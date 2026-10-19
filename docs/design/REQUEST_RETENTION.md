@@ -14,23 +14,37 @@ Each design claim names its ground. A claim with no ground says
 - **[research]**: divan `local-ai-gateway/request-body-retention-has-no-class-aware-contract-...md` at divan `911fa8b` (owner task 10 applied: 26 products). Claim ids such as GW-L2, PT-W1, L14 and OS1, and recommendation ids R1-R10, refer to that file.
 - **[reach]**: divan `local-ai-gateway/administrator-content-reach-differs-across-14-products-...md` (2026-10-11), synthesis "Bottom line", "Sharing" and "Support and break-glass".
 - **Dnn**: `~/Documents/azizam/engine-contract/DECISIONS.md` (D26-D46). This file is outside the repo.
-- Repo paths with line numbers, at `a372c303`.
+- Repo paths with line numbers, at `a372c303`. LiteLLM paths
+  (`litellm/proxy/...`) are in the installed 1.86.2 package of the repo
+  venv.
+- **[survey]**: the repo and LiteLLM surveys made for this design on
+  2026-10-19, by read-only subagents. The LiteLLM survey read the
+  installed source and ran an in-process canary harness, which now lives
+  outside the repo at `~/.tmp/llm-probe`. It read the names of the live
+  process's environment variables, not their values.
+- **[judge r1]**: the independent review of this design at `26b4d443`
+  (Codex GPT-6.1-Sol, high effort). Its findings are applied in this
+  revision.
 
 ## 1. Summary
 
 1. **One contract, four kinds.** Azizam keeps request content under one
    policy contract with one decision function, one write path, one reader
    rule, one erasure machine and one per-request control. The contract has
-   four content kinds. Each kind has its own purpose sentence and its own
-   defaults:
+   four content kinds, and each kind has its own purpose sentence. Members
+   see two switches. Library prompts and saved conversations share today's
+   switch, unchanged. Request history has its own. The kinds are:
    - Library prompts and saved conversations already exist.
    - Request history and Debug captures are new.
 
    The default values are bundled registry data, not code constants.
 2. **The reader floor is in core.** Only the person who made a request can
-   read its content through Azizam. Data can narrow that set. Nothing in data
+   read its content through Azizam. For saved conversations, the reader is
+   today's person-and-App scope. Data can narrow that set. Nothing in data
    can widen it. Widening is one marked extension point, and it stays closed
-   until Tim decides.
+   until Tim decides. A delegated credential (a key or an MCP grant)
+   reaches the new controls only with a privacy permission that the person
+   grants, so existing keys and grants gain nothing.
 3. **LiteLLM keeps nothing.** Azizam decides retention before a request
    reaches LiteLLM. The generated LiteLLM config and the launch environment
    turn off every LiteLLM place that can keep content. A test reads the
@@ -38,8 +52,10 @@ Each design claim names its ground. A claim with no ground says
 
    Today this is not true on the live host. LiteLLM there has a database
    and writes spend and error rows. Its default ERROR line printed an
-   echoed prompt in a measured test. Slice 3 fixes this and ships first
-   among the behaviour changes.
+   echoed prompt in a measured test. Slice 3 fixes this. When the gateway
+   cannot confirm that a database setting does not override the profile,
+   it refuses to route through LiteLLM. Slice 3 ships first among the
+   behaviour changes.
 4. **Facts about other systems are data.** Provider retention facts are
    provider-catalog data with evidence dates. Engine-kept history is a fact
    on the engine's protocol, definition or record, shown in the ledger and in
@@ -55,7 +71,7 @@ Each design claim names its ground. A claim with no ground says
    same reader floor and secrets rules as everything else.
 8. **Run again.** It makes a new request through the front door, with that
    request's permissions, cost checks and admission.
-9. **Phases.** The build is nine small slices (section 17). Slice 1 changes
+9. **Phases.** The build is ten small slices (section 17). Slice 1 changes
    no behaviour. It moves today's defaults into data and proves that every
    decision stays the same.
 
@@ -121,18 +137,38 @@ The contract has three layers. Each layer can only narrow the one above it.
 
 1. **Bundled defaults: `registry/retention.yml`.** This is data shipped
    with the gateway. It has a closed schema, `registry/retention.schema.json`,
-   and the owner can override every value. It holds each kind's purpose,
-   default and choices. Core code has no default of its own. A missing file
+   and the owner can override every value. It holds each group's default
+   and choices, and each kind's purpose, parts and readers. Core code has no default of its own. A missing file
    fails startup ([handoff] I7; `docs/EXTENSION_ARCHITECTURE.md:7-10` "Data
    owns ... policy defaults").
 2. **Household policy.** The owner's values, in `admin.db`
    `operator_settings`, key `retention`. Today's `prompt_memory` key moves
    there in slice 1 (section 12). It holds `never_keep` (the kill switch,
-   one for all kinds), and for each kind: `default_keep` for new members,
-   `retention_cap`, `readers` and `parts`.
-3. **Member choice.** One row per person and kind in a member preference
-   table (today: `prompt_memory_preferences`, `gateway/admin_store.py:236`),
-   with `keep` and `retention`.
+   one for all kinds). For each group it holds `default_keep` for new
+   members and `retention_cap`. For each kind it holds `readers` and
+   `parts`. For `debug_capture` it holds `allowed`.
+3. **Member choice.** One row per person and **preference group** in the
+   member preference table (today: `prompt_memory_preferences`,
+   `gateway/admin_store.py:236`). A row holds:
+   - `keep` and `retention`;
+   - `parts`, for groups that offer a choice (request history: "also keep
+     replies");
+   - `readers`, which can only narrow.
+
+   A group is a set of kinds that share one switch. `library_prompt` and
+   `conversation` form the group `prompts`, because today one member
+   preference governs both. It gates Responses storage (`proxy.py:26725`),
+   and turning it off deletes saved conversations (`proxy.py:20114`).
+   `request_history` is its own group. `debug_capture` has no member row:
+   opening a window is the choice (section 9).
+
+   **New member rows.** The household default applies only when a row is
+   created: at rollout, at user creation, or when a new group appears. It is
+   never applied later to a person who has a row, so a household change
+   never widens an existing member. This is today's rule
+   (`PROMPT_MEMORY.md` "The household default affects new members only",
+   `CORE_CONTRACTS.md` "Member preferences are saved at rollout and user
+   creation").
 
 The shape of `registry/retention.yml` (illustrative values; the
 request-history default is Tim's decision 1):
@@ -147,32 +183,35 @@ retention_choices:          # shared vocabulary; seconds are data, not code
   30_days: 2592000
   3_months: 7776000
   1_year: 31536000
-kinds:
-  library_prompt:
-    purpose: Library keeps the words that made each thing you created, so you can find it and make it again.
+groups:                     # one member switch per group
+  prompts:                  # today's prompt-memory switch, unchanged
+    kinds: [library_prompt, conversation]
     default_keep: true                # today's value (prompt_memory.py:33)
     choices: [never, 3_months, 1_year]
     default_retention: never          # today's value
+  request_history:
+    kinds: [request_history]
+    default_keep: false               # TIM DECISION 1 (section 18); new members only
+    choices: [1_day, 7_days, 30_days]
+    default_retention: 7_days
+    member_parts: [accepted]          # "also keep replies" adds received
+kinds:
+  library_prompt:
+    purpose: Library keeps the words that made each thing you created, so you can find it and make it again.
     parts: {allowed: [accepted], default: [accepted]}
     readers: maker                    # see section 4
   conversation:
     purpose: An app can ask Azizam to keep a conversation so it can continue it later.
-    default_keep: true                # today: Responses store defaults on with a person
-    choices: [never]                  # until explicitly deleted, as today
-    default_retention: never
     parts: {allowed: [accepted, received], default: [accepted, received]}
-    readers: maker
+    readers: scope                    # today's person + App/credential rule (section 4)
   request_history:
     purpose: Request history keeps what your apps sent for a short time, so you can check it and run it again.
-    default_keep: false               # TIM DECISION 1 (section 18)
-    choices: [1_day, 7_days, 30_days]
-    default_retention: 7_days
     parts: {allowed: [accepted, received], default: [accepted]}
     max_record_bytes: 1048576
     readers: maker
-  debug_capture:
+  debug_capture:                      # no group: opening a window is the choice (section 9)
     purpose: A Debug window keeps what went to one engine and what came back while you set it up, then deletes it.
-    default_keep: false               # only inside an open window
+    allowed: true                     # the household may set false
     choices: [1_hour, 1_day, 7_days]
     default_retention: 1_day          # counted from the window's end
     window_choices: [5_minutes, 15_minutes, 1_hour]
@@ -187,8 +226,10 @@ disclosure:
 
 The validator (core) refuses these:
 
-- A `readers` value outside the core list (section 4).
+- A `readers` value outside the core list (section 4), or any value but
+  `scope` for `conversation`.
 - A `parts` default outside `allowed`.
+- A kind in two groups, or a grouped kind that also has its own `choices`.
 - A `default_retention` outside `choices`.
 - A choice name missing from `retention_choices`.
 - `widening` other than `none`.
@@ -212,14 +253,22 @@ two kinds added:
    (`PROMPT_MEMORY.md` "No-key LAN calls ..."). The one existing exception is
    kept: a no-person Responses request with a stable App or credential scope
    and an explicit `store:true` (`CORE_CONTRACTS.md:620-622`).
-4. `debug_capture` only: no open window whose opener is this person and
-   whose engine is the dispatched engine: `no_window`.
-5. The member's `keep` is false: `member_disabled`. A member with no row
-   gets the household `default_keep` for that kind, snapshotted at rollout
-   or user creation, as today (`PROMPT_MEMORY.md` "Member preferences").
+4. `debug_capture` only. Keep exactly when the household allows windows
+   and an open window has this person as opener and the dispatched engine
+   as its engine (reason `debug_window`). Otherwise `no_window`. Steps 5 and
+   6 do not apply. The deadline is `min(ends_at, closed_at) + window
+   retention`, so closing a window early shortens its records' deadlines.
+   `parts` is the window's parts ∩ the household parts ∩ allowed.
+5. The member's `keep` for the kind's group is false: `member_disabled`.
+   Every person has a row for each group (section 3.2), so there is no
+   "no row" case at decision time. A row that is missing because of
+   contention during initialization degrades to not keeping, as today
+   (`PROMPT_MEMORY.md` "Contention during legacy preference initialization
+   degrades to no prompt storage").
 6. Otherwise keep. `kept_until` is the request time plus the shorter of the
-   member's retention and the household cap. `parts` is the intersection of
-   the household parts and the kind's allowed parts.
+   member's retention and the household cap. `parts` is the member's parts
+   ∩ the household parts ∩ the kind's allowed parts. `readers` is the
+   narrower of the member's and the household's value.
 
 A decision is made before anything persists. That covers the database, the
 execution spool, the STT workspace and anything sent to LiteLLM
@@ -300,20 +349,40 @@ I10):
    There is no content hash: a hash is derived content ([research]
    "Proposed classification", row "Derived content"). Media that is kept
    lives in Library, under `library_prompt`. A blob store for request inputs
-   ([research] R6) is not part of this design. Slice 9 lists it as a later
+   ([research] R6) is not part of this design. Section 17 lists it as a later
    need.
 6. **Pasted secrets cannot be detected.** No rule can prove that a message
    holds no pasted secret. The UI says so, and offers forget and "never
    save" ([research] R3, second paragraph). Azizam ships no regex "secret
    detector", because a detector that misses would be a control that does
    less than it says.
+7. **Only containers the gateway parses are captured.** These are JSON
+   objects, and multipart forms (their fields and part listing). A body the
+   gateway does not parse is recorded as
+   `{"omitted": "unsupported_container", "media_type": ..., "bytes": N}`:
+   a non-JSON native-lane body, raw audio, or any other media type. The
+   request itself still runs. This is "unknown shapes fail closed for
+   persistent capture, while ordinary authorized inference may still pass
+   through" ([research] R2).
+8. **A field named as a credential is removed, at any depth.** A field
+   whose name has a credential segment gets the value `[removed]`. The
+   segments are compared in snake, kebab or camel case: `secret`,
+   `password`, `passwd`, `credential(s)`, `authorization`, `apikey`, or
+   the pairs `api_key`, `access_token`, `refresh_token`, `id_token`,
+   `auth_token`. A plain `token` segment is not one of them, so
+   `max_tokens` is kept. This uses names only, like the D43 registration
+   test, and no shape knowledge. It catches a native API that takes its
+   key in the body. It cannot catch a credential under a neutral name, so
+   such a shape needs the per-field extension below, and the disclosure
+   names the limit.
 
-**Classification is per body, not per field.** Rules 1-5 are generic. They
-use no knowledge of an API shape, so any API shape, including one that
-arrives tomorrow, is covered with no new data. Field-level selectors
-(JSON pointers on a protocol description, [research] R2) are an extension
-for later, if a real shape needs a field dropped. Building them now would be
-machinery on speculation (`AGENTS.md:39`). This is a deliberate change from
+**Classification is per container, not per field.** Rules 1-8 are generic.
+They use no knowledge of an API shape, so every JSON or multipart shape,
+including one that arrives tomorrow, is covered with no new data. Other
+containers are not captured. Field-level selectors
+(`retention.drop` JSON pointers on a protocol description, [research] R2)
+come when a demonstrated shape needs a field dropped that rule 8 misses.
+Building them now would be machinery on speculation (`AGENTS.md:39`). This is a deliberate change from
 R2's full classifier, made for simplicity. A reviewer should check it.
 
 ### 3.6 Storage and the one write path
@@ -321,11 +390,17 @@ R2's full classifier, made for simplicity. A reviewer should check it.
 - `library_prompt` and `conversation` keep their tables
   (`asset_prompts`, `responses`). Their schemas do not change, and no row
   moves.
-- `request_history` and `debug_capture` use one new table, `kept_requests`,
-  in a new store `data/kept_requests.db`. It opens through `sqlite_startup`,
-  so it gets the shared lock, quarantine and corruption-only recovery
-  (`docs/ops/DATA_RETENTION.md`, last sections), and `secure_delete`. Its
-  columns:
+- `request_history` and `debug_capture` use one new table, `kept_requests`.
+  It is an additive table in `data/media_jobs.db`, beside `asset_prompts`,
+  so it inherits that store's lock, quarantine, corruption-only recovery
+  and `secure_delete` (`docs/ops/DATA_RETENTION.md`, last sections). There
+  is no new database file. More important: a Library deletion already
+  commits prompts, hides and job rows together in that database
+  (`DATA_RETENTION.md`: "Prompts, hides and job deletions commit together
+  in the media-jobs database or not at all"). The cascade to linked
+  records (section 3.1) joins the same transaction, so a crash cannot
+  leave one half done. For a media request, the request-history record and
+  the Library prompt are written in one transaction. Its columns:
   - `record_id`, `request_id`, `kind`, `person_id`, `app_id`
   - `engine_id`, `debug_window_id`
   - `created_at`, `kept_until`
@@ -348,14 +423,33 @@ R2's full classifier, made for simplicity. A reviewer should check it.
 
 ## 4. Reader scope (owner task 2)
 
-**The core floor.** Content of every kind is projected only after this
-equality check: `record.person_id == viewer.person_id`. The viewer's person
-comes from one of three places:
+**The core floor.** Each kind has one scope rule, written once in core:
+
+- **`library_prompt`, `request_history` and `debug_capture`** are always
+  written with a person. A write without one is refused (section 3.3, step
+  3). Their content is projected only when `record.person_id` is not null
+  and equals the viewer's person. A null person never matches a null
+  person.
+- **`conversation`** keeps today's rule exactly (`_responses_row_visible`,
+  `proxy.py:25293`). The row needs a matching person **and** a matching
+  immutable App id, or credential hash when there is no App. A no-person
+  row is visible only through that App or credential scope. The existing
+  tests stay the oracle (`tests/test_prompt_memory_responses.py:209,236`:
+  same person and a different App is denied; a scoped no-person row is
+  retrievable). The conversation's "maker" is that scope, not a person.
+
+For the person-scoped kinds, the viewer's person comes from one of three
+places:
 
 - a browser session or OIDC sign-in;
 - a personal App key minted by its owner (`admin_runtime.py:2294`,
   `person_for_app_credential`);
 - an MCP grant made by that person (`proxy.py:2413`).
+
+The last two are delegated credentials. For Library prompts, a personal key
+reads as it does today. For request history and Debug captures, a
+delegated credential reads only with the privacy permission, which the
+person grants (section 10).
 
 These have no person and can never read content: the owner role, admin and
 automation keys, service Apps, keys minted for someone else, trusted
@@ -378,8 +472,8 @@ coverage.
 **Data may narrow it.** `readers` takes values from a core list:
 
 - `maker` (the floor, and the most it allows today);
-- `maker_signed_in` (only a browser session or MCP grant; the maker's App
-  keys cannot read the content).
+- `maker_signed_in` (only the maker's browser session; no delegated
+  credential can read the content).
 
 A household or member value of `maker_signed_in` is a real narrowing.
 Today, sharing a personal key shares the maker's prompts
@@ -412,12 +506,12 @@ the place gets a copy.
 | # | Place | When | Azizam controls | Under forget / never save |
 |---|---|---|---|---|
 | 1 | `asset_prompts`, `responses`, `kept_requests` | per decision | yes | no write ([research] R4) |
-| 2 | Receipts | always | yes | structural only; the guard extends to values (16.2) |
+| 2 | Receipts | always | yes | structural only; the guard extends to values (section 13.3) |
 | 3 | Execution spool `data/image_media_jobs/` | async media jobs | yes | memory only, as today; the job cannot resume after a restart |
-| 4 | STT workspace `data/stt-spool/` | long audio | yes | **today it writes to disk even under forget.** Slice 6 moves it to the gateway's private temp directory (row 5) and the copy names it. A memory-only STT path is a later choice: long audio would cost too much memory (UNGROUNDED size limit). |
-| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 6 sets the temp directory to a gateway-private directory (`TMPDIR`, mode 0700, emptied at start) and the unit sets `PrivateTmp=yes`. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
+| 4 | STT workspace `data/stt-spool/` | long audio | yes | **today it writes to disk even under forget.** Slice 4 moves it to the gateway's private temp directory (row 5) and the copy names it. A memory-only STT path is a later choice: long audio would cost too much memory (UNGROUNDED size limit). |
+| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 4 sets the temp directory to a gateway-private directory (`TMPDIR`, mode 0700, emptied at start) and the unit sets `PrivateTmp=yes`. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
 | 6 | Gateway logs (journal) | always | yes | D43/D44: no request or upstream text in logs. The canary test checks the journal capture. |
-| 7 | Engine output files `data/processes/<id>.log` | engines the gateway starts | the file, yes; what the engine prints, no | the disclosure names it when the engine record declares a prompt-printing log level (an engine fact, section 6). `log_max_bytes` is existing record data. |
+| 7 | Engine output files `data/processes/<id>.log` | engines the gateway starts | the file, yes; what the engine prints, no | the disclosure names it for every engine whose output file Azizam keeps (section 5.3). `log_max_bytes` is existing record data. |
 | 8 | LiteLLM process, its stdout and its database | chat-shaped requests | yes, through the generated config and environment | section 5.2. **Today it is not clean**: error rows and the ERROR log line can hold echoed prompts. |
 | 9 | The engine's own history | engine-dependent | no | detect-and-advise (section 6) |
 | 10 | Provider retention | remote providers | no | provider fact (section 6) |
@@ -468,7 +562,7 @@ upstream default change then cannot turn a sink on.
 |---|---|---|---|
 | Spend rows: messages, response, `proxy_server_request` | `general_settings.store_prompts_in_spend_logs: false`; `disable_spend_logs: true` (key, user and team spend totals still update, so virtual-key budgets keep working; slice 3 tests this) | unset; spend rows written to the live database | GW-L2, GW-L10; survey |
 | Error rows (`metadata.error_information`: provider error text, capped; only the keys `input`, `messages` and `prompt` are redacted) | `general_settings.disable_error_logs: true` | unset; written | GW-L2; survey |
-| Database settings that override YAML | `general_settings.store_model_in_db: false`, plus the effective-settings check below | unset | GW-L3; survey |
+| Database settings that override YAML | `general_settings.store_model_in_db: false`, plus the database-override precondition check below | unset | GW-L3; survey |
 | Callbacks (`callbacks`, `success_callback`, `failure_callback`, key and team callbacks) | `[]` for each; Azizam creates no key with callback metadata | unset (empty); no environment variable enables them in 1.86.2 | GW-L1, GW-L10; survey |
 | Message content in logging objects | `litellm_settings.turn_off_message_logging: true`; `redact_messages_in_exceptions: true`; `redact_user_api_key_info: true` (defence in depth only) | unset | GW-L1, GW-L12 |
 | Process stdout and stderr | `LITELLM_LOG=CRITICAL` in the child environment; never `--debug`, `--detailed_debug`, `DEBUG` or `DETAILED_DEBUG` | unset: ERROR lines can carry echoed prompts | GW-L11; survey (measured) |
@@ -476,7 +570,7 @@ upstream default change then cannot turn a sink on.
 | Response cache and Responses polling cache | `litellm_settings.cache: false`; no `cache_params`; `router_settings.cache_responses: false` | unset (off; `litellm.cache` is `None`, measured) | GW-L8, GW-L10 |
 | `.env` auto-load by LiteLLM | `LITELLM_MODE=PRODUCTION` | unset (`DEV` loads a `.env` found by walking up; none exists today) | survey |
 | Admin UI and API docs | `DISABLE_ADMIN_UI=true`, `NO_DOCS=true`, `NO_REDOC=true` (the `/ui` files stay mounted on 127.0.0.1 behind the master key) | unset | GW-L3; survey |
-| Uploads over 1 MiB | `TMPDIR` set to the gateway's private temp directory (slice 6) | system temp | Starlette `formparsers.py:126,209` |
+| Uploads over 1 MiB | `TMPDIR` set to the gateway's private temp directory (slice 4) | system temp | Starlette `formparsers.py:126,209` |
 | Image-URL conversion cache (10 entries, 600 s, memory) and other memory caches | none; disclosed under "memory" | n/a | GW-L7; survey |
 
 **Launch environment.** The child gets an allowlisted environment instead of
@@ -496,22 +590,59 @@ each failure (D43 `describe_*`). So the gateway's log becomes the record of
 LiteLLM failures. This is a deliberate trade: the journal is host-only (D45),
 but "never save" must also be true there.
 
-**Effective-settings check.** Database rows can override the YAML. So after
-each LiteLLM start the gateway reads LiteLLM's effective general settings
-through its master-key settings API, as the virtual-key admin client already
-does for `/key/*` (`gateway/admin_api.py:291,2870`). It compares them with
-the no-content profile.
+**The database override is checked, and a failure closes the path.** In
+1.86.2, YAML values can be overridden from the database only through one
+path. At startup, LiteLLM turns `store_model_in_db` on when the env var
+`STORE_MODEL_IN_DB` is set, when the YAML sets it, or when the
+`LiteLLM_Config` row `general_settings` has `store_model_in_db: true`
+(`litellm/proxy/proxy_server.py:7409-7435`). Only then does it merge that
+row's settings into the config (`:3624-3630`, `:5542-5575`), and it polls
+the row every 30 seconds (`:5631-5675`). That poll is what sets
+`store_prompts_in_spend_logs` from the row (`:5411-5425`).
 
-- **On a mismatch** (or when the check cannot run), the engine page shows an
-  attention item: "LiteLLM may keep request content: <setting>".
-- The "never save" disclosure then adds a line: "LiteLLM, which runs chat
-  for Azizam, may keep a copy."
-- Chat keeps working.
+The persisted UI settings sync only a fixed list of runtime flags, and no
+content switch is on that list (`:7255-7285`;
+`ui_crud_endpoints/proxy_setting_endpoints.py:191-200`). That list does
+include `forward_client_headers_to_llm_api`.
 
-This is honest without changing routing. Failing closed was considered: it
-would stop all chat on a setting the owner may not know about. UNGROUNDED:
-the exact LiteLLM 1.86.2 route that returns effective settings. Slice 3 finds
-it in the installed source before it relies on it.
+The settings API cannot prove the content switches either:
+`/config/list` reports only selected general settings, without the two
+disable switches. It reads the database row, not the effective values
+(`:14252-14275`, [judge r1]). So the gateway checks the precondition
+itself:
+
+1. **Environment.** The child's allowlisted environment never carries
+   `STORE_MODEL_IN_DB`, and the YAML sets `store_model_in_db: false`.
+   Deterministic tests cover both.
+2. **Database row.** Before the gateway routes any request to a newly
+   started LiteLLM, it reads the `LiteLLM_Config` rows `general_settings`
+   and `litellm_settings` with a read-only query. It already has
+   `DATABASE_URL`. The precondition fails when any of these hold:
+   - `store_model_in_db` is true;
+   - `store_prompts_in_spend_logs` is true;
+   - a `callbacks`, `success_callback`, `failure_callback` or `cache` key is
+     present.
+3. **Fail closed.** Until the check passes, every request that would go
+   through LiteLLM gets `503 litellm_content_unverified`, a gateway
+   refusal with a plain sentence that names the setting and the fix. The
+   engine page shows the same attention item. A check that cannot run
+   (for example, the database is unreachable) also fails closed, because
+   LiteLLM with a database it cannot be checked against is the case the
+   rule exists for. With no database, step 2 has nothing to check and
+   passes.
+
+This is a deliberate behaviour change. On the live host it could refuse
+chat on the first deploy, if such a row exists. So the read-only count in
+section 19 runs before slice 3 deploys. The check reads LiteLLM's own table
+names. That is allowed: LiteLLM is the pinned, managed substrate, and
+`gateway/litellm_substrate.py` already knows it. It is not engine knowledge.
+Any LiteLLM upgrade re-verifies these line references (the pin is
+hash-locked, `PRODUCT_STRATEGY.md:200-201`).
+
+Limit: a host process holding the LiteLLM master key or direct database
+access could change settings in LiteLLM's memory after the check, through
+`/config/update`. On this host that is the owner, and Azizam does not call
+that route. A test pins that no gateway code calls it.
 
 **What is already stored is unknown.** Rows that LiteLLM wrote to the live
 database before slice 3 stay there. Turning switches off does not remove old
@@ -539,8 +670,13 @@ after it confirms the internal hop needs nothing more.
    `OTEL_EXPORTER_OTLP_ENDPOINT`, `LITELLM_LOG=DEBUG`, `DEBUG=1`,
    `DATABASE_HOST`.
 3. The in-process canary test is described in section 16.2.
-4. The admin preview (`GET /admin/api/operator/litellm-config`, D30) shows
-   the content switches and the last effective-settings check.
+4. The precondition check is tested against a fixture of query results.
+   With each overriding row, and with a failed query, chat through LiteLLM
+   is refused with `litellm_content_unverified`. With a clean result, chat
+   goes through. A live check runs it against a scratch LiteLLM database
+   (16.3).
+5. The admin preview (`GET /admin/api/operator/litellm-config`, D30) shows
+   the content switches and the result of the last precondition check.
 
 ### 5.3 "Never save" copy that stays honest
 
@@ -548,17 +684,25 @@ The disclosure is data (`disclosure.never_save`). It is assembled from facts,
 not written as one promise. This is the default text with no engine facts
 added (draft; the UX review owns the final words):
 
-> Azizam does not save this request: not in its database, files or logs.
-> While the request runs, it is in this computer's memory. The computer can
-> copy memory to its swap space, to a hibernation file or into a crash
-> report. A large upload passes through a temporary file that is deleted
-> when the request ends.
+> Azizam does not save this request in its database or its logs. While the
+> request runs, it is in this computer's memory. Long audio, and uploads
+> over 1 MB, also pass through temporary files in Azizam's private folder.
+> Those files are deleted when the request ends, but the disk can keep
+> their old blocks. The computer can copy memory to swap space, to a
+> hibernation file or into a crash report.
+
+When the engine is one that Azizam starts and keeps an output file for
+(section 5.1, row 7), one line is added:
+
+> <engine> prints to a file that Azizam keeps on this computer (the last
+> 64 KB). If <engine> prints what it receives, that file holds it.
 
 Facts are added for the engine and provider the request goes to (section 6):
 
-> ComfyUI on this computer keeps its own history of up to 10,000 requests.
-> Anything that can reach its port can read or clear that history. Azizam
-> cannot delete it.
+> ComfyUI, which Azizam reaches at this computer's own address, keeps its
+> own history of requests in its memory until it restarts. It drops the
+> oldest entry only once it holds more than 10,000. Anything that can reach
+> its port can read or clear that history. Azizam does not clear it.
 
 and
 
@@ -603,10 +747,16 @@ Both kinds of fact use one schema, `retention_fact`:
   180) shows "this was last checked on <date>". Azizam never fetches the
   source automatically: no network calls on read ([research] R8 "Viewing the
   ledger must never resend the request").
-- **History.** A receipt records the `id` and `checked` date of each fact in
-  force when the request was sent. A later catalog change then does not
-  rewrite what the ledger said for an old request ([research] R8 "preserve
-  the evidence date and exact route/model/config used").
+- **History: immutable revisions.** A fact's revision is a hash of its
+  canonical JSON. When a request is sent, each fact in force is appended
+  once to an append-only table, `retention_fact_revisions` (revision hash,
+  fact JSON, first seen), in `media_jobs.db`. The receipt records the
+  revision hashes. The ledger of an old request renders the stored
+  revisions, so an edit, a removal or an upgrade cannot rewrite what it
+  said ([research] R8 "preserve the evidence date and exact
+  route/model/config used"; [judge r1] finding 10). A revision row holds no
+  request content, so it has no deadline. It is pruned only when no
+  remaining receipt references it.
 - **Seed.** The seed comes from the corrected research: PT-O1 for OpenAI,
   GW-O1 to GW-O3 for OpenRouter, PT-A* for Anthropic, PT-G* and PT-VX3 for
   Gemini through the OpenAI-compatible route. PT-VX3 records implicit
@@ -621,7 +771,7 @@ wins:
 1. **The protocol description** (`registry/protocols/<id>.yml`), for
    history that comes with the API shape. `node-graph` gets:
    - `holds: submitted graphs, their inputs and outputs`
-   - `how_long: until cleared; up to 10,000 entries`
+   - `how_long: in memory until the engine restarts or clears it; the oldest entry is dropped when it holds more than 10,000`
    - `reach: anything that can reach the engine's port; no sign-in in a default install`
    - evidence L13 and L14
 
@@ -657,9 +807,13 @@ claimed.
 **No purge code.** Azizam does not clear engine history. This is
 detect-and-advise: Identity "a repairer of broken engines (it detects and
 advises)", `PRODUCT_STRATEGY.md:44`; [handoff] I6. The advice is a fact
-field, `control`, for example: "Clear it in ComfyUI, or start ComfyUI with
-history kept in memory only". One existing behaviour is kept and not
-widened: a maker's explicit video DELETE also asks the engine to drop that
+field, `control`. For example: "The history is cleared when ComfyUI
+restarts, or by ComfyUI's own clear-history action. Keep ComfyUI's port
+reachable only from this computer." Both facts come from L13 and L14 (an
+in-memory dictionary; `POST /history` clears it; the default bind is
+127.0.0.1). L13 found no setting that turns history off, so the advice
+does not offer one. One existing behaviour is kept and not widened: a
+maker's explicit video DELETE also asks the engine to drop that
 one job's history entry, through the protocol's declared
 `graph.delete_history` operation (`proxy.py:12320-12328`). It is data-driven
 (a protocol operation, no engine name) and acts only on the maker's own job.
@@ -679,8 +833,13 @@ gateway already has ([research] R8). It appears in three places:
 
 It answers, in plain words:
 
-1. **Who can read it in Azizam.** "Only you", plus "your App keys" when
-   `readers: maker`.
+1. **Who can read it in Azizam.** "Only you", made exact per kind while
+   `readers` is `maker`:
+   - A Library prompt adds "and anyone holding one of your personal App
+     keys". That is today's delegation (`CORE_CONTRACTS.md:601-603`).
+   - Request history and Debug captures add "and the keys and connected
+     apps you gave the privacy permission", when any exist.
+   - A conversation says "you, through the app that saved it".
 2. **Who runs the machine.** "The owner, <name>, runs this computer and can
    read its files."
 3. **Where it went.** The engine or provider, by display name. It shows the
@@ -703,22 +862,24 @@ or member choice object (section 3.2). None has state of its own (Identity,
 
 1. **Presets** (registry picks). These are named policy objects in
    `registry/retention.yml` under `presets`:
-   - **Keep nothing:** every kind off, the forget default for Try.
-   - **Library only:** today's behaviour, and the default after migration.
-   - **Library and 7 days of request history.**
-   - **Library and saved conversations, no request history.**
+   - **Keep nothing:** both member switches off (prompts and
+     conversations; request history).
+   - **Prompts and conversations:** today's behaviour, and the state after
+     migration.
+   - **Prompts, conversations and 7 days of request history.**
 
    Picking a preset writes its values. When the stored values match no
    preset, the picker shows **Custom**. The UI never pretends a preset is
    still in force.
-2. **Guided form.** One row per kind: its purpose sentence, an on/off
-   switch, the retention choice and, for request history, "also keep
-   replies". Under each row the form shows the ledger preview for a typical
-   request (section 7) and the consequence of the change in plain words. For
+2. **Guided form.** One row per preference group: its purpose sentences,
+   an on/off switch, the retention choice and, for request history, "also
+   keep replies". "Also keep replies" is the member's `parts`. Under each
+   row the form shows the ledger preview for a typical request (section 7) and the consequence of the change in plain words. For
    example: "Turning this off deletes 41 kept requests now. This cannot be
-   undone." The owner's form adds the kill switch, the caps and
-   `readers`. A member's form shows the owner's caps as limits, not as
-   errors.
+   undone." The owner's form adds the kill switch, the caps, the household
+   `parts` and `readers`, and "Allow Debug windows". A member's form adds
+   "Only when I am signed in" (`readers: maker_signed_in`). It shows the
+   owner's caps as limits, not as errors.
 3. **Full data editing.** The policy object as YAML or JSON, with the
    schema and the validator's plain refusals. It is the same object the
    REST API returns.
@@ -726,8 +887,10 @@ or member choice object (section 3.2). None has state of its own (Identity,
 The essential complexity is four kinds × (keep, retention, parts, readers) ×
 three layers of authority. The UI hides it this way:
 
-- A member sees two switches: Library and request history. Conversations
-  are an app's choice. Debug captures exist only inside a window.
+- A member sees two switches. The first is "Remember my prompts and saved
+  conversations", today's switch, unchanged. The second is "Request
+  history". A saved conversation also needs the app to ask for it
+  (`store`). Debug captures exist only inside a window.
 - The owner sees one form.
 - Only the expert layer shows parts and readers.
 
@@ -749,14 +912,23 @@ from the check.
 - `opener_person_id`
 - `engine_id`
 - `opened_at`, `ends_at`, chosen from `window_choices`
-- `parts`
+- `parts`, chosen at opening from the allowed parts (default: all three)
+- `retention`, chosen from `choices`
 - `closed_at`
 
-While a window is open, decision step 4 keeps `debug_capture` records for
-the opener's own requests to that engine. The records carry all three parts.
-They expire `default_retention` after the window ends. A window can be
+**Opening a window is the opener's explicit consent to keep content for a
+bounded time.** So `debug_capture` has no member switch (section 3.2).
+Decision step 4 keeps the opener's own requests to that engine while the
+window is open. Steps 1-3 still apply: the kill switch, a forgetting
+request and the no-person rule all win over a window. The household can
+forbid windows (`kinds.debug_capture.allowed: false`); then opening returns
+`403 debug_windows_disabled`.
+
+Each record expires at `min(ends_at, closed_at) + retention`. Closing a
+window early shortens its records' deadlines to match. A window can be
 closed early. Closing a window or deleting its records uses the normal
-erasure path.
+erasure path. A request still in flight when its window closes is refused
+at write time (section 12).
 
 **Rules (all in core):**
 
@@ -784,8 +956,10 @@ erasure path.
     (D45b).
   - The view is a management output, so it leaves through the one egress
     (D31). Part bodies are a new projection class `MakerContent`. It is
-    emitted only to the record's maker after the equality check and is
-    forbidden for every other audience (D28 default Forbidden).
+    emitted only to the record's maker after the scope check (section 4)
+    and is forbidden for every other audience (D28 default Forbidden).
+    `MakerContent` ships with the first content surface, request history
+    (slice 5), not with the Debug window.
 - **Honesty.** While a window is open, the header of every page the opener
   sees shows "Debug window open for <engine>, 12 minutes left". The receipt
   of each captured request says `retention.kind: debug_capture`.
@@ -797,21 +971,37 @@ semantic tests. A route inventory test fails when an operation is missing
 from the matrix (`HEADLESS_AND_RESOURCES.md` "Support matrix, not a parity
 ritual"; Identity item 6).
 
-**Who may change what.** Any maker credential can reduce: turn off, shorten,
-delete, close a window. Widening needs the person: turn on, lengthen, add
-parts, open a window. The person can be a browser session, an MCP grant, or
-a personal App key minted with **May change my privacy settings**.
+**Who may use these controls.**
 
-That last option is the one new key property: a boolean chosen when the key
-is minted. Minting already needs a recent sign-in (D36). It defaults to off.
-Without it, a leaked personal key could turn history on, capture the maker's
-requests from every other device, and read them later. The asymmetry is the
-same as for the per-request control (section 3.4).
+- **A browser session** of the person may use every control in the table
+  below. A widening write checks the session is live in its own
+  transaction (D41).
+- **A delegated credential** (a personal App key or an MCP grant) may use
+  the retention, kept-request and Debug-window controls only if it carries
+  the **privacy permission**. The person chooses it when minting the key
+  (minting already needs a recent sign-in, D36) or on the MCP consent page,
+  where it is shown as an extra line: "Read and delete what Azizam keeps
+  for you, and change your privacy settings". It defaults to off.
+- **Existing keys and grants get no new reach.** The MCP consent page
+  promises that an app "can't change your plan, keys, people or settings"
+  (`web/src/app/authorize/page.tsx:108`), and grants have only the `mcp`
+  and `offline_access` scopes (`gateway/mcp_oauth.py:80-81`). So the
+  permission is a new scope, `privacy`, and existing grants do not have
+  it. Without the permission, a delegated credential keeps exactly what it
+  has today: a personal key can still read the maker's Library prompts
+  through the existing routes (`CORE_CONTRACTS.md:601-603`), and every
+  credential can use the per-request forget control.
+- **Why the permission exists.** Without it, a leaked personal key could
+  turn history on, capture the maker's requests from every other device,
+  and read them later.
+- **Household policy** needs the owner role: a session, an owner automation
+  key (as today, `owner_openapi_routes.json:337,341`), or an owner's MCP
+  grant with the permission.
 
 | Control | REST | MCP | CLI (Restish over OpenAPI) |
 |---|---|---|---|
 | Household policy: read, write, preset | `GET/PUT /admin/api/settings/retention` (`If-Match`) | tool `retention`, action `household_get` / `household_set` (owner person) | `restish azizam get-retention-settings` / `put-retention-settings` (owner key) |
-| My choices | `GET/PUT /me/api/retention` (session); `GET/PUT /gateway/v1/me/retention` (personal key; PUT that widens needs the key property) | `retention` `mine_get` / `mine_set` | `restish azizam-app get-my-retention` / `put-my-retention` |
+| My choices | `GET/PUT /me/api/retention` (session); `GET/PUT /gateway/v1/me/retention` (delegated credential with the privacy permission) | `retention` `mine_get` / `mine_set` | `restish azizam-app get-my-retention` / `put-my-retention` |
 | My kept requests: list, read, delete, delete all | `GET /gateway/v1/requests`, `GET /gateway/v1/requests/{id}`, `DELETE ...{id}`, `DELETE /gateway/v1/requests` | tool `requests`, actions `list` / `get` / `delete` / `delete_all` | `restish azizam-app list-requests` etc. |
 | Library prompt delete (existing) | `DELETE /me/api/prompt-memory/prompts` becomes `DELETE /gateway/v1/requests?kind=library_prompt` | `requests` `delete_all` with `kind` | same |
 | Ledger | `GET /gateway/v1/requests/{id}/ledger`; `GET /gateway/v1/me/retention/ledger` | `requests` `ledger` | `restish azizam-app get-request-ledger` |
@@ -863,22 +1053,35 @@ bytes past any check:
   Cost unknown under a cap is refused, as today.
 - **Scheduler and fair sharing** (Identity item 3). Run again goes through
   the one admission gate as any request (`HEADLESS_AND_RESOURCES.md` Release
-  A item 5; `resource_admission.advise_resource_admission`,
-  `gateway/resource_admission.py:158`). Before confirming, `dry_run`
-  evaluates the same pure function and shows the result, labelled "not
-  reserved". It can say:
-  - "ready";
-  - "will wake <engine>";
-  - "will wait for <engine>, which is busy";
-  - "will unload <other engine> (yours)";
-  - "refused: <reason>".
+  A item 5). It runs at the caller's normal priority. It counts toward the
+  caller's concurrency and outstanding-job limits
+  (`media_jobs.create(..., outstanding_limits=)`). Engine waking and
+  swapping happen in the normal dispatch path (`proxy.ensure_target`,
+  `proxy.py:1598`, with the swap lock and drain), so Run again cannot jump
+  the queue or unload another person's engine by a path of its own. There
+  is no batch run: one record at a time, so history cannot become a bulk
+  queue.
+- **What the preview can honestly say.** Before confirming, `dry_run`
+  shows only facts that exist today, labelled "not reserved":
+  1. The admission outcome (allowed, delayed or refused, with its reasons)
+     from `advise_resource_admission` (`gateway/resource_admission.py:158`),
+     fed by the same inputs the route uses
+     (`resource_admission_http.advise_route_admission`). That module "does
+     not manage services, queues or workers" (`resource_admission.py:1`),
+     so the preview does not claim it does.
+  2. The engine's residency as last observed, with its time: "loaded" or
+     "not loaded, so it will be started" (`gateway/engine_residency.py`;
+     `observed_at` per `HEADLESS_AND_RESOURCES.md` principle 2).
+  3. The cost estimate.
 
-  Run again never unloads another person's engine without the normal
-  consent rule (`HEADLESS_AND_RESOURCES.md` Release A item 3). It runs at
-  the caller's normal priority and counts toward the caller's concurrency
-  and outstanding-job limits (`media_jobs.create(..., outstanding_limits=)`).
-  There is no batch run: one record at a time, so history cannot become a
-  bulk queue. Dispatch re-checks admission after the preview.
+  The preview does not predict which other engine a swap would unload. No
+  pure planner for that exists: the swap is decided inside `ensure_target`
+  at dispatch. A preview of it is the "explain availability" read that
+  `HEADLESS_AND_RESOURCES.md` lists under "Later, only on demonstrated
+  need". Run again is a reason to build it later, not a reason to promise
+  it now. The dispatch rechecks everything, so a state change between
+  preview and send gives the real outcome, with its own reason.
+
 - **Output.** Run again is a new request, so its own content follows the
   current policy (section 3.3), not the source record's. Its output is not
   promised to match the original. Engines and models change, and a seed
@@ -895,12 +1098,20 @@ more kinds (`PROMPT_MEMORY.md` "Retention and upgrade"):
 
 The changes:
 
-- **Cutoffs gain a kind.** A cutoff row becomes `(person_id, kind)`.
-  Existing rows become the kinds they covered then: `library_prompt` and
-  `conversation`, plus job hashes and spools as today. "Delete all" and the
-  kill switch cover every kind.
-- **Turning a kind off records an erasure intent for that kind.** It is
-  written in the same transaction as the choice, and the kind's records are
+- **Cutoffs gain a group.** A cutoff row becomes `(person_id, group)`.
+  Existing rows become group `prompts`, which covers what they covered
+  then: Library prompts, conversations, job hashes and spools. "Delete all"
+  and the kill switch cover every group. A Debug window's close is its own
+  cutoff, `(person_id, debug_window_id)`.
+- **One asset's deletion is fenced too.** Deleting a Library item deletes
+  its linked request-history records in the same transaction (section
+  3.6). A request-history write for a media request runs in the same
+  transaction as its Library prompt write. If the asset is already hidden
+  for that person (`media_hidden_assets`), the write is refused. A late
+  write therefore cannot bring back a record for an item the maker has
+  deleted.
+- **Turning a group off records an erasure intent for that group.** It is
+  written in the same transaction as the choice, and the group's records are
   deleted, as memory-off does today. A failed intent write returns `503
   retry_required` and leaves the choice unchanged.
 - **Shortening a retention shortens existing deadlines. Lengthening never
@@ -916,31 +1127,29 @@ The changes:
 - **Expired is deleted.** An expired record is deleted by the loop, not
   hidden. Reads also check `kept_until`, so a record past its deadline is
   never shown, even if the loop is late.
-- **Deleting a Library item deletes its linked request-history records**
-  (section 3.1).
 - **Removing a member erases every kind.** Disabling a member keeps them
   until their deadlines, as today.
 
 **Migration: no silent change.** Slice 1 is a pure move:
 
 1. `operator_settings.prompt_memory` becomes `operator_settings.retention`.
-   - `default_remember` becomes `kinds.library_prompt.default_keep` and
-     `kinds.conversation.default_keep`.
-   - `retention_cap` becomes `kinds.library_prompt.retention_cap`.
+   - `default_remember` becomes the group default `groups.prompts.default_keep`.
+   - `retention_cap` becomes `groups.prompts.retention_cap`.
    - `never_keep` becomes `never_keep`.
    - The revision counter carries over.
-2. The member preference rows get `kind = library_prompt`. Each member also
-   gets a `conversation` row with the same `remember` value. Today one
-   preference governs both (`prompt_memory.decide` is called for Responses
-   at `proxy.py:26730`).
-3. `request_history` and `debug_capture` start with no member rows. A
-   member with no row gets the household default for that kind (section
-   3.3, step 5). So existing members see nothing new being kept unless the
-   default keeps it. If Tim chooses a keep default (decision 1), the
-   rollout instead snapshots `keep: false` for existing members and shows
-   them a one-time notice with the switch. New members get the default.
-   Either way, nobody already using Azizam starts having request bodies
-   kept without being told.
+2. Each member preference row becomes the row of group `prompts`, with the
+   same `remember` and `retention`. One row still governs Library prompts
+   and conversations, as today: `prompt_memory.decide` is called for
+   Responses (`proxy.py:26725-26736`), and memory-off deletes saved
+   conversations (`proxy.py:20114`). Turning it off later still deletes
+   both, and an app's `store:true` still needs it on. The test in 16.1.2
+   changes the switch after migration, not only once before it.
+3. Group `request_history` rows are created at rollout for every existing
+   member, with `keep: false`, whatever the household default is. So
+   existing members see nothing new kept. If Tim chooses a keep default
+   (decision 1), it applies to members created after rollout, and existing
+   members get a one-time notice with the switch. Nobody already using
+   Azizam starts having request bodies kept without being told.
 4. No row in `asset_prompts` or `responses` changes. No `kept_until` moves.
    The proof is the migration test in section 16.1, run on a copy of the
    live `admin.db` and `media_jobs.db`. That is the same rehearsal rule D26
@@ -969,10 +1178,10 @@ rules are those of prompt memory. Retention adds no new identity rule.
 
 - Content leaves only through the management egress (D31), as
   `MakerContent` (section 9). The projector builds that class only after
-  the person-equality check. Every other audience gets Forbidden.
+  the kind's scope check (section 4). Every other audience gets Forbidden.
 - Parts hold no gateway-attached credential by construction (section 3.5).
-  The noninterference property (D32 e) is tested: two registries that
-  differ only in secret bytes give byte-identical records and views.
+  The noninterference property (D32 e) is tested on gateway-composed
+  output (section 16.2). The engine's success product is excluded (D45b).
 - No engine words reach a non-owner through the Debug window (D45, D44
   "Limits"). Request history keeps only `accepted` by default, which is the
   caller's own words. When `received` is kept, it is the trusted engine's
@@ -998,8 +1207,8 @@ added to `CLIENT_VISIBLE_FIELDS` (`gateway/receipts.py:29`):
 - `reason` comes from the closed set in section 3.3, plus `write_failed` and
   `incomplete`.
 
-A receipt also gets `replay_of` (Run again) and `retention_facts`: the fact
-ids and checked dates in force (section 6.1). All values are enums, ids,
+A receipt also gets `replay_of` (Run again) and `retention_facts`: the
+revision hashes of the facts in force (section 6.1). All values are enums, ids,
 counts and times. The receipt never holds content ([research] R1;
 `gateway/receipts.py:3-4`).
 
@@ -1038,12 +1247,13 @@ provider is data.
 | Alternative | Why rejected |
 |---|---|
 | Two stores, two contracts | Two defaults for the same words with no shared model ([handoff] F2, I1). |
-| Per-field classifier for every API shape now ([research] R2) | Machinery ahead of need. Generic whole-body rules cover any shape (section 3.5). |
+| Per-field classifier for every API shape now ([research] R2) | Machinery ahead of need. Generic per-container rules cover every JSON and multipart shape, and other containers are not captured (section 3.5). |
 | A per-request `mode: "keep"` | Lets a key holder widen against the maker's choice (section 3.4). |
 | Owner-editable reader scope | Crosses "who may do what" ([handoff] I2). |
 | Purging engine history from the gateway | Per-engine remediation in code; Identity "detects and advises" ([handoff] I6). |
 | Relying on `turn_off_message_logging` | The installed 1.86.2 predates the `raw_request` fix ([research] GW-L12), and the switch does not stop process logs (measured). |
 | Removing LiteLLM's database | LiteLLM virtual keys need it (`LITELLM_SUBSTRATE_DECISION.md`). The content tables are turned off instead. Revisit when the virtual-key bypass is retired. |
+| A new database file for kept requests | It would split the Library cascade across two stores and add a crash boundary ([judge r1] finding 12). One table in `media_jobs.db` keeps one transaction. |
 | A memory-only Debug window | Lost on restart, and it would be a second storage path with its own rules. The one store with a short expiry is simpler. |
 | `mlock` for "never save" | Not possible for a Python process as a whole, and hibernation ignores it ([research] OS1). The copy is honest instead. |
 
@@ -1061,27 +1271,34 @@ Each slice lists its own subset in section 17.
      kind). Assert that `retention.decide` equals today's
      `prompt_memory.decide` and the Responses store rule
      (`proxy.py:26797-26804`) on every case.
-   - The old functions are kept in the test as the reference until slice 9.
+   - The old functions are kept in the test as the reference until slice 10.
 2. **Migration.**
    - On a fixture and on a copy of the live `admin.db` and `media_jobs.db`:
      every `kept_until` is unchanged.
    - Every member's effective decision for the existing kinds is unchanged.
+   - **After** migration, turning the `prompts` switch off blocks both a new
+     Library prompt and an app's `store:true`, and deletes saved
+     conversations, exactly as before (the existing
+     `tests/test_prompt_memory_responses.py` suite runs unchanged).
    - Running the migration twice is a no-op.
    - A partial failure rolls back.
 3. **Data, not code.**
    - Deleting `registry/retention.yml` fails startup with a plain message.
    - A grep-based test finds no retention default literal in Python or the
      web source. This is the same ratchet style as the boundary guard.
-   - Changing `request_history.default_keep` in the file changes the
+   - Changing `groups.request_history.default_keep` in the file changes the
      decision for a new member, with no code change.
 4. **Reader floor.**
    - A cross-principal matrix of the owner, an administrator, another
-     member, the maker's personal key, a service App key, an automation
-     key, a trusted address and a signed URL.
+     member, the maker's personal key and MCP grant (each with and without
+     the privacy permission), a service App key, an automation key, a
+     trusted address and a signed URL.
    - Each is checked against every content route and MCP action: list,
      get, search, ledger, export, Run again, Debug window read.
-   - Only the maker's credentials succeed. `readers: maker_signed_in`
-     removes the personal key.
+   - Only the maker's session, and the maker's delegated credentials that
+     carry the permission, succeed for request history and Debug
+     captures. Library prompts keep today's key delegation.
+     `readers: maker_signed_in` removes every delegated credential.
    - Ownership is applied before pagination (`HEADLESS_AND_RESOURCES.md`
      Release A item 4).
 5. **Widening is closed.** Every `widening` value other than `none` is
@@ -1105,14 +1322,43 @@ Each slice lists its own subset in section 17.
      operation is in the matrix of section 10, and every matrix row is
      reachable.
    - The same semantic cases run over REST, MCP and the OpenAPI client.
-   - A widening through a personal key without the key property returns
-     403. With the property it succeeds.
+   - Every retention, kept-request and Debug-window operation through a
+     personal key or MCP grant without the privacy permission returns 403
+     `privacy_permission_required`. With the permission it succeeds.
+   - Existing grants and keys have exactly today's reach after the
+     migration.
 9. **Receipts.**
    - `retention` is set only after the write commits.
    - A forced writer failure gives `failed`, never `kept`.
    - The value guard refuses free text in the new fields.
 10. **Boundary guard.** `tests/test_engine_knowledge_boundary.py` passes,
     and the ratchet baseline does not rise.
+11. **Every control does something.** A table test lists every control
+    the UI, REST, MCP and the data file expose: each group's `keep`,
+    `retention`, `parts` and `readers`; each household value; and each
+    window's `parts` and `retention`. For each control, the test flips it
+    and asserts a changed decision, capture or authorization. A control
+    with no effect fails ("no control that does nothing").
+12. **Debug activation.**
+    - An open window captures the opener's request to its engine with the
+      window's parts. Without a window, nothing is captured.
+    - Another person's request, or a request to another engine, is not
+      captured.
+    - The kill switch, `forget` and `allowed: false` each win over an open
+      window.
+    - Closing early shortens deadlines to `closed_at + retention`.
+    - A request in flight at close is refused at write.
+13. **Containers and names.**
+    - A non-JSON native-lane body is recorded as `unsupported_container`,
+      and the request still succeeds.
+    - Fields named `api_key`, `clientSecret` and `x-api-key` at depth 3 are
+      removed. `max_tokens` and `top_k` are kept.
+14. **Fact revisions.** After a fact is edited, removed, or its catalog is
+    upgraded, an old request's ledger renders the revision it was sent
+    under.
+15. **Conversation scope.** The existing Responses scope tests pass
+    unchanged. A conversation row with a null person is never readable
+    through a person check.
 
 ### 16.2 Canary tests across every sink
 
@@ -1130,10 +1376,17 @@ find a marker.
   - a cancelled request.
 - **Credential canaries.** The caller key, a stored provider key, a stored
   header and URL credentials (D32 a).
-- **Runs.** Each canary request runs under:
-  - **forget**: no content marker may appear in any sink;
-  - **kept**: content markers appear only in `kept_requests` (or the kind's
-    table), and credential markers appear nowhere.
+- **Runs and allowed places.** The assertions follow the request's
+  lifecycle:
+  - **During the request** (sampled at a barrier the fake engine holds):
+    content markers may be only in process memory and the gateway's private
+    temp directory (section 5.1, rows 4-5).
+  - **After the request ends, under forget:** the private temp directory is
+    empty, and no content marker is in any searched sink. The one exception
+    is the engine output file of the echoing fake engine (below).
+  - **After the request ends, kept:** content markers are only in the kind's
+    table (`kept_requests`, `asset_prompts` or `responses`, WAL included).
+  - **Every run:** credential markers appear nowhere.
 - **Sinks searched.** Raw bytes, with base64, URL-encoded and JSON-escaped
   forms (`log_scrub.forms`):
   - every file under the test's data, cache and private temp directories;
@@ -1144,8 +1397,11 @@ find a marker.
   - LiteLLM's writable paths and captured stdout;
   - the engine output files of a fake engine that echoes its input to
     stdout.
-- **The positive control for the engine file** is the reason row 7 of
-  section 5.1 is disclosed rather than claimed clean.
+- **The engine output file.** The echoing fake engine's output file holds
+  the marker. That positive control is the reason row 7 of section 5.1 is
+  disclosed, not claimed clean. The assertion there is that the "never
+  save" text for that engine includes the engine-output line. A second
+  fake engine that prints nothing leaves no marker.
 - **LiteLLM.** The real pinned LiteLLM runs in-process: its proxy app under
   a test client, with the generated config, the allowlisted environment, and
   a private working directory and `TMPDIR`. It needs no ports. A stub
@@ -1161,8 +1417,13 @@ find a marker.
   - Mutation tests prove the check works: `success_callback: ["log_file"]`,
     `cache: true`, `LITELLM_LOG=DEBUG` or `disable_error_logs: false` in the
     fixture must each fail it.
-- **Noninterference** (D32 e): two configs that differ only in secret
-  bytes give identical records, ledgers and Debug views.
+- **Noninterference** (D32 e), scoped to what the gateway composes. Two
+  configs that differ only in secret bytes give identical gateway-composed
+  output: record metadata, omissions, the `accepted` and `sent` parts,
+  ledgers, receipts, and the Debug view's headers and error parts. A
+  `received` success body is the trusted engine's product (D45b) and is
+  outside this property, because an engine may echo a credential it was
+  given.
 
 ### 16.3 Live end-to-end checks on this machine
 
@@ -1179,7 +1440,8 @@ live 5000 or 15000 services.
    parts, see a second member's request not captured, close the window and
    see the records expire.
 3. **Run again.** Run again on a kept request to an engine that is asleep.
-   The dry run says "will wake". Confirm. The new receipt has `replay_of`.
+   The dry run shows the admission outcome and "not loaded, so it will be
+   started". Confirm. The new receipt has `replay_of`.
    With a paid alias, a capped plan refuses with the plain reason.
 4. **Library delete.** Delete a Library item and confirm that its linked
    request-history record is gone.
@@ -1192,21 +1454,40 @@ live 5000 or 15000 services.
 
 ## 17. Build plan
 
-Each slice ships on its own, passes the gate, and gets an independent model
-review before it merges (handoff standard). The acceptance tests refer to
-section 16.
+**Rules for every slice.**
+
+- Each slice ships on its own, passes the gate, and gets an independent
+  model review before it merges (handoff standard).
+- A control ships with every surface that supports it (REST, MCP and
+  CLI). So no slice leaves a surface gap behind.
+- A slice's acceptance uses only features shipped by then. The tests of
+  section 16 named under a slice run in the part that applies to what
+  exists. Slice 10 runs the whole matrix cumulatively.
 
 | # | Slice | Changes behaviour? | Acceptance |
 |---|---|---|---|
-| 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and schema; `gateway/retention.py` with `decide`, `write` and the validator; `prompt_memory.decide` and the Responses rule call it; settings key migration; remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1, 16.1.2, 16.1.3 (except the new-kind case), 16.1.10; live: existing prompt-memory flows unchanged |
-| 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; client receipt shape snapshot updated deliberately |
-| 3 | **LiteLLM keeps nothing.** Explicit config switches, allowlisted child environment, `LITELLM_LOG=CRITICAL`, the effective-settings check and its attention item, only `X-Azizam-Request-Id` forwarded (if the internal hop allows it), `LimitCORE=0` in the unit. Ships first among the behaviour changes, because live content is being written today. | LiteLLM config and environment; LiteLLM's own error lines leave the journal | the 16.2 LiteLLM canary and mutation tests; the config and environment tests of 5.2; live on a scratch instance with a scratch LiteLLM database: chat works, a virtual key's budget still meters, no spend or error row is written, and cancellation still correlates |
-| 4 | **Request history**: kind, `kept_requests` store, capture of `accepted` and `received`, the secret floor, the per-request control on every data-plane route, member and household switches, deletion and expiry, maker routes under `/gateway/v1/`. Default from data (Tim's decision 1). | New kind; off unless data says otherwise | 16.1.3-16.1.7, the 16.2 content and credential canaries, live 16.3.1 and 16.3.4 |
-| 5 | **Facts as data**: `retention_fact` schema; provider catalog seeds; protocol, definition and record levels; ledger view and the assembled "never save" copy. | Adds views | schema tests, a removed fact stays removed, the stale label, no network on read; live 16.3.5 |
-| 6 | **Temporary files**: gateway-private `TMPDIR`, `PrivateTmp=yes`, STT workspace under it; disclosure rows 4-5. | Moves temporary files | 16.2 multipart and STT canaries; the STT suite unchanged |
-| 7 | **Debug window**: windows table, decision step 4, `sent` part at the internal hop and the egress builder, the `MakerContent` projection, the engine-page button. | New kind | 16.1.4 (Debug reads), 16.2 with a window open, the admin-on-owner-key withholding case; live 16.3.2 |
-| 8 | **Surfaces and UX layers**: the three MCP tools, the OpenAPI operations, the key property, presets, guided form and data editor. | New surfaces | 16.1.8; UX review of the three layers per the design-review gate |
-| 9 | **Run again**: the dry-run admission preview, cost preview, re-auth, incomplete-record editor, `replay_of`. Then remove the old `prompt_memory.decide` reference used by 16.1.1. | New action | 16.3.3; access-plan and cap refusals through REST and MCP |
+| 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
+| 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
+| 3 | **LiteLLM keeps nothing.** See the 5.2 profile. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-4; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
+| 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
+| 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
+| 6 | **Facts and ledger.** The `retention_fact` schema and revisions; provider catalog seeds; protocol, definition and record levels; the ledger view and its routes and MCP action; the assembled "never save" text. | Adds views | 16.1.14; schema tests; a removed fact stays removed; the stale label; no network on read; live check 5 |
+| 7 | **Debug window.** The windows table; decision step 4; the `sent` part at the internal hop and the egress builder; error-part withholding by role; the engine-page button; the `debug_window` MCP tool and the CLI operations. | New kind | 16.1.4 (Debug reads); 16.1.12; 16.1.11 (window controls); 16.2 with a window open; the administrator on an owner-stored-key withholding case; live check 2 |
+| 8 | **Presets and full data editing.** The preset picker with Custom, and the YAML/JSON editor with the validator's refusals. | New UI views | each preset round-trips to its values; an edited value shows Custom; the UX review of the three layers per the design-review gate |
+| 9 | **Run again.** The dry-run preview (admission outcome, residency, cost), re-authorization, the incomplete-record editor, `replay_of`, and the REST, MCP and CLI action. | New action | live check 3; access-plan and cap refusals through REST and MCP; a state change between preview and dispatch gives the real outcome |
+| 10 | **Cumulative gate.** The full section 16 matrix over all kinds and surfaces. Remove the old `prompt_memory.decide` reference kept for 16.1.1. | No | all of section 16 green |
+
+**Live checks for slice 3** run on a scratch instance with a scratch
+LiteLLM database:
+
+- chat works;
+- a virtual key's budget still meters;
+- no spend row and no error row is written;
+- cancellation still correlates;
+- a seeded `store_model_in_db` row makes chat refuse with
+  `litellm_content_unverified`.
+
+Slice 3 deploys only after the live read-only count of section 19.
 
 **Later, only on demonstrated need:** field-level selectors on protocol
 descriptions; a blob store for request inputs ([research] R6); saved
@@ -1221,11 +1502,11 @@ for decision 3, a named slice.
 ### Decision 1: the default for new request history
 
 - **What each answer sets.**
-  - Off: `kinds.request_history.default_keep: false`.
+  - Off: `groups.request_history.default_keep: false`.
   - On: `true`, with `default_retention` as chosen. The rollout then
     snapshots `keep: false` for existing members and shows them a notice
     (section 12).
-  - Per route kind: not offered. One switch per kind keeps the member's
+  - Per route kind: not offered. One switch per group keeps the member's
     model to two switches.
 - **Recommendation: off.** Request history stays structural-only until the
   maker turns it on. Reasons:
@@ -1304,12 +1585,16 @@ for decision 3, a named slice.
   materialized LiteLLM config, which can carry header or URL credentials.
   That belongs to the secrets train (D30: "written to a restricted file").
   This document does not fix it.
-- UNGROUNDED: the LiteLLM 1.86.2 route for the effective-settings check
-  (section 5.2).
+- The LiteLLM line references in section 5.2 are for 1.86.2 in this
+  machine's venv. Re-verify them on any upgrade.
 - Callback-enabling environment names are not a concern: the survey found
   none in 1.86.2, and the allowlisted child environment would make such a
   list unnecessary anyway.
-- Reviewer focus: the choice of per-body classification over [research]
-  R2's per-field registry (section 3.5). The one new key property (section
-  10). The three new MCP tools against `HEADLESS_AND_RESOURCES.md` "No new
-  tools yet".
+- Reviewer focus:
+  - per-container classification instead of [research] R2's per-field
+    registry (section 3.5);
+  - the privacy permission on delegated credentials (section 10);
+  - the three new MCP tools against `HEADLESS_AND_RESOURCES.md` "No new
+    tools yet";
+  - LiteLLM failing closed on the database-override precondition (section
+    5.2).
