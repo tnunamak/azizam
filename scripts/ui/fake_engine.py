@@ -1,5 +1,6 @@
 """Deterministic OpenAI-compatible engine used only by the isolated UI harness."""
 import asyncio
+import hashlib
 import os
 import re
 import time
@@ -196,6 +197,7 @@ async def comfy_upload(request: Request):
             "content_type": part.content_type,
             "bytes": len(data),
             "head_hex": data[:8].hex(),
+            "sha256": hashlib.sha256(data).hexdigest(),
         })
         return {"name": part.filename, "subfolder": "", "type": "input"}
     return JSONResponse({"error": "no file part"}, status_code=400)

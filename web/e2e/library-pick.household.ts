@@ -5,6 +5,7 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -22,7 +23,7 @@ type LibraryItem = {
   size_bytes: number;
   download_url: string;
 };
-type Upload = { filename: string; bytes: number; head_hex: string };
+type Upload = { filename: string; bytes: number; head_hex: string; sha256: string };
 
 let seed: Manifest;
 let signedIn: Awaited<ReturnType<BrowserContext["storageState"]>>;
@@ -93,7 +94,8 @@ async function expectEngineGot(page: Page, item: LibraryItem) {
   const sent = await uploads(page);
   expect(sent).toHaveLength(1);
   expect(sent[0].bytes).toBe(original.length);
-  expect(sent[0].head_hex).toBe(original.subarray(0, 8).toString("hex"));
+  // Every byte, not a length and a prefix.
+  expect(sent[0].sha256).toBe(createHash("sha256").update(original).digest("hex"));
   // A JSON note about the picture ("{"asset_id"…") is not the picture.
   expect(sent[0].head_hex).not.toBe(Buffer.from('{"asset_').toString("hex"));
 }
