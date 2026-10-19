@@ -12705,6 +12705,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    # Complete deadline repair before serving; the recurring maintenance pass retries failures later.
     await asyncio.to_thread(prompt_memory.tighten_contract_periods,
                             admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
@@ -20226,8 +20227,8 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        retention = policy["retention"]
-    prompt_memory.tighten_retention(retention, person_id=person_id)
+        period = retention.normalize_period(policy["retention"], kind=retention.LIBRARY_PROMPT, owner_cap=False)
+    prompt_memory.tighten_retention(period, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
