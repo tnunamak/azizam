@@ -476,6 +476,26 @@ def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_
     assert prompt_memory.put("removed-period-asset", person, "prompt sentinel", kept_until=decision.kept_until,
                              created_at=started, path=media_path, admin_path=admin_path)
     assert prompt_memory.get("removed-period-asset", person, path=media_path)["kept_until"] == expected_deadline
+    from gateway import settings_api
+    assert settings_api.prompt_memory_settings(admin_path)["retention_cap"] == "3_months"
+
+
+def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch):
+    from gateway import prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "earlier-prompt", path=admin_path)["id"]
+    started = int(time.time())
+    assert prompt_memory.put("earlier-asset", person, "old prompt", kept_until=None,
+                             created_at=started, path=media_path, admin_path=admin_path)
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=["3_months"], default_retention="3_months", default_cap="3_months")
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 1
+    assert prompt_memory.get("earlier-asset", person, path=media_path)["kept_until"] == (
+        started + contract.seconds_map()["3_months"])
+    assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 0
 
 
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
@@ -623,6 +643,10 @@ def test_the_settings_responses_carry_the_bundled_choices_and_defaults(tmp_path)
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     user = admin_store.upsert_oidc_user("iss", "carol", email="c@example.test", path=path)["id"]
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO operator_settings(key,value_json,updated_at,updated_by) "
+                     "VALUES('retention', ?, 1, NULL)",
+                     (json.dumps({"legacy_unclassified": {"x": "hidden legacy sentinel"}}),))
     app = FastAPI()
     app.include_router(create_settings_router(
         auth=lambda request: AdminContext(subject="o", roles=frozenset({"owner"}), auth_method="session", csrf_token="x"),
@@ -637,5 +661,8 @@ def test_the_settings_responses_carry_the_bundled_choices_and_defaults(tmp_path)
                                    {"id": "3_months", "seconds": 7776000}]
     assert expected["defaults"] == {"default_remember": True, "never_keep": False, "retention_cap": "never",
                                     "remember": True, "retention": "never"}
-    assert client.get("/admin/api/settings/prompt-memory", headers={"x-azizam-csrf": "x"}).json()["contract"] == expected
-    assert client.get("/me/api/prompt-memory").json()["contract"] == expected
+    owner = client.get("/admin/api/settings/prompt-memory", headers={"x-azizam-csrf": "x"}).json()
+    member = client.get("/me/api/prompt-memory").json()
+    assert owner["contract"] == member["contract"] == expected
+    assert "hidden legacy sentinel" not in json.dumps(owner)
+    assert "hidden legacy sentinel" not in json.dumps(member)
