@@ -41,7 +41,11 @@ member switch per group of kinds, and each kind's purpose, parts and readers.
 cross-row rules. The gateway does not start without a valid file, and Python and
 the web read these values through the settings API
 (`docs/design/REQUEST_RETENTION.md` section 3.2).
-Restart the gateway after editing `retention.yml`. Startup validates the file
-and shortens saved prompt deadlines under stricter periods before serving.
+Restart the gateway after editing `retention.yml`. A stored period keeps its
+duration while its ID remains in `retention_choices`, even if it is no longer
+offered for new selections. If its ID is deleted, the shortest finite offered
+period applies. Startup validates the file and attempts to shorten saved
+prompt deadlines before serving; the recurring maintenance pass retries a
+failed repair.
 Slice 1 refuses `household.never_keep: true` in this file; the owner setting
 performs the required erasure when that switch is enabled.
