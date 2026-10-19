@@ -15,10 +15,19 @@ see a secret read through a helper in another module, which is why each helper t
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REGISTERS = {"remember", "env_secret", "resolve"}
+# A name that says its value is a credential. It decides what a literal environment name, a configuration key or a
+# configuration attribute is: ``os.environ.get("OPENAI_API_KEY")`` and ``cfg.client_secret`` read a secret as surely as
+# ``os.environ.get(name)`` does.
+SECRET_NAME = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
+# ... unless the name says it holds something else: the name of a variable, a reference, an id, an address, a path.
+NOT_A_VALUE = re.compile(r"(?i)(_env|_ref|_id|_origin|_endpoint|_url|_seconds|_s|_name|_path|_file|_bytes|_per_key)$")
+NOT_A_VALUE_EXACT = {"auth_inject", "credentials", "auth", "auth_test", "authorization_endpoint", "token_endpoint"}
+CONFIG_BASE = re.compile(r"(?i)(config|settings|cfg|conf)$")
 
 # "file::qualified function": why it need not register. Each reads a name from configuration but the value is not a
 # credential that can reach an upstream or a log, or its caller registers it.
@@ -38,6 +47,11 @@ NO_REGISTRATION_NEEDED = {
     "proxy.py::_probe_service_resource_fact": "the name of a base-URL variable (an address)",
     "proxy.py::_service_resource_probe_url": "the name of a base-URL variable (an address)",
     "proxy.py::_is_internal_litellm_lifecycle_request": "compares the internal key with a request header; neither is logged or sent on",
+    "proxy.py::_bootstrap_admin_oidc_cfg": "reads the names of the signing-key settings to build the sign-in configuration; the key is never sent or logged",
+    "proxy.py::_resolved_admin_oidc_config": "the signing key of the admin session: signs a cookie, never sent to an upstream or logged",
+    "proxy.py::admin_oidc_callback": "the signing key of the admin session: signs a cookie, never sent to an upstream or logged",
+    "proxy.py::_admin_oidc_config_snapshot": "builds the management view of the sign-in settings: says whether a client secret is saved, never its value",
+    "gateway/signin_api.py::create_signin_api.build_snapshot": "builds the management view of the sign-in settings: says whether a client secret is saved, never its value",
 }
 
 
@@ -55,12 +69,40 @@ def _chain(func: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
-def _reads_secret(call: ast.Call) -> bool:
-    name, chain = _name(call.func), _chain(call.func)
+def _value_name(name: object) -> bool:
+    return isinstance(name, str) and bool(SECRET_NAME.search(name)) and not NOT_A_VALUE.search(name) and name not in NOT_A_VALUE_EXACT
+
+
+def _literal(node: ast.AST | None) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _config_base(node: ast.AST) -> bool:
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        node = node.value if not isinstance(node, ast.Call) else node.func
+    name = node.attr if isinstance(node, ast.Attribute) else node.id if isinstance(node, ast.Name) else ""
+    return bool(CONFIG_BASE.search(name))
+
+
+def _reads_secret(node: ast.AST) -> bool:
+    """A stored secret, a variable read by a name that is not a literal, a variable whose literal name says it is a credential,
+    or a configuration key or attribute whose name says it holds one."""
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+        return _value_name(node.attr) and _config_base(node.value)
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        return _value_name(_literal(node.slice)) and _config_base(node.value)
+    if not isinstance(node, ast.Call):
+        return False
+    name, chain = _name(node.func), _chain(node.func)
     if name == "get_provider_secret":
         return True
-    named = chain in ("os.environ.get", "get_env", "env") or name == "get_env"
-    return bool(named and call.args and not isinstance(call.args[0], ast.Constant))
+    named = chain in ("os.environ.get", "os.getenv", "get_env", "env") or name == "get_env"
+    if named and node.args:
+        literal = _literal(node.args[0])
+        return not isinstance(node.args[0], ast.Constant) or bool(literal and SECRET_NAME.search(literal))
+    if name == "get" and isinstance(node.func, ast.Attribute) and node.args and _config_base(node.func.value):
+        return _value_name(_literal(node.args[0]))
+    return False
 
 
 class _Functions(ast.NodeVisitor):
@@ -79,8 +121,8 @@ class _Functions(ast.NodeVisitor):
             child = pending.pop()
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
+            entry["reads"] = entry["reads"] or _reads_secret(child)
             if isinstance(child, ast.Call):
-                entry["reads"] = entry["reads"] or _reads_secret(child)
                 entry["registers"] = entry["registers"] or _name(child.func) in REGISTERS
             pending.extend(ast.iter_child_nodes(child))
         self.generic_visit(node)

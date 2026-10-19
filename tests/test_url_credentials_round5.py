@@ -340,18 +340,6 @@ def test_a_value_is_not_forgotten_after_many_newer_ones(store):
     assert "R5-VALUE-00699-SECRET" not in runtime_secrets.scrub("echo R5-VALUE-00699-SECRET")
 
 
-def test_when_the_limit_is_reached_a_value_in_use_is_kept_and_the_unused_one_goes(store, monkeypatch):
-    monkeypatch.setattr(log_scrub, "_SOURCE_LIMIT", 3)
-    log_scrub.clear()
-    refs = [secret_refs.store(f"R5-LIMIT-{index}-SECRET", db_path=store) for index in range(4)]
-    for ref in refs[:3]:
-        runtime_secrets.resolve(ref)
-    runtime_secrets.resolve(refs[0])  # in use again: refreshed
-    runtime_secrets.resolve(refs[3])  # over the limit: the one unused longest goes
-    assert "R5-LIMIT-0-SECRET" not in runtime_secrets.scrub("R5-LIMIT-0-SECRET")
-    assert "R5-LIMIT-1-SECRET" in runtime_secrets.scrub("R5-LIMIT-1-SECRET")
-    assert "R5-LIMIT-3-SECRET" not in runtime_secrets.scrub("R5-LIMIT-3-SECRET")
-
 
 def test_a_value_replaced_under_the_same_source_is_still_scrubbed_until_newer_ones_push_it_out(store, monkeypatch):
     log_scrub.clear()

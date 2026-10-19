@@ -56,7 +56,7 @@ HttpLoadUnloadDriver  (http-load-unload)
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway import runtime_secrets
+from gateway import log_scrub, runtime_secrets
 
 import asyncio
 import contextlib
@@ -637,7 +637,7 @@ class DockerDriver:
             if result.returncode != 0:
                 return (
                     f"docker inspect '{container}' failed (container may not exist): "
-                    f"{result.stderr.decode(errors='replace').strip()}"
+                    f"{log_scrub.describe_bytes(result.stderr, 'docker wrote')}"
                 )
         except FileNotFoundError:
             return "docker executable not found; DockerDriver requires Docker to be installed"
@@ -1557,7 +1557,7 @@ class SystemdDriver:
             return False
         if proc.returncode != 0:
             _say(
-                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {log_scrub.describe_bytes(stderr, 'systemctl wrote')}",
                 flush=True,
             )
             return False
@@ -1744,12 +1744,11 @@ class HttpLoadUnloadDriver:
                     )
                     if resp.status_code not in (200, 204):
                         _say(
-                            f"[lifecycle] HttpLoadUnloadDriver.swap: unload returned "
-                            f"{resp.status_code}: {resp.text[:200]}",
+                            f"[lifecycle] HttpLoadUnloadDriver.swap: {log_scrub.describe_response(resp, 'unload was refused')}",
                             flush=True,
                         )
             except Exception as e:
-                _say(f"[lifecycle] HttpLoadUnloadDriver.swap: unload error: {e}", flush=True)
+                _say(f"[lifecycle] HttpLoadUnloadDriver.swap: unload error: {log_scrub.describe_error(e)}", flush=True)
                 return False
 
         # Step 3: build load body.
@@ -1790,8 +1789,7 @@ class HttpLoadUnloadDriver:
                 # Step 5b: error marker.
                 if '"status":"error"' in response_text or '"error":' in response_text:
                     _say(
-                        f"[lifecycle] HttpLoadUnloadDriver.swap: load reported error: "
-                        f"{response_text[-300:]}",
+                        f"[lifecycle] HttpLoadUnloadDriver.swap: {log_scrub.describe_bytes(response_text, 'load reported an error')}",
                         flush=True,
                     )
                     return False
@@ -1808,12 +1806,12 @@ class HttpLoadUnloadDriver:
 
                 _say(
                     f"[lifecycle] HttpLoadUnloadDriver.swap: outcome unclear, "
-                    f"loaded={loaded_now}, response={response_text[-200:]}",
+                    f"loaded={loaded_now}, {log_scrub.describe_bytes(response_text, 'reply')}",
                     flush=True,
                 )
                 return False
         except Exception as e:
-            _say(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {e}", flush=True)
+            _say(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {log_scrub.describe_error(e)}", flush=True)
             return False
 
     def swap_required(

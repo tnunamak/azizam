@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from gateway import sqlite_startup
+from gateway import log_scrub, sqlite_startup
 
 DEFAULT_KEY_FILE = "provider-secrets.key"
 
@@ -217,6 +217,7 @@ def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guar
 def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:
     """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`)."""
     secret_id = _normalize_secret_id(secret_id)
+    log_scrub.forget(secret_id)  # the registry is bounded by the secrets that exist
     if conn is not None:
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
         return SecretStatus(secret_id, "missing", None, None)

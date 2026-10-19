@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable, Iterator, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 from gateway import secret_store
 
@@ -150,6 +152,19 @@ def binding_marks(record: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(marks))
 
 
+def dialed_path(path: str) -> str | None:
+    """The path a reader requests for ``path``, with dot segments resolved; ``None`` when the readers do not agree on it.
+
+    A reader joins the field to its base with ``urljoin`` (which resolves dot segments) or by concatenation (the HTTP client
+    then resolves them); both give ``/a/../ready`` as ``/ready``. They differ only for a path that ends in a dot segment
+    (``/a/b/..``: ``/a/`` or ``/a``), and such a path has no single destination to show. The destination the owner reviews uses
+    this, so what is shown is what is dialed.
+    """
+    joined = urlsplit(urljoin("http://x.invalid/", path)).path or ("/" if path.startswith("/") else "")
+    client = httpx.URL("http://x.invalid" + (path if path.startswith("/") else "/" + path)).path
+    return joined if joined == client else None
+
+
 def destination(public: Any, base: Any = None) -> str | None:
     """The address the owner reviews before credentials are bound to it: ``scheme://host:port`` and the path, no more.
 
@@ -162,7 +177,8 @@ def destination(public: Any, base: Any = None) -> str | None:
         return None
     text = str(public or "").strip()
     path = urlsplit(text).path if is_absolute(text) else re.split(r"[?#]", text, maxsplit=1)[0]
-    return origin + path
+    resolved = dialed_path(path)
+    return None if resolved is None else origin + resolved
 
 
 def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], str | None]) -> list[dict[str, Any]]:

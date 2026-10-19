@@ -212,11 +212,19 @@ resources:
     origin. Every reader builds its request once (`runtime_secrets.url(..., dial=)`): the credentials
     are attached to the address the reader will send to, checked for that address, and that
     address is returned, so a configuration reload between a check and a send cannot redirect it.
-    Every secret a driver, a probe or the native lane reads, from the store or from an environment variable, is
-    registered for the log scrub (`gateway/log_scrub.py`; `tests/test_secret_registration.py` finds each reader
-    and fails for one that neither registers nor says why it need not). A registered value is kept while its
-    source exists, at most 8 KiB of it, and the registry holds at most 4 MiB and 65536 sources, least recently
-    used first.
+    The gateway never logs an upstream response body or an upstream error text (decision D43): a log
+    line about an upstream holds a status, a content type, a byte count, the class of an error and the origin it
+    was sent to, and a reason of its own (`log_scrub.describe_response`, `describe_bytes`, `describe_error`,
+    `describe_origin`). `tests/test_no_upstream_text_in_logs.py` finds a log call that takes a body, a subprocess's
+    output, an HTTP error's text or a traceback. As the backup, every secret a driver, a probe or the native lane
+    reads, from the store or from an environment variable, is registered for the log scrub
+    (`gateway/log_scrub.py`; `tests/test_secret_registration.py` finds each reader, including a literal
+    environment name or a configuration key that names a credential, and fails for one that neither registers
+    nor says why it need not). The registry is keyed by source (a secret reference, `env:NAME`), so it is bounded
+    by configuration and nothing in use is evicted; a source keeps its last three values and is forgotten when its
+    secret is deleted. A value is scrubbed in every form the gateway can produce (raw, URL-encoded, JSON-escaped,
+    base64, and base64 of `user:password`) before the line is cut to length. A value longer than 64 KiB is not
+    registered and every line is withheld while one is held.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of

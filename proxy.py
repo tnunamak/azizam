@@ -2169,7 +2169,7 @@ def _init_cloudflare_ip_ranges() -> None:
             print("[proxy] WARNING: cloudflare_mode on but no IP ranges parsed; "
                   "CF-Connecting-IP will be refused (fail closed)", flush=True)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] WARNING: cloudflare_mode on but IP-range fetch failed ({e}); "
+        print(f"[proxy] WARNING: cloudflare_mode on but IP-range fetch failed ({log_scrub.describe_error(e)}); "
               "CF-Connecting-IP will be refused (fail closed)", flush=True)
 
 
@@ -2453,7 +2453,7 @@ def resolve_secret_value(value) -> str:
         env_name = value.get("env", "")
         if env_name:
             secret = get_env(env_name, secret)
-        log_scrub.remember(secret, f"env:{env_name}" if env_name else "config-secret")
+        _remember_config_secret(secret, env_name)
         prefix = value.get("prefix", "")
         if prefix and secret:
             return f"{prefix} {secret}"
@@ -2462,7 +2462,15 @@ def resolve_secret_value(value) -> str:
     if isinstance(value, str) and value.startswith("env:"):
         return log_scrub.env_secret(value.removeprefix("env:"))
 
-    return str(value or "")
+    literal = str(value or "")
+    _remember_config_secret(literal, "")
+    return literal
+
+
+def _remember_config_secret(secret: Any, env_name: str) -> None:
+    """Register a secret from the auth configuration (a literal, or the value of the variable that overrides it)."""
+    text = str(secret or "")
+    log_scrub.remember(text, f"env:{env_name}" if env_name else "config:" + hashlib.sha256(text.encode()).hexdigest()[:16])
 
 
 def service_auth_config(auth_context: AuthContext, service: str) -> dict:
@@ -3454,7 +3462,8 @@ async def _current_loaded_llm_target(
 
 async def refresh_openai_model_aliases() -> int:
     """Fetch available OpenAI model IDs and cache inferred categories locally."""
-    api_key = os.environ.get("OPENAI_MODEL_DISCOVERY_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    discovery_key, account_key = log_scrub.env_secret("OPENAI_MODEL_DISCOVERY_API_KEY"), log_scrub.env_secret("OPENAI_API_KEY")
+    api_key = discovery_key or account_key
     if not api_key:
         print("Set OPENAI_MODEL_DISCOVERY_API_KEY or OPENAI_API_KEY to refresh model aliases.", file=sys.stderr)
         return 2
@@ -3465,7 +3474,7 @@ async def refresh_openai_model_aliases() -> int:
             headers={"Authorization": f"Bearer {api_key}"},
         )
     if resp.status_code != 200:
-        print(f"OpenAI model refresh failed: HTTP {resp.status_code} {resp.text[:300]}", file=sys.stderr)
+        print(f"OpenAI model refresh failed: {log_scrub.describe_response(resp, 'the model list was refused')}", file=sys.stderr)
         return 1
 
     data = resp.json()
@@ -4142,7 +4151,7 @@ async def _stream_tts_upstream(
         try:
             first_chunk = await anext(raw_chunks, b"")
         except TransportFailure as e:
-            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e}", flush=True)
+            print(f"[proxy] TTS engine at {log_scrub.describe_origin(url)} dropped the stream before any audio: {log_scrub.describe_error(e)}", flush=True)
             return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
         if not first_chunk:
             return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
@@ -8713,7 +8722,7 @@ async def proxy_graph_image_edit_request(
                 img_width, img_height = img.size
                 print(f"[proxy] Detected image size: {img_width}x{img_height}", flush=True)
             except Exception as e:
-                print(f"[proxy] Could not detect image size: {e}, using default 1024x1024", flush=True)
+                print(f"[proxy] Could not detect image size: {log_scrub.describe_error(e)}, using default 1024x1024", flush=True)
                 img_width, img_height = 1024, 1024
 
             if requested_dimensions is not None:
@@ -9598,7 +9607,7 @@ async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
             q_resp = await graph.queue()
             h_resp = await graph.history_page(_VIDEO_RECONCILE_HISTORY_LIMIT)
     except Exception as e:
-        print(f"[proxy] video reconcile: {_graph_adapter('videos').label} fetch failed ({e})", flush=True)
+        print(f"[proxy] video reconcile: {_graph_adapter('videos').label} fetch failed ({log_scrub.describe_error(e)})", flush=True)
         return (None, None)
     if q_resp.status != 200 or h_resp.status != 200:
         return (None, None)
@@ -12036,7 +12045,7 @@ async def proxy_graph_video_content(
                 else:
                     video_bytes = stored_video_bytes
             except media_metadata.MediaMetadataError as exc:
-                print(f"[proxy] video metadata rewrite failed: {exc}", flush=True)
+                print(f"[proxy] video metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
                 return Response(
                     content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
                     status_code=502,
@@ -15036,6 +15045,7 @@ async def _admin_oidc_config_with_discovery():
 
 
 async def _oidc_exchange_code(code: str, *, config, pkce: PKCEPair) -> dict[str, Any]:
+    log_scrub.remember(config.client_secret, "oidc-client-secret")
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             config.token_endpoint,
@@ -16547,7 +16557,7 @@ async def _setup_page_response(
         try:
             status_payload = await status_endpoint.get_cached_status(config)
         except Exception as e:  # noqa: BLE001
-            print(f"[proxy] setup status enrichment failed: {e}", flush=True)
+            print(f"[proxy] setup status enrichment failed: {log_scrub.describe_error(e)}", flush=True)
             status_payload = None
     brand_label, brand_wordmark = _brand_settings()
     body = render_setup_page(
@@ -23328,7 +23338,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                     ),
                 )
         except media_metadata.MediaMetadataError as exc:
-            print(f"[proxy] workflow run metadata rewrite failed: {exc}", flush=True)
+            print(f"[proxy] workflow run metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
             return Response(
                 content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
@@ -23935,7 +23945,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                         ),
                                     )
                             except media_metadata.MediaMetadataError as exc:
-                                print(f"[proxy] audio metadata rewrite failed: {exc}", flush=True)
+                                print(f"[proxy] audio metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
                                 return Response(
                                     content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
                                     status_code=502,
@@ -24670,6 +24680,7 @@ async def _litellm_models_payload(
     *,
     runtime_config,
 ) -> dict[str, Any] | None:
+    log_scrub.remember(runtime_config.api_key, "litellm-internal-key")
     execution_request = LlmExecutionRequest(
         method="GET",
         url=litellm_url(base_url=runtime_config.base_url, path="v1/models"),
@@ -24703,7 +24714,7 @@ async def _litellm_models_payload(
             return payload
         return None
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] LiteLLM model catalog fetch failed: {e}", flush=True)
+        print(f"[proxy] LiteLLM model catalog fetch failed: {log_scrub.describe_error(e)}", flush=True)
         return None
     finally:
         try:
@@ -26903,8 +26914,8 @@ async def create_response(request: Request):
                 headers=omission_headers,
             )
     except Exception as error:  # noqa: BLE001
-        print(f"[proxy] /v1/responses internal error: {error}", flush=True)
-        return _responses_error(f"Internal error: {error}", code="internal_error", status=500)
+        print(f"[proxy] /v1/responses internal error: {log_scrub.describe_error(error)}", flush=True)
+        return _responses_error(f"Internal error: {log_scrub.describe_error(error)}", code="internal_error", status=500)
 
 
 async def retrieve_response(response_id: str, request: Request):

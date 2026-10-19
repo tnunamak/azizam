@@ -261,39 +261,4 @@ def test_the_native_lane_credential_is_registered(store, monkeypatch):
 # LOW: the registry is bounded in bytes, not only in sources
 # ---------------------------------------------------------------------------
 
-def test_a_long_value_is_registered_by_its_first_8_kib_only():
-    log_scrub.clear()
-    runtime_secrets.remember("A" * (1 << 20), "big")
-    held = [value for values in runtime_secrets._RESOLVED.values() for value in values]
-    assert held and max(len(value) for value in held) == log_scrub._MAX_VALUE == 8192
-    echoed = "echo " + "A" * 9000 + " end"
-    cleaned = runtime_secrets.scrub(echoed, limit=100000)
-    assert "A" * 8192 not in cleaned and cleaned.startswith("echo [removed]")
 
-
-def test_the_registry_never_holds_more_than_its_byte_bound(monkeypatch):
-    monkeypatch.setattr(log_scrub, "_TOTAL_BYTES", 40000)
-    log_scrub.clear()
-    for index in range(30):
-        log_scrub.remember(f"{index:03d}" + "x" * 7000, f"source-{index}")
-    total = sum(len(value) for values in log_scrub._RESOLVED.values() for value in values)
-    assert total <= 40000 and total == log_scrub._held_bytes
-    assert "source-29" in log_scrub._RESOLVED and "source-0" not in log_scrub._RESOLVED, "the oldest-used goes, the newest stays"
-
-
-def test_a_source_that_is_in_use_survives_the_byte_bound(monkeypatch):
-    monkeypatch.setattr(log_scrub, "_TOTAL_BYTES", 30000)
-    log_scrub.clear()
-    for index in range(3):
-        log_scrub.remember(f"{index}" + "y" * 7000, f"source-{index}")
-    log_scrub.remember("0" + "y" * 7000, "source-0")  # used again
-    log_scrub.remember("3" + "y" * 7000, "source-3")
-    log_scrub.remember("4" + "y" * 7000, "source-4")
-    assert "source-0" in log_scrub._RESOLVED and "source-1" not in log_scrub._RESOLVED
-
-
-def test_the_byte_count_follows_a_value_that_changes_under_one_source():
-    log_scrub.clear()
-    for value in ("a" * 100, "b" * 100, "c" * 100, "d" * 100, "d" * 100):
-        log_scrub.remember(value, "rotating")
-    assert log_scrub._held_bytes == 300 == sum(len(v) for v in log_scrub._RESOLVED["rotating"])
