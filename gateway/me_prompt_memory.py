@@ -218,7 +218,10 @@ def _member_settings(person_id: str, *, path: Path) -> dict[str, Any]:
     )
     return {
         "remember": bool(record.get("remember")),
-        "retention": str(record.get("retention") or retention.member_defaults()["retention"]),
+        "retention": retention.normalize_period(
+            str(record.get("retention") or retention.member_defaults()["retention"]),
+            kind=retention.LIBRARY_PROMPT, owner_cap=False,
+        ),
     }
 
 
