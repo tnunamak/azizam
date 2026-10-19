@@ -60,6 +60,18 @@ def is_absolute(public: str) -> bool:
     return bool(_SCHEME.match(public))
 
 
+def path_shaped(public: Any) -> bool:
+    """True for the text of a field that may hold credentials: an absolute http(s) URL, or a path with one leading slash.
+
+    Nothing else (``//host/path``, ``@host/x``, ``host/x``, a backslash, another scheme) is a field no reader can be sure to
+    join the way another reads it; its credentials are never put back.
+    """
+    text = str(public or "").strip()
+    if is_absolute(text):
+        return strict_origin(text) is not None
+    return text.startswith("/") and not text.startswith("//") and "\\" not in text
+
+
 def field_origin(public: Any, base: Any = None) -> str | None:
     """The origin credentials stored with ``public`` are bound to, or ``None`` when the field cannot hold any.
 
@@ -135,3 +147,24 @@ def binding_marks(record: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
         else:
             marks.append((path, origin or "unbound:" + str(parent.get(key) or "")))
     return tuple(sorted(marks))
+
+
+def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], str | None]) -> list[dict[str, str]]:
+    """For each URL field of ``record`` that holds credentials, whether they are bound to the address the field has now.
+
+    ``"confirmed"`` when every stored credential is bound to the field's effective origin, ``"needs_confirmation"`` when one
+    is bound to none (stored before decision D42) or to another (the field or its base moved). A URL kept whole holds its
+    address inside the secret, so it is confirmed when it is bound to any origin. The result names carriers only: no value,
+    no reference and no address.
+    """
+    from gateway import record_carriers
+
+    states = []
+    for path, parent, key, origin in bound_fields(record):
+        held = parent[key + _ENTRIES]
+        refs = record_carriers.refs_in(held)
+        bound = [origin_of_ref(ref) for ref in refs]
+        whole = isinstance(held, Mapping) and bool(held.get("whole"))
+        ok = bool(refs) and all(item is not None and (whole or item == origin) for item in bound)
+        states.append({"carrier": path, "state": "confirmed" if ok else "needs_confirmation"})
+    return states

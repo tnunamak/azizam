@@ -184,13 +184,30 @@ resources:
     fingerprint holds, for every URL field that has credentials, the origin it is bound to (or its own
     text when it has none), so an administrator's change of the field, or of the base it joins to, is
     owner-only (403) on every route. The owner may move such a field; its credentials stay bound
-    to the old origin until the owner sets them again. Admin schema 13 binds the credentials of
-    records that exist. A host with user info (`user:pw@host` in `config.host`) is refused at a write;
+    to the old origin until the owner sets them again. Admin schema 13 binds nothing (decision D42:
+    only the owner binds a credential stored before an address was bound). A host with user info (`user:pw@host` in `config.host`) is refused at a write;
     a stored one has its user info kept apart and not sent. Every log line a lifecycle driver prints
     passes through `runtime_secrets.scrub`, which removes the secret values this process has resolved (as
     stored and URL-encoded) and cuts the line. An environment value that was a mapping or a list when a
     migration stored it is marked `structured` and a process with it is not started, with a message
     that names the variable; setting the value again as text clears the mark.
+  - **Credentials stored before an address was bound** (owner-only, decision D42). A credential
+    stored with a path by an older version is bound to no address, and an administrator could
+    have re-aimed the field under that version, so the address a field has when the database is
+    migrated is not evidence of what the owner meant. Schema 13 therefore binds nothing: it counts
+    the unbound credentials and writes one audit entry (service ids and a count). The runtime sends
+    a credential bound to no address nowhere. The engine view (`url_credentials`, and an
+    `engine_address_needs_confirmation` item in `attention`) names each field as `confirmed` or
+    `needs_confirmation`, with no value and no reference. Only an owner write binds: entering the
+    credentials again, or the `confirm_address` command of `POST .../secret-entries` (owner-only,
+    403 for anyone else), which binds them to the address the field has at that moment, and is
+    refused for a field with no origin. A record written by the owner is bound at the write; a
+    record read from an older database keeps a path's credentials unbound and a URL's bound to its own
+    origin. Every reader builds its request once (`runtime_secrets.url(..., dial=)`): the credentials
+    are attached to the address the reader will send to, checked for that address, and that
+    address is returned, so a configuration reload between a check and a send cannot redirect it.
+    Every secret a driver or probe resolves, from the store or from an environment variable, is
+    registered for the log scrub, and a registered value is kept while its source exists.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of

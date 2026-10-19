@@ -31,7 +31,7 @@ from gateway.secret_refs import Put
 MAX_VALUE = 8192
 MAX_COMMANDS = 64
 RESERVED_TEXTS = frozenset({"[redacted]", "<redacted>", "<configured>"})
-OPERATIONS = ("add", "replace", "rename", "retain", "clear", "set", "set_credentials", "clear_credentials")
+OPERATIONS = ("add", "replace", "rename", "retain", "clear", "set", "set_credentials", "clear_credentials", "confirm_address")
 _ALLOWED_KEYS = {
     "add": {"carrier", "operation", "name", "value", "public"},
     "replace": {"carrier", "operation", "entry_id", "value"},
@@ -41,6 +41,7 @@ _ALLOWED_KEYS = {
     "set": {"carrier", "operation", "items", "clear"},  # an item is a literal, a retain, a replace (same id) or a new secret
     "set_credentials": {"carrier", "operation", "url", "whole", "label"},  # whole + label: the URL is one secret with a public name
     "clear_credentials": {"carrier", "operation"},
+    "confirm_address": {"carrier", "operation"},  # bind the stored credentials of a URL to the address the field has now (D42)
 }
 
 
@@ -59,6 +60,9 @@ class Outcome:
     created: list[str] = field(default_factory=list)
     retired: list[str] = field(default_factory=list)
     changed: bool = False
+    # (secret reference, origin or function of the value) for each stored credential the owner confirmed an address for.
+    # The caller binds them (``secret_store.bind_provider_secrets``); this module never decrypts one.
+    confirm: list[tuple[str, Any]] = field(default_factory=list)
 
 
 def carrier_kind(carrier: Any) -> str | None:
@@ -142,7 +146,7 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
             "headers": {"add", "replace", "rename", "retain", "clear"},
             "env": {"add", "replace", "retain", "clear"},
             "argv": {"set"},
-            "url": {"set_credentials", "clear_credentials"},
+            "url": {"set_credentials", "clear_credentials", "confirm_address"},
             "secret": {"add", "replace", "retain", "clear"},
             "provider_key": {"add", "replace", "retain", "clear"},
         }
@@ -477,9 +481,31 @@ def _whole_label(label: Any, url: str) -> str:
     return label
 
 
+def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: str, carrier: str, out: Outcome) -> None:
+    """The owner says the address a URL field has now is the one its stored credentials are for (decision D42).
+
+    The credentials are bound to that address's effective origin. A field with no origin to bind to is refused.
+    """
+    held = parent.get(key + record_carriers.SECRETS_SUFFIX)
+    refs = record_carriers.refs_in(held)
+    if not refs:
+        raise CommandError("invalid_value", "that field has no stored credentials to confirm an address for")
+    base = url_binding.base_of(record, carrier)
+    if isinstance(held, Mapping) and held.get("whole"):
+        origin: Any = lambda value: url_binding.field_origin(value, base)  # noqa: E731 - the address is inside the secret
+    else:
+        origin = url_binding.field_origin(parent.get(key), base)
+        if origin is None:
+            raise CommandError("url_unbound", str(record_carriers.UrlUnbound(carrier)))
+    out.confirm.extend((ref, origin) for ref in refs)
+
+
 def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     secrets_key = key + record_carriers.SECRETS_SUFFIX
+    if command["operation"] == "confirm_address":
+        _confirm_address(record, parent, key, command["carrier"], out)
+        return
     out.retired.extend(record_carriers.refs_in(parent.get(secrets_key)))
     parent.pop(secrets_key, None)
     if command["operation"] == "clear_credentials":

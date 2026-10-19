@@ -76,36 +76,28 @@ def _concat(base: str, path: str) -> str:
     return f"{base}{path}"
 
 
-def _poll_base(svc: Mapping[str, Any]) -> str:
-    """The address ``_poll_health`` dials for a service: its host and port."""
-    return f"http://{svc.get('host', '127.0.0.1')}:{svc.get('port')}"
-
-
 def _say(*parts: Any, **kwargs: Any) -> None:
     """Print one log line. Every secret value the gateway resolved is removed from it and it is cut to a short length: a
     server can echo a credential it was sent in a body, a header or an error (decision D39)."""
     print(runtime_secrets.scrub(" ".join(str(part) for part in parts), limit=600), **kwargs)
 
 
-def _health_endpoint(driver_config: Mapping[str, Any], default: str, svc: Mapping[str, Any]) -> str:
-    """A driver's health path, with the query credentials its record stores for it put back (resolved now).
+def _with_health(svc: Mapping[str, Any], container: Mapping[str, Any], key: str, default: str) -> dict:
+    """A copy of ``svc`` whose health endpoint, with the credentials stored for it, is ``container[key]`` (or ``default``).
 
-    The credentials are put back only when ``_poll_base(svc)`` followed by the path is an address with the origin they
-    were stored for; otherwise, or when a stored part cannot be read, the default path is used and nothing is sent.
+    The credentials stay a stored reference: ``_health_request`` puts them back when it builds the request, once, for the
+    address it will send to (decision D42).
     """
-    base = _poll_base(svc)
-    try:
-        dialed = runtime_secrets.url(driver_config, "health_endpoint", base=base, join=_concat)
-    except runtime_secrets.SecretUnavailable:
-        return default
-    return dialed[len(base):] or default
-
-
-def _without_health_entries(svc: Mapping[str, Any], health_endpoint: str) -> dict:
-    """A copy of ``svc`` whose ``health_endpoint`` is already resolved, so ``_poll_health`` does not resolve it again."""
     out = dict(svc)
-    out["health_endpoint"] = health_endpoint
-    out.pop("health_endpoint_entries", None)
+    public, held = container.get(key), container.get(key + "_entries")
+    if public or held:
+        out["health_endpoint"] = public or ""
+    else:
+        out["health_endpoint"] = default
+    if held:
+        out["health_endpoint_entries"] = held
+    else:
+        out.pop("health_endpoint_entries", None)
     return out
 
 
@@ -440,6 +432,30 @@ def engine_read_request(
     return url, {name: value for name, value in connection.headers.items() if name != "content-type"}
 
 
+def _health_request(svc: Mapping[str, Any]) -> Optional[tuple[str, dict[str, str]]]:
+    """The URL and headers of a service's health read, with the credentials stored for its health endpoint put back.
+
+    The request is built once. The credentials are attached to the address ``engine_read_request`` returns, they are put
+    back only when that address has the origin they were stored for, and that address is the one returned: nothing is read
+    again between the check and the send. A credential that cannot be read, or that belongs to another origin, gives the
+    default path with nothing secret in it.
+    """
+    seen: list[Optional[tuple[str, dict[str, str]]]] = []
+
+    def dial(text: str) -> str:
+        request = engine_read_request(svc, text)
+        seen.append(request)
+        return request[0] if request else ""
+
+    try:
+        address = runtime_secrets.url(svc, "health_endpoint", dial=dial)
+    except runtime_secrets.SecretUnavailable:
+        return engine_read_request(svc, "/health")
+    if not seen:  # the service names no health endpoint
+        return engine_read_request(svc, "/health")
+    return (address, seen[-1][1]) if seen[-1] else None
+
+
 def _get_kwargs(headers: Mapping[str, str], **kwargs: Any) -> dict[str, Any]:
     """Pass headers only when there are some, so a plain service's call is unchanged."""
     return {**({"headers": dict(headers)} if headers else {}), **kwargs}
@@ -469,7 +485,7 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
 
     import httpx  # local import to avoid circular at module level
 
-    request = engine_read_request(svc, svc.get("health_endpoint", "/health"))
+    request = _health_request(svc)
     if request is None:
         return False
     url, headers = request
@@ -1048,7 +1064,7 @@ class SystemdDriver:
         ok = await self._run_systemctl(cmd)
         if not ok:
             return False
-        health_ep = _health_endpoint(dc, "/health", svc)
+        health_ep = dc.get("health_endpoint") or "/health"
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         return await _poll_health(svc_for_poll, timeout_s)
 
@@ -1114,7 +1130,7 @@ class SystemdDriver:
 
     async def health(self, svc: Mapping[str, Any]) -> str:
         dc = self._driver_config(svc)
-        health_ep = _health_endpoint(dc, "/health", svc)
+        health_ep = dc.get("health_endpoint") or "/health"
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         ok = await _poll_health(svc_for_poll, 3.0)
         return HealthState.HEALTHY if ok else HealthState.UNHEALTHY
@@ -1255,7 +1271,7 @@ class SystemdDriver:
         scope_flag = self._scope_flag(dc)
         unit = dc.get("unit", "")
         dropin_name = dc.get("dropin", "20-model.conf")
-        health_ep = _health_endpoint(dc, "/health", svc)
+        health_ep = dc.get("health_endpoint") or "/health"
         health_timeout = float(dc.get("health_timeout_s", self._DEFAULT_HEALTH_TIMEOUT_S))
 
         if not unit:
@@ -1397,7 +1413,7 @@ class SystemdDriver:
     ) -> Optional[float]:
         """Poll the health endpoint; return seconds until 200, or None on timeout."""
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
-        request = engine_read_request(svc_for_poll, health_ep)
+        request = _health_request(svc_for_poll)
         start = time.time()
         deadline = start + health_timeout
         interval = 1.0
@@ -1502,8 +1518,8 @@ class SystemdDriver:
 
     @staticmethod
     def _svc_with_health_endpoint(svc: Mapping[str, Any], health_ep: str) -> dict:
-        """Return a copy of svc with health_endpoint set for _poll_health."""
-        return _without_health_entries(svc, health_ep)
+        """Return a copy of svc whose health endpoint, and the credentials stored for it, are the driver's, for _poll_health."""
+        return _with_health(svc, SystemdDriver._driver_config(svc), "health_endpoint", health_ep)
 
     async def _run_systemctl(self, cmd: list[str]) -> bool:
         """Run a systemctl command. True on exit code 0; False on failure or timeout.
@@ -1588,8 +1604,7 @@ class HttpLoadUnloadDriver:
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Health-check only; load is handled by swap() for single-slot drivers."""
         dc = self._driver_config(svc)
-        verify_ep = self._path(dc, "verify_endpoint", "/health", base=_poll_base(svc), fallback_on_unreadable=True)
-        return await _poll_health(_without_health_entries(svc, verify_ep), min(timeout_s, 5.0))
+        return await _poll_health(_with_health(svc, dc, "verify_endpoint", "/health"), min(timeout_s, 5.0))
 
     def stop(self, svc: Mapping[str, Any]) -> None:
         """POST unload synchronously (best-effort)."""
@@ -1825,19 +1840,14 @@ class HttpLoadUnloadDriver:
         return {}
 
     @staticmethod
-    def _path(dc: Mapping[str, Any], key: str, default: str, *, base: str, fallback_on_unreadable: bool = False) -> str:
+    def _path(dc: Mapping[str, Any], key: str, default: str, *, base: str) -> str:
         """A path of the driver config with the query credentials its record stores for it put back (resolved now).
 
         The credentials are put back only when ``base`` followed by the path is an address with the origin they were
-        stored for. Raises ``SecretUnavailable`` when a stored part cannot be read or belongs to another address, unless
-        ``fallback_on_unreadable`` (a health check, which carries no key) asks for the default instead.
+        stored for, and the driver sends to ``base`` followed by exactly the path returned. Raises ``SecretUnavailable``
+        when a stored part cannot be read or belongs to another address.
         """
-        try:
-            return runtime_secrets.url(dc, key, base=base, join=_concat)[len(base):] or default
-        except runtime_secrets.SecretUnavailable:
-            if fallback_on_unreadable:
-                return default
-            raise
+        return runtime_secrets.url(dc, key, base=base, join=_concat)[len(base):] or default
 
     @staticmethod
     def _base_url(svc: Mapping[str, Any]) -> str:
@@ -1881,7 +1891,7 @@ class HttpLoadUnloadDriver:
                 return key
         env_var = dc.get("admin_key_env", "")
         if env_var:
-            return get_env(env_var, "")
+            return runtime_secrets.env_secret(env_var)
         return ""
 
     @staticmethod
@@ -1894,7 +1904,7 @@ class HttpLoadUnloadDriver:
                 return key
         env_var = dc.get("api_key_env", "")
         if env_var:
-            return get_env(env_var, "")
+            return runtime_secrets.env_secret(env_var)
         return ""
 
     async def _get_loaded_model(self, base_url: str, verify_ep: str, api_key: str) -> Optional[str]:

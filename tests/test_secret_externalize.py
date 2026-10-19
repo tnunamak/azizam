@@ -91,9 +91,14 @@ def test_what_the_runtime_resolves_is_exactly_what_the_legacy_record_sent(db):
     assert runtime_secrets.env_mapping(moved["config"]["env"]) == legacy["config"]["env"]
     assert runtime_secrets.header_pairs(moved["config"]["headers"], origin="http://engine.invalid:8080") == {"X-Vendor": S["header"]}
     assert runtime_secrets.url(moved["config"], "address") == legacy["config"]["address"]
+    # A path in a record that exists already is bound to no address (decision D42): it is not put back until the owner
+    # confirms the address, and the owner's own write binds it to the address of its base.
     base, join = "http://engine.invalid:8080", lambda head, tail: f"{head}{tail}"  # a path is read for the address it is dialed at
-    assert runtime_secrets.url(moved["process"], "health_endpoint", base=base, join=join) == base + legacy["process"]["health_endpoint"]
-    ready = moved["observations"]["ready"]["http"]
+    with pytest.raises(runtime_secrets.OriginRefused):
+        runtime_secrets.url(moved["process"], "health_endpoint", base=base, join=join)
+    owned, _ = record_carriers.externalize_service(legacy, Recorder(db), reject_ambiguous=True)
+    assert runtime_secrets.url(owned["process"], "health_endpoint", base=base, join=join) == base + legacy["process"]["health_endpoint"]
+    ready = owned["observations"]["ready"]["http"]
     assert runtime_secrets.url(ready, "path", base=base, join=join) == base + legacy["observations"]["ready"]["http"]["path"]
 
 

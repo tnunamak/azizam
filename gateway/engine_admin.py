@@ -35,7 +35,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms, url_binding
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -748,6 +748,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         if route.get("path"):
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(request_base, route["path"])})
     fingerprint = _stored_evidence_binding(stored, db_path=db_path, env=env)
+    url_credentials = url_binding.credential_states(stored, lambda ref: _secret_origin(ref, db_path))
     v2 = service_registry.service_record_v2(stored)
     v2["connection"]["address"] = address
     if protocol_mode:
@@ -774,8 +775,13 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
                          if secret_id and not env_name and key.get("availability") == "unavailable" else [])
                       + ([{"code": "engine_credential_origin_mismatch",
                            "message": "The saved key is bound to a different address and will not be sent to this engine."}]
-                         if key["state"] == "configured" and key.get("origin") != origin_of(address) else []),
+                         if key["state"] == "configured" and key.get("origin") != origin_of(address) else [])
+                      + [{"code": "engine_address_needs_confirmation", "carrier": row["carrier"],
+                          "message": f"The credentials stored with {row['carrier']} are bound to no address that matches it, so they are not sent. "
+                                     "The owner confirms the address, or enters them again."}
+                         for row in url_credentials if row["state"] == "needs_confirmation"],
         "key": key,
+        "url_credentials": url_credentials,
         "capabilities": caps,
         "models": models,
         "tests": {cap: copy.deepcopy(row) for cap, row in (config.get("engine_tests") or {}).items()
@@ -796,6 +802,14 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "can_edit_offerings": schema_matches and not declared_offerings,
         "offering_edit_reason": "These models or workflows have selection settings this form cannot safely edit. Their saved settings are shown below." if declared_offerings else None,
     }
+
+
+def _secret_origin(ref: str, db_path: Path) -> str | None:
+    """The origin a stored secret is bound to (metadata only), or None when it has none or cannot be read."""
+    try:
+        return secret_store.provider_secret_origin(ref, db_path=db_path)
+    except Exception:  # noqa: BLE001 - an unreadable store reads as "bound to nothing"
+        return None
 
 
 def _command_view(command: Any) -> Any:

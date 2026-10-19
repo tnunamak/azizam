@@ -344,7 +344,8 @@ def store(tmp_path):
 
 
 def _moved(record, db):
-    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(db))
+    """The record as the owner's write stores it (a path takes the origin of its base; decision D42)."""
+    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(db), reject_ambiguous=True)
     assert paths
     return moved
 
@@ -421,7 +422,7 @@ def test_the_models_catalog_probe_and_the_context_window_probe_carry_their_store
     moved = _moved(record, store)
     assert proxy._runtime_health_endpoint(moved) == "http://good.invalid:9/ready?token=R3CATALOG"
     monkeypatch.setitem(proxy.config, "backends", {"e": moved["config"]})
-    assert proxy._context_window_probe_endpoint("e") == "/props?token=R3CONTEXT"
+    assert proxy._context_window_probe_request("e")[0] == "http://good.invalid:9/props?token=R3CONTEXT"
     secret_refs.delete(record_carriers.refs_in(moved["config"]["health_endpoint_entries"])[0], db_path=store)
     assert proxy._runtime_health_endpoint(moved) is None
 
@@ -473,7 +474,7 @@ def test_a_write_refuses_a_mapping_or_a_list_as_an_environment_value(store, valu
 
 def test_a_migration_still_keeps_a_stored_structured_environment_value_as_a_secret_never_inline(store):
     record = {"id": "e", "config": {"host": "good.invalid", "port": 9}, "process": {"driver": "command", "env": {"MODE": {"a": "R3SECRET"}}}}
-    moved = _moved(record, store)
+    moved, _ = record_carriers.externalize_service(record, secret_refs.putter(store))
     assert "R3SECRET" not in json.dumps(moved)
 
 

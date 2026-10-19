@@ -1447,6 +1447,8 @@ class AdminSQLiteStore:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
+                if outcome.confirm:
+                    self._bind_confirmed(sid, outcome.confirm, commands, actor)
                 return {**(snapshot or {}), "value": registry,
                         "excluded": self.get_service_registry_exclusions()}
             registry["services"][sid] = new_record
@@ -1464,9 +1466,31 @@ class AdminSQLiteStore:
                 pending = error
             for ref in outcome.retired:
                 secret_refs.delete(ref, db_path=self.path)
+            if outcome.confirm:
+                self._bind_confirmed(sid, outcome.confirm, commands, actor)
             if saved is None:
                 raise pending
             return saved
+
+    def _bind_confirmed(self, service_id: str, confirm: list[tuple[str, Any]], commands: list[dict[str, Any]],
+                        actor: AdminContext) -> None:
+        """Bind the stored credentials of the URL fields the owner confirmed to the address each has now (decision D42).
+
+        All or none. Only the owner reaches this: ``apply_secret_commands`` refuses any command but ``retain`` for anyone
+        else. The audit entry names the service and the carriers, never a value or a reference.
+        """
+        try:
+            changed = secret_store.bind_provider_secrets(confirm, db_path=self.path)
+        except (KeyError, ValueError, OSError, sqlite3.Error):
+            raise ValueError("a stored credential could not be bound to this address; enter it again") from None
+        admin_store.record_audit(
+            "operator.service.address_confirmed",
+            actor_kind=actor.actor_kind, actor_id=actor.audit_actor_id, actor_label=actor.actor_label,
+            target_kind="service", target_id=service_id,
+            metadata={"carriers": sorted({str(c["carrier"]) for c in commands if c.get("operation") == "confirm_address"}),
+                      "bound": changed},
+            path=self.path,
+        )
 
     def set_service_enabled(
         self, *, service_id: str, enabled: bool, actor: AdminContext,

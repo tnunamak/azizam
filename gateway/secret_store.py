@@ -178,15 +178,33 @@ def read_provider_secret_on(conn: sqlite3.Connection, secret_id: str, *, db_path
     return value, stored_origin
 
 
-def rebind_provider_secret(conn: sqlite3.Connection, secret_id: str, origin: str, *, db_path: Path) -> bool:
-    """Bind a stored secret to ``origin`` (it is encrypted again under the new binding), inside the caller's transaction.
+def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path) -> int:
+    """Bind stored secrets to an origin, all or none, in one transaction. Returns how many changed.
 
-    False when it is already bound to that origin. Raises ``KeyError`` when it is missing."""
-    value, stored_origin = read_provider_secret_on(conn, secret_id, db_path=db_path)
-    if stored_origin == _normalize_origin(origin):
-        return False
-    put_provider_secret(secret_id, value, db_path=db_path, approved_origin=origin, conn=conn, allow_short=True, keep_suffix=False)
-    return True
+    Each item is ``(secret_id, origin)``; ``origin`` is an origin text, or a function of the secret's own value that returns
+    one (a URL kept whole has its address inside the secret). The value is read and sealed again inside this function
+    and goes nowhere else. Raises ``KeyError`` for a missing secret and ``ValueError`` when no origin results; nothing
+    is changed then.
+    """
+    ensure_provider_secret_schema(db_path)
+    changed = 0
+    with closing(sqlite_startup.connect(db_path)) as conn:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for secret_id, origin in items:
+                value, stored_origin = read_provider_secret_on(conn, secret_id, db_path=db_path)
+                target = origin(value) if callable(origin) else origin
+                if not target:
+                    raise ValueError("a stored credential has no address to bind to")
+                if stored_origin == _normalize_origin(target):
+                    continue
+                put_provider_secret(secret_id, value, db_path=db_path, approved_origin=target, conn=conn, allow_short=True, keep_suffix=False)
+                changed += 1
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return changed
 
 
 def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:

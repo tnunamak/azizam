@@ -1401,15 +1401,19 @@ def _engine_probe_json_sync(backend: str, endpoint: str, timeout: float) -> Any:
     return resp.json() if resp.status_code == 200 else None
 
 
+async def _get_probe_json(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+    """The JSON a service returns at exactly this URL, or None. Redirects are not followed."""
+    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = await client.get(url, headers=dict(headers))
+    return resp.json() if resp.status_code == 200 else None
+
+
 async def _engine_probe_json(backend: str, endpoint: str, timeout: float) -> Any:
     """The async form of ``_engine_probe_json_sync``."""
     probe = _engine_probe(backend, endpoint)
     if probe is None:
         return None
-    url, headers = probe
-    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
-        resp = await client.get(url, headers=headers)
-    return resp.json() if resp.status_code == 200 else None
+    return await _get_probe_json(*probe, timeout)
 
 
 def _backend_reports_loaded_model_as_path(backend: str) -> bool:
@@ -24123,36 +24127,63 @@ def _configured_context_window_for_backend(backend: str | None) -> int | None:
     return None
 
 
-def _context_window_probe_endpoint(backend: str | None) -> str | None:
-    """The service's ``context_window_probe.endpoint`` (a path, with its stored credentials put back), or None when it declares no probe.
-
-    The credentials are put back only when the service's base address followed by the path has the origin they were
-    stored for (decision D39); the probe sends to exactly that address."""
+def _context_window_probe(backend: str | None) -> Mapping[str, Any] | None:
     cfg = (config.get("backends") or {}).get(backend) if backend else None
     probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
-    if not isinstance(probe, Mapping):
+    return probe if isinstance(probe, Mapping) else None
+
+
+def _context_window_probe_endpoint(backend: str | None) -> str | None:
+    """The service's ``context_window_probe.endpoint`` as declared (a path, without its stored credentials), or None when it declares no probe."""
+    probe = _context_window_probe(backend)
+    if probe is None:
         return None
-    base = _backend_base_url(str(backend))
+    endpoint = str(probe.get("endpoint") or "")
+    held = probe.get("endpoint_entries")
+    kept_whole = isinstance(held, Mapping) and bool(held.get("whole"))
+    return endpoint if endpoint.startswith("/") or (kept_whole and not endpoint) else None
+
+
+def _context_window_probe_request(backend: str | None) -> tuple[str, dict[str, str]] | None:
+    """The one request the context-window probe sends: its URL, with the stored credentials of the endpoint put back, and its headers.
+
+    The URL is built once, by the same function the other probes use (``_engine_probe``), and the credentials are put back
+    only when that URL has the origin they were stored for (decisions D39 and D42). The caller sends exactly this URL: the
+    backend's address is not read again between the check and the send, so a configuration reload in between cannot
+    redirect it. None when the service declares no probe, or the credentials cannot be put back.
+    """
+    probe = _context_window_probe(backend)
+    if probe is None or _context_window_probe_endpoint(backend) is None:
+        return None
+    seen: list[tuple[str, dict[str, str]] | None] = []
+
+    def dial(text: str) -> str:
+        request = _engine_probe(str(backend), text)
+        seen.append(request)
+        return request[0] if request else ""
+
     try:
-        endpoint = runtime_secrets.url(probe, "endpoint", base=base, join=lambda head, tail: f"{head}{tail}")[len(base):]
+        address = runtime_secrets.url(probe, "endpoint", dial=dial)
     except runtime_secrets.SecretUnavailable:
         return None
-    return endpoint if endpoint.startswith("/") else None
+    return (address, seen[-1][1]) if seen and seen[-1] else None
 
 
 async def _probed_context_window(backend: str) -> int | None:
     """The context window the service itself reports at its declared probe endpoint."""
-    endpoint = _context_window_probe_endpoint(backend)
-    if endpoint is None:
+    if _context_window_probe_endpoint(backend) is None:
         return None
     cached = _MODEL_CONTEXT_CACHE.get(backend)
     now = time.time()
     if cached and now - cached[0] < _MODEL_CONTEXT_CACHE_TTL_S:
         return cached[1]
+    request = _context_window_probe_request(backend)
+    if request is None:
+        return None
 
     value: int | None = None
     try:
-        payload = await _engine_probe_json(backend, endpoint, 2.0)
+        payload = await _get_probe_json(*request, 2.0)
         if payload is not None:
             data = payload.get("data") if isinstance(payload, Mapping) else None
             if isinstance(data, list):
@@ -29416,9 +29447,11 @@ def _native_engine_base(target: Mapping[str, Any]) -> str:
     record = target.get("record")
     if isinstance(record, Mapping) and any(record.get(key + "_entries") for key in ("url", "base_url")):
         try:
-            return runtime_secrets.service_url(record, ("url", "base_url")) or str(target["host"])
+            base = runtime_secrets.service_url(record, ("url", "base_url"))
         except runtime_secrets.SecretUnavailable:
             return str(target["host"])
+        # The headers of this call were resolved for the host's origin: the URL they go to must have it too.
+        return base if base and service_registry.origin_of(base) == service_registry.origin_of(str(target["host"])) else str(target["host"])
     return str(target["host"])
 
 

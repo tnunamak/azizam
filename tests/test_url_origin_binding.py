@@ -278,7 +278,7 @@ def test_an_administrator_cannot_move_the_base_a_path_with_credentials_is_joined
     assert stored(gateway)["d39"] == before
 
 
-@pytest.mark.parametrize("field", ["health_endpoint", "context_window_probe.endpoint"])
+@pytest.mark.parametrize("field", ["context_window_probe.endpoint"])
 def test_an_administrator_can_still_edit_the_path_of_a_field_that_holds_credentials_on_the_same_origin(gateway, host_isolated, field):
     owner, _, _, admin = owner_and_admin(gateway)
     _plant(gateway, owner)
@@ -362,12 +362,13 @@ def test_an_administrator_can_still_rename_a_record_that_holds_credentials_by_a_
         assert after["config"][key] == before["config"][key], key
 
 
-def test_an_administrator_can_patch_the_path_of_the_health_endpoint_on_the_same_origin(gateway, host_isolated):
+def test_an_administrator_can_no_longer_change_the_health_endpoint_at_all(gateway, host_isolated):
+    """Since the engine-page merge the health endpoint is a service setting only the owner changes (any value, any route)."""
     owner, _, _, admin = owner_and_admin(gateway)
     _plant(gateway, owner)
     done = _patch(admin, {"health_endpoint": "/status"})
-    assert done.status_code == 200, done.text
-    assert stored(gateway)["d39"]["config"]["health_endpoint"] == "/status"
+    assert done.status_code == 403 and error_code(done) == "owner_required", done.text
+    assert stored(gateway)["d39"]["config"]["health_endpoint"] == "/ready"
 
 
 def test_a_write_that_puts_credentials_in_a_field_with_no_origin_is_refused_with_a_clear_message(gateway, host_isolated):
@@ -408,7 +409,7 @@ def _entries(public, base_config, db, path="config.health_endpoint"):
     """A service record with ``public`` stored the way a write stores it (credentials in the store)."""
     key = path.rpartition(".")[2]
     record = {"id": "e", "name": "e", "config": {**base_config, key: f"{public}?token={CANARY}"}}
-    moved, _ = record_carriers.externalize_service(record, secret_refs.putter(db))
+    moved, _ = record_carriers.externalize_service(record, secret_refs.putter(db), reject_ambiguous=True)
     return moved
 
 
@@ -437,7 +438,7 @@ def test_a_field_without_credentials_is_not_in_the_fingerprint(store):
 # ---------------------------------------------------------------------------
 
 def _moved(record, db):
-    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(db))
+    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(db), reject_ambiguous=True)
     assert paths
     return moved
 
@@ -487,12 +488,12 @@ def test_the_catalog_probe_does_not_follow_the_base_to_another_origin(store):
 def test_the_context_window_probe_sends_nothing_to_another_origin(store, monkeypatch, attack):
     moved = _record_for_runtime(store)
     monkeypatch.setitem(proxy.config, "backends", {"d39": copy.deepcopy(moved["config"])})
-    assert proxy._context_window_probe_endpoint("d39") == f"/props?token={CANARY}-context"
+    assert proxy._context_window_probe_request("d39")[0] == f"{GOOD}/props?token={CANARY}-context"
     proxy.config["backends"]["d39"]["context_window_probe"]["endpoint"] = RUNTIME_ATTACKS[attack]
-    assert proxy._context_window_probe_endpoint("d39") is None
+    assert proxy._context_window_probe_request("d39") is None
     proxy.config["backends"]["d39"]["context_window_probe"]["endpoint"] = "/props"
     proxy.config["backends"]["d39"]["port"] = 4444
-    assert proxy._context_window_probe_endpoint("d39") is None
+    assert proxy._context_window_probe_request("d39") is None
 
 
 @pytest.mark.parametrize("attack", sorted(RUNTIME_ATTACKS))
@@ -671,72 +672,38 @@ def _bound(path: Path) -> dict[str, str | None]:
         return {row[0]: row[1] for row in conn.execute("SELECT id, approved_origin FROM provider_secrets")}
 
 
-def test_the_schema_13_migration_binds_each_stored_credential_to_the_origin_of_its_field_once(tmp_path):
+def test_the_schema_13_migration_binds_nothing_and_reports_what_is_unbound(tmp_path, capsys):
+    """Decision D42: a credential stored with a path under an older version is bound to no address, and stays so."""
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     runtime_secrets.configure(path)
     try:
         record = _record(base_url=f"{GOOD}/v1?key={CANARY}-base")
-        put = lambda value, origin=None: secret_refs.store(value, db_path=path, origin=None)  # noqa: E731 - version 12 bound a path to nothing
+        put = lambda value, origin=None: secret_refs.store(value, db_path=path, origin=None)  # noqa: E731 - how schema 12 stored a path
         moved, _ = record_carriers.externalize_service(record, put)
         document = service_registry.normalize_service_registry({"schema_version": 2, "services": {"d39": moved}})
         _store_as_v12(path, document)
         refs = record_carriers.refs_in(moved)
-        assert refs and set(_bound(path).values()) == {None}
-        values_before = {ref: secret_store.get_provider_secret(ref, db_path=path) for ref in refs}
+        before = _bound(path)
+        assert refs and set(before.values()) == {None}
 
         admin_store.init_db(path)
 
         assert admin_store.schema_version(path) == admin_store.SCHEMA_VERSION
-        bound = _bound(path)
-        assert set(bound) >= set(refs)
-        assert {bound[ref] for ref in refs} == {"http://good.invalid:9"}
-        assert {ref: secret_store.get_provider_secret(ref, db_path=path, expected_origin=GOOD) for ref in refs} == values_before
+        assert _bound(path) == before, "the migration binds no credential"
         with sqlite3.connect(path) as conn:
             audit = [json.loads(row[0]) for row in conn.execute(
                 "SELECT metadata_json FROM audit_events WHERE action='operator.url_binding.migrate'")]
-            generation = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0]
             registry_after = conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]
-        assert len(audit) == 1 and audit[0]["services"] == ["d39"] and audit[0]["rebound"] == len(refs)
-        assert CANARY not in json.dumps(audit)
-        assert json.loads(registry_after) == document, "the migration changes secrets' bindings, never the record"
-
+        assert len(audit) == 1 and audit[0]["services"] == ["d39"] and audit[0]["unconfirmed"] == len(refs)
+        assert CANARY not in json.dumps(audit) and CANARY not in capsys.readouterr().out
+        assert json.loads(registry_after) == document
         admin_store.init_db(path)  # a second start changes nothing
         with sqlite3.connect(path) as conn:
-            again = conn.execute("SELECT COUNT(*) FROM audit_events WHERE action='operator.url_binding.migrate'").fetchone()[0]
-            assert again == 1
-            assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == generation
-        assert _bound(path) == bound
-        # and the runtime now puts them back for that origin, and for no other
-        from gateway import service_registry as registry_module
-
-        reread = registry_module.load_service_registry(path=path)["services"]["d39"]
-        assert proxy._runtime_health_endpoint(reread) == f"{GOOD}/ready?token={CANARY}-health"
-        reread["config"]["health_endpoint"] = "//attacker.invalid/collect"
-        assert proxy._runtime_health_endpoint(reread) is None
-    finally:
-        runtime_secrets.configure(None)
-
-
-def test_the_schema_13_migration_leaves_a_field_with_no_origin_unbound_and_says_so(tmp_path, capsys):
-    path = tmp_path / "admin.db"
-    admin_store.init_db(path)
-    runtime_secrets.configure(path)
-    try:
-        record = _record()
-        put = lambda value, origin=None: secret_refs.store(value, db_path=path, origin=None)  # noqa: E731
-        moved, _ = record_carriers.externalize_service(record, put)
-        moved["config"]["health_endpoint"] = "//attacker.invalid/collect"  # a record an administrator re-aimed under schema 12
-        document = service_registry.normalize_service_registry({"schema_version": 2, "services": {"d39": moved}})
-        _store_as_v12(path, document)
-        health_refs = record_carriers.refs_in(moved["config"]["health_endpoint_entries"])
-        admin_store.init_db(path)
-        bound = _bound(path)
-        assert {bound[ref] for ref in health_refs} == {None}, "a field with no origin binds nothing"
-        out = capsys.readouterr().out
-        assert "left unbound" in out and CANARY not in out
+            assert conn.execute("SELECT COUNT(*) FROM audit_events WHERE action='operator.url_binding.migrate'").fetchone()[0] == 1
+        assert _bound(path) == before
         reread = service_registry.load_service_registry(path=path)["services"]["d39"]
-        assert proxy._runtime_health_endpoint(reread) is None
+        assert proxy._runtime_health_endpoint(reread) is None, "nothing is sent until the owner confirms the address"
     finally:
         runtime_secrets.configure(None)
 
@@ -909,7 +876,7 @@ def test_every_url_field_that_can_hold_credentials_is_bound_to_its_origin_and_is
     absolute = path.rpartition(".")[2] in ("base_url", "api_base", "default_base_url", "url", "address", "endpoint", "upstream", "key_url", "docs_url")
     public = "http://good.invalid:9/x" if absolute else "/x"
     record = _merge({"id": "e", "name": "e", "config": {"host": "good.invalid", "port": 9}}, _nested(path, f"{public}?token={CANARY}"))
-    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(store))
+    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(store), reject_ambiguous=True)
     assert path in paths, paths
     bound = {secret_rows_of(store)[ref] for ref in record_carriers.refs_in(moved)}
     assert bound == {GOOD}, (path, bound)
@@ -931,7 +898,7 @@ def secret_rows_of(db) -> dict:
 
 def test_a_models_row_url_is_bound_too(store):
     record = {"id": "e", "name": "e", "config": {"host": "good.invalid", "port": 9, "models": [{"id": "m", "url": f"/m?token={CANARY}"}]}}
-    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(store))
+    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(store), reject_ambiguous=True)
     assert "config.models[0].url" in paths
     assert {secret_rows_of(store)[ref] for ref in record_carriers.refs_in(moved)} == {GOOD}
     after = copy.deepcopy({"services": {"e": moved}})

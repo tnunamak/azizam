@@ -215,6 +215,12 @@ def split_path_params(path: str) -> tuple[str, list[tuple[str, str | None]]]:
     return _PARAM.sub(take, path), chunks
 
 
+def path_param_count(url: str) -> int:
+    """How many ``;`` chunks the path of an address holds (the places ``join_url`` puts path parameters back)."""
+    start = url.find("/", url.index("://") + 3) if "://" in url else url.find("/")
+    return len(_PARAM.findall(url[start:])) if start >= 0 else 0
+
+
 def _params_held(path: str, entries: Any) -> bool:
     """True when the ``;`` chunks of a public path are the ones ``entries`` already stands for (a second pass changes nothing)."""
     texts = [match.group(1) for match in _PARAM.finditer(path)]
@@ -400,8 +406,9 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
                     base: str | None = None, path: str = "", strict: bool | None = None) -> bool:
     """Move the credentials out of ``container[key]`` into the store. True when it changed anything. Idempotent.
 
-    The credentials are bound to the effective origin of the field: its own when it is an absolute http(s) URL, else the
-    origin of ``base`` (decision D39). A URL that cannot be read with confidence is stored whole as one private value and
+    The credentials are bound to the effective origin of the field: its own when it is an absolute http(s) URL, else (on a
+    ``strict`` write, the owner's) the origin of ``base`` (decisions D39 and D42); a path in a record that exists already
+    (a migration) is bound to nothing. A URL that cannot be read with confidence is stored whole as one private value and
     the field is left empty (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it
     raises ``AmbiguousUrl`` instead, so the caller is told to fix it. With ``reject_ambiguous`` a field with no origin to
     bind to (a protocol-relative address, a path with no base) raises ``UrlUnbound`` (also with ``strict``, which defaults
@@ -417,7 +424,7 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
     except AmbiguousUrl:
         if reject_ambiguous:
             raise
-        origin = url_binding.field_origin(value, base)
+        origin = url_binding.field_origin(value, base if strict else None)
         if origin is None and strict:
             raise UrlUnbound(path or key)
         container[key] = ""
@@ -425,7 +432,10 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
         return True
     if not parts:
         return False
-    origin = url_binding.field_origin(public, base)
+    # A path takes the origin of a base only on a write that says so (``strict``: a new write by the owner). A record that
+    # exists already (a migration) keeps a path's credentials bound to nothing: the base it sits on may have been moved by
+    # someone other than the owner, so the address it has today is not what the owner meant (decision D42).
+    origin = url_binding.field_origin(public, base if strict else None)
     if origin is None and strict:
         raise UrlUnbound(path or key)
     held = url_entries(public, parts, put, origin=origin)

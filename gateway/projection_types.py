@@ -231,7 +231,7 @@ OVERRIDES = register(Obj("Overrides", {
 ENGINE_VIEW = register(Obj("EngineView", {
     "service_id": STR, "definition": STR, "definition_version": ANY_SCALAR, "inferred": BOOL, "name": STR,
     "enabled": BOOL, "locked": BOOL, "editable": BOOL, "not_editable_reason": STR, "lifecycle_editable": BOOL,
-    "values": JSON, "key": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
+    "values": JSON, "key": JSON, "url_credentials": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
     "other_settings": JSON, "record": JSON, "v2": JSON, "access": JSON,
     "reply_timeout": JSON, "attention": JSON, "request_path": JSON, "credential_destination": STR,
     "ignored_headers": JSON, "unsupported_fields": JSON, "can_edit_offerings": BOOL, "offering_edit_reason": ANY_SCALAR,
