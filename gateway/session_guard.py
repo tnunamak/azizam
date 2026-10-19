@@ -30,7 +30,15 @@ class BrowserSession:
 
     @classmethod
     def of(cls, session, user_id: str) -> "BrowserSession":
-        """The sign-in behind an ``AdminSession`` (anything with ``session_id`` and ``family_id``)."""
+        """The sign-in behind an ``AdminSession`` (anything with ``session_id`` and ``family_id``).
+
+        Raises ``TypeError`` for anything else, such as the bare person id a caller's session lookup might hand
+        back: a write must never be checked against a sign-in that was built from the wrong object.
+        """
+        for field in ("session_id", "family_id"):
+            if not isinstance(getattr(session, field, None), str):
+                raise TypeError(f"BrowserSession.of needs a sign-in session with a text {field}, "
+                                f"not {type(session).__name__}")
         return cls(str(user_id), str(session.session_id), str(session.family_id),
                    getattr(session, "expires_at", None), getattr(session, "absolute_expires_at", None))
 

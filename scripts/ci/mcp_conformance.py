@@ -35,6 +35,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from dataclasses import dataclass
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -45,7 +46,7 @@ import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
-from gateway import mcp_oauth, mcp_server  # noqa: E402
+from gateway import accounts, admin_store, mcp_oauth, mcp_server  # noqa: E402
 from gateway.mcp_oauth_store import Store  # noqa: E402
 
 SUITE_DIR = ROOT / "tests" / "conformance"
@@ -53,6 +54,15 @@ SUITE = SUITE_DIR / "node_modules" / ".bin" / "conformance"
 REVISIONS = ("2026-07-28", "2025-11-25")
 PERSON = "usr_conformance"
 SESSION_HEADER = "x-conformance-person"
+
+
+@dataclass(frozen=True)
+class FixtureSession:
+    """The signed-in person the fixture plays: the ids a real ``AdminSession`` carries for the consent's write."""
+
+    person_id: str
+    session_id: str = "conformance-session"
+    family_id: str = "conformance-session"
 
 
 def free_port() -> int:
@@ -80,10 +90,14 @@ def build_app(base: str, db: Path) -> FastAPI:
     async def no_documents(url: str):
         raise OSError("the conformance fixture fetches no client metadata documents")
 
+    # The consent checks the sign-in against the account tables (decision D41), so they must exist.
+    admin_store.init_db(db)
+    accounts.initialize(db)
     oauth = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
         public_base_url=lambda request: base,
-        session=lambda request: request.headers.get(SESSION_HEADER),
-        person=lambda session: {"id": session, "email": "conformance@example.invalid"} if session == PERSON else None,
+        session=lambda request: (FixtureSession(PERSON) if request.headers.get(SESSION_HEADER) == PERSON else None),
+        person=lambda session: ({"id": session.person_id, "email": "conformance@example.invalid"}
+                                if session.person_id == PERSON else None),
         check_action=lambda request, session: None,
         person_can_connect=lambda person_id: person_id == PERSON,
         plan=lambda person_id: {"name": "Conformance"},
