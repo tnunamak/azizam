@@ -13,16 +13,25 @@ from pathlib import Path
 import yaml
 
 SEED = r"""
-import sys, time
+import sqlite3, sys, time
+from pathlib import Path
 from gateway import accounts, admin_store
+from gateway.access_plans import CAPABILITIES
 from gateway.runtime_auth import hash_api_key
 db, key = sys.argv[1:3]
-from pathlib import Path
 path = Path(db)
 admin_store.init_db(path)
 accounts.initialize(path)
 now = int(time.time())
+plan = admin_store.create_access_plan({
+    "name": "seam check", "can_use": {c: {"items": "all"} for c in CAPABILITIES},
+    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False,
+    "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None}, "can_load_models": True,
+    "receipt_detail": "full", "media_metadata": "none"}, now=now, path=path)
 user = admin_store.upsert_oidc_user("local", "seam", email="seam@example.test", display_name="Seam check", now=now, path=path)
+with sqlite3.connect(path) as conn:
+    conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET plan_id=excluded.plan_id",
+                 (user["id"], plan["id"]))
 app = admin_store.create_app("seam check", kind="personal", owner_user_id=user["id"], access_plan="person", now=now, path=path)
 admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key(key),
                                    prefix="seamchk", display_name="seam check", now=now, path=path)
@@ -52,6 +61,10 @@ class Gateway:
                 },
             },
             "admin": {"oidc": {"cookie": {"secure": False}}},
+            # The engine is reached by the name callers use, as on a real gateway: one model alias for one service.
+            "model_aliases": {"transcriptions": {"engines": {"engine": {
+                "display_name": "engine under test", "service": "stt-engine", "model": model, "upload_format": "wav16k"}}}},
+            "model_compatibility": {"enabled": True, "defaults": {"transcriptions": model}},
         }
         (state / "config.yml").write_text(yaml.safe_dump(document))
         self.env = {
