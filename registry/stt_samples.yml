@@ -88,8 +88,9 @@ samples:
         https://groups.inf.ed.ac.uk/ami/icsi/license.shtml and ICSI/LICENCE.txt
         in ICSI_core_NXT.zip: CC BY 4.0. Only the first 1800 s of the 3022 s
         meeting are used. Some words have no times in the corpus; they are
-        spread between known neighbours. Some contractions have no apostrophe
-        in the source ("thats").
+        spread between known neighbours. The corpus writes a clitic as its own
+        word ("that" "'s"); the reference joins it to the word before without
+        the apostrophe ("thats", "youre"), as the private build.py does.
     duration_seconds: 1800.0
     speakers: 6
     timing: word
