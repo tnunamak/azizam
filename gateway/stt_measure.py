@@ -226,6 +226,57 @@ def seam_excess(
     return paired_excess(pairs, resamples=resamples), paired_excess(placebo, resamples=resamples)
 
 
+def piece_counts(scored: Scored, *, trim: float = 2.0) -> list[tuple[int, int, float]]:
+    """(words, deleted, length) for each piece of a run, with ``trim`` seconds at each end left out."""
+    out = []
+    for start, end in scored.run.segments:
+        lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
+        if hi <= lo:
+            continue
+        indexes = range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi))
+        out.append((len(indexes), sum(1 for i in indexes if scored.alignment.status[i] == DELETED), end - start))
+    return out
+
+
+def rate_interval(pieces: Sequence[tuple[int, int, float]], *, resamples: int = 4000, seed: int = 20261019) -> dict[str, float | int]:
+    """Deletion rate (%) over pieces with a 95% bootstrap interval resampling whole pieces."""
+    pieces = [p for p in pieces if p[0] > 0]
+    if not pieces:
+        return {"pieces": 0, "words": 0, "deletion_pct": math.nan, "low_pct": math.nan, "high_pct": math.nan}
+    total = sum(w for w, _d, _l in pieces)
+    rate = 100.0 * sum(d for _w, d, _l in pieces) / total
+    rng = random.Random(seed)
+    draws = []
+    for _ in range(resamples):
+        sample = [pieces[rng.randrange(len(pieces))] for _ in pieces]
+        words = sum(w for w, _d, _l in sample)
+        draws.append(100.0 * sum(d for _w, d, _l in sample) / words if words else 0.0)
+    draws.sort()
+    return {"pieces": len(pieces), "words": total, "deletion_pct": round(rate, 2),
+            "low_pct": round(draws[int(0.025 * resamples)], 2), "high_pct": round(draws[int(0.975 * resamples) - 1], 2)}
+
+
+def difference(first: Sequence[tuple[int, int, int]], second: Sequence[tuple[int, int, int]], *, resamples: int = 4000,
+               seed: int = 20261019) -> Estimate:
+    """Excess of ``first`` minus excess of ``second`` (independent sets of places), with a bootstrap interval."""
+    if not first or not second:
+        return Estimate(0, 0, 0.0, 0.0, 0.0)
+
+    def value(pairs: Sequence[tuple[int, int, int]]) -> float:
+        words = sum(n for _a, _b, n in pairs)
+        return 100.0 * sum(a - b for a, b, _n in pairs) / words if words else 0.0
+
+    rng = random.Random(seed)
+    draws = []
+    for _ in range(resamples):
+        a = [first[rng.randrange(len(first))] for _ in first]
+        b = [second[rng.randrange(len(second))] for _ in second]
+        draws.append(value(a) - value(b))
+    draws.sort()
+    return Estimate(len(first) + len(second), sum(n for _a, _b, n in first) + sum(n for _a, _b, n in second),
+                    value(first) - value(second), draws[int(0.025 * resamples)], draws[int(0.975 * resamples) - 1])
+
+
 def deletion_by_length(
     runs: Sequence[tuple[Sequence[RefWord], Scored]], edges: Sequence[float], *, trim: float = 2.0,
 ) -> list[dict[str, float | int | str]]:

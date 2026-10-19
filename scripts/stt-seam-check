@@ -164,7 +164,7 @@ def score_arm(arm: str, recordings: list[Recording], raw: Path, pairs_of: list[t
             "placebo": measure.paired_excess(placebo, resamples=resamples).as_dict(),
         })
     return {
-        "arm": arm, "per_recording": rows,
+        "arm": arm, "per_recording": rows, "_pooled_pairs": pooled,
         "pooled_excess": measure.paired_excess(pooled, resamples=resamples).as_dict(),
         "pooled_placebo": measure.paired_excess(placebo_pooled, resamples=resamples).as_dict(),
         "deletion_by_length": measure.deletion_by_length(scored_runs, EDGES),
@@ -172,11 +172,59 @@ def score_arm(arm: str, recordings: list[Recording], raw: Path, pairs_of: list[t
     }
 
 
+def run_length_sweep(repo: Path, lengths: list[float], recordings: list[Recording], args, raw: Path, port: int) -> dict:
+    """Send consecutive pieces of each length straight to the engine (the gateway's cutting is off) and score deletions."""
+    chunking = {"enabled": False, "max_duration_seconds": 7200, "backend_timeout_seconds": 180, "deadline_seconds": 3600}
+    state = Path(args.scratch) / f"sweep-{int(time.time())}"
+    tap = Tap(port + 1, "127.0.0.1", args.engine_port)
+    tap.start()
+    gateway = Gateway(repo, state, port, port + 1, chunking, args.model)
+    try:
+        gateway.start()
+        with httpx.Client() as client:
+            for recording in recordings:
+                for length in lengths:
+                    out = raw / f"sweep.{recording.key.replace('/', '_')}.{length:g}.json"
+                    if out.exists():
+                        continue
+                    count = int(args.sweep_seconds // length)
+                    texts, failures = [], []
+                    print(f"[sweep] {recording.key}: {count} pieces of {length:g} s ...", flush=True)
+                    for index in range(count):
+                        piece = state / "piece.wav"
+                        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{index * length}", "-t", f"{length}",
+                                        "-i", str(recording.audio), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(piece)], check=True)
+                        result = transcribe(client, gateway, tap, piece, args.model, args.request_timeout)
+                        texts.append(result.get("text", "") if result["status"] == 200 else "")
+                        if result["status"] != 200:
+                            failures.append({"index": index, "status": result["status"]})
+                        piece.unlink()
+                    out.write_text(json.dumps({"texts": texts, "failures": failures, "length": length}))
+    finally:
+        gateway.stop()
+        tap.stop()
+        shutil.rmtree(state, ignore_errors=True)
+    rows = []
+    for length in lengths:
+        pieces, failed = [], 0
+        for recording in recordings:
+            result = json.loads((raw / f"sweep.{recording.key.replace('/', '_')}.{length:g}.json").read_text())
+            failed += len(result["failures"])
+            count = len(result["texts"])
+            words = measure.normalize(" ".join(result["texts"]), FILLERS)
+            end = count * length
+            reference = [w for w in recording.words if w.mid < end]
+            run = measure.Run(words, [(i * length, (i + 1) * length) for i in range(count)])
+            pieces += measure.piece_counts(measure.score_run(reference, run))
+        rows.append({"length": length, "failed_pieces": failed, **measure.rate_interval(pieces)})
+    return {"rows": rows, "seconds_per_recording": args.sweep_seconds}
+
+
 def fmt(estimate: dict) -> str:
     return f"{estimate['excess_pp']:+.2f} [{estimate['low_pp']:+.2f}, {estimate['high_pp']:+.2f}] ({estimate['points']})"
 
 
-def report(results: list[dict], recordings: list[Recording], args, chunkings: dict, hard_max: float | None) -> str:
+def report(results: list[dict], recordings: list[Recording], args, chunkings: dict, hard_max: float | None, sweep: dict | None = None) -> str:
     lines = [f"# Real-speech seam check ({datetime.date.today()})", "",
              "Human reference transcripts, through the gateway route end to end, to the live engine (read only).", "",
              "## Recordings", "", "| recording | minutes | speakers | words | reference timing | licence |", "|---|---|---|---|---|---|"]
@@ -191,6 +239,9 @@ def report(results: list[dict], recordings: list[Recording], args, chunkings: di
         lines.append(f"| {recording.key} | " + " | ".join(fmt(r["per_recording"][index]["excess"]) for r in results) + " |")
     lines.append("| **pooled** | " + " | ".join("**" + fmt(r["pooled_excess"]) + "**" for r in results) + " |")
     lines.append("| noise floor (places away from every cut) | " + " | ".join(fmt(r["pooled_placebo"]) for r in results) + " |")
+    if len(results) > 1:
+        diff = measure.difference(results[0]["_pooled_pairs"], results[1]["_pooled_pairs"]).as_dict()
+        lines.append(f"| {results[0]['arm']} minus {results[1]['arm']} (independent places) | {fmt(diff)} |")
     lines += ["", "## Noise floor per recording", "", "| recording | " + " | ".join(f"{r['arm']} floor" for r in results) + " |", "|---|" + "---|" * len(results)]
     for index, recording in enumerate(recordings):
         lines.append(f"| {recording.key} | " + " | ".join(fmt(r["per_recording"][index]["placebo"]) for r in results) + " |")
@@ -205,6 +256,12 @@ def report(results: list[dict], recordings: list[Recording], args, chunkings: di
         lines.append(f"| {recording.key} | " + " | ".join(str(r["per_recording"][index]["wer_pct"]) for r in results) + " |")
     lines += ["", "| arm | requests | longest piece sent (s) | wall seconds |", "|---|---|---|---|"]
     lines += [f"| {r['arm']} | {r['requests']} | {r['longest_piece_seconds']} | {r['wall_seconds']} |" for r in results]
+    if sweep:
+        lines += ["", "## Deletion rate by piece length, pieces sent straight to the engine (gateway cutting off)", "",
+                  f"Consecutive pieces from the first {sweep['seconds_per_recording']:g} s of each recording; words 2 s inside each end; "
+                  "interval resamples whole pieces.", "", "| piece length (s) | pieces | words | deleted % [95%] | engine refused |", "|---|---|---|---|---|"]
+        lines += [f"| {r['length']:g} | {r['pieces']} | {r['words']} | {r['deletion_pct']} [{r['low_pct']}, {r['high_pct']}] | {r['failed_pieces']} |"
+                  for r in sweep["rows"]]
     if hard_max is not None:
         lines += ["", "## Acceptance (D47)", ""]
         for r in results:
@@ -233,6 +290,9 @@ def main() -> None:
     parser.add_argument("--request-timeout", type=float, default=3600.0)
     parser.add_argument("--resamples", type=int, default=4000)
     parser.add_argument("--allow-busy-gpu", action="store_true")
+    parser.add_argument("--length-sweep", type=lambda v: [float(x) for x in v.split(",")], default=None,
+                        help="also send consecutive pieces of these lengths (s) straight to the engine, using the last --arm's tree")
+    parser.add_argument("--sweep-seconds", type=float, default=900.0, help="audio per recording used for the length sweep")
     args = parser.parse_args()
 
     reason = None if args.allow_busy_gpu else gpu_busy()
@@ -258,8 +318,13 @@ def main() -> None:
         run_arm(name, Path(repo).resolve(), chunking, recordings, args, raw, args.port + 2 * index)
         target = float(chunking.get("target_seconds", 30))
         results.append(score_arm(name, recordings, raw, offsets_for(args, chunking), target, args.resamples))
-    (out / "results.json").write_text(json.dumps({"results": results, "chunking": chunkings}, indent=1))
-    (out / "REPORT.md").write_text(report(results, recordings, args, chunkings, args.hard_max))
+    sweep = None
+    if args.length_sweep:
+        sweep = run_length_sweep(Path(args.arm[-1].partition("=")[2]).resolve(), args.length_sweep, recordings, args, raw,
+                                 args.port + 2 * len(args.arm))
+    public = [{k: v for k, v in r.items() if not k.startswith("_")} for r in results]
+    (out / "results.json").write_text(json.dumps({"results": public, "chunking": chunkings, "length_sweep": sweep}, indent=1))
+    (out / "REPORT.md").write_text(report(results, recordings, args, chunkings, args.hard_max, sweep))
     print(f"wrote {out / 'REPORT.md'}")
 
 
