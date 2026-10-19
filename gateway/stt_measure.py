@@ -26,9 +26,10 @@ OK, SUBSTITUTED, DELETED = 0, 1, 2
 
 
 def normalize(text: str, drop: frozenset[str] = frozenset()) -> list[str]:
-    """Lowercase words with punctuation removed; apostrophes inside a word stay; ``drop`` words are removed."""
-    words = _WORD.findall(text.lower().replace("’", "'"))
-    return [word for word in words if word not in drop]
+    """Lowercase words with punctuation removed and apostrophes joined ("that's" -> "thats", as some corpora write
+    it); ``drop`` words are removed."""
+    words = (word.replace("'", "") for word in _WORD.findall(text.lower().replace("’", "'")))
+    return [word for word in words if word and word not in drop]
 
 
 @dataclass(frozen=True)

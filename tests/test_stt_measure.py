@@ -37,7 +37,8 @@ def test_alignment_labels_a_dropped_a_changed_and_an_added_word() -> None:
 
 
 def test_normalize_drops_punctuation_and_listed_fillers() -> None:
-    assert m.normalize("Well, it's -- uh -- fine!", frozenset({"uh"})) == ["well", "it's", "fine"]
+    assert m.normalize("Well, it's -- uh -- fine!", frozenset({"uh"})) == ["well", "its", "fine"]
+    assert m.normalize("That’s what you’re") == m.normalize("thats what youre")
 
 
 def _recording(seconds=900.0, step=0.4):

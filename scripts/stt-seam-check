@@ -51,7 +51,8 @@ class Recording:
 def load_recording(root: Path, key: str) -> Recording:
     folder = root / key
     ref = json.loads((folder / "ref.json").read_text())
-    words = [measure.RefWord(w["w"], w["t0"], w["t1"]) for w in ref["words"] if w["w"] not in FILLERS]
+    words = [measure.RefWord(joined, w["t0"], w["t1"]) for w in ref["words"]
+             for joined in measure.normalize(w["w"], FILLERS)]
     speakers = ref["speakers"] if isinstance(ref["speakers"], int) else len(ref["speakers"])
     return Recording(key, folder / "audio.wav", words, speakers, ref["duration_s"], ref.get("timing", "word"), ref.get("licence", ""))
 
