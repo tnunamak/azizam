@@ -18,6 +18,7 @@ import proxy
 from tests.support.access import access_context, plan_for
 from gateway import speech_stream, stt_chunking
 
+from tests.support.stt_pcm import planning_pcm
 from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart, _wav_bytes
 
 
@@ -676,7 +677,7 @@ class SttMidFileFallbackTests(SttCase):
 
         for patcher in (
             patch.object(stt_chunking, "probe_audio", side_effect=probe),
-            patch.object(stt_chunking, "detect_silences", new=unittest.mock.AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])),
+            planning_pcm(75, [20.0, 40.0, 60.0]),
             patch.object(stt_chunking, "extract_segment", side_effect=extract),
         ):
             patcher.start()

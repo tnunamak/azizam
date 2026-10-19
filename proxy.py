@@ -4913,7 +4913,7 @@ async def _dispatch_selected_stt_route(
                 break
             # Chunk attempts that began mean the engine failed part-way through a long file;
             # the next engine restarts the whole file.
-            chunks_started = int((receipt.metadata.get("stt") or {}).get("attempts_started") or 0)
+            chunks_started = int((receipt.metadata.get("stt") or {}).get("chunk_attempts") or 0)
             if chunks_started:
                 reason = f"{reason}@chunk{chunks_started}"
             # The engine could not serve this request for a reason another engine may not share.
@@ -5039,6 +5039,11 @@ async def _stt_terminal_response(
     async with ReceiptLifecycleOwner(receipt) as owner:
         owner.report(status=status, reason=reason)
     return response
+
+
+def _stt_audio_not_splittable_response(error: stt_chunking.SttAudioNotSplittable) -> Response:
+    """The audio is longer than the engine takes in one piece and could not be cut: say so, with the gateway's own words."""
+    return client_errors.stt_audio_cannot_be_split(error.reason, error.limit_seconds)
 
 
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
@@ -5267,8 +5272,9 @@ async def proxy_stt_request(
                     cancellation_waiters=waiters,
                     deadline_at=deadline_at,
                     on_cancel=signal_cancellation,
-                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
+                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count, "chunk_attempts": count}),
                     on_outcome=record_outcome,
+                    on_whole_file_attempt=lambda: receipt.metadata["stt"].update({"attempts_started": 1}),
                     wav16k_input=wav16k_input,
                     stream=streams,
                 ),
@@ -5369,6 +5375,9 @@ async def proxy_stt_request(
         except ModelCompatibilityError as error:
             owner.report(status="failed", reason="failed")
             return model_compatibility_error(error)
+        except stt_chunking.SttAudioNotSplittable as error:
+            owner.report(status="failed", reason="failed")
+            return _stt_audio_not_splittable_response(error)
         except stt_chunking.SttInvalidAudio:
             owner.report(status="failed", reason="failed")
             return openai_error_response(

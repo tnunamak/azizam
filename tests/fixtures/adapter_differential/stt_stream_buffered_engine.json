@@ -180,7 +180,7 @@
           "metadata": {
             "status_code": 200,
             "stt": {
-              "attempts_started": 0,
+              "attempts_started": 1,
               "chunked": false,
               "field_count": 3,
               "file_count": 1

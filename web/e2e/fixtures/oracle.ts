@@ -292,6 +292,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
         base_url: engineOrigin,
         protocol: "openai-compatible",
         capabilities: ["audio", "transcriptions"],
+        chunking: { native_long_audio: true },
         health_endpoint: "/health",
         models: [{ public: "whisper-large", upstream: "whisper-large" }],
         model_policy_schema_version: 1,
@@ -357,8 +358,8 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
         multipart: {
           file: { name: "clip.wav", mimeType: "audio/wav", buffer: silentWav() },
           model: "whisper-large",
-          // A field that makes the request ineligible for chunking, which would
-          // start ffprobe; the fixture gateway forbids that subprocess.
+          // This envelope passes through whole; the fixture service declares
+          // native long-audio handling, so no media probe is needed.
           "timestamp_granularities[]": "segment",
         },
       }),

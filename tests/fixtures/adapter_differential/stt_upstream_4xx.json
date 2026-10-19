@@ -167,7 +167,7 @@
           "metadata": {
             "status_code": 400,
             "stt": {
-              "attempts_started": 0,
+              "attempts_started": 1,
               "chunked": false,
               "field_count": 2,
               "file_count": 1

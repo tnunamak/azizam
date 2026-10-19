@@ -23,7 +23,9 @@ from starlette.requests import Request
 
 import proxy
 from tests.support.access import access_context
+from tests.support.stt_pcm import pcm_bytes, planning_pcm, write_pcm
 from gateway import stt_chunking
+from gateway import client_errors
 from gateway import service_registry
 from gateway.backends.cancellation import CancellationRegistry
 
@@ -158,83 +160,159 @@ class SttChunkMergeTests(unittest.TestCase):
             [("response_format", "verbose_json")], file_count=1
         ))
 
-    def test_silence_preferred_plan_forces_missing_seams(self) -> None:
-        for silences, expected in (
-            ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
-            ([(29, 31), (89, 91)], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
-            ([(24, 26), (94, 96)], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
-            ([(23, 25), (33, 34)], [(0.0, 33.5), (33.5, 60), (60, 90), (90, 125)]),
-        ):
-            with self.subTest(silences=silences):
-                self.assertEqual(stt_chunking.plan_silence_preferred_segments(
-                    duration_seconds=125, silences=silences,
-                    target_seconds=30, search_seconds=10, max_segments=64,
-                ), expected)
+    def _quietest(self, duration: float, quiet_at=(), **kwargs):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "planning.pcm"
+        write_pcm(path, duration, quiet_at, **kwargs)
+        return stt_chunking.quietest_frame_reader(path)
 
-    def test_silence_preferred_plan_covers_short_targets_and_tails(self) -> None:
-        for duration, target in ((80, 20), (31, 2), (60, 30), (30.001, 30), (125, 45), (1321.62, 30)):
-            with self.subTest(duration=duration, target=target):
-                segments = stt_chunking.plan_silence_preferred_segments(
-                    duration_seconds=duration, silences=[],
-                    target_seconds=target, search_seconds=10, max_segments=64,
+    def test_quietest_frame_is_the_lowest_energy_frame_and_ties_go_to_the_nearest(self) -> None:
+        quietest = self._quietest(60, quiet_at=[12.3, 40.0])
+        self.assertAlmostEqual(quietest(10, 15, 10.0), 12.3, delta=0.16)
+        self.assertAlmostEqual(quietest(38, 42, 41.9), 40.0, delta=0.16)
+        # A window with no quiet place and equal frames: the frame nearest `near`.
+        self.assertAlmostEqual(quietest(20, 25, 22.0), 22.0, delta=0.006)
+        self.assertAlmostEqual(quietest(20, 25, 20.0), 20.0, delta=0.006)
+        # The result always lies inside the window, also past the end of the data.
+        self.assertTrue(55 <= quietest(55, 70, 69.0) <= 70)
+        self.assertEqual(quietest(100, 110, 105.0), 105.0)
+
+    def test_the_quietest_frame_of_a_lower_floor_beats_a_nearer_quiet_one(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "planning.pcm"
+        loud = pcm_bytes(30, quiet_at=[], )
+        near_gap = pcm_bytes(30, quiet_at=[14.0], floor=300)
+        far_gap = pcm_bytes(30, quiet_at=[17.0], floor=0)
+        merged = bytearray(loud)
+        merged[int(13.8 * 32000):int(14.2 * 32000)] = near_gap[int(13.8 * 32000):int(14.2 * 32000)]
+        merged[int(16.8 * 32000):int(17.2 * 32000)] = far_gap[int(16.8 * 32000):int(17.2 * 32000)]
+        path.write_bytes(bytes(merged))
+        self.assertAlmostEqual(stt_chunking.quietest_frame_reader(path)(12, 20, 14.0), 17.0, delta=0.16)
+
+    def test_plan_cuts_at_the_quiet_place_near_each_target(self) -> None:
+        for quiet_at, expected in (
+            ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([30.0, 90.0], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([25.0, 95.0], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
+        ):
+            with self.subTest(quiet_at=quiet_at):
+                segments = stt_chunking.plan_quietest_frame_segments(
+                    duration_seconds=125, quietest_frame=self._quietest(125, quiet_at),
+                    target_seconds=30, search_seconds=10, max_segment_seconds=50, max_segments=64,
                 )
-                self.assertGreater(len(segments), 1)
+                self.assertEqual(len(segments), len(expected))
+                for (start, end), (want_start, want_end) in zip(segments, expected):
+                    self.assertAlmostEqual(start, want_start, delta=0.2)
+                    self.assertAlmostEqual(end, want_end, delta=0.2)
+
+    def test_plan_only_looks_near_the_target_and_does_not_chase_a_distant_quiet_place(self) -> None:
+        # Search 2 s: the quiet place at 24 s is out of reach of the 30 s target, so the cut stays at 30 s.
+        segments = stt_chunking.plan_quietest_frame_segments(
+            duration_seconds=70, quietest_frame=self._quietest(70, [24.0, 36.5]),
+            target_seconds=30, search_seconds=2, max_segment_seconds=40, max_segments=64,
+        )
+        self.assertAlmostEqual(segments[0][1], 30.0, delta=0.02)
+
+    def test_the_record_search_width_is_not_silently_narrowed(self) -> None:
+        segments = stt_chunking.plan_quietest_frame_segments(
+            duration_seconds=75, quietest_frame=self._quietest(75, [20.0]),
+            target_seconds=30, search_seconds=12, max_segment_seconds=50, max_segments=64,
+        )
+        self.assertAlmostEqual(segments[0][1], 20.0, delta=0.16)
+        self.assertLessEqual(max(end - start for start, end in segments), 50)
+
+    def test_plan_tiles_the_file_without_overlap_and_never_exceeds_the_hard_maximum(self) -> None:
+        for duration, target, search, maximum in (
+            (80, 20, 2, 24), (80, 20, 0, 20), (31, 2, 0.5, 2.5), (60, 30, 2, 40), (30.001, 30, 2, 40), (125, 45, 2, 60),
+            (1321.62, 30, 2, 40), (4 * 3600.3, 30, 2, 40), (200, 30, 10, 30), (200, 30, 2, 31), (36, 30, 2, 40),
+        ):
+            with self.subTest(duration=duration, target=target, maximum=maximum):
+                segments = stt_chunking.plan_quietest_frame_segments(
+                    duration_seconds=duration, quietest_frame=lambda lo, hi, near: near,
+                    target_seconds=target, search_seconds=search, max_segment_seconds=maximum, max_segments=100_000,
+                )
                 self.assertEqual(segments[0][0], 0)
                 self.assertEqual(segments[-1][1], duration)
                 self.assertEqual([end for _, end in segments[:-1]], [start for start, _ in segments[1:]])
-                self.assertTrue(all(0 < end - start <= target + min(30, target) for start, end in segments))
+                self.assertLessEqual(max(end - start for start, end in segments), maximum)
+                self.assertTrue(all(end - start >= 0.5 or len(segments) == 1 for start, end in segments))
                 self.assertAlmostEqual(sum(end - start for start, end in segments), duration)
-        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=80, silences=[(19, 21), (39, 41), (59, 61)],
-            target_seconds=20, search_seconds=8, max_segments=64,
-        ), [(0.0, 20), (20, 40), (40, 60), (60, 80)])
-        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=80, silences=[(29, 31)],
-            target_seconds=20, search_seconds=50, max_segments=64,
-        ), [(0.0, 20), (20, 40), (40, 60), (60, 80)])
-        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=50, silences=[(48, 52)],
-            target_seconds=40, search_seconds=10, max_segments=64,
-        ), [(0.0, 40), (40, 50)])
 
-    def test_silence_preferred_plan_bounds_opposing_offsets(self) -> None:
-        segments = stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=121, silences=[(19, 21), (69, 71)],
-            target_seconds=30, search_seconds=10, max_segments=64,
-        )
-        self.assertEqual(segments, [(0.0, 20), (20, 70), (70, 90), (90, 121)])
-        self.assertEqual(max(b - a for a, b in segments), 50)  # T + 2*S
-        self.assertEqual(segments[0][0], 0)
-        self.assertEqual(segments[-1][1], 121)
-        self.assertEqual([b for _, b in segments[:-1]], [a for a, _ in segments[1:]])
-        self.assertTrue(all(0 < b - a <= 70 for a, b in segments))
+    def test_plan_keeps_the_hard_maximum_against_an_adversarial_signal(self) -> None:
+        # The reader answers the least helpful place in the range it is given: always the far end, always the near end.
+        for name, reader in (
+            ("far end", lambda lo, hi, near: hi),
+            ("near end", lambda lo, hi, near: lo),
+            ("away from target", lambda lo, hi, near: hi if near - lo < hi - near else lo),
+        ):
+            for duration in (47.3, 500.0, 3601.7):
+                with self.subTest(reader=name, duration=duration):
+                    segments = stt_chunking.plan_quietest_frame_segments(
+                        duration_seconds=duration, quietest_frame=reader,
+                        target_seconds=30, search_seconds=2, max_segment_seconds=32, max_segments=10_000,
+                    )
+                    self.assertLessEqual(max(end - start for start, end in segments), 32)
+                    self.assertEqual(segments[-1][1], duration)
+                    self.assertEqual([end for _, end in segments[:-1]], [start for start, _ in segments[1:]])
 
-    def test_silence_preferred_plan_rejects_excessive_work(self) -> None:
-        class BoundedScans(list):
-            scans = 0
+    def test_plan_keeps_the_hard_maximum_on_audio_with_no_quiet_place_and_with_a_single_loud_burst(self) -> None:
+        for name, quiet_at, floor in (("no quiet place", [], 0), ("quiet at the window edges", [28.0, 32.0, 58.0, 62.0, 88.0, 92.0], 0)):
+            with self.subTest(case=name):
+                segments = stt_chunking.plan_quietest_frame_segments(
+                    duration_seconds=150, quietest_frame=self._quietest(150, quiet_at),
+                    target_seconds=30, search_seconds=2, max_segment_seconds=40, max_segments=64,
+                )
+                self.assertLessEqual(max(end - start for start, end in segments), 40)
+                self.assertEqual([end for _, end in segments[:-1]], [start for start, _ in segments[1:]])
 
-            def __iter__(self):
-                self.scans += 1
-                if self.scans > 3:
-                    raise AssertionError("Planner scanned beyond the segment budget")
-                return super().__iter__()
-
-        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=125, silences=[], target_seconds=30,
-            search_seconds=10, max_segments=4,
-        ), [(0.0, 30), (30, 60), (60, 90), (90, 125)])
-        with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
-            stt_chunking.plan_silence_preferred_segments(
-                duration_seconds=125, silences=[], target_seconds=30,
-                search_seconds=10, max_segments=3,
+    def test_plan_rejects_a_maximum_below_the_target_and_excessive_work(self) -> None:
+        with self.assertRaises(stt_chunking.SttConfigurationError):
+            stt_chunking.plan_quietest_frame_segments(
+                duration_seconds=100, quietest_frame=lambda lo, hi, near: near,
+                target_seconds=30, search_seconds=2, max_segment_seconds=29, max_segments=64,
             )
-        # Bound scan count and total possible cuts if the planning cap regresses.
-        silences = BoundedScans()
+        calls = []
+
+        def counted(lo, hi, near):
+            calls.append(near)
+            return near
+
+        self.assertEqual(len(stt_chunking.plan_quietest_frame_segments(
+            duration_seconds=125, quietest_frame=counted, target_seconds=30, search_seconds=2,
+            max_segment_seconds=40, max_segments=4,
+        )), 4)
+        calls.clear()
         with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
-            stt_chunking.plan_silence_preferred_segments(
-                duration_seconds=1321.62, silences=silences, target_seconds=0.01,
-                search_seconds=0.001, max_segments=3,
+            stt_chunking.plan_quietest_frame_segments(
+                duration_seconds=1321.62, quietest_frame=counted, target_seconds=0.6,
+                search_seconds=0.1, max_segment_seconds=1.0, max_segments=3,
             )
+        self.assertLessEqual(len(calls), 3)
+
+    def test_record_fields_default_and_say_where_the_hard_maximum_came_from(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            declared = _config(root, target_seconds=30, threshold_seconds=40, search_seconds=2, max_segment_seconds=40, native_long_audio="true")
+            self.assertEqual(
+                (declared.target_seconds, declared.search_seconds, declared.max_segment_seconds, declared.native_long_audio),
+                (30.0, 2.0, 40.0, True),
+            )
+            self.assertEqual(declared.chunking_view()["from_bundled_defaults"], [])
+            undeclared = _config(root, target_seconds=30, threshold_seconds=60)
+            self.assertEqual((undeclared.search_seconds, undeclared.max_segment_seconds, undeclared.native_long_audio), (2.0, 34.0, False))  # target + 2 * search: the bundled `derive`
+            self.assertFalse(undeclared.max_segment_declared)
+            self.assertEqual(undeclared.chunking_view()["from_bundled_defaults"], ["search_seconds", "max_segment_seconds"])
+            # A file above the hard maximum is always cut, whatever the threshold says.
+            self.assertEqual(undeclared.chunk_above_seconds, 34.0)
+            self.assertEqual(declared.chunk_above_seconds, 40.0)
+            with self.assertRaises(stt_chunking.SttConfigurationError):
+                _config(root, target_seconds=30, threshold_seconds=60, max_segment_seconds=20)
+            self.assertEqual(_config(root, target_seconds=30, threshold_seconds=40, search_seconds=0).search_seconds, 0.0)
+            # Keys of the silence-based planner are no longer read; a record that still holds them gets the defaults.
+            legacy = _config(root, target_seconds=30, threshold_seconds=40, silence_search_seconds=10, silence_noise_db="-30dB", silence_min_seconds=0.5)
+            self.assertEqual((legacy.search_seconds, legacy.max_segment_seconds), (2.0, 34.0))
 
     def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
         parsed = [
@@ -383,17 +461,37 @@ class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_missing_silence_posts_only_bounded_segments(self) -> None:
-        for silences, expected in (
+    async def test_extraction_refuses_a_piece_whose_actual_duration_exceeds_the_hard_maximum(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
+            destination = root / "piece.wav"
+
+            async def fake_command(args, **_kwargs):
+                destination.write_bytes(b"RIFF" + b"x" * 100)
+                return b"", b""
+
+            with (
+                patch.object(stt_chunking, "run_media_command", new=AsyncMock(side_effect=fake_command)),
+                patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(40.05, 16000, 1))),
+            ):
+                with self.assertRaises(stt_chunking.SttSetupFailure):
+                    await stt_chunking.extract_segment(
+                        root / "source.wav", destination, start_seconds=0, end_seconds=40, config=config,
+                        cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                    )
+
+    async def test_the_quietest_places_decide_the_cuts_and_every_segment_stays_bounded(self) -> None:
+        for quiet_at, expected in (
             ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
-            ([(29, 31), (89, 91)], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
-            ([(24, 26), (94, 96)], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
+            ([30.0, 90.0], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([25.0, 95.0], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
         ):
-            with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
+            with self.subTest(quiet_at=quiet_at), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 source = root / "source.wav"
                 source.write_bytes(b"original")
-                config = _config(root, target_seconds=30, threshold_seconds=40, silence_search_seconds=10, max_duration_seconds=150)
+                config = _config(root, target_seconds=30, threshold_seconds=40, search_seconds=10, max_duration_seconds=150)
                 extracted = []
                 posted = []
 
@@ -407,7 +505,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     posted.append(path)
                     return stt_chunking.UpstreamResponse(200, b'{"text":"repeat"}', {})
 
-                with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=silences)), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+                with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), planning_pcm(125, quiet_at), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
                     outcome = await stt_chunking.execute_chunking(
                         source_path=source, source_stem="source", fields=[("response_format", "json")],
                         config=config, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
@@ -415,9 +513,116 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertEqual(outcome.mode, "chunked")
                 self.assertEqual(outcome.attempts_started, 4)
-                self.assertEqual(extracted, expected)
+                self.assertEqual(len(extracted), len(expected))
+                for (start, end), (want_start, want_end) in zip(extracted, expected):
+                    self.assertAlmostEqual(start, want_start, delta=0.2)
+                    self.assertAlmostEqual(end, want_end, delta=0.2)
+                self.assertLessEqual(max(end - start for start, end in extracted), config.max_segment_seconds)
                 self.assertEqual(len(posted), 4)
                 self.assertEqual(outcome.merged_payload, {"text": "repeat repeat repeat repeat"})
+                self.assertFalse(any(root.glob("planning-*")))
+
+    async def _run_unplannable(self, *, probed, decode_error=None, probe_error=None, **limits):
+        """Run execute_chunking on a file whose planning fails; return (outcome or raised error, posts)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=3000, **limits)
+            posts = []
+
+            async def post(_path, filename):
+                posts.append(filename)
+                return stt_chunking.UpstreamResponse(200, b'{"text":"x"}', {})
+
+            patches = [patch.object(stt_chunking, "probe_audio", new=AsyncMock(
+                return_value=probed, side_effect=probe_error))]
+            patches.append(patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=decode_error)))
+            with patches[0], patches[1]:
+                try:
+                    result = await stt_chunking.execute_chunking(
+                        source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                        post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                    )
+                except stt_chunking.SttExecutionError as error:
+                    result = error
+            return result, posts
+
+    async def test_a_file_above_the_maximum_that_cannot_be_planned_is_refused_not_sent_whole(self) -> None:
+        long_file = stt_chunking.ProbedAudio(1320, 16000, 1)
+        for name, kwargs, reason in (
+            ("probe cannot determine a duration", {"probed": None, "probe_error": stt_chunking.SttMediaCommandFailed("x")}, "unknown_duration"),
+            ("decoder rejects the file", {"probed": long_file, "decode_error": stt_chunking.SttMediaCommandFailed("x")}, "unreadable_media"),
+            ("a local tool is missing", {"probed": long_file, "decode_error": stt_chunking.SttSetupFailure("x")}, "split_failed"),
+            ("the decoded audio cannot be read", {"probed": long_file, "decode_error": OSError("disk")}, "split_failed"),
+        ):
+            with self.subTest(name):
+                result, posts = await self._run_unplannable(**kwargs)
+                self.assertIsInstance(result, stt_chunking.SttAudioNotSplittable)
+                self.assertEqual((result.reason, result.limit_seconds, posts), (reason, 40.0, []))
+
+    async def test_unknown_duration_refusal_does_not_claim_the_file_is_long(self) -> None:
+        result, posts = await self._run_unplannable(
+            probed=None, probe_error=stt_chunking.SttMediaCommandFailed("secret ffprobe output")
+        )
+        self.assertEqual(posts, [])
+        self.assertIsInstance(result, stt_chunking.SttAudioNotSplittable)
+        response = client_errors.stt_audio_cannot_be_split(result.reason, result.limit_seconds)
+        self.assertEqual(response.status_code, 422)
+        message = json.loads(response.body)["error"]["message"]
+        self.assertIn("could not determine", message)
+        self.assertIn("40-second limit", message)
+        self.assertNotIn("longer than", message)
+        self.assertNotIn("secret", message)
+
+    async def test_a_file_the_engine_takes_whole_or_a_native_long_audio_engine_still_passes_through(self) -> None:
+        short_file = stt_chunking.ProbedAudio(41, 16000, 1)  # above the 40 s threshold, not above the 40 s... see below
+        for name, kwargs in (
+            ("native long-audio engine", {"probed": stt_chunking.ProbedAudio(1320, 16000, 1), "decode_error": stt_chunking.SttSetupFailure("x"), "native_long_audio": True}),
+            ("a hard maximum above the file", {"probed": short_file, "decode_error": stt_chunking.SttSetupFailure("x"), "max_segment_seconds": 60}),
+        ):
+            with self.subTest(name):
+                limits = {key: kwargs.pop(key) for key in ("native_long_audio", "max_segment_seconds") if key in kwargs}
+                if "max_segment_seconds" in limits:
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        root = Path(temp_dir)
+                        source = root / "source.wav"
+                        source.write_bytes(b"source")
+                        config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=60)
+                        with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=short_file)), patch.object(
+                            stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=stt_chunking.SttSetupFailure("x"))
+                        ):
+                            result = await stt_chunking.execute_chunking(
+                                source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                                post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                            )
+                else:
+                    result, _posts = await self._run_unplannable(**kwargs, **limits)
+                self.assertEqual((result.mode, result.attempts_started, result.fallback_reason), ("passthrough", 0, "setup_failed_before_attempt"))
+
+    async def test_the_error_policy_still_raises_the_setup_failure_itself(self) -> None:
+        result, posts = await self._run_unplannable(
+            probed=stt_chunking.ProbedAudio(1320, 16000, 1), decode_error=stt_chunking.SttSetupFailure("x"), setup_failure_policy="error",
+        )
+        self.assertIs(type(result), stt_chunking.SttSetupFailure)
+        self.assertEqual(posts, [])
+
+    async def test_a_short_file_is_not_decoded_for_planning(self) -> None:
+        decode = AsyncMock()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(40, 16000, 1))), patch.object(
+                stt_chunking, "decode_planning_pcm", new=decode,
+            ):
+                outcome = await stt_chunking.execute_chunking(
+                    source_path=source, source_stem="source", fields=[("response_format", "json")],
+                    config=_config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40),
+                    post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                )
+        self.assertEqual((outcome.mode, outcome.fallback_reason), ("passthrough", "below_threshold"))
+        decode.assert_not_awaited()
 
     async def test_media_child_is_killed_and_reaped_on_task_cancellation(self) -> None:
         class BlockingReader:
@@ -479,7 +684,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
                 cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
             )
-            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))), planning_pcm(75, [20.0, 40.0, 60.0]), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
                 with self.assertRaises(stt_chunking.SttBackendTimeout):
                     await stt_chunking.execute_chunking(post_file=timeout_post, **common)
                 outcome = await stt_chunking.execute_chunking(post_file=redirect_post, **common)
@@ -491,14 +696,16 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         async def extract(_source, destination, **_kwargs):
             Path(destination).write_bytes(b"RIFFchunk")
 
-        for rows, policy, expected in (
-            ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", "chunked"),
-            ([{"kind": "no-such-kind"}], "passthrough", "passthrough"),
-            (["no-such-transform"], "error", stt_chunking.SttSetupFailure),
+        for rows, policy, limits, expected in (
+            ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", {}, "chunked"),
+            # The engine takes a 75 s file whole, so a row that cannot run lets it pass; for a file above the maximum it refuses.
+            ([{"kind": "no-such-kind"}], "passthrough", {"max_segment_seconds": 100}, "passthrough"),
+            ([{"kind": "no-such-kind"}], "passthrough", {}, stt_chunking.SttSetupFailure),
+            (["no-such-transform"], "error", {}, stt_chunking.SttSetupFailure),
         ):
-            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as temp_dir:
+            with self.subTest(rows=rows, limits=limits), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                base = _config(root, setup_failure_policy=policy)
+                base = _config(root, setup_failure_policy=policy, **limits)
                 config = stt_chunking.SttExecutionConfig.from_service(
                     service_id="stt-test", config_directory=root,
                     service_config={**base.backend_config, "transforms": rows},
@@ -518,7 +725,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 )
                 with (
                     patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
-                    patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])),
+                    planning_pcm(75, [20.0, 40.0, 60.0]),
                     patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
                 ):
                     if isinstance(expected, type):
@@ -529,7 +736,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     outcome = await run
                 self.assertEqual(outcome.mode, expected)
                 if expected == "chunked":
-                    self.assertEqual(outcome.merged_payload, {"text": "part part part"})
+                    self.assertEqual(outcome.merged_payload, {"text": "part part part part"})
                 else:
                     self.assertEqual((outcome.fallback_reason, posted), ("setup_failed_before_attempt", []))
 
@@ -552,7 +759,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
-                patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])),
+                planning_pcm(75, [20.0, 40.0, 60.0]),
                 patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
             ):
                 with self.assertRaises(stt_chunking.SttChunkAttemptError):
@@ -657,8 +864,8 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.httpx, "AsyncClient", Client),
                 patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", stt_chunking.SttResourceGate()),
                 patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
-                patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[])),
-                patch.object(stt_chunking, "plan_silence_preferred_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
+                patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock()),
+                patch.object(stt_chunking, "plan_quietest_frame_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
                 patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
                 patch.object(proxy.receipt_store, "begin"),
                 patch.object(proxy.receipt_store, "finalize", return_value=True),
@@ -722,7 +929,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
         SttSetupFailure for every such recording, which — under the
         operator's setup_failure_policy: passthrough default — sent the
         whole file to the STT backend in one request instead of letting
-        threshold/silence-aware chunking engage."""
+        threshold/quiet-place chunking engage."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.webm"
@@ -844,9 +1051,9 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(probed.channels, 1)
 
     async def test_segment_limit_and_deadline_are_deterministic(self) -> None:
-        # The same admission contract covers silence-selected and forced cuts.
-        for silences in ([], [(19, 21), (39, 41)]):
-            with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
+        # The same admission contract covers cuts at a quiet place and cuts with none.
+        for quiet_at in ([], [20.0, 40.0]):
+            with self.subTest(quiet_at=quiet_at), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 source = root / "source.wav"
                 source.write_bytes(b"source")
@@ -855,7 +1062,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 post = AsyncMock()
                 with (
                     patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
-                    patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=silences)),
+                    planning_pcm(75, quiet_at),
                     patch.object(stt_chunking, "extract_segment", new=extract),
                 ):
                     with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
@@ -899,8 +1106,8 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 on_cancel=None,
             )
             self.assertEqual(outcome.mode, "chunked")
-            self.assertEqual(outcome.merged_payload, {"text": "part-1 part-2 part-3"})
-            self.assertEqual(len(uploaded), 3)
+            self.assertEqual(outcome.merged_payload, {"text": "part-1 part-2 part-3 part-4"})
+            self.assertEqual(len(uploaded), 4)
             self.assertFalse(any(root.glob("segment-*.wav")))
 
 
@@ -1082,7 +1289,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_asgi_disconnect_cancels_delayed_downstream_upload_and_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, enabled=False)
+            config = _config(root, enabled=False, native_long_audio=True)
             body, content_type = _multipart_body()
             disconnect = asyncio.Event()
             sent = False
@@ -1116,16 +1323,16 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 499)
             self.assertEqual(finalized, began)
             self.assertEqual(finalized[0].status, "cancelled")
-            self.assertEqual(finalized[0].metadata["stt"]["attempts_started"], 0)
+            self.assertEqual(finalized[0].metadata["stt"]["attempts_started"], 1)  # the whole-file request was started
             self.assertTrue(_BlockingSttClient.closed)
             self.assertEqual(list((root / "spool").glob("*")), [])
 
     async def test_real_asgi_disconnect_wins_every_stt_await_boundary(self) -> None:
         """The persistent ASGI watcher wins probe, media, upload, and read races."""
-        for boundary in ("probe", "silence", "extract", "chunk_post", "response_read", "fallback_post"):
+        for boundary in ("probe", "plan", "extract", "chunk_post", "response_read", "fallback_post"):
             with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                config = _config(root, enabled=boundary != "fallback_post")
+                config = _config(root, enabled=boundary != "fallback_post", native_long_audio=boundary == "fallback_post")
                 body, content_type = _multipart_body()
                 disconnect = asyncio.Event()
                 sent = False
@@ -1159,9 +1366,10 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                             f'{{"format":{{"duration":"{duration}"}},"streams":[{{"codec_type":"audio","sample_rate":"8000","channels":1}}]}}'.encode(),
                             b"",
                         )
-                    if any("silencedetect" in str(part) for part in command):
-                        await block_or_return("silence", cancellation_waiters, deadline_at, on_cancel)
-                        return b"", b"silence_start: 19\nsilence_end: 21 | silence_duration: 2\nsilence_start: 39\nsilence_end: 41 | silence_duration: 2\n"
+                    if "s16le" in command:
+                        await block_or_return("plan", cancellation_waiters, deadline_at, on_cancel)
+                        Path(command[-1]).write_bytes(pcm_bytes(75, [20.0, 40.0]))
+                        return b"", b""
                     await block_or_return("extract", cancellation_waiters, deadline_at, on_cancel)
                     Path(command[-1]).write_bytes(b"RIFF" + b"x" * 64)
                     return b"", b""
@@ -1261,22 +1469,132 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                     receive,
                 )
                 probe = AsyncMock(return_value=stt_chunking.ProbedAudio(2, 8000, 1))
+                finalized = []
                 with (
                     patch.object(proxy, "_stt_execution_snapshot", return_value=config),
                     patch.object(proxy.httpx, "AsyncClient", side_effect=client_factory),
                     patch.object(stt_chunking, "probe_audio", new=probe),
                     patch.object(proxy.receipt_store, "begin"),
-                    patch.object(proxy.receipt_store, "finalize", return_value=True),
+                    patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
                 ):
                     response = await proxy.proxy_stt_request(request, access_context())
 
+                # The whole-file request is an upstream attempt, so the receipt does not say "0 attempts".
+                self.assertEqual((finalized[0].metadata["stt"]["attempts_started"], finalized[0].metadata["stt"]["chunked"]), (1, False))
+                self.assertNotIn("chunk_attempts", finalized[0].metadata["stt"])
                 self.assertEqual(response.status_code, 203)
                 self.assertEqual(response.body, b'{"text":"direct","segments":[]}')
                 self.assertEqual(response.headers["x-local-transport"], "yes")
                 self.assertNotIn("connection", response.headers)
                 self.assertEqual(len(received), 1)
                 self.assertTrue(str(received[0].url).endswith("/v1/audio/transcriptions"))
-                self.assertEqual(probe.await_count, 1 if kind == "short" else 0)
+                self.assertEqual(probe.await_count, 1)
+                self.assertEqual(list((root / "spool").glob("*")), [])
+
+    async def test_an_ineligible_long_request_is_refused_before_an_upstream_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _config(root, threshold_seconds=40, target_seconds=30, max_segment_seconds=40)
+            body, content_type = _multipart_body(content=b"RIFF-long", fields=(("model", "whisper-1"),
+                                                                              ("response_format", "verbose_json")))
+            sent = False
+
+            async def receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                await asyncio.Future()
+
+            contacted = []
+
+            class NeverCalled:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                async def post(self, *args, **kwargs):
+                    contacted.append("post")
+
+                async def aclose(self):
+                    return None
+
+            request = Request(
+                {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions",
+                 "headers": [(b"content-type", content_type.encode())]}, receive)
+            finalized = []
+            with (
+                patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                patch.object(proxy.httpx, "AsyncClient", NeverCalled),
+                patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(120, 16000, 1))),
+                patch.object(proxy.receipt_store, "begin"),
+                patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
+            ):
+                response = await proxy.proxy_stt_request(request, access_context())
+
+            assert response.status_code == 422
+            assert json.loads(response.body)["error"]["code"] == "stt_audio_cannot_be_split"
+            assert contacted == []
+            assert finalized[0].metadata["stt"]["attempts_started"] == 0
+
+    async def test_the_route_refuses_a_long_unplannable_file_in_the_gateways_words_and_posts_nothing(self) -> None:
+        for reason, error, status in (
+            ("unreadable_media", stt_chunking.SttMediaCommandFailed("secret-path /srv/x ffmpeg said sk-1234"), 422),
+            ("split_failed", stt_chunking.SttSetupFailure("secret-path /srv/x"), 502),
+        ):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=3000)
+                body, content_type = _multipart_body(content=b"RIFF-long", fields=(("model", "whisper-1"),))
+                sent = False
+
+                async def receive():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    await asyncio.Future()
+
+                contacted = []
+
+                class NeverCalled:
+                    def __init__(self, *args, **kwargs):
+                        pass
+
+                    def build_request(self, *args, **kwargs):
+                        contacted.append("build_request")
+
+                    async def post(self, *args, **kwargs):
+                        contacted.append("post")
+
+                    async def send(self, *args, **kwargs):
+                        contacted.append("send")
+
+                    async def aclose(self):
+                        return None
+
+                request = Request(
+                    {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                    receive,
+                )
+                finalized = []
+                with (
+                    patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                    patch.object(proxy.httpx, "AsyncClient", NeverCalled),
+                    patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(1320, 16000, 1))),
+                    patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=error)),
+                    patch.object(proxy.receipt_store, "begin"),
+                    patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
+                ):
+                    response = await proxy.proxy_stt_request(request, access_context())
+
+                self.assertEqual(response.status_code, status)
+                payload = json.loads(response.body)["error"]
+                self.assertEqual(payload["code"], "stt_audio_cannot_be_split")
+                self.assertIn("longer than 40 seconds", payload["message"])
+                self.assertNotIn("secret-path", response.body.decode())
+                self.assertNotIn("sk-1234", response.body.decode())
+                self.assertEqual((finalized[0].status, finalized[0].metadata["stt"]["attempts_started"]), ("failed", 0))
+                self.assertEqual(contacted, [])
                 self.assertEqual(list((root / "spool").glob("*")), [])
 
     async def test_decoded_direct_success_error_and_redirect_drop_representation_headers(self) -> None:
@@ -1284,7 +1602,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
         for status, encoding in ((200, "gzip"), (500, "deflate"), (302, "gzip, deflate")):
             with self.subTest(status=status, encoding=encoding), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                config = _config(root, enabled=False)
+                config = _config(root, enabled=False, native_long_audio=True)
                 body, content_type = _multipart_body(content=b"RIFF-encoded")
                 sent = False
                 decoded = b'{"text":"decoded"}'
