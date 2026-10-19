@@ -49,10 +49,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"message\": \"unsupported audio\", \"type\": \"invalid_request_error\"}}"
+          "text": "{\"error\": {\"message\": \"The engine rejected the request.\", \"type\": \"invalid_request_error\", \"param\": null, \"code\": null}}"
         },
         "headers": {
-          "content-length": "76",
+          "content-length": "120",
           "content-type": "application/json"
         },
         "status": 400

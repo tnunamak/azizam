@@ -473,9 +473,11 @@ class AnthropicConformanceTests(unittest.TestCase):
         r = self.post(upstream, self.USER)
         self.assertEqual(r.status_code, 404)
         validate("ErrorResponse", r.json())
+        # the engine's words decide only that the model is unknown; the name is the caller's own (decision D45)
         self.assertEqual(
-            r.json()["error"], {"type": "not_found_error", "message": "model: nope-x"}
+            r.json()["error"], {"type": "not_found_error", "message": "model: default"}
         )
+        self.assertNotIn("nope-x", r.text)
 
     def test_upstream_statuses_map_to_anthropic_error_types(self) -> None:
         for status, kind in ((429, "rate_limit_error"), (503, "api_error"), (401, "authentication_error")):

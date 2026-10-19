@@ -96,7 +96,8 @@ def test_an_engine_that_drops_mid_stream_aborts_the_client_stream(fake_upstreams
 
     with pytest.raises(Exception) as dropped:
         asyncio.run(call())
-    assert "peer closed connection" in str(dropped.value)
+    # the failure names the class of the transport error and not its text (decision D44)
+    assert "RemoteProtocolError" in str(dropped.value) and "peer closed connection" not in str(dropped.value)
     _expect_forwarded(fake)
 
 
@@ -106,7 +107,7 @@ def test_a_rate_limited_engine_status_and_retry_after_reach_the_caller(fake_upst
     response = asyncio.run(_open(fake))
 
     assert response.status_code == 429
-    assert json.loads(response.body)["error"]["type"] == "rate_limited"
+    assert json.loads(response.body)["error"]["type"] == "rate_limit_error"   # the engine's own type is not on the list: the status's type
     assert response.headers.get("retry-after") == "7"
     _expect_forwarded(fake)
 

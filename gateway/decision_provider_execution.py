@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import category_enforcement, providers
+from gateway import category_enforcement, client_errors, providers
 from gateway.capabilities import Capability
 from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 from gateway.decisions_api import DecisionDispatchResult
@@ -447,8 +447,9 @@ async def openai(
                 "x-azizam-provider": provider.id,
                 "x-azizam-cost-usd": str(receipt.cost["usd"]) if receipt.cost and receipt.cost.get("usd") is not None else "unknown",
             }
-            if upstream_headers.get("retry-after"):
-                headers["retry-after"] = upstream_headers["retry-after"]
+            seconds = client_errors.retry_after(upstream_headers.get("retry-after"))
+            if seconds is not None:
+                headers["retry-after"] = seconds
             return Response(upstream_content, status_code=upstream_status, media_type=upstream_headers.get("content-type", "application/json"), headers=headers)
         except TimeoutError:
             owner.report(status="failed", reason="deadline_exceeded")

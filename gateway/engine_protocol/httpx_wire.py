@@ -25,12 +25,17 @@ def lower_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
 
 
 def failure(error: Exception) -> TransportFailure:
-    """The typed failure for an httpx error: ``timeout``, ``unreachable`` or ``aborted``, keeping the original text."""
+    """The typed failure for an httpx error: ``timeout``, ``unreachable`` or ``aborted``.
+
+    The message names the class of the error and not its text: an httpx error text can name the URL, which can hold a
+    credential (decision D44).
+    """
+    name = type(error).__name__
     if isinstance(error, httpx.TimeoutException):
-        return TransportFailure("timeout", str(error))
+        return TransportFailure("timeout", f"The engine did not answer in time ({name}).")
     if isinstance(error, httpx.ConnectError):
-        return TransportFailure("unreachable", str(error))
-    return TransportFailure("aborted", str(error))
+        return TransportFailure("unreachable", f"The engine could not be reached ({name}).")
+    return TransportFailure("aborted", f"The connection to the engine failed ({name}).")
 
 
 def supplied(**options: Any) -> dict[str, Any]:

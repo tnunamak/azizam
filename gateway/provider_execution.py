@@ -18,7 +18,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from gateway import category_enforcement, providers
+from gateway import category_enforcement, client_errors, providers
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders, LlmExecutionPredispatchError,
     LiteLlmRuntimeConfig, LlmExecutionRequest, RequestDisconnectWatcher,
@@ -624,8 +624,9 @@ async def execute_paid_litellm(
                 await watcher.aclose()
         cost = providers.extract_provider_cost(provider, headers=response.headers)
         headers = {"x-azizam-request-id": receipt.request_id, "x-azizam-remote": "1"}
-        if response.headers.get("retry-after"):
-            headers["retry-after"] = response.headers["retry-after"]
+        seconds = client_errors.retry_after(response.headers.get("retry-after"))
+        if seconds is not None:
+            headers["retry-after"] = seconds
         if response.status_code >= 400:
             # Do not reflect vendor exception text, URLs or auth headers.
             unbilled_rejection = cost.usd is None and response.status_code in {401, 403, 429}

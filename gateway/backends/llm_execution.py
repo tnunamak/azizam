@@ -8,6 +8,7 @@ Keep it narrow so the substrate boundary does not become a second router.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 from dataclasses import dataclass
 import asyncio
@@ -186,7 +187,9 @@ def _litellm_service_candidates(
 def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
     env_name = str(config.get("api_key_env") or config.get("api_key_ref") or "").strip()
     if env_name:
-        return get_env(env_name, "", environ=env)
+        value = get_env(env_name, "", environ=env)
+        log_scrub.remember(value, f"env:{env_name}")
+        return value
     return ""
 
 

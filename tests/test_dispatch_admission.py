@@ -22,7 +22,7 @@ from starlette.responses import Response
 
 import proxy
 from tests.support.access import authenticated, identity, plan_for  # noqa: E402
-from gateway import media_jobs, receipt_store, receipts, media_ingestion
+from gateway import client_errors, media_jobs, receipt_store, receipts, media_ingestion
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 CASES = [
@@ -282,10 +282,10 @@ def test_non_admission_upstream_error_keeps_legacy_envelope(dispatch_env, monkey
     assert response.status_code == 502
     payload = response.json()
     if protocol == 'anthropic':
-        assert payload['error']['message'] == 'ordinary backend error'
+        assert payload['error']['message'] == client_errors.status_reason(502)   # the engine's words are not passed on (D45)
         assert payload['type'] == 'error'
     else:
-        assert payload == {'error': 'ordinary backend error'}
+        assert payload == {'error': client_errors.status_reason(502)}
     assert 'admission' not in payload
 
 

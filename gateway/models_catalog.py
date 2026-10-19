@@ -990,11 +990,14 @@ async def probe_service_health(
     *,
     get_json: Callable[[str], Awaitable[Mapping[str, Any] | None]],
     service_ids: Iterable[str] | None = None,
+    endpoint_for: Callable[[Mapping[str, Any]], str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Probe generic service health endpoints declared as data.
 
     Services without ``health_endpoint`` are reported as unknown. This function
-    never infers readiness from enablement alone.
+    never infers readiness from enablement alone. ``endpoint_for`` turns a service
+    record into the URL to probe; the gateway passes one that puts the record's
+    stored credentials back, this module never reads them.
     """
 
     services = _services_mapping(service_records)
@@ -1002,7 +1005,7 @@ async def probe_service_health(
 
     async def probe_one(service_id: str) -> tuple[str, dict[str, Any]]:
         service = services.get(service_id)
-        endpoint = _health_endpoint(service) if isinstance(service, Mapping) else None
+        endpoint = (endpoint_for or _health_endpoint)(service) if isinstance(service, Mapping) else None
         if not endpoint:
             # Nothing was checked, so this evidence has no observation time.
             return service_id, {

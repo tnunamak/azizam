@@ -42,10 +42,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"azizam_object\": \"video.generation\", \"status\": \"failed\", \"azizam_status\": \"failed\", \"progress\": 100, \"completed_at\": \"<time>\", \"expires_at\": \"<time>\", \"prompt\": null, \"remixed_from_video_id\": null, \"error\": {\"code\": \"video_generation_failed\", \"message\": \"ComfyUI LTXVSampler node 12: execution failed\"}, \"model\": \"ltx-2.5-t2v\", \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417, \"created_at\": \"<time>\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"updated_at\": \"<time>\"}"
+          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"azizam_object\": \"video.generation\", \"status\": \"failed\", \"azizam_status\": \"failed\", \"progress\": 100, \"completed_at\": \"<time>\", \"expires_at\": \"<time>\", \"prompt\": null, \"remixed_from_video_id\": null, \"error\": {\"code\": \"video_generation_failed\", \"message\": \"ComfyUI LTXVConcatAVLatent node 12: execution failed\"}, \"model\": \"ltx-2.5-t2v\", \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417, \"created_at\": \"<time>\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"updated_at\": \"<time>\"}"
         },
         "headers": {
-          "content-length": "<520 after normalisation>",
+          "content-length": "<527 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200

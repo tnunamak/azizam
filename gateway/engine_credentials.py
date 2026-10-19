@@ -8,7 +8,7 @@ import sqlite3
 from cryptography.exceptions import InvalidTag
 from typing import Any, Mapping
 
-from gateway import admin_store, secret_store
+from gateway import admin_store, log_scrub, secret_store
 
 
 class CredentialUnavailable(ValueError):
@@ -54,6 +54,7 @@ def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict
             raise ValueError("engine credential is not approved for this connection") from None
         except (KeyError, OSError, InvalidTag, sqlite3.Error):
             raise CredentialUnavailable("engine credential reference is unavailable") from None
+    log_scrub.remember(value, reference)
     if "\r" in value or "\n" in value:
         raise ValueError("engine credential value is invalid")
     return {header: f"{scheme} {value}" if scheme else value}

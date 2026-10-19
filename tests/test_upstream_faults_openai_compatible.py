@@ -172,7 +172,7 @@ def test_upstream_drop_mid_stream_ends_with_an_error_event(fake_upstreams, monke
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
-def test_rate_limit_keeps_status_retry_after_and_error_body(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
+def test_rate_limit_keeps_status_retry_after_and_machine_fields_in_our_words(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "rate-limited")
 
     async def call() -> httpx.Response:
@@ -183,7 +183,9 @@ def test_rate_limit_keeps_status_retry_after_and_error_body(fake_upstreams, monk
 
     assert response.status_code == 429
     assert response.headers["retry-after"] == "7"
-    assert response.json() == {"error": {"message": "Rate limit reached for requests", "type": "requests", "param": None, "code": "rate_limit_exceeded"}}
+    # the engine's message is replaced by the gateway's sentence for its machine code (decision D44)
+    assert response.json() == {"error": {"message": "The engine is busy or limiting requests. Try again later.", "type": "requests",
+                                         "param": None, "code": "rate_limit_exceeded"}}
     [forwarded] = fake.calls("chat")
     assert forwarded.json == {"model": MODEL, "messages": MESSAGES, "stream": stream}
 

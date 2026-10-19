@@ -593,3 +593,27 @@ assert time.time_ns() == fixed * 1_000_000_000
          str(tmp_path), str(FIXED_NOW)],
         check=True, capture_output=True, timeout=30,
     )
+
+
+def test_household_cache_is_already_clean_so_no_background_migration_rewrites_it(tmp_path):
+    """The migration that strips pre-upgrade files must find nothing to do.
+
+    A seeded file the server's startup migration rewrites later changes its size
+    under any browser test that read the Library listing first (a listing said
+    44934 bytes, the download then sent 44574).
+    """
+    from gateway import prompt_metadata_migration
+
+    _seed(tmp_path)
+    cache = tmp_path / "images"
+    before = {path.name: path.read_bytes() for path in cache.iterdir()}
+    result = prompt_metadata_migration.strip_cached_assets(
+        cache, tmp_path / "check-migration.db"
+    )
+    assert result.complete, result.errors
+    after = {path.name: path.read_bytes() for path in cache.iterdir()}
+    assert [name for name in before if before[name] != after[name]] == []
+    # The server's own progress record, next to the media jobs, already says so.
+    with sqlite3.connect(tmp_path / "prompt_metadata_migration.db") as conn:
+        recorded = conn.execute("SELECT COUNT(*) FROM prompt_metadata_migration").fetchone()[0]
+    assert recorded == result.scanned

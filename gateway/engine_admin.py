@@ -35,7 +35,8 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms
+from gateway import log_scrub
+from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms, url_binding
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -367,11 +368,15 @@ def _stored_key(record: Mapping[str, Any] | None, *, db_path: Path, env: Callabl
     if not name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
         name = "AZIZAM_DOWNSTREAM_API_KEY"
     if name:
-        return env(name), "env", origin
+        value = env(name)
+        log_scrub.remember(value, f"env:{name}")
+        return value, "env", origin
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:
         try:
-            return secret_store.get_provider_secret(secret_id, db_path=db_path, expected_origin=origin or None), "stored", origin
+            value = secret_store.get_provider_secret(secret_id, db_path=db_path, expected_origin=origin or None)
+            log_scrub.remember(value, secret_id)
+            return value, "stored", origin
         except Exception:  # noqa: BLE001 - an unreadable secret is "no key", never a crash
             return None, "stored", origin
     return None, "none", origin
@@ -394,6 +399,7 @@ def resolve_key(values: Mapping[str, Any], ctx: Any, *, record: Mapping[str, Any
         if not _is_owner(ctx):
             raise _owner_only("Only the owner can read a key from a server environment variable.")
         value = env(env_name)
+        log_scrub.remember(value, f"env:{env_name}")
         if not value:
             raise DraftError("The variable named for the API key is not set on the gateway’s computer.", field="api_key_env")
         return KeyInput(value, "env")
@@ -748,6 +754,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         if route.get("path"):
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(request_base, route["path"])})
     fingerprint = _stored_evidence_binding(stored, db_path=db_path, env=env)
+    url_credentials = url_binding.credential_states(stored, lambda ref: _secret_origin(ref, db_path))
     v2 = service_registry.service_record_v2(stored)
     v2["connection"]["address"] = address
     if protocol_mode:
@@ -774,8 +781,17 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
                          if secret_id and not env_name and key.get("availability") == "unavailable" else [])
                       + ([{"code": "engine_credential_origin_mismatch",
                            "message": "The saved key is bound to a different address and will not be sent to this engine."}]
-                         if key["state"] == "configured" and key.get("origin") != origin_of(address) else []),
+                         if key["state"] == "configured" and key.get("origin") != origin_of(address) else [])
+                      + [{"code": "engine_address_needs_confirmation", "carrier": row["carrier"], "destination": row["destination"],
+                          "message": (f"The credentials stored with {row['carrier']} are bound to no address that matches it, so they are not sent. "
+                                      + ("Enter them again: this URL is kept whole, so there is no address to review."
+                                         if row["reenter"] else
+                                         f"If {row['destination']} is where they should go, the owner confirms that address; otherwise enter them again."
+                                         if row["destination"] else
+                                         "This field has no address they could be bound to; enter them again."))}
+                         for row in url_credentials if row["state"] == "needs_confirmation"],
         "key": key,
+        "url_credentials": url_credentials,
         "capabilities": caps,
         "models": models,
         "tests": {cap: copy.deepcopy(row) for cap, row in (config.get("engine_tests") or {}).items()
@@ -796,6 +812,14 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "can_edit_offerings": schema_matches and not declared_offerings,
         "offering_edit_reason": "These models or workflows have selection settings this form cannot safely edit. Their saved settings are shown below." if declared_offerings else None,
     }
+
+
+def _secret_origin(ref: str, db_path: Path) -> str | None:
+    """The origin a stored secret is bound to (metadata only), or None when it has none or cannot be read."""
+    try:
+        return secret_store.provider_secret_origin(ref, db_path=db_path)
+    except Exception:  # noqa: BLE001 - an unreadable store reads as "bound to nothing"
+        return None
 
 
 def _command_view(command: Any) -> Any:

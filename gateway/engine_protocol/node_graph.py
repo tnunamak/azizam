@@ -38,6 +38,8 @@ from urllib.parse import quote
 
 import httpx
 
+from gateway import log_scrub
+
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.assets import AssetStore, served_media_type
 from gateway.engine_protocol.description import ProtocolDescription
@@ -68,8 +70,28 @@ _DEFAULT_LABEL = "the engine"
 # ---------------------------------------------------------------------------
 
 
-def execution_error_message(job: Mapping[str, Any] | None, label: str = _DEFAULT_LABEL) -> str | None:
-    """A safe, short summary of an execution error in a history entry, or ``None``."""
+def _own_node_label(graph: Mapping[str, Any] | None, node_id: Any) -> str:
+    """The gateway's own label (``class_type``) for a node of the graph it submitted, or ``""``.
+
+    The engine names the node that failed; the name is used only to look the node up in the graph the gateway sent. The
+    words of the sentence come from that graph, never from the engine's ``node_type`` or ``node_id`` (decision D45b).
+    """
+    if not isinstance(graph, Mapping):
+        return ""
+    node = graph.get(str(node_id)) if node_id is not None else None
+    if not isinstance(node, Mapping):
+        return ""
+    return str(node.get("class_type") or "").strip()[:64]
+
+
+def execution_error_message(job: Mapping[str, Any] | None, label: str = _DEFAULT_LABEL,
+                            graph: Mapping[str, Any] | None = None) -> str | None:
+    """A short summary of an execution error in a history entry, or ``None``.
+
+    ``graph`` is the prompt the gateway submitted (node id to node). A node is named only when the engine's node id is in
+    that graph, and then by the graph's own ``class_type``; without the graph, or for an id that is not in it, the
+    sentence names no node.
+    """
     status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
     if not isinstance(status_block, Mapping):
         return None
@@ -79,16 +101,12 @@ def execution_error_message(job: Mapping[str, Any] | None, label: str = _DEFAULT
         if not (isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error"):
             continue
         payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
-        node_type = str(payload.get("node_type") or "").strip()
-        node_id = str(payload.get("node_id") or "").strip()
+        node_id = payload.get("node_id")
+        node_type = _own_node_label(graph, node_id)
 
         location = f"{label} execution error"
-        if node_type and node_id:
+        if node_type:
             location = f"{label} {node_type} node {node_id}"
-        elif node_type:
-            location = f"{label} {node_type}"
-        elif node_id:
-            location = f"{label} node {node_id}"
 
         return f"{location}: execution failed"[:500]
 
@@ -109,9 +127,10 @@ def execution_error_node_id(job: Mapping[str, Any] | None) -> str | None:
     return None
 
 
-def history_state(job: Mapping[str, Any] | None, label: str = _DEFAULT_LABEL) -> tuple[str, str | None]:
+def history_state(job: Mapping[str, Any] | None, label: str = _DEFAULT_LABEL,
+                  graph: Mapping[str, Any] | None = None) -> tuple[str, str | None]:
     """``(state, error_text)`` for a history entry: ``failed``, ``running`` or ``succeeded``."""
-    error_message = execution_error_message(job, label)
+    error_message = execution_error_message(job, label, graph)
     if error_message:
         return ("failed", error_message)
 
@@ -345,7 +364,7 @@ class NodeGraphAdapter:
     # --- caller-facing messages (the engine's name is data) -----------------------------------
 
     def unavailable_message(self, conn: Connection) -> str:
-        return f"{self.label} unavailable at {conn.address}"
+        return f"{self.label} unavailable at {log_scrub.describe_origin(conn.address)}"
 
     # --- the interface ----------------------------------------------------------------------
 
@@ -354,7 +373,7 @@ class NodeGraphAdapter:
             async with self._use(conn, None) as session:
                 reply = await session.stats(timeout=CONTROL_TIMEOUT_S)
         except TransportFailure as error:
-            return Health("failing", f"{error.kind}: {error}", "graph.stats")
+            return Health("failing", f"{error.kind}: {error}", "graph.stats")  # a TransportFailure message is ours
         if reply.status == 200:
             return Health("ok", "", "graph.stats")
         return Health("failing", f"HTTP {reply.status}", "graph.stats")
@@ -403,15 +422,18 @@ class NodeGraphAdapter:
         reply = await self.invoke(conn, op, request)
         assert isinstance(reply, WireReply)
         if reply.status != 200:
-            raise UpstreamError(reply.status, reply.text or "", body=reply.raw or b"")
+            raise UpstreamError(reply.status, f"The prompt answered HTTP {reply.status}.", body=reply.raw or b"", excerpt=reply.text or "")
         prompt_id = reply.json().get("prompt_id")
         if not prompt_id:
             raise MalformedResponse("No prompt_id returned")
         return JobRef(op, str(prompt_id))
 
     async def poll(self, conn: Connection, ref: JobRef, *, headers: Any = UNSET, session: GraphSession | None = None,
-                   timeout: Any = UNSET) -> JobStatus:
+                   timeout: Any = UNSET, graph: Mapping[str, Any] | None = None) -> JobStatus:
         """One look at the prompt's history entry.
+
+        ``graph`` is the prompt the gateway submitted: a failure names a node only when it is in that graph (see
+        ``execution_error_message``).
 
         An entry that is not there yet is ``pending``. A non-200 answer is an ``UpstreamError`` and a failure to reach
         the engine is a ``TransportFailure``; core decides whether to look again.
@@ -424,7 +446,7 @@ class NodeGraphAdapter:
         if ref.id not in history:
             return JobStatus(ref, JobState.pending)
         job = history[ref.id]
-        state, error = history_state(job, self.label)
+        state, error = history_state(job, self.label, graph)
         if state == "failed":
             return JobStatus(ref, JobState.failed, error)
         if state == "running":
@@ -541,10 +563,10 @@ class NodeGraphAdapter:
                 info = decode_output(handle)
                 reply = await use.view(view_params(info))
                 if reply.status != 200 or not reply.raw:
-                    raise UpstreamError(reply.status, f"The file '{info.get('filename')}' could not be read.")
+                    raise UpstreamError(reply.status, "An output file could not be read.")
                 content_type = served_media_type(reply.headers.get("content-type"), reply.raw[:16])
                 if content_type is None:
-                    raise MalformedResponse(f"The file '{info.get('filename')}' is not a media type that is served.")
+                    raise MalformedResponse("An output file is not a media type that is served.")
 
                 async def chunks(data: bytes = reply.raw) -> AsyncIterator[bytes]:
                     yield data
@@ -572,7 +594,7 @@ def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:
     if kind == "execution_success":
         return JobEvent(ref, "status", JobState.succeeded)
     if kind == "execution_error":
-        return JobEvent(ref, "status", JobState.failed, detail=str(data.get("exception_message") or "")[:500] or None)
+        return JobEvent(ref, "status", JobState.failed, detail="execution failed")  # the engine's own message is not repeated (D45b)
     if kind == "execution_interrupted":
         return JobEvent(ref, "status", JobState.cancelled)
     return None

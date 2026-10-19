@@ -186,7 +186,15 @@ class RerankRouteTests(RouteCase):
     def test_engine_400_is_a_vendor_400(self) -> None:
         self.use_upstream(lambda r: httpx.Response(400, json={"error": {"message": "input is too large"}}))
         resp = self._post({"query": "q", "documents": ["a"]})
-        self.assertEqual((resp.status_code, resp.json()["message"]), (400, "input is too large"))
+        # the engine's words are not passed on (decision D44)
+        self.assertEqual((resp.status_code, resp.json()["message"]), (400, "The rerank engine answered HTTP 400."))
+
+    def test_engine_error_words_and_echoed_credentials_are_never_passed_on(self) -> None:
+        for status in (400, 401, 500):
+            with self.subTest(status=status):
+                self.use_upstream(lambda r, status=status: httpx.Response(status, json={"error": {"message": "bad key R8-ECHOED-CREDENTIAL"}}))
+                resp = self._post({"query": "q", "documents": ["a"]})
+                self.assertNotIn("R8-ECHOED-CREDENTIAL", resp.text)
 
     def test_engine_5xx_is_502(self) -> None:
         self.use_upstream(lambda r: httpx.Response(500, text="boom"))

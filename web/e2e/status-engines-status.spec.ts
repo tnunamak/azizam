@@ -278,3 +278,18 @@ for (const { state, theme, width } of cases) {
       .toBe(true);
   });
 }
+
+// The page is read by axe while the engines still load; the CI run that caught
+// this one read it by chance. Hold the status answer to make it certain.
+test("status while the engines are still being checked", async ({ page }) => {
+  await mockStatusApis(page, { empty: false, statusError: false, providers: 200 });
+  await page.route("**/admin/api/status", () => new Promise<void>(() => {}));
+  await page.goto("/status/");
+  await expect(
+    page.getByRole("status", { name: "Checking engines" }),
+  ).toBeVisible();
+  const violations = (
+    await new AxeBuilder({ page }).analyze()
+  ).violations.filter((v) => ["serious", "critical"].includes(v.impact ?? ""));
+  expect(violations).toEqual([]);
+});

@@ -258,7 +258,7 @@ def test_admin_schema_migration_leaves_a_conflicting_service_out_and_keeps_the_g
         conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES ('service_registry',?,0)", (json.dumps(registry),))
     admin_store.init_db(db)
     with sqlite3.connect(db) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         stored = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
     record = stored["services"]["engine-a"]
     assert "engine-a" in record["migration_refused"] and "conflict" in record["migration_refused"]

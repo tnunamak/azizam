@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway import runtime_secrets, secret_store, service_registry
+from gateway import log_scrub, runtime_secrets, secret_store, service_registry
 from gateway.engine_check import join_url
 from gateway.litellm_substrate import SECRET_PLACEHOLDER, _engine_request_settings, engine_headers
 
@@ -77,6 +77,8 @@ def inference_connection(
         if (config.get("api_key_secret_id") or env_name) and not key and not allow_unavailable_key:
             raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.")
         if key:
+            # Anything that logs an upstream's reply removes this key from it (decision D42).
+            runtime_secrets.remember(key, f"env:{env_name}" if env_name else log_scrub.secret_source(config.get("api_key_secret_id")))
             headers["authorization"] = f"Bearer {key}"
     return InferenceConnection(
         url=join_url(base, operation_path), headers=headers,

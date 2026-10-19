@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store, engine_check, native_lane, projection, record_carriers
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers, url_binding
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
@@ -251,7 +251,8 @@ def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any],
 
 def registry_error_text(text: str, value: Mapping[str, Any]) -> str:
     """``text``, an error about a stored registry, without any value a left-out record of it holds."""
-    secrets = [secret for item in read_registry(value)[1] for secret in record_carriers.legacy_secret_texts(item.record)]
+    secrets = [secret for item in read_registry(value)[1]
+               for secret in (*record_carriers.legacy_secret_texts(item.record), *record_carriers.typed_value_texts(item.record))]
     return projection.scrub_text(text, secrets)
 
 
@@ -285,7 +286,8 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
-                message = projection.scrub_text(message[:300], record_carriers.legacy_secret_texts(raw))
+                message = projection.scrub_text(
+                    message[:300], [*record_carriers.legacy_secret_texts(raw), *record_carriers.typed_value_texts(raw)])
                 excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                 continue
             kept[key] = record
@@ -842,7 +844,12 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")
         if endpoint:
-            observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
+            probe: dict[str, Any] = {"path": endpoint, "expect": 200}
+            held = lifecycle["driver_config"].get("health_endpoint_entries")
+            if not public and held:
+                # The stored credentials of the probe path go with it; a public view shows none.
+                probe["path_entries"] = copy.deepcopy(held)
+            observations["process_ready"] = {"http": probe}
     residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
     if lifecycle.get("driver") == "http-load-unload":
         residency.setdefault("legacy_driver", "http-load-unload")
@@ -1119,6 +1126,30 @@ def _same_imported_package_record(
     )
 
 
+def _priority(service_id: str, value: Any) -> int:
+    """A record's priority as a whole number (100 when unset). The refusal names the record and never the value."""
+    try:
+        return int(value or 100)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"service {service_id!r} has a priority that is not a whole number") from None
+
+
+def validate_service_numbers(service_id: str, config: Mapping[str, Any]) -> None:
+    """A port that is set must be a whole number from 1 to 65535 (text of digits counts), and a priority a whole number.
+
+    The port becomes part of an address the gateway dials and shows, so a value of another kind (a word, a secret
+    typed in the wrong slot) is refused here, with text that does not repeat it.
+    """
+    _priority(service_id, config.get("priority"))
+    port = config.get("port")
+    if port is None or port == "":
+        return
+    if isinstance(port, str) and port.strip().isascii() and port.strip().isdigit():
+        port = int(port.strip())
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"service {service_id!r} has a port that is not a whole number from 1 to 65535")
+
+
 def service_from_backend_config(
     service_id: str,
     raw: Mapping[str, Any],
@@ -1127,6 +1158,7 @@ def service_from_backend_config(
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
+    validate_service_numbers(service_id, safe_config)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
     validate_provider_native_passthrough_disabled(service_id, safe_config)
     if is_remote_provider_config(safe_config):
@@ -1171,7 +1203,7 @@ def service_from_backend_config(
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or "required"),
         "capabilities": capabilities,
         "config": safe_config,
@@ -1276,6 +1308,7 @@ def normalize_service_record(
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
+    validate_service_numbers(service_id, config)
     if check_secrets:
         validate_provider_secret_refs(service_id, config, secret_refs)
         validate_provider_native_passthrough_disabled(service_id, config)
@@ -1292,7 +1325,7 @@ def normalize_service_record(
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or config.get("role") or "required"),
         "capabilities": capabilities,
         "config": config,
@@ -1543,6 +1576,11 @@ _ENDPOINT_KEYS = (
     "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
 )
 LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+# The origin the keys of a lifecycle driver (its admin key and API key) are bound to. The driver sends them only
+# to the address it dials when that address has this origin; only the owner records it.
+DRIVER_CREDENTIAL_ORIGIN_KEY = "driver_credential_origin"
+_DRIVER_KEY_FIELDS = ("admin_key", "api_key")
+_DRIVER_KEY_ENV_FIELDS = ("admin_key_env", "api_key_env")
 
 
 def service_base_url(config: Mapping[str, Any]) -> str:
@@ -1583,7 +1621,7 @@ def _names_credential(key: str) -> bool:
     """
     lowered = key.strip().lower()
     return (
-        lowered in ("credential_origin", "api_key")
+        lowered in ("credential_origin", DRIVER_CREDENTIAL_ORIGIN_KEY, "api_key")
         or lowered.endswith(_REFERENCE_KEY_SUFFIXES)
         or (is_secret_key(lowered) and is_secret_reference_key(lowered))
     )
@@ -1655,6 +1693,26 @@ def _is_driven(block: Any) -> bool:
     return False
 
 
+def driver_keys_held(record: Mapping[str, Any]) -> bool:
+    """True when a lifecycle block of the record names a key its driver sends (an admin key or an API key).
+
+    The key may be stored (an entry) or named by an environment variable (``admin_key_env``, ``api_key_env``).
+    """
+    config = record.get("config")
+    process = record.get("process")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None,
+              process.get("legacy_lifecycle") if isinstance(process, Mapping) else None]
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        driver_config = block.get("driver_config")
+        if any(block.get(field) for field in _DRIVER_KEY_FIELDS):
+            return True
+        if isinstance(driver_config, Mapping) and any(driver_config.get(field) for field in _DRIVER_KEY_ENV_FIELDS):
+            return True
+    return False
+
+
 def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
     """Whether a lifecycle block that names a driver was created, changed or removed.
 
@@ -1676,12 +1734,43 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
+def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
+    """Where a lifecycle driver of this record dials: its host and port, else the origin of its base URL.
+
+    The driver's keys (an admin key, an API key) go to this address. It is one of the addresses the credential
+    fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
+    no address; the driver then has nowhere to send a key.
+    """
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if host and port not in (None, ""):
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
+        scheme = str(config.get("scheme") or "http").strip() or "http"
+        return f"{scheme}://{host}:{port}"
+    return origin_of(service_base_url(config))
+
+
+def _dialed_origins(config: Mapping[str, Any]) -> frozenset[str]:
+    """The origins of every address the gateway can dial for this record, however the record spells them.
+
+    ``service_base_url`` returns the first of ``base_url``, ``api_base`` and ``default_base_url`` that is set, and the
+    host and port apply only when none is, so comparing just its result would hide a change to the others. The
+    lifecycle driver reads the host and port whatever the base URL says. A set, because naming an address a second
+    time sends a key nowhere new.
+    """
+    addresses = [str(config.get(key) or "").strip() for key in ("base_url", "api_base", "default_base_url")]
+    addresses.append(lifecycle_dial_url(config))
+    return frozenset(origin_of(address) or address for address in addresses if address)
+
+
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     """Every address a credential of this record can be sent to, and every origin it is bound to.
 
-    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``)
-    and the address the form stores; a native credential goes only to the origin written beside it.
-    A change to any of these moves a key, so each has its own place in the fingerprint.
+    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``),
+    the address the form stores and the host and port a lifecycle driver dials; a native credential goes
+    only to the origin written beside it. A change to any of these moves a key, so each has its own place
+    in the fingerprint.
     """
     connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
     credentials = connection.get("credentials") if isinstance(connection.get("credentials"), Mapping) else {}
@@ -1696,6 +1785,7 @@ def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     )
     return (
         tuple(origin_of(address) or address for address in addresses),
+        tuple(sorted(_dialed_origins(config))),
         bound,
         str(config.get(LIFECYCLE_BASE_KEY) or ""),
     )
@@ -1706,12 +1796,14 @@ def credential_binding_changes(
 ) -> dict[str, list[str]]:
     """Services whose credential or credential host differs between two registries.
 
-    A service is listed when it gains or changes a credential reference, when it
+    A service is listed when it gains, changes or loses a credential reference
+    (a lost one leaves its secret in the store with no record that owns it), when it
     sets the base of the gateway's own internal key, when it already carries a
     credential and its origin moves, when its lifecycle driver is set, changed
     or removed (a driver runs commands or sends a stored key), when its
-    ``auth_inject`` rules change, or when it sets a field that makes the
-    gateway write a file or read process command lines.
+    ``auth_inject`` rules change, when the origin a URL field with stored
+    credentials is bound to changes (decision D39), or when it sets a field that
+    makes the gateway write a file or read process command lines.
     The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
@@ -1721,12 +1813,18 @@ def credential_binding_changes(
         before = old.get(service_id) or {}
         refs, prior = credential_references(record), credential_references(before)
         reasons = [path for path, value in refs.items() if prior.get(path) != value]
+        # Taking a reference away detaches the secret it names and leaves it in the store with nothing to own it.
+        reasons += [path for path in prior if path not in refs]
         config = record.get("config") or {}
         before_config = before.get("config") or {}
         if config.get(LIFECYCLE_BASE_KEY) and config.get(LIFECYCLE_BASE_KEY) != before_config.get(LIFECYCLE_BASE_KEY):
             reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
         if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
             reasons.append("host")
+        # Credentials stored with a URL go where that URL goes: a change to the address of such a field (or to the base
+        # a path joins) moves them (decision D39).
+        marks_before, marks_after = dict(url_binding.binding_marks(before)), dict(url_binding.binding_marks(record))
+        reasons += [path for path, mark in marks_before.items() if path in marks_after and marks_after[path] != mark]
         if lifecycle_driver_changed(before, record):
             reasons.append("lifecycle")
         if (config.get("auth_inject") or None) != (before_config.get("auth_inject") or None):
@@ -1762,6 +1860,11 @@ def bind_credential_origins(
             origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
             if origin:
                 config["credential_origin"] = origin
+        if driver_keys_held(record):
+            # The driver's keys go to the address it dials, which may not be the one the base URL names.
+            driver_origin = origin_of(lifecycle_dial_url(config))
+            if driver_origin:
+                config[DRIVER_CREDENTIAL_ORIGIN_KEY] = driver_origin
         # Each per-class native credential is bound to the host the native lane sends to.
         connection = config.get("connection")
         credentials = connection.get("credentials") if isinstance(connection, Mapping) else None

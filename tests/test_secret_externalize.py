@@ -60,6 +60,7 @@ def _legacy_record() -> dict:
             "health_endpoint": f"/health?access_token={S['probe']}",
         },
         "observations": {"ready": {"http": {"path": f"/ready?sig={S['probe']}", "expect": 200}}},
+        "connection": {"address": "http://engine.invalid:8080"},
     }
 
 
@@ -90,8 +91,15 @@ def test_what_the_runtime_resolves_is_exactly_what_the_legacy_record_sent(db):
     assert runtime_secrets.env_mapping(moved["config"]["env"]) == legacy["config"]["env"]
     assert runtime_secrets.header_pairs(moved["config"]["headers"], origin="http://engine.invalid:8080") == {"X-Vendor": S["header"]}
     assert runtime_secrets.url(moved["config"], "address") == legacy["config"]["address"]
-    assert runtime_secrets.url(moved["process"], "health_endpoint") == legacy["process"]["health_endpoint"]
-    assert runtime_secrets.url(moved["observations"]["ready"]["http"], "path") == legacy["observations"]["ready"]["http"]["path"]
+    # A path in a record that exists already is bound to no address (decision D42): it is not put back until the owner
+    # confirms the address, and the owner's own write binds it to the address of its base.
+    base, join = "http://engine.invalid:8080", lambda head, tail: f"{head}{tail}"  # a path is read for the address it is dialed at
+    with pytest.raises(runtime_secrets.OriginRefused):
+        runtime_secrets.url(moved["process"], "health_endpoint", base=base, join=join)
+    owned, _ = record_carriers.externalize_service(legacy, Recorder(db), reject_ambiguous=True)
+    assert runtime_secrets.url(owned["process"], "health_endpoint", base=base, join=join) == base + legacy["process"]["health_endpoint"]
+    ready = owned["observations"]["ready"]["http"]
+    assert runtime_secrets.url(ready, "path", base=base, join=join) == base + legacy["observations"]["ready"]["http"]["path"]
 
 
 def test_a_second_pass_changes_nothing_and_stores_nothing(db):
@@ -136,7 +144,10 @@ def test_a_url_that_cannot_be_read_is_stored_whole_and_never_echoed(db, value):
     holder = {"address": value}
     assert record_carriers.externalize_url(holder, "address", Recorder(db))
     assert holder["address"] == "" and "whole" in holder["address_entries"]
-    assert runtime_secrets.url(holder, "address") == value
+    # kept whole and private, and never put back: a URL with no readable origin cannot be bound to one (decision D39)
+    assert runtime_secrets.resolve(holder["address_entries"]["whole"]["secret_ref"]) == value
+    with pytest.raises(runtime_secrets.OriginRefused):
+        runtime_secrets.url(holder, "address")
 
 
 def test_a_secret_entry_may_be_short_and_keeps_no_suffix(db):
@@ -176,7 +187,7 @@ def test_the_schema_11_migration_moves_the_inline_secrets_once_and_audits_counts
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         stored = conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]
         stored_index = conn.execute("SELECT value_json FROM operator_settings WHERE key='extension_package_index'").fetchone()[0]
         generation = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0]
@@ -204,7 +215,7 @@ def test_the_schema_11_migration_on_a_live_shaped_registry_is_a_no_op(tmp_path):
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == before
         assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM audit_events WHERE action='operator.secrets.externalize'").fetchone()[0] == 0

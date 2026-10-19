@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from gateway import client_errors, runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
@@ -74,13 +75,17 @@ class DecisionRuntime:
         service = self.config().get("backends", {}).get(service_id, {})
         engine = None
         try:
+            # The stored credentials of the health endpoint (a query token) are put back here, at the moment of the probe.
+            base = f"http://{service['host']}:{service['port']}"
+            # ... and only where the address it makes has the origin they were stored for (decision D39).
+            target = runtime_secrets.url(service, "health_endpoint", base=base, join=lambda head, tail: f"{head}{tail}") or f"{base}/health"
             with httpx.Client(timeout=0.3, trust_env=False) as client:
-                response = client.get(f"http://{service['host']}:{service['port']}{service.get('health_endpoint', '/health')}")
+                response = client.get(target)
             if response.status_code == 200:
                 candidate = response.json().get("engine")
                 if candidate in {"gpu", "cpu"}:
                     engine = candidate
-        except (httpx.HTTPError, ValueError, KeyError, AttributeError):
+        except (httpx.HTTPError, ValueError, KeyError, AttributeError, runtime_secrets.SecretUnavailable):
             pass
         self.observed[service_id] = (time.monotonic(), engine)
         return engine
@@ -270,7 +275,8 @@ class DecisionRuntime:
             status = response.status_code if response.status_code in (200, 422, 429) else 502
             if status == 502:
                 raise DecisionsError(502, "decision_backend_error", "The configured decision engine failed.")
-            headers = {"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {}
+            retry_after = client_errors.retry_after(response.headers.get("retry-after"))   # a number we write, not the service's text
+            headers = {"retry-after": retry_after} if retry_after is not None else {}
             if fallbacks:
                 headers["x-azizam-fallback"] = ",".join(fallbacks)
             return DecisionDispatchResult(payload, status_code=status, backend=service_id,

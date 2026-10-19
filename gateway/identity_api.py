@@ -48,7 +48,7 @@ class FaceServiceClient:
                 data={"model": model},
             )
         if response.status_code != 200:
-            raise RuntimeError(f"face service returned {response.status_code}: {response.text[:200]}")
+            raise RuntimeError(f"face service returned {response.status_code}")
         return list(response.json()["faces"])
 
 
@@ -436,8 +436,8 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             return JSONResponse(report)
         except (IdentityError, LikenessError) as exc:
             return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
-        except (httpx.HTTPError, RuntimeError) as exc:
-            return error(502, "face_service_error", f"face service failed: {str(exc) or type(exc).__name__}")
+        except (httpx.HTTPError, RuntimeError):
+            return error(502, "face_service_error", "face service failed.")
 
     async def identity_route(request: Request):
         auth = guard(request, IDENTITY_PATH)
@@ -460,8 +460,8 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             return await run_scene(request, auth, req, response_format)
         except (IdentityError, LikenessError) as exc:
             return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
-        except (httpx.HTTPError, RuntimeError) as exc:
-            return error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
+        except (httpx.HTTPError, RuntimeError):
+            return error(502, "identity_backend_error", "identity workflow failed.")
 
     async def execute(auth: Any, req: SceneRequest) -> ids.SceneResult:
         """Run the pipeline. Raises IdentityUnavailable when the face sidecar cannot start."""

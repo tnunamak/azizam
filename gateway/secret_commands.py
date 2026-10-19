@@ -8,8 +8,11 @@ position does not mean "keep", and a value that is one of the marker texts is re
 The carriers are the ones ``gateway/record_carriers.py`` defines. A list of arguments is changed as a whole
 (``set``), where every item says what it is: a public ``literal``, a ``retain`` of an entry by id, or a new
 ``secret``; an entry the new list does not keep must be named in ``clear``, so nothing is dropped by omission.
-Every command is checked before anything is stored, a bad one stores nothing, and a failure after storing
-removes what this call stored. The error text is fixed: it never repeats a submitted value.
+A URL field changes with ``set_credentials`` (the credentials of the URL are stored beside it) or, when the secret sits
+in a place no rule can find (a path segment of a webhook address), with ``whole`` and a public ``label``: the whole URL
+is kept as one secret and a read shows the label. Every command is checked before anything is stored, a bad one stores
+nothing, and a failure after storing removes what this call stored. The error text is fixed: it never repeats a submitted
+value.
 
 This module is management-safe: it stores and deletes secrets and never decrypts one.
 """
@@ -22,13 +25,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from gateway import record_carriers, secret_refs
+from gateway import record_carriers, secret_refs, url_binding
 from gateway.secret_refs import Put
 
 MAX_VALUE = 8192
 MAX_COMMANDS = 64
 RESERVED_TEXTS = frozenset({"[redacted]", "<redacted>", "<configured>"})
-OPERATIONS = ("add", "replace", "rename", "retain", "clear", "set", "set_credentials", "clear_credentials")
+OPERATIONS = ("add", "replace", "rename", "retain", "clear", "set", "set_credentials", "clear_credentials", "confirm_address")
 _ALLOWED_KEYS = {
     "add": {"carrier", "operation", "name", "value", "public"},
     "replace": {"carrier", "operation", "entry_id", "value"},
@@ -36,8 +39,10 @@ _ALLOWED_KEYS = {
     "retain": {"carrier", "operation", "entry_id"},
     "clear": {"carrier", "operation", "entry_id"},
     "set": {"carrier", "operation", "items", "clear"},  # an item is a literal, a retain, a replace (same id) or a new secret
-    "set_credentials": {"carrier", "operation", "url"},
+    "set_credentials": {"carrier", "operation", "url", "whole", "label"},  # whole + label: the URL is one secret with a public name
     "clear_credentials": {"carrier", "operation"},
+    # bind the stored credentials of a URL to the address the field has now, which the owner reviewed (D42)
+    "confirm_address": {"carrier", "operation", "expected_destination"},
 }
 
 
@@ -56,6 +61,11 @@ class Outcome:
     created: list[str] = field(default_factory=list)
     retired: list[str] = field(default_factory=list)
     changed: bool = False
+    # (secret reference, origin or function of the value) for each stored credential the owner confirmed an address for.
+    # The caller binds them (``secret_store.bind_provider_secrets``); this module never decrypts one.
+    confirm: list[tuple[str, Any]] = field(default_factory=list)
+    # (carrier, destination the owner reviewed) for each confirmation, so the binding can check it again where it commits.
+    confirmations: list[tuple[str, str]] = field(default_factory=list)
 
 
 def carrier_kind(carrier: Any) -> str | None:
@@ -132,6 +142,8 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
         extra = set(command) - _ALLOWED_KEYS[operation]
         if extra:
             raise CommandError("invalid_command", f"command {index + 1} has a field the {operation} operation does not take")
+        if operation == "confirm_address" and not (isinstance(command.get("expected_destination"), str) and command["expected_destination"]):
+            raise CommandError("invalid_command", f"command {index + 1} must name the destination it confirms (expected_destination)")
         kind = carrier_kind(command.get("carrier"))
         if kind is None:
             raise CommandError("unknown_carrier", f"command {index + 1} names a carrier the record model does not have")
@@ -139,7 +151,7 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
             "headers": {"add", "replace", "rename", "retain", "clear"},
             "env": {"add", "replace", "retain", "clear"},
             "argv": {"set"},
-            "url": {"set_credentials", "clear_credentials"},
+            "url": {"set_credentials", "clear_credentials", "confirm_address"},
             "secret": {"add", "replace", "retain", "clear"},
             "provider_key": {"add", "replace", "retain", "clear"},
         }
@@ -284,7 +296,8 @@ def _env(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
             ref = put(value, None)
             out.created.append(ref)
             out.retired.append(env[name]["secret_ref"])
-            env[name] = {**env[name], "secret_ref": ref}
+            # a new value is text: the mark of a value that was a mapping or a list goes with the old one (decision D39)
+            env[name] = {key: item for key, item in {**env[name], "secret_ref": ref}.items() if key != "structured"}
         else:
             env[name] = {**env[name], "value": value}
     out.changed = True
@@ -449,9 +462,69 @@ def _scalar(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: O
     out.changed = True
 
 
+MAX_LABEL = 80
+
+
+def _whole_label(label: Any, url: str) -> str:
+    """The public name of a URL kept whole: short text that repeats no part of the URL (a path segment can be the secret)."""
+    from urllib.parse import urlsplit
+
+    if not isinstance(label, str) or not label.strip():
+        raise CommandError("invalid_label", "a URL kept whole needs a short label to show in its place")
+    label = label.strip()
+    if len(label) > MAX_LABEL or any(ord(ch) < 32 or ord(ch) == 127 for ch in label) or "://" in label:
+        raise CommandError("invalid_label", f"a label is short text of at most {MAX_LABEL} characters, without a URL or control characters")
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        host = ""
+    public_words = {part for part in re.split(r"[.\-]+", host) if part}
+    lowered = label.lower()
+    for part in re.split(r"[/?#&=;:@\s]+", url):
+        if len(part) >= 4 and part.lower() not in public_words and part.lower() in lowered:
+            raise CommandError("invalid_label", "the label repeats a part of the URL; name what the URL is for instead")
+    return label
+
+
+def reviewed_destination(record: Mapping[str, Any], carrier: str) -> str | None:
+    """The destination a confirmation of ``carrier`` would bind to, from ``record`` as it stands (None: nothing to bind to)."""
+    parent, key = _parent(dict(record) if not isinstance(record, dict) else record, carrier)
+    return url_binding.destination_of(record, carrier, parent.get(key))
+
+
+def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: str, command: Mapping[str, Any],
+                     out: Outcome) -> None:
+    """The owner says the address a URL field has now, which they reviewed, is the one its stored credentials are for (D42).
+
+    The command names that address (``expected_destination``, as the engine view shows it) and it is refused when the record,
+    read under the lock, would bind to another one: a field changed after the owner looked is not confirmed by a click
+    on what they saw. A URL kept whole has no address to review (it is inside the secret): it is entered again.
+    """
+    carrier = command["carrier"]
+    held = parent.get(key + record_carriers.SECRETS_SUFFIX)
+    refs = record_carriers.refs_in(held)
+    if not refs:
+        raise CommandError("invalid_value", "that field has no stored credentials to confirm an address for")
+    if isinstance(held, Mapping) and held.get("whole"):
+        raise CommandError("reenter_required", "that URL is kept whole, so its address is inside the secret and there is nothing "
+                           "to review; enter it again with set_credentials")
+    destination = url_binding.destination_of(record, carrier, parent.get(key))
+    if destination is None:
+        raise CommandError("url_unbound", str(record_carriers.UrlUnbound(carrier)))
+    if command["expected_destination"] != destination:
+        raise CommandError("destination_changed", "the address this field would bind to is not the one you reviewed; "
+                           "read the engine again and confirm the address it shows now")
+    origin = url_binding.field_origin(parent.get(key), url_binding.base_of(record, carrier))
+    out.confirm.extend((ref, origin) for ref in refs)
+    out.confirmations.append((carrier, destination))
+
+
 def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     secrets_key = key + record_carriers.SECRETS_SUFFIX
+    if command["operation"] == "confirm_address":
+        _confirm_address(record, parent, key, command, out)
+        return
     out.retired.extend(record_carriers.refs_in(parent.get(secrets_key)))
     parent.pop(secrets_key, None)
     if command["operation"] == "clear_credentials":
@@ -460,6 +533,23 @@ def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
     url = command.get("url")
     if not isinstance(url, str) or not url:
         raise CommandError("invalid_value", "a URL is required")
+    whole = command.get("whole")
+    if whole not in (None, True, False):
+        raise CommandError("invalid_command", "whole must be true or false")
+    if not whole and "label" in command:
+        raise CommandError("invalid_command", "a label belongs to a URL kept whole; send whole as true")
+    base = url_binding.base_of(record, command["carrier"])
+    if whole:
+        label = _whole_label(command.get("label"), url)
+        origin = url_binding.field_origin(url, base)
+        if origin is None:
+            raise CommandError("url_unbound", str(record_carriers.UrlUnbound(command["carrier"])))
+        ref = put(validate_value(url), origin)
+        out.created.append(ref)
+        parent[key] = ""
+        parent[secrets_key] = {"whole": secret_refs.entry(ref, label=label)}
+        out.changed = True
+        return
     parent[key] = url
     before = len(out.created)
 
@@ -469,9 +559,11 @@ def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
         return ref
 
     try:
-        record_carriers.externalize_url(parent, key, counting_put)
+        record_carriers.externalize_url(parent, key, counting_put, base=base, path=command["carrier"], strict=True)
     except record_carriers.AmbiguousUrl:
         raise CommandError("invalid_value", "that URL cannot be read") from None
+    except record_carriers.UrlUnbound as error:
+        raise CommandError("url_unbound", str(error)) from None
     if len(out.created) == before:
         raise CommandError("invalid_value", "that URL holds no credentials to store; use clear_credentials to remove them")
     out.changed = True

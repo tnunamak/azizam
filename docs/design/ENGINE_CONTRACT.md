@@ -151,7 +151,88 @@ resources:
     moment an engine request is sent, a process or command starts, the router
     config is written, or a package is cloned; an architecture test lists the
     modules that import it. Schema 11 moves what older records held, once and
-    idempotently; a registry with nothing inline is not touched.
+    idempotently; a registry with nothing inline is not touched. Each reader of a
+    stored URL (the driver's load, unload and verify paths, the readiness poll, the
+    resource, catalog, placement and context-window probes, the process-ready
+    observation) puts the stored query and user info back when it sends the
+    request; a part that cannot be read stops the request, and no reader falls back to
+    a default path. Every runtime lookup that fails does so as `SecretUnavailable`
+    (a missing row, another origin, damaged bytes, a malformed entry), never as a
+    `KeyError`.
+  - **Where a key goes** (owner-only). A record that holds a credential (a stored
+    key, an environment variable name, a driver's admin or API key) sends it only to
+    the origin its owner bound it to (`config.credential_origin`, and
+    `config.driver_credential_origin` for a lifecycle driver). The fingerprint that
+    decides whether a save moves a key holds the origin of every address a
+    credential path dials: `base_url`, `api_base` and `default_base_url` each on its own, the native
+    URL, the address the form stores, and the host and port (with scheme) the
+    lifecycle driver dials. The driver takes its address from the same function
+    (`service_registry.lifecycle_dial_url`), so what it dials is always covered, and it sends nothing,
+    and logs that, when that origin is not the bound one. Taking a credential
+    reference away (`api_key_secret_id`, `secret_refs`, a driver key) is an owner
+    change as well. Admin schema 12 binds the driver keys of records that exist.
+  - **Where the credentials of a URL go** (owner-only, decision D39). The credentials
+    stored with a URL field (`<field>_entries`) are bound to the field's effective origin:
+    its own origin when it is an absolute http(s) URL, the origin of the base it is joined to
+    when it is a path (one leading slash). Case and the default port do not matter
+    (`HTTP://H` is `http://h:80`). A field with no such origin (a protocol-relative `//host/path`, a
+    text with no leading slash, a scheme that is not http(s), a host with a percent sign or a
+    backslash) cannot hold credentials: a write is refused, and a stored one is never put back.
+    Each reader passes the base it dials and its own join; the credentials are put back only
+    when the address it dials has the stored origin, and otherwise nothing secret is sent, the
+    request is refused with a fixed text and the refusal is logged without a value. The
+    fingerprint holds, for every URL field that has credentials, the origin it is bound to (or its own
+    text when it has none), so an administrator's change of the field, or of the base it joins to, is
+    owner-only (403) on every route. The owner may move such a field; its credentials stay bound
+    to the old origin until the owner sets them again. Admin schema 13 binds nothing (decision D42:
+    only the owner binds a credential stored before an address was bound). A host with user info (`user:pw@host` in `config.host`) is refused at a write;
+    a stored one has its user info kept apart and not sent. Every log line a lifecycle driver prints
+    passes through `runtime_secrets.scrub`, which removes the secret values this process has resolved (as
+    stored and URL-encoded) and cuts the line. An environment value that was a mapping or a list when a
+    migration stored it is marked `structured` and a process with it is not started, with a message
+    that names the variable; setting the value again as text clears the mark.
+  - **Credentials stored before an address was bound** (owner-only, decision D42). A credential
+    stored with a path by an older version is bound to no address, and an administrator could
+    have re-aimed the field under that version, so the address a field has when the database is
+    migrated is not evidence of what the owner meant. Schema 13 therefore binds nothing: it counts
+    the unbound credentials and writes one audit entry (service ids and a count). The runtime sends
+    a credential bound to no address nowhere. The engine view (`url_credentials`, and an
+    `engine_address_needs_confirmation` item in `attention`) names each field as `confirmed` or
+    `needs_confirmation`, with no value and no reference, and for each field the `destination` a
+    confirmation would bind to (`scheme://host:port` and the path of the field, no credential in it).
+    Only an owner write binds: entering the credentials again, or the `confirm_address` command of
+    `POST .../secret-entries` (owner-only, 403 for anyone else). The command must name the
+    `expected_destination` the owner read; inside the binding transaction the destination is computed
+    again from the registry as it is then and from the generation the view came from, and a
+    difference refuses with `destination_changed` (or a 412) and binds nothing. A field with no origin
+    is refused (`url_unbound`), and a URL kept whole, which has no address to review, is refused
+    (`reenter_required`): it is entered again. `secret_store.bind_provider_secrets(items, guard=)`
+    is the one function that opens that transaction; its `guard(conn)` runs first inside it. A record written by the owner is bound at the write; a
+    record read from an older database keeps a path's credentials unbound and a URL's bound to its own
+    origin. Every reader builds its request once (`runtime_secrets.url(..., dial=)`): the credentials
+    are attached to the address the reader will send to, checked for that address, and that
+    address is returned, so a configuration reload between a check and a send cannot redirect it.
+    The gateway never logs an upstream response body or an upstream error text (decision D43): a log
+    line about an upstream holds a status, a content type, a byte count, the class of an error and the origin it
+    was sent to, and a reason of its own (`log_scrub.describe_response`, `describe_bytes`, `describe_error`,
+    `describe_origin`). `tests/test_no_upstream_text_in_logs.py` finds a log call that takes a body, a subprocess's
+    output, an HTTP error's text or a traceback. As the backup, every secret a driver, a probe or the native lane
+    reads, from the store or from an environment variable, is registered for the log scrub
+    (`gateway/log_scrub.py`; `tests/test_secret_registration.py` finds each reader, including a literal
+    environment name or a configuration key that names a credential, and fails for one that neither registers
+    nor says why it need not). The registry is keyed by source (a stored secret's id, `env:NAME`, a configured
+    name; never a hash of a value), so it is bounded by configuration and nothing in use is evicted; a source keeps
+    the values it held before its last eight rotations, is set when a secret is stored and forgotten after its
+    deletion has committed. A value is scrubbed in every form the gateway can produce (raw, URL-encoded, JSON-escaped,
+    base64, and base64 of `user:password`) before the line is cut to length. A value longer than 64 KiB is not
+    registered and every line is withheld while a source holds one.
+    The scrubber and the call-site check are secondary guards (decision D44). The boundary is the egress:
+    `gateway/log_egress.py` cleans every log record when it is made (message scrubbed, exception reduced to its type
+    and the location of each frame, `httpx` and `httpcore` pinned to WARNING and cut to method, origin and status),
+    wraps `print` and the standard streams, and routes warnings and uncaught exceptions through the same path;
+    `gateway/client_errors.py` builds every error to an API caller from a fixed reason, our code and the request id,
+    and passes an engine's error on with its status, machine code and `Retry-After` and none of its words or headers.
+    `UpstreamError` keeps the engine's text in `excerpt`, which no `str()`, `repr()` or log line shows.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of
@@ -161,8 +242,9 @@ resources:
     is `{"id", "name", "configured"}`; an environment value is
     `{NAME: {"id", "configured"}}`; a command is a list of public literals
     (strings) and `{"id", "configured", "prefix"?}`; a URL field is its public form
-    (no user info, no query) beside `<field>_entries`
-    (`{"userinfo": {...}, "query": [{"id", "name", "configured"}], "fragment": {...}}`);
+    (no user info, no query, no path-parameter values) beside `<field>_entries`
+    (`{"userinfo": {...}, "params": [{"id", "name", "configured"}], "query": [{"id", "name", "configured"}], "fragment": {...}}`;
+    a URL kept whole shows `{"whole": {"id", "label", "configured"}}`);
     a stored provider key is `{"configured": bool}`. A value the type does not
     expect (text where a mapping belongs) is left out and reported, never shown.
   - **How a secret changes** (decision D27). Never by a marker, an empty string,
@@ -177,7 +259,8 @@ resources:
     `set` (a command: `items` in order, each `{"literal"}`, `{"retain": entry_id}`,
     `{"replace": entry_id, "secret": value, "prefix"?}` (a new value under the same id) or
     `{"secret": value, "prefix"?}`, and `clear`: every stored entry the list drops
-    must be named there; a `literal` is public as declared, no flag name is read to guess otherwise), `set_credentials` (`url`) and `clear_credentials` (a URL
+    must be named there; a `literal` is public as declared, no flag name is read to guess otherwise), `set_credentials` (`url`; or `url`, `whole: true` and a `label` to keep a
+    URL whose secret sits in its path as one secret, shown by its label) and `clear_credentials` (a URL
     field). Ids are server-issued (`ent_...`) and stable across reorder, rename and
     replace. A value that is one of the marker texts (`[redacted]`, `<redacted>`,
     `<configured>`), empty, not text, over 8 KiB or holding NUL is refused. Unknown
@@ -187,7 +270,7 @@ resources:
     Error codes: `invalid_commands`, `invalid_command`, `unknown_carrier`,
     `invalid_entry_id`, `duplicate_entry`, `unknown_entry`, `invalid_value`,
     `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
-    `credential_header_public` (a header named like a credential cannot be `public`), `carrier_unavailable`, `owner_required` (403),
+    `credential_header_public` (a header named like a credential cannot be `public`), `invalid_label` (a URL kept whole needs a short label that repeats no part of the URL), `carrier_unavailable`, `owner_required` (403),
     `service_not_found` (404), `generation_mismatch` (412).
     The engine's inference key uses the `config.api_key` carrier: `add` takes
     `value`; `replace`, `retain` and `clear` name `key.entry_id` from the engine
@@ -224,7 +307,10 @@ resources:
     A reference slot that has no entry id (`config.api_key_secret_id`, `secret_refs`) is read as
     `{"configured": true}` or as names; a write that sends back exactly what a read shows for the stored
     value leaves it as it is (the same rule as for a carrier), and any other marker, mapping or reserved text there
-    is refused with fixed text. A URL is kept byte for byte, query string included (`?a=b+c`, `?a=`, `&&`, `%2f`);
+    is refused with fixed text. What a read shows for an entry (`{"id", "configured"}` with no reference) written
+    where no stored entry has that id, and a `<field>_entries` part that is not an entry or an empty or gap marker,
+    are refused too, as is a mapping or a list where an environment value goes (the runtime never passed one on).
+    A URL is kept byte for byte, query string, `;name=value` path parameters and an empty user info (`http://@host/`) included (`?a=b+c`, `?a=`, `&&`, `%2f`);
     one that holds a backslash, a control character or an invalid port is refused on a write (it would read as
     another host to another client) and kept whole and private when a stored record has it. The URL fields are
     every one the runtime reads as an address (`record_carriers.URL_FIELD_PATHS`, a model row's `url`). Inline input

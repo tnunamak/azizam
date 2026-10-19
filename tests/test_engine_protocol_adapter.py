@@ -245,7 +245,8 @@ def test_speech_refusals_come_back_as_replies_and_transport_errors_as_typed_fail
         errors[:] = [error]
         with pytest.raises(TransportFailure) as raised:
             run(InlineTtsAdapter().invoke(conn, "speech.synthesize", _speech()))
-        assert raised.value.kind == kind and str(raised.value) == str(error)
+        # the message names the class of the error and not its text (decision D44)
+        assert raised.value.kind == kind and type(error).__name__ in str(raised.value) and str(error) not in str(raised.value)
 
 
 def test_speech_streams_raw_chunks_and_closes_upstream(fake_upstreams) -> None:
@@ -340,7 +341,8 @@ def test_voice_operations_keep_httpx_failures_typed_and_pass_other_errors_throug
             errors[:] = [error]
             with pytest.raises(TransportFailure) as raised:
                 run(InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body=payload)))
-            assert (raised.value.kind, str(raised.value), type(raised.value.__cause__)) == (kind, str(error), type(error))
+            assert (raised.value.kind, type(raised.value.__cause__)) == (kind, type(error))
+            assert type(error).__name__ in str(raised.value) and str(error) not in str(raised.value)
         errors[:] = [KeyError("not httpx")]
         with pytest.raises(KeyError):
             run(InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body=payload)))
@@ -458,7 +460,7 @@ def test_a_short_clip_is_posted_as_the_old_multipart_call_did(fake_upstreams) ->
     fake_upstreams.router._routes[STT_HOST] = HandlerTransport(refuse)
     with pytest.raises(TransportFailure) as raised:
         run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files)))
-    assert (raised.value.kind, str(raised.value)) == ("unreachable", "refused")
+    assert raised.value.kind == "unreachable" and "ConnectError" in str(raised.value) and "refused" not in str(raised.value)
 
 
 @pytest.mark.parametrize("op, route", [("stt.transcribe", "transcriptions"), ("stt.translate", "translations")])

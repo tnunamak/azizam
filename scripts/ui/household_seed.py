@@ -1176,7 +1176,7 @@ PROMPT_NOT_KEPT = frozenset({4, 13})
 
 
 def _media(state, paths, apps, hashes, now, rng, people):
-    from gateway import media_jobs, prompt_memory, receipt_store
+    from gateway import media_jobs, prompt_memory, prompt_metadata_migration, receipt_store
     from gateway.receipts import RouteReceipt
 
     entries = json.loads((FIXTURES / "manifest.json").read_text())
@@ -1301,6 +1301,16 @@ def _media(state, paths, apps, hashes, now, rng, people):
             )
         assets.append({"asset_id": asset_id, "owner": owner, "kind": kind,
                        "prompt_kept": bool(prompt_kept)})
+    # The fixture files carry embedded metadata, as an instance's pre-upgrade
+    # files do. The server's startup migration strips them in place, so a
+    # browser test that listed the Library first would see a size the download
+    # no longer has. Run the same migration here, against the same progress
+    # record, so the server finds every file clean and rewrites nothing.
+    migrated = prompt_metadata_migration.strip_cached_assets(
+        cache, paths["media_jobs"].with_name("prompt_metadata_migration.db")
+    )
+    if not migrated.complete:
+        raise RuntimeError(f"household media left unclean: {sorted(migrated.errors)}")
     return assets
 
 

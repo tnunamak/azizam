@@ -23,6 +23,7 @@ RUNTIME_IMPORTERS = {
     "gateway/engine_process.py": "resolves the argument list and environment of an owned process when it starts it",
     "gateway/engine_connection.py": "resolves headers at the final lifecycle inference hop",
     "gateway/engine_observations.py": "resolves the query credentials of a readiness probe when it sends the probe",
+    "gateway/decision_routing.py": "resolves the query credentials of a placement probe when it sends the probe",
     "proxy.py": "resolves a native call's headers and URL credentials when it forwards the call",
 }
 # Modules that read a provider key from the store directly (decision D26 moved the other carriers; a provider key is
