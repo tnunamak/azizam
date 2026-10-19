@@ -30257,6 +30257,9 @@ from gateway.json_compression import JsonCompressionMiddleware
 app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
+# Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
+from gateway.noindex import NoIndexHeaderMiddleware
+app.add_middleware(NoIndexHeaderMiddleware)
 
 
 # =============================================================================

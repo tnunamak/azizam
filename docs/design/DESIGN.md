@@ -338,9 +338,12 @@ Copper sits near the complement of the petrol teal, so the mark is the only warm
 | `icon-192.png`, `icon-512.png` (`web/public/`) | 192, 512 | The same tile with 22.5 % rounded corners, for desktop shortcuts |
 | `icon-maskable-192.png`, `icon-maskable-512.png` (`web/public/`) | 192, 512 | Full bleed; the 48 box at 56 %, every copper pixel inside the 40 % safe circle (a test checks) |
 | `manifest.webmanifest` (`web/src/app/manifest.ts`) | | Name, colours and the four icons above |
+| `robots.txt` (`web/public/`) | | `User-agent: *`, `Disallow: /` |
 | `opengraph-image.png` (`web/public/`) | 1200 × 630 | The lockup on #0C1F25 and the link preview's line, "One AI gateway for your apps and the people you invite." |
 
 `gateway/ui_pages.json` lists these root files: the gateway serves exactly these names to anyone (browsers fetch icons without credentials), and `web/scripts/check-export-shape.mjs` fails the build when one is missing or an unlisted file appears. Next writes the icon, manifest and theme-color tags from `web/src/app/`. A link preview needs an absolute image URL, and the static export knows its origin only at build time, so `og:image` is added only when the build runs with `AZIZAM_PUBLIC_URL` set (`web/src/lib/site-metadata.ts`). Without it the preview has a title and a description and no image; a file-convention `opengraph-image` would point at `http://localhost:3000` instead.
+
+`robots.txt` is the one root file crawlers fetch (`web/public/robots.txt`: `User-agent: *` and `Disallow: /`). It is public for the same reason as the icons: a crawler sends no credentials, and a 401 would tell it nothing. Azizam is a private service, so every HTML response the gateway sends also carries `X-Robots-Tag: noindex, nofollow` (`gateway/noindex.py`, the outermost layer), and the root metadata adds `<meta name="robots" content="noindex, nofollow">`.
 
 ### Do and don't
 
