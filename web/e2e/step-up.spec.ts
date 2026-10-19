@@ -75,9 +75,14 @@ async function openAdvanced(page: Page) {
   await page.goto("/settings/");
   const section = page.getByRole("region", { name: "Advanced", exact: true });
   await section.getByRole("button", { name: "Edit Advanced", exact: true }).click();
-  await page.getByText("Effective configuration and export", { exact: true }).click();
   return section;
 }
+
+// The gateway holds the effective configuration behind a recent sign-in, as it does the export of the same
+// document (gateway/step_up.py, decision D36). The page loads and Advanced opens without asking; showing
+// the configuration is the first thing that does.
+const effectiveToggle = (page: Page) =>
+  page.getByText("Effective configuration and export", { exact: true });
 
 const prompt = (page: Page) => page.getByRole("dialog", { name: /Confirm it.s you/ });
 
@@ -89,15 +94,17 @@ for (const width of [1440, 390]) {
   }) => {
     const page = await staleOwnerPage(browser, baseURL!, request, width);
     try {
-      // The page itself loads: only the risky action asks.
+      // The page itself loads and Advanced opens: only the risky action asks.
       await openAdvanced(page);
-      const exportLink = page.getByRole("link", { name: "Export redacted snapshot" });
-      await expect(exportLink).toBeVisible();
-
-      await exportLink.click();
       const dialog = prompt(page);
+      await expect(dialog).toBeHidden();
+      const exportLink = page.getByRole("link", { name: "Export redacted snapshot" });
+
+      // Showing the configuration is that action.
+      await effectiveToggle(page).click();
       await expect(dialog).toBeVisible();
       await expect(dialog).toContainText("This action needs a recent sign-in.");
+      await expect(exportLink).toBeHidden();
       const password = dialog.getByLabel("Password");
       await expect(password).toBeFocused();
       await expect(password).toHaveAttribute("autocomplete", "current-password");
@@ -118,28 +125,27 @@ for (const width of [1440, 390]) {
       await expect(password).toHaveValue("");
       await expect(password).toBeFocused();
 
-      // The right password finishes the original action with no second click.
-      const download = page.waitForEvent("download");
+      // The right password finishes the original action with no second click: the configuration shows.
       await password.fill(OWNER_PASSWORD);
       await password.press("Enter");
-      const file = await download;
-      expect(file.suggestedFilename()).toBe("gateway-effective-config.json");
       await expect(dialog).toBeHidden();
+      await expect(exportLink).toBeVisible();
+      await expect(page.getByLabel("Effective configuration JSON")).toBeVisible();
       // Focus goes back to the control that started the action.
-      await expect(exportLink).toBeFocused();
+      await expect(effectiveToggle(page)).toBeFocused();
 
-      // The session is now fresh: the same action does not ask again.
-      const again = page.waitForEvent("download");
+      // The session is now fresh: the export does not ask again.
+      const file = page.waitForEvent("download");
       await exportLink.click();
-      await again;
-      await expect(prompt(page)).toBeHidden();
+      expect((await file).suggestedFilename()).toBe("gateway-effective-config.json");
+      await expect(dialog).toBeHidden();
     } finally {
       await page.context().close();
     }
   });
 }
 
-test("cancelling the prompt leaves the export undone and the page usable", async ({
+test("cancelling the prompt leaves the configuration hidden and the page usable", async ({
   browser,
   baseURL,
   request,
@@ -150,15 +156,20 @@ test("cancelling the prompt leaves the export undone and the page usable", async
     const exportLink = page.getByRole("link", { name: "Export redacted snapshot" });
     let downloads = 0;
     page.on("download", () => (downloads += 1));
-    await exportLink.click();
+    await effectiveToggle(page).click();
     const dialog = prompt(page);
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toBeHidden();
-    await expect(exportLink).toBeFocused();
-    // The failure is shown in plain words, not as raw JSON.
-    await expect(page.getByText("Confirm it's you to do this.")).toBeVisible();
+    await expect(effectiveToggle(page)).toBeFocused();
+    // The configuration stays hidden and the page stays usable: the failure is in plain words, with a retry.
+    await expect(exportLink).toBeHidden();
+    await expect(page.getByText("Effective configuration could not be loaded.")).toBeVisible();
     expect(downloads).toBe(0);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toBeHidden();
   } finally {
     await page.context().close();
   }
