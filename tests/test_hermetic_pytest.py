@@ -96,6 +96,12 @@ def test_service_and_terminal_mutation_are_rejected_before_spawn(command: list[s
         subprocess.run(command, check=False)
 
 
+@pytest.mark.parametrize("command", ["nvidia-smi", "/usr/bin/nvidia-smi"])
+def test_real_gpu_probe_is_rejected_before_spawn(command: str) -> None:
+    with pytest.raises(pytest.fail.Exception, match="host-control command 'nvidia-smi'"):
+        subprocess.run([command, "--query-gpu=index,uuid"], check=False)
+
+
 def test_process_signalling_is_rejected_before_effect() -> None:
     with pytest.raises(pytest.fail.Exception, match="process signalling"):
         os.kill(os.getpid(), signal.SIGTERM)
