@@ -11,6 +11,7 @@ observability.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from types import MappingProxyType
 from typing import Any, Literal, TypeVar
 
 import httpx
+import yaml
 from openai.types.audio.transcription import (
     Transcription,
     UsageDuration,
@@ -68,6 +70,7 @@ _TAIL_FRACTION_OF_TARGET = 0.25
 _MIN_SEGMENT_SECONDS = 0.5
 # Boundary line, part headers and CRLFs around one multipart part, with room for long filenames.
 _PART_FRAMING_BYTES = 8192
+_CHUNKING_DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "registry" / "stt_chunking_defaults.yml"
 _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
     {
         "connection",
@@ -182,6 +185,20 @@ class SttCleanupFailure(SttExecutionError):
     """A mandatory, already-attempted cleanup action failed."""
 
 
+@functools.lru_cache(maxsize=4)
+def _read_chunking_defaults(path: Path, modified_ns: int) -> Mapping[str, Any]:
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    defaults = document.get("defaults")
+    if not isinstance(defaults, Mapping):
+        raise SttConfigurationError("The bundled STT chunking defaults are missing")
+    return MappingProxyType(dict(defaults))
+
+
+def bundled_chunking_defaults(path: Path = _CHUNKING_DEFAULTS_PATH) -> Mapping[str, Any]:
+    """The long-audio values a record falls back to, from the bundled data file ``registry/stt_chunking_defaults.yml``."""
+    return _read_chunking_defaults(path, path.stat().st_mtime_ns)
+
+
 @dataclass(frozen=True)
 class SttExecutionConfig:
     """Validated, immutable execution budget captured from one service record."""
@@ -256,15 +273,22 @@ class SttExecutionConfig:
         if not host or not 0 < port < 65536:
             raise SttConfigurationError("STT service host and port are invalid")
 
-        threshold = positive_float("threshold_seconds", 720.0)
-        target = positive_float("target_seconds", 480.0)
+        fallback = bundled_chunking_defaults()
+        threshold = positive_float("threshold_seconds", float(fallback["threshold_seconds"]))
+        target = positive_float("target_seconds", float(fallback["target_seconds"]))
         if target >= threshold:
             raise SttConfigurationError("STT target_seconds must be less than threshold_seconds")
-        search = positive_float("search_seconds", 2.0)
+        search = positive_float("search_seconds", float(fallback["search_seconds"]))
         # The hard maximum is the longest piece the engine takes without losing words. A record that does not
-        # declare one gets the longest piece the cut rules can produce (target plus the search width on each side).
+        # declare one gets the bundled fallback; `derive` there means the longest piece the cut rules can produce
+        # (target plus the search width on each side).
         max_segment_declared = chunking.get("max_segment_seconds") is not None
-        max_segment = positive_float("max_segment_seconds", target + 2.0 * search) if max_segment_declared else target + 2.0 * search
+        max_segment_fallback = fallback.get("max_segment_seconds")
+        derived = target + 2.0 * search
+        max_segment = (
+            positive_float("max_segment_seconds", derived) if max_segment_declared
+            else derived if max_segment_fallback in (None, "derive") else float(max_segment_fallback)
+        )
         if max_segment < target:
             raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
 
@@ -330,18 +354,25 @@ class SttExecutionConfig:
         )
 
     def chunking_view(self) -> dict[str, Any]:
-        """What the owner is shown about long-audio cutting: the numbers in force and where the hard maximum came from."""
+        """What the owner is shown about long-audio cutting: the numbers in force and which come from the bundled defaults."""
+        saved = _thaw(self.backend_config.get("chunking")) or {}
+        from_defaults = [
+            key for key in ("threshold_seconds", "target_seconds", "search_seconds", "max_segment_seconds")
+            if saved.get(key) is None
+        ]
         return {
             "enabled": self.chunking_enabled,
             "cut_files_longer_than_seconds": self.chunk_above_seconds,
             "target_seconds": self.target_seconds,
             "search_seconds": self.search_seconds,
             "max_segment_seconds": self.max_segment_seconds,
-            "max_segment_source": (
-                "saved on this engine" if self.max_segment_declared
-                else "default (target plus twice the search width); set max_segment_seconds on this engine to change it"
-            ),
             "native_long_audio": self.native_long_audio,
+            "from_bundled_defaults": from_defaults,
+            "note": (
+                "Values listed in from_bundled_defaults are not saved on this engine; they come from the bundled "
+                "defaults (registry/stt_chunking_defaults.yml). Save them on the engine to fix them."
+                if from_defaults else "All values are saved on this engine."
+            ),
         }
 
     @property

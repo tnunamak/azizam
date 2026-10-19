@@ -1,0 +1,14 @@
+# One-time upgrades of stored transcription records from the silence-based cut planner (before D47).
+#
+# A record is upgraded only when every key under `when` equals its stored `chunking` value; nothing else changes.
+# `set` adds the listed keys when the record has none of its own; `drop` removes keys the planner no longer reads.
+# A record that does not match keeps its stored values (the dropped keys stay inert) and the engine page shows the
+# numbers in force.
+upgrades:
+  - note: >-
+      The seeded GPU transcription record as 915dc190 shipped it: 30 s target, 10 s silence search, 40 s threshold.
+      Measured on 734 seams (stt-seam-eval, 2026-10-19): the energy minimum within 2 s of a target beats the old
+      silence midpoint, and this engine deletes words in pieces over 40 s.
+    when: {target_seconds: 30, threshold_seconds: 40, silence_search_seconds: 10}
+    set: {search_seconds: 2, max_segment_seconds: 40}
+    drop: [silence_search_seconds, silence_noise_db, silence_min_seconds]

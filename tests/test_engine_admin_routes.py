@@ -368,7 +368,8 @@ def test_stt_long_audio_fields_round_trip_and_the_view_says_where_the_maximum_ca
     assert view["other_settings"]["chunking"] == chunking
     assert view["stt_chunking"] == {
         "enabled": True, "cut_files_longer_than_seconds": 40.0, "target_seconds": 30.0, "search_seconds": 2.0,
-        "max_segment_seconds": 40.0, "max_segment_source": "saved on this engine", "native_long_audio": False,
+        "max_segment_seconds": 40.0, "native_long_audio": False, "from_bundled_defaults": [],
+        "note": "All values are saved on this engine.",
     }
     # The operator registry (REST, and the MCP tools that read it) returns the same fields.
     assert _record(gateway, "ears")["config"]["chunking"] == chunking
@@ -380,7 +381,7 @@ def test_stt_long_audio_fields_round_trip_and_the_view_says_where_the_maximum_ca
     del registry["services"]["ears"]["config"]["chunking"]["max_segment_seconds"]
     _put_registry(gateway, registry)
     shown = owner.get("/admin/api/engines/ears").json()["engine"]["stt_chunking"]
-    assert shown["max_segment_seconds"] == 34.0 and shown["max_segment_source"].startswith("default")
+    assert shown["max_segment_seconds"] == 34.0 and shown["from_bundled_defaults"] == ["max_segment_seconds"]
     # A record with no chunking block has no long-audio view.
     registry = _registry(gateway)
     del registry["services"]["ears"]["config"]["chunking"]
