@@ -204,7 +204,7 @@ def run_length_sweep(repo: Path, lengths: list[float], recordings: list[Recordin
         gateway.stop()
         tap.stop()
         shutil.rmtree(state, ignore_errors=True)
-    rows = []
+    rows, interiors = [], {length: [] for length in lengths}
     for length in lengths:
         pieces, failed = [], 0
         for recording in recordings:
@@ -212,11 +212,18 @@ def run_length_sweep(repo: Path, lengths: list[float], recordings: list[Recordin
             failed += len(result["failures"])
             count = len(result["texts"])
             words = measure.normalize(" ".join(result["texts"]), FILLERS)
-            end = count * length
-            reference = [w for w in recording.words if w.mid < end]
-            run = measure.Run(words, [(i * length, (i + 1) * length) for i in range(count)])
-            pieces += measure.piece_counts(measure.score_run(reference, run))
+            reference = [w for w in recording.words if w.mid < count * length]
+            scored = measure.score_run(reference, measure.Run(words, [(i * length, (i + 1) * length) for i in range(count)]))
+            pieces += measure.piece_counts(scored)
+            interiors[length].append((recording, scored, measure.interior_deletions(scored)))
         rows.append({"length": length, "failed_pieces": failed, **measure.rate_interval(pieces)})
+    base = min(lengths)
+    for row in rows:
+        # Pool the blocks of all recordings into one interval.
+        blocks = []
+        for index, (recording, scored, other) in enumerate(interiors[row["length"]]):
+            blocks += measure.deletion_blocks(interiors[base][index][2], other, scored.mids)
+        row["vs_shortest"] = measure.paired_excess(blocks).as_dict() if row["length"] != base else None
     return {"rows": rows, "seconds_per_recording": args.sweep_seconds}
 
 
@@ -259,9 +266,9 @@ def report(results: list[dict], recordings: list[Recording], args, chunkings: di
     if sweep:
         lines += ["", "## Deletion rate by piece length, pieces sent straight to the engine (gateway cutting off)", "",
                   f"Consecutive pieces from the first {sweep['seconds_per_recording']:g} s of each recording; words 2 s inside each end; "
-                  "interval resamples whole pieces.", "", "| piece length (s) | pieces | words | deleted % [95%] | engine refused |", "|---|---|---|---|---|"]
-        lines += [f"| {r['length']:g} | {r['pieces']} | {r['words']} | {r['deletion_pct']} [{r['low_pct']}, {r['high_pct']}] | {r['failed_pieces']} |"
-                  for r in sweep["rows"]]
+                  "interval resamples whole pieces.", "", "| piece length (s) | pieces | words | deleted % [95%] | same words, minus the shortest length (points) | engine refused |", "|---|---|---|---|---|---|"]
+        lines += [f"| {r['length']:g} | {r['pieces']} | {r['words']} | {r['deletion_pct']} [{r['low_pct']}, {r['high_pct']}] | "
+                  f"{fmt(r['vs_shortest']) if r['vs_shortest'] else '-'} | {r['failed_pieces']} |" for r in sweep["rows"]]
     if hard_max is not None:
         lines += ["", "## Acceptance (D47)", ""]
         for r in results:

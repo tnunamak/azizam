@@ -238,6 +238,32 @@ def piece_counts(scored: Scored, *, trim: float = 2.0) -> list[tuple[int, int, f
     return out
 
 
+def interior_deletions(scored: Scored, *, trim: float = 2.0) -> dict[int, int]:
+    """Reference word index -> 1 if the run dropped it, for words at least ``trim`` s inside a piece."""
+    out: dict[int, int] = {}
+    for start, end in scored.run.segments:
+        lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
+        for i in range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi)) if hi > lo else ():
+            out[i] = 1 if scored.alignment.status[i] == DELETED else 0
+    return out
+
+
+def deletion_blocks(
+    base: Mapping[int, int], other: Mapping[int, int], mids: Sequence[float], *, block: float = 30.0,
+) -> list[tuple[int, int, int]]:
+    """Per ``block`` seconds: (deletions in ``other`` minus ``base``, 0, words) over words inside a piece in both runs.
+
+    The same words are compared, so how often an engine drops a short backchannel cancels. Feed the blocks of all
+    recordings to ``paired_excess`` for the interval (blocks, not words, are resampled).
+    """
+    blocks: dict[int, list[int]] = {}
+    for index in base.keys() & other.keys():
+        entry = blocks.setdefault(int(mids[index] // block), [0, 0])
+        entry[0] += other[index] - base[index]
+        entry[1] += 1
+    return [(d, 0, n) for d, n in blocks.values()]
+
+
 def rate_interval(pieces: Sequence[tuple[int, int, float]], *, resamples: int = 4000, seed: int = 20261019) -> dict[str, float | int]:
     """Deletion rate (%) over pieces with a 95% bootstrap interval resampling whole pieces."""
     pieces = [p for p in pieces if p[0] > 0]
