@@ -32,6 +32,7 @@ of scope here — this module is the durable substrate those routes call into.
 from __future__ import annotations
 
 from gateway import request_connections, secret_store, session_guard
+from gateway import retention as retention_contract
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -47,7 +48,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -65,6 +66,9 @@ _SECRET_REFS_VERSION = 11
 _DRIVER_KEY_ORIGIN_VERSION = 12
 # Schema 13 binds the credentials stored with each URL field to its effective origin (gateway.url_binding_migration).
 _URL_BINDING_VERSION = 13
+# Schema 14 moves operator setting ``prompt_memory`` to ``retention`` (gateway.retention_migration). An older gateway
+# refuses a database at this version, so it cannot read the household policy as if it were unset.
+_RETENTION_KEY_VERSION = 14
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -459,6 +463,11 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         "AND COALESCE(app_id, subject_id) IN (SELECT app_id FROM session_apps)",
         (_now(),),
     )
+    # Before anything reads the household default below: the setting it reads moves here.
+    if row is not None and int(row[0]) < _RETENTION_KEY_VERSION:
+        from gateway import retention_migration
+
+        retention_migration.migrate(conn)
     _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
@@ -630,16 +639,20 @@ def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
 
 
 def _prompt_memory_default(conn: sqlite3.Connection) -> bool:
+    """The household default for a person who has no saved choice: the owner's, else the bundled one."""
+    default = bool(retention_contract.household_defaults()["default_remember"])
     row = conn.execute(
-        "SELECT value_json FROM operator_settings WHERE key='prompt_memory'"
+        "SELECT value_json FROM operator_settings WHERE key=?", (retention_contract.SETTING_KEY,)
     ).fetchone()
     if row is None:
-        return True
+        return default
     try:
         value = json.loads(row[0])
     except (TypeError, json.JSONDecodeError):
-        return True
-    return bool(value.get("default_remember", True)) if isinstance(value, Mapping) else True
+        return default
+    if not isinstance(value, Mapping):
+        return default
+    return bool(retention_contract.household(value)["default_remember"])
 
 
 def _insert_account_access(conn: sqlite3.Connection, user_id: str) -> None:
@@ -654,8 +667,8 @@ def _insert_prompt_memory_preference(
     value = _prompt_memory_default(conn)
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
-        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, 'never', ?, NULL)",
-        (user_id, 1 if value else 0, now),
+        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL)",
+        (user_id, 1 if value else 0, retention_contract.member_defaults()["retention"], now),
     )
 
 
@@ -666,8 +679,8 @@ def _freeze_missing_prompt_memory_preferences(
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
         "(user_id, remember, retention, updated_at, updated_by) "
-        "SELECT id, ?, 'never', ?, NULL FROM users",
-        (1 if remember else 0, ts),
+        "SELECT id, ?, ?, ?, NULL FROM users",
+        (1 if remember else 0, retention_contract.member_defaults()["retention"], ts),
     )
 
 
@@ -3036,10 +3049,10 @@ def put_operator_setting_in(
     now: int | None = None,
 ) -> dict[str, Any]:
     """``put_operator_setting`` inside a transaction the caller owns and commits."""
-    setting_key = str(key or "").strip()
+    setting_key, value = _canonical_setting(conn, str(key or "").strip(), value)
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
-    if setting_key == "prompt_memory":
+    if setting_key == retention_contract.SETTING_KEY:
         _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
         if value.get("never_keep"):
             _record_prompt_erasure(conn, "*", ts)
@@ -3055,6 +3068,19 @@ def put_operator_setting_in(
     _advance_setting_revision(conn, setting_key)
     row = conn.execute(_SETTING_SELECT + " WHERE s.key = ?", (setting_key,)).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+def _canonical_setting(
+    conn: sqlite3.Connection, key: str, value: Mapping[str, Any],
+) -> tuple[str, Mapping[str, Any]]:
+    """The setting a write lands on. The prompts group's view (key ``prompt_memory``, the names the settings screens
+    use) sets that group's values in the household policy, ``retention``, and leaves the other groups as they are."""
+    if key != retention_contract.PROMPTS_VIEW_KEY:
+        return key, value
+    stored = get_operator_setting_in(conn, retention_contract.SETTING_KEY)
+    return retention_contract.SETTING_KEY, retention_contract.apply_prompts_view(
+        stored["value"] if stored else None, value,
+    )
 
 
 def operator_setting_revision_in(conn: sqlite3.Connection, key: str) -> str:
@@ -3128,6 +3154,7 @@ def put_operator_setting_with_audit_in(
     if not isinstance(value, Mapping):
         raise ValueError("operator setting value must be a mapping")
     ts = _now() if now is None else int(now)
+    setting_key, value = _canonical_setting(conn, setting_key, value)
     if expected_revision is not None and expected_revision != operator_setting_revision_in(conn, setting_key):
         raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
     if validate_in_transaction is not None:
@@ -3384,7 +3411,7 @@ def write_service_registry_and_setting_with_audits(
     must not be outrun. None for a write no browser sign-in started.
     """
     setting_name = str(setting_key or "").strip()
-    if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
+    if not setting_name or setting_name in {"service_registry", retention_contract.SETTING_KEY, retention_contract.PROMPTS_VIEW_KEY}:
         raise ValueError("an ordinary operator setting key is required")
     if not isinstance(registry, Mapping) or not isinstance(setting_value, Mapping):
         raise ValueError("registry and setting values must be mappings")
@@ -3533,8 +3560,9 @@ def put_prompt_memory_preference(
 ) -> dict[str, Any]:
     if not user_id:
         raise ValueError("user_id is required")
-    if retention not in {"3_months", "1_year", "never"}:
-        raise ValueError("retention must be one of 3_months, 1_year, never")
+    choices = retention_contract.bundled().choices(retention_contract.LIBRARY_PROMPT)
+    if retention not in choices:
+        raise ValueError("retention must be one of " + ", ".join(choices))
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")

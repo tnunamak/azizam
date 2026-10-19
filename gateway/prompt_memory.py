@@ -14,23 +14,24 @@ import stat
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 import os
 
-from gateway import admin_store, directory_index, media_jobs, media_metadata, request_connections
+from gateway import admin_store, directory_index, media_jobs, media_metadata, request_connections, retention
 from gateway.sqlite_startup import connect
 from gateway.public_failure import PublicFailure
 
 DB_PATH = media_jobs.DB_PATH
-NAMESPACE = "com.azizam.prompts"
-RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
-RETENTION_LOCK_TIMEOUT_SECONDS = 0.25
-ERASURE_CUTOFF_TABLE = "prompt_memory_erasure_cutoffs"
-MEMBER_DEFAULTS = {"remember": True, "retention": "never"}
-HOUSEHOLD_DEFAULTS = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
+# The policy, the decision and the one writer are gateway/retention.py; the defaults are registry/retention.yml.
+NAMESPACE = retention.NAMESPACE
+RETENTION_LOCK_TIMEOUT_SECONDS = retention.RETENTION_LOCK_TIMEOUT_SECONDS
+ERASURE_CUTOFF_TABLE = retention.ERASURE_CUTOFF_TABLE
+Decision = retention.Decision
+PromptModeError = retention.PromptModeError
+requested_mode = retention.requested_mode
+retention_guard = retention.guard
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS asset_prompts (
@@ -50,35 +51,6 @@ CREATE TABLE IF NOT EXISTS media_volume_identity (
   created_at INTEGER NOT NULL
 );
 """
-
-
-@dataclass(frozen=True)
-class Decision:
-    person_id: str | None
-    keep: bool
-    reason: str
-    kept_until: int | None = None
-    created_at: int | None = None
-
-
-class PromptModeError(ValueError):
-    pass
-
-
-def requested_mode(body: Mapping[str, Any] | None) -> str | None:
-    if not isinstance(body, Mapping):
-        return None
-    extensions = body.get("extensions")
-    if extensions is None:
-        return None
-    if not isinstance(extensions, Mapping):
-        raise PromptModeError("extensions must be an object")
-    block = extensions.get(NAMESPACE)
-    if block is None:
-        return None
-    if not isinstance(block, Mapping) or set(block) != {"mode"} or block.get("mode") != "forget":
-        raise PromptModeError(f"extensions.{NAMESPACE} must be {{'mode':'forget'}}")
-    return "forget"
 
 
 def prompt_text(body: Mapping[str, Any] | None) -> str | None:
@@ -137,116 +109,25 @@ def decide(
     *, person_id: str | None, member: Mapping[str, Any] | None,
     household: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
     responses_store: bool | None = None, now: int | None = None,
+    kind: str = retention.LIBRARY_PROMPT,
 ) -> Decision:
-    """Resolve policy before any payload, media or Responses persistence."""
-    mode = requested_mode(request_body)
-    policy = {**HOUSEHOLD_DEFAULTS, **(household or {})}
-    if policy["never_keep"]:
-        return Decision(person_id, False, "server_disabled")
-    if mode == "forget" or responses_store is False:
-        return Decision(person_id, False, "request_forget")
-    if not person_id:
-        return Decision(None, False, "no_person")
-    preference = {**MEMBER_DEFAULTS, "remember": policy["default_remember"], **(member or {})}
-    if not preference.get("remember", policy["default_remember"]):
-        return Decision(person_id, False, "member_disabled")
-    started = int(time.time()) if now is None else now
-    member_period = RETENTION_SECONDS.get(preference.get("retention", "never"))
-    cap_period = RETENTION_SECONDS.get(policy.get("retention_cap", "never"))
-    finite = [period for period in (member_period, cap_period) if period is not None]
-    expiry = started + min(finite) if finite else None
-    return Decision(person_id, True, "remembered", expiry, started)
-
-
-@contextmanager
-def retention_guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dict[str, Any]]:
-    """Hold the admin setting's write lock through a prompt-bearing write.
-
-    A kill-switch update waits for this write, then purges it. A write that
-    starts after the update sees the new policy and is refused. The lock works
-    across gateway processes because it is a SQLite transaction.
-    """
-    if admin_path is None:
-        yield {**HOUSEHOLD_DEFAULTS, **MEMBER_DEFAULTS}
-        return
-    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
-    conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT value_json FROM operator_settings WHERE key='prompt_memory'").fetchone()
-        household = {**HOUSEHOLD_DEFAULTS, **(json.loads(row[0]) if row else {})}
-        _ensure_erasure_cutoff_table(conn)
-        erased = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'",
-        ).fetchone()
-        household_cutoff = int(erased[0]) if erased else 0
-        member = None
-        person_enabled = True
-        forgot_before = household_cutoff
-        if person_id:
-            erased = conn.execute(
-                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
-            ).fetchone()
-            forgot_before = max(household_cutoff, int(erased[0]) if erased else 0)
-            member = conn.execute(
-                "SELECT remember, retention FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
-            ).fetchone()
-            user_exists = conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is not None
-            if not user_exists:
-                person_enabled = False
-            else:
-                if member is None:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO prompt_memory_preferences"
-                        "(user_id, remember, retention, updated_at, updated_by) "
-                        "VALUES (?, ?, 'never', ?, NULL)",
-                        (person_id, 1 if household["default_remember"] else 0, int(time.time())),
-                    )
-                    member = conn.execute(
-                        "SELECT remember, retention FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
-                    ).fetchone()
-                account_table = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
-                ).fetchone()
-                if account_table is not None:
-                    access = conn.execute(
-                        "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
-                    ).fetchone()
-                    person_enabled = access is None or (access[0] is None and access[1] is None)
-        policy = {**household, "remember": bool(member[0]) if member else household["default_remember"],
-                  "retention": member[1] if member else MEMBER_DEFAULTS["retention"],
-                  "forgot_before": forgot_before}
-        policy["remember"] = bool(policy["remember"]) and person_enabled
-        yield policy
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def _ensure_erasure_cutoff_table(conn: sqlite3.Connection) -> None:
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,),
-    ).fetchone() is None:
-        conn.execute(
-            f"CREATE TABLE {ERASURE_CUTOFF_TABLE} ("
-            "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)"
-        )
+    """Resolve policy before any payload, media or Responses persistence (``retention.decide``)."""
+    return retention.decide(
+        kind, person_id=person_id, member=member, household_policy=household,
+        request_body=request_body, responses_store=responses_store, now=now,
+    )
 
 
 def household_settings(*, admin_path: Path | None = None) -> dict[str, Any]:
-    row = admin_store.get_operator_setting(
-        "prompt_memory", path=admin_path or admin_store.DB_PATH,
-    )
-    return {**HOUSEHOLD_DEFAULTS, **(row.get("value") or {} if row else {})}
+    row = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path or admin_store.DB_PATH)
+    return retention.household(row.get("value") if row else None)
 
 
 def decide_for_person(
     person_id: str | None, body: Mapping[str, Any] | None, *,
     admin_path: Path | None = None,
     responses_store: bool | None = None,
+    kind: str = retention.LIBRARY_PROMPT,
 ) -> Decision:
     """Resolve memory policy for an authenticated person independent of App."""
     path = admin_path or admin_store.DB_PATH
@@ -256,20 +137,20 @@ def decide_for_person(
     except sqlite3.OperationalError:
         # If storage is unavailable, validate the request and disable memory.
         requested_mode(body)
-        return Decision(person_id, False, "storage_unavailable")
+        return Decision(person_id, False, "storage_unavailable", kind=kind)
     return decide(
         person_id=person_id, member=member, household=household,
-        request_body=body, responses_store=responses_store,
+        request_body=body, responses_store=responses_store, kind=kind,
     )
 
 
 def get_member(person_id: str, *, path: Path | None = None) -> dict[str, Any]:
     record = admin_store.get_prompt_memory_preference(person_id, path=path or admin_store.DB_PATH)
     if not record:
-        return dict(MEMBER_DEFAULTS)
+        return retention.member_defaults()
     return {
         "remember": bool(record.get("remember")),
-        "retention": str(record.get("retention") or MEMBER_DEFAULTS["retention"]),
+        "retention": str(record.get("retention") or retention.member_defaults()["retention"]),
     }
 
 
@@ -290,24 +171,11 @@ def put_member(
 
 
 def household_default(value: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    return {**HOUSEHOLD_DEFAULTS, **(value or {})}
+    return {**retention.household_defaults(), **(value or {})}
 
 
 def effective(member: Mapping[str, Any] | None, household: Mapping[str, Any] | None) -> dict[str, Any]:
-    prefs = {**MEMBER_DEFAULTS, **(member or {})}
-    policy = household_default(household)
-    remember = bool(prefs.get("remember", True)) and not bool(policy.get("never_keep"))
-    return {
-        "remember": remember,
-        "retention": _effective_retention(str(prefs.get("retention") or "never"), str(policy.get("retention_cap") or "never")),
-    }
-
-
-def _effective_retention(member_retention: str, cap_retention: str) -> str:
-    finite = [value for value in (member_retention, cap_retention) if RETENTION_SECONDS.get(value) is not None]
-    if not finite:
-        return "never"
-    return min(finite, key=lambda value: RETENTION_SECONDS[value] or 0)
+    return retention.effective(member, household)
 
 
 def _connect(path: Path | None) -> sqlite3.Connection:
@@ -361,18 +229,8 @@ def put(
     if not asset_id or not person_id or not isinstance(prompt_text, str) or not prompt_text:
         raise ValueError("asset, maker and nonempty prompt text are required")
     started = int(time.time()) if created_at is None else created_at
-    with retention_guard(admin_path, person_id) as policy:
-        if (policy["never_keep"] or not policy["remember"]
-                or started <= policy.get("forgot_before", 0)):
-            return False
-        periods = [RETENTION_SECONDS[value] for value in
-                   (policy["retention"], policy["retention_cap"])
-                   if RETENTION_SECONDS[value] is not None]
-        limits = [kept_until] if kept_until is not None else []
-        limits.extend(started + period for period in periods)
-        deadline = min(limits) if limits else None
-        if deadline is not None and deadline <= int(time.time()):
-            return False
+
+    def insert(deadline: int | None) -> None:
         conn = _connect(path)
         try:
             conn.execute(
@@ -387,7 +245,11 @@ def put(
             conn.commit()
         finally:
             conn.close()
-    return True
+
+    return retention.write(
+        retention.LIBRARY_PROMPT, admin_path=admin_path, person_id=person_id, created_at=started,
+        kept_until=kept_until, commit=insert,
+    )
 
 
 def safe_put(
@@ -408,7 +270,7 @@ def safe_put(
 def tighten_retention(period: str, *, person_id: str | None = None,
                       path: Path | None = None, now: int | None = None) -> int:
     """Shorten existing deadlines; never restore or lengthen a prompt."""
-    seconds = RETENTION_SECONDS[period]
+    seconds = retention.seconds_map()[period]
     if seconds is None:
         return 0
     conn = _connect(path)
@@ -555,7 +417,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
-        _ensure_erasure_cutoff_table(conn)
+        retention.ensure_erasure_cutoff_table(conn)
         row = conn.execute(
             f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
         ).fetchone()
@@ -588,7 +450,7 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
             f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'"
         ).fetchone() if table_exists else None
         setting = conn.execute(
-            "SELECT value_json, updated_at FROM operator_settings WHERE key='prompt_memory'"
+            "SELECT value_json, updated_at FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)
         ).fetchone()
         legacy = int(setting[1]) if setting and json.loads(setting[0]).get("never_keep") else 0
         return max(int(row[0]) if row else 0, legacy) or None

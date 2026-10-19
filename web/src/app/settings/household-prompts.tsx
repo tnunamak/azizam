@@ -19,13 +19,14 @@ import {
 } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import {
-  RETENTIONS,
   capLabel,
+  defaultCap,
   householdPromptMemoryApi,
   isRetention,
   isShorter,
   promptMemoryKey,
   purgeStatus,
+  retentionChoices,
   type HouseholdPromptMemory,
   type HouseholdPromptMemoryResponse,
   type Retention,
@@ -131,12 +132,12 @@ export function HouseholdPromptsSection() {
           onOpenChange={(open) => !open && setPending(null)}
           title={
             pending?.kind === "cap"
-              ? `Keep prompts for at most ${capLabel[pending.value].toLowerCase()}?`
+              ? `Keep prompts for at most ${capLabel(pending.value).toLowerCase()}?`
               : "Never keep prompts on this gateway?"
           }
           description={
             pending?.kind === "cap"
-              ? `Everyone’s prompts older than ${capLabel[pending.value].toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
+              ? `Everyone’s prompts older than ${capLabel(pending.value).toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
               : "Nothing new will be kept. Deletion of everyone’s saved prompts may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library. Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies."
           }
           confirmLabel={
@@ -171,7 +172,7 @@ function Rows({
   onChange: (next: HouseholdPromptMemory) => void;
   onAsk: (pending: Pending) => void;
 }) {
-  const cap = isRetention(value.retention_cap) ? value.retention_cap : "never";
+  const cap = isRetention(value.retention_cap) ? value.retention_cap : defaultCap();
   return (
     <>
       <SettingRow
@@ -230,9 +231,9 @@ function Rows({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {RETENTIONS.map((option) => (
+              {retentionChoices().map((option) => (
                 <SelectItem key={option} value={option}>
-                  {capLabel[option]}
+                  {capLabel(option)}
                 </SelectItem>
               ))}
             </SelectContent>

@@ -24,13 +24,16 @@ import { SignOutEverywhereSection } from "./sign-out-everywhere";
 import { accountApi } from "@/lib/account-api";
 import { useOwnerName } from "@/lib/use-owner-name";
 import {
-  RETENTIONS,
   capLabel,
+  defaultCap,
+  defaultRetention,
   isRetention,
   isShorter,
+  keepsForever,
   memberRetentionLabel,
   promptMemoryKey,
   purgeStatus,
+  retentionChoices,
   withinCap,
   type MemberPromptMemoryResponse,
   type Retention,
@@ -143,10 +146,10 @@ function PromptsSection() {
   const household = memory.household;
   const cap = isRetention(household.retention_cap)
     ? household.retention_cap
-    : "never";
+    : defaultCap();
   const retention = isRetention(memory.effective_retention)
     ? memory.effective_retention
-    : "never";
+    : defaultRetention();
   const status = purgeStatus(data.prompt_purge);
   const owner = viewer.admin ? null : (ownerName ?? "The gateway owner");
   const busy = save.isPending || remove.isPending;
@@ -212,9 +215,9 @@ function PromptsSection() {
               // control wraps under it (DESIGN: phone rows are 64).
               className="max-sm:flex-nowrap"
               description={
-                cap === "never"
+                keepsForever(cap)
                   ? "Creations stay in Library."
-                  : `Up to ${capLabel[cap].toLowerCase()} here.`
+                  : `Up to ${capLabel(cap).toLowerCase()} here.`
               }
               control={
                 <Select
@@ -235,13 +238,13 @@ function PromptsSection() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {RETENTIONS.map((value) => (
+                    {retentionChoices().map((value) => (
                       <SelectItem
                         key={value}
                         value={value}
                         disabled={!withinCap(value, cap)}
                       >
-                        {memberRetentionLabel[value]}
+                        {memberRetentionLabel(value)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -298,14 +301,14 @@ function PromptsSection() {
           pending?.kind === "off"
             ? "Stop remembering what you type?"
             : pending?.kind === "retention"
-              ? `Forget prompts after ${memberRetentionLabel[pending.value].toLowerCase()}?`
+              ? `Forget prompts after ${memberRetentionLabel(pending.value).toLowerCase()}?`
               : "Delete your saved prompts?"
         }
         description={
           pending?.kind === "off"
             ? "New prompts won’t be saved. Deletion of saved prompts may continue in the background. Your pictures, audio and videos stay in Library."
             : pending?.kind === "retention"
-              ? `Prompts older than ${memberRetentionLabel[pending.value].toLowerCase()} are deleted now. Your pictures, audio and videos stay in Library.`
+              ? `Prompts older than ${memberRetentionLabel(pending.value).toLowerCase()} are deleted now. Your pictures, audio and videos stay in Library.`
               : "Every prompt saved for you is deleted. Your pictures, audio and videos stay in Library. This can’t be undone."
         }
         confirmLabel={

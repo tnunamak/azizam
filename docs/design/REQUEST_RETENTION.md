@@ -584,7 +584,7 @@ upstream default change then cannot turn a sink on.
 | Per-request debug and no-log fields (`litellm_request_debug`, `no-log`, `success_callback` in a body) | nothing new: the gateway's body allowlist already drops them (`gateway/backends/llm_execution.py:38-124,245-268`); a test pins it | blocked | survey |
 | Response cache and Responses polling cache | `litellm_settings.cache: false`; no `cache_params`; `router_settings.cache_responses: false` | unset (off; `litellm.cache` is `None`, measured) | GW-L8, GW-L10 |
 | `.env` auto-load by LiteLLM | `LITELLM_MODE=PRODUCTION` | unset (`DEV` loads a `.env` found by walking up; none exists today) | survey |
-| Admin UI and API docs | `DISABLE_ADMIN_UI=true`, `NO_DOCS=true`, `NO_REDOC=true` (the `/ui` files stay mounted on 127.0.0.1 behind the master key) | unset | GW-L3; survey |
+| Admin UI and API docs | `DISABLE_ADMIN_UI=true`, `NO_DOCS=true`, `NO_REDOC=true` (LiteLLM's own admin UI files stay mounted on 127.0.0.1 behind the master key) | unset | GW-L3; survey |
 | Uploads over 1 MiB | `TMPDIR` set to the gateway's private temp directory (slice 4) | system temp | Starlette `formparsers.py:126,209` |
 | Image-URL conversion cache (10 entries, 600 s, memory) and other memory caches | none; disclosed under "memory" | n/a | GW-L7; survey |
 
@@ -1604,6 +1604,34 @@ live 5000 or 15000 services.
 | 8 | **Presets and full data editing.** The preset picker with Custom, and the YAML/JSON editor with the validator's refusals. | New UI views | each preset round-trips to its values; an edited value shows Custom; the UX review of the three layers per the design-review gate |
 | 9 | **Run again.** The dry-run preview (admission outcome, residency, cost), re-authorization, the incomplete-record editor, `replay_of`, and the REST, MCP and CLI action. | New action | live check 3; access-plan and cap refusals through REST and MCP; a state change between preview and dispatch gives the real outcome |
 | 10 | **Cumulative gate.** The full section 16 matrix over all kinds and surfaces. Remove the old `prompt_memory.decide` reference kept for 16.1.1. | No | all of section 16 green |
+
+**Slice 1 as built.** Slice 1 changes no decision. These points are where
+the build chose a form that the text above leaves open:
+
+- The household policy is operator setting `retention`. Admin schema 14 moves
+  `prompt_memory` to it (`gateway/retention_migration.py`) and an older gateway
+  refuses the database, so a rollback cannot read the kill switch as unset. The
+  stored shape is `{"never_keep", "groups": {"prompts": {"default_keep",
+  "retention_cap"}}}`. The owner screen and `/admin/api/settings/prompt-memory`
+  keep their wire names (`default_remember`, `never_keep`, `retention_cap`):
+  they are the `prompts` group's view of the setting. `put_operator_setting`
+  accepts that view under the key `prompt_memory`.
+- The member rows stay in table `prompt_memory_preferences`. In slice 1 the rows
+  of that table are the rows of group `prompts`; slice 5 adds the group to the
+  table's key when the second group arrives. Cutoff rows get their group in the
+  same slice.
+- `registry/retention.yml` holds only the kinds that exist. The validator
+  refuses a kind that core cannot capture, so `request_history` and
+  `debug_capture` join the file in the slice that adds their capture points.
+  The file also holds the household cap default (`default_cap`) and the
+  kill-switch default (`household.never_keep`), which were code constants.
+- Both prompt-memory settings responses gain one key, `contract`: the choices
+  (with their lengths, in listing order) and every default of the group. The web
+  reads them from there and keeps no copy. Nothing else in either response
+  changes.
+- `retention.write` takes the kind, the request's time and a `commit` function.
+  It runs `commit` under the same lock that `retention_guard` held, for Library
+  prompts (`prompt_memory.put`) and for the two Responses writes.
 
 **Live checks for slice 3** run on a scratch instance with a scratch
 LiteLLM database:
