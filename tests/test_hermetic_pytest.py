@@ -231,6 +231,20 @@ def test_the_guard_hooks_are_installed_and_removed_by_pytest_configure_and_uncon
     assert calls == ["install", "restore"]
 
 
+def test_session_finish_releases_the_guard_before_xdist_worker_cleanup(monkeypatch) -> None:
+    import conftest
+
+    calls: list[str] = []
+
+    class Recorder:
+        def restore(self) -> None:
+            calls.append("restore")
+
+    monkeypatch.setattr(conftest, "_GUARD", Recorder())
+    conftest.pytest_sessionfinish(None, 0)
+    assert calls == ["restore"]
+
+
 def test_restore_removes_the_socket_guard_and_forgets_its_listeners() -> None:
     from _hermetic import _REAL_SOCKET, HermeticGuard
 
