@@ -1,0 +1,156 @@
+# Long recordings with human reference transcripts, for measuring long-audio
+# transcription settings. This file is data only: it names where each file
+# lives and its checksum. Azizam ships no audio. gateway/stt_samples.py
+# downloads the sources on demand, checks them and builds a 16 kHz mono WAV
+# plus a word list with times.
+#
+# sources: every file to download. A file is cached by its sha256, so a large
+#   archive that several samples share downloads once.
+# recipe.kind: how to read the reference words (ami-words, icsi-words,
+#   earnings21). recipe.params name the sources by their `name`.
+#   cut_seconds (optional, any kind): keep only the first N seconds of audio
+#   and only the words that end by then.
+# timing: "word" (the corpus times every word) or "segment-interpolated"
+#   (the corpus times speech segments; word times are spread over them).
+
+x-ami-annotations: &ami_annotations
+  name: annotations
+  url: https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip
+  sha256: b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d
+  bytes: 22887865
+
+x-ami-licence: &ami_licence
+  name: CC BY 4.0
+  url: https://creativecommons.org/licenses/by/4.0/
+  attribution: AMI Meeting Corpus, Carletta et al. (https://groups.inf.ed.ac.uk/ami/corpus/)
+  note: >-
+    https://groups.inf.ed.ac.uk/ami/corpus/license.shtml says "The AMI corpus
+    and its annotations are released under the Creative Commons Attribution
+    4.0 license agreement".
+
+samples:
+  - id: ami-TS3003a
+    corpus: ami
+    title: AMI meeting TS3003a (Mix-Headset)
+    licence: *ami_licence
+    duration_seconds: 1505.643
+    speakers: 4
+    timing: word
+    sources:
+      - name: audio
+        url: https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/TS3003a/audio/TS3003a.Mix-Headset.wav
+        sha256: b6ce59ff735c234afdd94b13744aa26f6785af746170543fd03b33160e920a6d
+        bytes: 48180608
+      - *ami_annotations
+    recipe:
+      kind: ami-words
+      params:
+        audio: audio
+        annotations: annotations
+        word_members:
+          - words/TS3003a.A.words.xml
+          - words/TS3003a.B.words.xml
+          - words/TS3003a.C.words.xml
+          - words/TS3003a.D.words.xml
+
+  - id: ami-ES2014a
+    corpus: ami
+    title: AMI meeting ES2014a (Mix-Headset)
+    licence: *ami_licence
+    duration_seconds: 1149.013
+    speakers: 4
+    timing: word
+    sources:
+      - name: audio
+        url: https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2014a/audio/ES2014a.Mix-Headset.wav
+        sha256: 9d29e308566b8c7be4c328f4a2998e371e5f506384f111042ec91b465f7f792c
+        bytes: 36768472
+      - *ami_annotations
+    recipe:
+      kind: ami-words
+      params:
+        audio: audio
+        annotations: annotations
+        word_members:
+          - words/ES2014a.A.words.xml
+          - words/ES2014a.B.words.xml
+          - words/ES2014a.C.words.xml
+          - words/ES2014a.D.words.xml
+
+  - id: icsi-Bdb001-first30min
+    corpus: icsi
+    title: ICSI meeting Bdb001, first 30 minutes (interaction mix)
+    licence:
+      name: CC BY 4.0
+      url: https://creativecommons.org/licenses/by/4.0/
+      attribution: ICSI Meeting Corpus (Janin et al. 2003), Edinburgh NXT distribution
+      note: >-
+        https://groups.inf.ed.ac.uk/ami/icsi/license.shtml and ICSI/LICENCE.txt
+        in ICSI_core_NXT.zip: CC BY 4.0. Only the first 1800 s of the 3022 s
+        meeting are used. Some words have no times in the corpus; they are
+        spread between known neighbours. The corpus writes a clitic as its own
+        word ("that" "'s"); the reference joins it to the word before without
+        the apostrophe ("thats", "youre"), as the private build.py does.
+    duration_seconds: 1800.0
+    speakers: 6
+    timing: word
+    sources:
+      - name: audio
+        url: https://groups.inf.ed.ac.uk/ami/ICSIsignals/NXT/Bdb001.interaction.wav
+        sha256: 74ded35b52877dd300effd32ed25d8c390fe9eecfaf451c080271778751842d9
+        bytes: 96701996
+      - name: annotations
+        url: https://groups.inf.ed.ac.uk/ami/ICSICorpusAnnotations/ICSI_core_NXT.zip
+        sha256: cf4860245b9ca9c9ed11a66e5a74cfea2a99a686a52f7580aa0a6bc2225895a9
+        bytes: 19488722
+    recipe:
+      kind: icsi-words
+      params:
+        audio: audio
+        annotations: annotations
+        cut_seconds: 1800
+        word_members:
+          - ICSI/Words/Bdb001.A.words.xml
+          - ICSI/Words/Bdb001.B.words.xml
+          - ICSI/Words/Bdb001.C.words.xml
+          - ICSI/Words/Bdb001.D.words.xml
+          - ICSI/Words/Bdb001.E.words.xml
+          - ICSI/Words/Bdb001.F.words.xml
+
+  - id: earnings21-4366522
+    corpus: earnings21
+    title: Earnings-21 call 4366522 (Aldeyra Therapeutics Q2 2020)
+    licence:
+      name: CC BY-SA 4.0
+      url: https://creativecommons.org/licenses/by-sa/4.0/
+      attribution: Earnings-21, Rev.com (https://github.com/revdotcom/speech-datasets/tree/main/earnings21)
+      note: >-
+        https://github.com/revdotcom/speech-datasets/blob/main/earnings21/LICENSE.md
+        licenses the transcripts and alignment files under CC BY-SA 4.0 and
+        states no separate licence for the audio, which is public earnings-call
+        audio that Rev publishes in the same repository. Use it for private
+        local evaluation; do not redistribute the audio. The public transcript
+        has no word times: word times are spread over the speaker's RTTM speech
+        segments and can be a few seconds off inside a long segment.
+    duration_seconds: 1817.731
+    speakers: 5
+    timing: segment-interpolated
+    sources:
+      - name: audio
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/media/4366522.mp3
+        sha256: 143073661592bc19ab931de1f5cf564adbfd2777c65837cacfa98572c6b1e09e
+        bytes: 9088686
+      - name: transcript
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/transcripts/nlp_references/4366522.nlp
+        sha256: 53eab8ef960f999d6fb0a55af583cdfb7210e1a17ae164b07c7855bffeebcbf8
+        bytes: 96239
+      - name: segments
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/rttms/4366522.rttm
+        sha256: 2c60f70d87784d4b29ee539fbdacec9fd5b98c950d861b73799b6d12c73feebe
+        bytes: 26228
+    recipe:
+      kind: earnings21
+      params:
+        audio: audio
+        transcript: transcript
+        segments: segments

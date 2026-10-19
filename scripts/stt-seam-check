@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Real-speech seam check for long-audio transcription, run through the gateway route end to end.
+
+For each arm (a source tree with its long-audio settings) the script starts a disposable gateway on a loopback port
+(18000-18999) whose only backend is an existing transcription engine, reached through a recording tap. Each
+recording (human transcript with word times) is sent twice, whole and with its first PHASE seconds cut off, so the
+second run cuts in the middle of the first run's pieces. The scoring is gateway/stt_measure.py: excess word errors
+within 2 s of a cut against the same words away from a cut, the same estimate at places away from every cut (the noise
+floor), deletion rate by piece length, and the longest piece sent. It writes REPORT.md and results.json.
+
+The engine is only used, never started, stopped or configured. See scripts/stt_seam_check/README.md.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import math
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))  # scripts/ for the stt_seam_check package
+sys.path.insert(0, str(HERE.parent.parent))  # the repo that holds this script, for gateway.stt_measure
+
+import httpx  # noqa: E402
+
+from gateway import stt_measure as measure  # noqa: E402
+from scripts.stt_seam_check.gateway import Gateway  # noqa: E402
+from scripts.stt_seam_check.tap import Tap  # noqa: E402
+
+FILLERS = frozenset({"uh", "um", "mm", "hmm", "mhm", "uh-huh", "eh", "erm"})
+EDGES = [20.0, 30.0, 40.0, 50.0, 60.0]
+
+
+@dataclass
+class Recording:
+    key: str
+    audio: Path
+    words: list[measure.RefWord]
+    speakers: int | str
+    seconds: float
+    timing: str
+    licence: str
+
+
+def load_recording(root: Path, key: str) -> Recording:
+    folder = root / key
+    ref = json.loads((folder / "ref.json").read_text())
+    words = [measure.RefWord(joined, w["t0"], w["t1"]) for w in ref["words"]
+             for joined in measure.normalize(w["w"], FILLERS)]
+    speakers = ref["speakers"] if isinstance(ref["speakers"], int) else len(ref["speakers"])
+    return Recording(key, folder / "audio.wav", words, speakers, ref["duration_s"], ref.get("timing", "word"), ref.get("licence", ""))
+
+
+def gpu_busy(limit_percent: int = 60) -> str | None:
+    """A reason not to run, or None. Resident idle models are fine; a busy GPU is not."""
+    try:
+        samples = []
+        for _ in range(4):
+            out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                                 capture_output=True, text=True, timeout=10).stdout.split()
+            samples.append(max(int(v) for v in out))
+            time.sleep(1)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return "nvidia-smi did not answer"
+    return f"GPU utilization {samples} is above {limit_percent}%: another job is running" if min(samples) > limit_percent else None
+
+
+def cut_from(audio: Path, seconds: float, destination: Path) -> None:
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{seconds}", "-i", str(audio),
+                    "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(destination)], check=True)
+
+
+def transcribe(client: httpx.Client, gateway: Gateway, tap: Tap, audio: Path, model: str, timeout: float) -> dict:
+    tap.take()
+    started = time.monotonic()
+    with audio.open("rb") as handle:
+        reply = client.post(
+            f"http://127.0.0.1:{gateway.port}/v1/audio/transcriptions", headers={"Authorization": f"Bearer {gateway.key}"},
+            data={"model": "engine", "response_format": "json"}, files={"file": (audio.name, handle, "audio/wav")}, timeout=timeout)
+    wall = time.monotonic() - started
+    pieces = tap.take()
+    if reply.status_code != 200:
+        return {"status": reply.status_code, "error": reply.text[:300], "pieces": pieces, "wall": wall}
+    return {"status": 200, "text": reply.json().get("text", ""), "pieces": pieces, "wall": wall}
+
+
+def offsets_for(args, chunking: dict) -> list[tuple[float, float]]:
+    """(first, second) start offsets: the second is half a target later, so its cuts fall mid-piece in the first."""
+    half = float(chunking.get("target_seconds", 30)) / 2.0
+    return [(base, base + half) for base in args.phases]
+
+
+def run_arm(arm: str, repo: Path, chunking: dict, recordings: list[Recording], args, raw: Path, port: int) -> None:
+    state = Path(args.scratch) / f"{arm}-{int(time.time())}"
+    tap = Tap(port + 1, "127.0.0.1", args.engine_port)
+    tap.start()
+    gateway = Gateway(repo, state, port, port + 1, chunking, args.model)
+    try:
+        gateway.start()
+        with httpx.Client() as client:
+            for recording in recordings:
+                for offset in [o for pair in offsets_for(args, chunking) for o in pair]:
+                    out = raw / f"{arm}.{recording.key.replace('/', '_')}.{offset:g}.json"
+                    if out.exists():
+                        continue
+                    source = recording.audio
+                    if offset:
+                        source = state / f"{recording.audio.parent.name}-from-{offset:g}.wav"
+                        cut_from(recording.audio, offset, source)
+                    print(f"[{arm}] {recording.key} from {offset:g} s ...", flush=True)
+                    result = transcribe(client, gateway, tap, source, args.model, args.request_timeout)
+                    result["offset"] = offset
+                    print(f"[{arm}]   status {result['status']}, {len(result['pieces'])} pieces, {result['wall']:.0f} s", flush=True)
+                    if result["status"] != 200:
+                        raise SystemExit(f"[{arm}] the gateway answered {result['status']}: {result.get('error')}")
+                    out.write_text(json.dumps(result))
+                    if source != recording.audio:
+                        source.unlink()
+    finally:
+        gateway.stop()
+        tap.stop()
+        shutil.rmtree(state, ignore_errors=True)
+
+
+def to_run(result: dict) -> measure.Run:
+    ends, total = [], 0.0
+    for piece in result["pieces"]:
+        total += piece["seconds"] or 0.0
+        ends.append(total)
+    starts = [0.0, *ends[:-1]]
+    return measure.Run(measure.normalize(result.get("text", ""), FILLERS), list(zip(starts, ends)), result["offset"])
+
+
+def score_arm(arm: str, recordings: list[Recording], raw: Path, pairs_of: list[tuple[float, float]], target: float, resamples: int) -> dict:
+    pooled, placebo_pooled, scored_runs, rows, maximum, requests, wall = [], [], [], [], 0.0, 0, 0.0
+    for recording in recordings:
+        runs, rec_pairs, rec_placebo = {}, [], []
+        for offset in sorted({o for pair in pairs_of for o in pair}):
+            result = json.loads((raw / f"{arm}.{recording.key.replace('/', '_')}.{offset:g}.json").read_text())
+            run = to_run(result)
+            requests += len(result["pieces"])
+            wall += result["wall"]
+            maximum = max([maximum, *[b - a for a, b in run.segments]])
+            runs[offset] = measure.score_run(recording.words, run)
+        for first, second in pairs_of:
+            pairs, placebo = measure.seam_pairs(runs[first], runs[second], placebo_offset=target / 4.0)
+            rec_pairs += pairs
+            rec_placebo += placebo
+        pooled += rec_pairs
+        placebo_pooled += rec_placebo
+        pairs, placebo = rec_pairs, rec_placebo
+        runs = list(runs.values())
+        scored_runs += [(recording.words, run) for run in runs]
+        rows.append({
+            "recording": recording.key, "minutes": round(recording.seconds / 60, 1), "speakers": recording.speakers,
+            "timing": recording.timing, "words": len(recording.words),
+            "wer_pct": round(measure.word_error_rate(runs[0]), 2),
+            "excess": measure.paired_excess(pairs, resamples=resamples).as_dict(),
+            "placebo": measure.paired_excess(placebo, resamples=resamples).as_dict(),
+        })
+    return {
+        "arm": arm, "per_recording": rows, "_pooled_pairs": pooled,
+        "pooled_excess": measure.paired_excess(pooled, resamples=resamples).as_dict(),
+        "pooled_placebo": measure.paired_excess(placebo_pooled, resamples=resamples).as_dict(),
+        "deletion_by_length": measure.deletion_by_length(scored_runs, EDGES),
+        "longest_piece_seconds": round(maximum, 2), "requests": requests, "wall_seconds": round(wall),
+    }
+
+
+def run_length_sweep(repo: Path, lengths: list[float], recordings: list[Recording], args, raw: Path, port: int) -> dict:
+    """Send consecutive pieces of each length straight to the engine (the gateway's cutting is off) and score deletions."""
+    chunking = {"enabled": False, "max_duration_seconds": 7200, "backend_timeout_seconds": 180, "deadline_seconds": 3600}
+    state = Path(args.scratch) / f"sweep-{int(time.time())}"
+    tap = Tap(port + 1, "127.0.0.1", args.engine_port)
+    tap.start()
+    gateway = Gateway(repo, state, port, port + 1, chunking, args.model)
+    try:
+        gateway.start()
+        with httpx.Client() as client:
+            for recording in recordings:
+                for length in lengths:
+                    out = raw / f"sweep.{recording.key.replace('/', '_')}.{length:g}.json"
+                    if out.exists():
+                        continue
+                    count = int(args.sweep_seconds // length)
+                    texts, failures = [], []
+                    print(f"[sweep] {recording.key}: {count} pieces of {length:g} s ...", flush=True)
+                    for index in range(count):
+                        piece = state / "piece.wav"
+                        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{index * length}", "-t", f"{length}",
+                                        "-i", str(recording.audio), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(piece)], check=True)
+                        result = transcribe(client, gateway, tap, piece, args.model, args.request_timeout)
+                        texts.append(result.get("text", "") if result["status"] == 200 else "")
+                        if result["status"] != 200:
+                            failures.append({"index": index, "status": result["status"]})
+                        piece.unlink()
+                    out.write_text(json.dumps({"texts": texts, "failures": failures, "length": length}))
+    finally:
+        gateway.stop()
+        tap.stop()
+        shutil.rmtree(state, ignore_errors=True)
+    rows, interiors = [], {length: [] for length in lengths}
+    for length in lengths:
+        pieces, failed = [], 0
+        for recording in recordings:
+            result = json.loads((raw / f"sweep.{recording.key.replace('/', '_')}.{length:g}.json").read_text())
+            failed += len(result["failures"])
+            count = len(result["texts"])
+            words = measure.normalize(" ".join(result["texts"]), FILLERS)
+            reference = [w for w in recording.words if w.mid < count * length]
+            scored = measure.score_run(reference, measure.Run(words, [(i * length, (i + 1) * length) for i in range(count)]))
+            pieces += measure.piece_counts(scored)
+            interiors[length].append((recording, scored, measure.interior_deletions(scored)))
+        rows.append({"length": length, "failed_pieces": failed, **measure.rate_interval(pieces)})
+    base = min(lengths)
+    for row in rows:
+        # Pool the blocks of all recordings into one interval.
+        blocks = []
+        for index, (recording, scored, other) in enumerate(interiors[row["length"]]):
+            blocks += measure.deletion_blocks(interiors[base][index][2], other, scored.mids)
+        row["vs_shortest"] = measure.paired_excess(blocks).as_dict() if row["length"] != base else None
+    return {"rows": rows, "seconds_per_recording": args.sweep_seconds}
+
+
+def fmt(estimate: dict) -> str:
+    return f"{estimate['excess_pp']:+.2f} [{estimate['low_pp']:+.2f}, {estimate['high_pp']:+.2f}] ({estimate['points']})"
+
+
+def report(results: list[dict], recordings: list[Recording], args, chunkings: dict, hard_max: float | None, sweep: dict | None = None) -> str:
+    lines = [f"# Real-speech seam check ({datetime.date.today()})", "",
+             "Human reference transcripts, through the gateway route end to end, to the live engine (read only).", "",
+             "## Recordings", "", "| recording | minutes | speakers | words | reference timing | licence |", "|---|---|---|---|---|---|"]
+    lines += [f"| {r.key} | {r.seconds / 60:.1f} | {r.speakers} | {len(r.words)} | {r.timing} | {r.licence} |" for r in recordings]
+    lines += ["", "## Arms", ""]
+    lines += [f"- **{arm}**: `{json.dumps(c, sort_keys=True)}`" for arm, c in chunkings.items()]
+    lines += ["", f"Each recording is sent at start offsets {args.phases} s and again half a target later (so cuts fall mid-piece). Window ±2 s around each cut; a cut is paired only when the other run "
+              "has no cut within 2.5 s. 95% intervals from a 4000-draw bootstrap over places. Format: excess percentage points "
+              "[interval] (places).", "", "## Excess word errors near cuts (cut against no cut)", "",
+              "| recording | " + " | ".join(f"{r['arm']} excess" for r in results) + " |", "|---|" + "---|" * len(results)]
+    for index, recording in enumerate(recordings):
+        lines.append(f"| {recording.key} | " + " | ".join(fmt(r["per_recording"][index]["excess"]) for r in results) + " |")
+    lines.append("| **pooled** | " + " | ".join("**" + fmt(r["pooled_excess"]) + "**" for r in results) + " |")
+    lines.append("| noise floor (places away from every cut) | " + " | ".join(fmt(r["pooled_placebo"]) for r in results) + " |")
+    if len(results) > 1:
+        diff = measure.difference(results[0]["_pooled_pairs"], results[1]["_pooled_pairs"]).as_dict()
+        lines.append(f"| {results[0]['arm']} minus {results[1]['arm']} (independent places) | {fmt(diff)} |")
+    lines += ["", "## Noise floor per recording", "", "| recording | " + " | ".join(f"{r['arm']} floor" for r in results) + " |", "|---|" + "---|" * len(results)]
+    for index, recording in enumerate(recordings):
+        lines.append(f"| {recording.key} | " + " | ".join(fmt(r["per_recording"][index]["placebo"]) for r in results) + " |")
+    lines += ["", "## Deletion rate by piece length (words 2 s inside each end, both runs)", ""]
+    for r in results:
+        lines += [f"**{r['arm']}**", "", "| piece length | pieces | words | deleted % |", "|---|---|---|---|"]
+        lines += [f"| {row['bucket']} | {row['pieces']} | {row['words']} | {row['deletion_pct']} |" for row in r["deletion_by_length"]]
+        lines.append("")
+    lines += ["## Whole-transcript word error rate (full run, against the human reference) and cost", "",
+              "| recording | " + " | ".join(f"{r['arm']} WER %" for r in results) + " |", "|---|" + "---|" * len(results)]
+    for index, recording in enumerate(recordings):
+        lines.append(f"| {recording.key} | " + " | ".join(str(r["per_recording"][index]["wer_pct"]) for r in results) + " |")
+    lines += ["", "| arm | requests | longest piece sent (s) | wall seconds |", "|---|---|---|---|"]
+    lines += [f"| {r['arm']} | {r['requests']} | {r['longest_piece_seconds']} | {r['wall_seconds']} |" for r in results]
+    if sweep:
+        lines += ["", "## Deletion rate by piece length, pieces sent straight to the engine (gateway cutting off)", "",
+                  f"Consecutive pieces from the first {sweep['seconds_per_recording']:g} s of each recording; words 2 s inside each end; "
+                  "interval resamples whole pieces.", "", "| piece length (s) | pieces | words | deleted % [95%] | same words, minus the shortest length (points) | engine refused |", "|---|---|---|---|---|---|"]
+        lines += [f"| {r['length']:g} | {r['pieces']} | {r['words']} | {r['deletion_pct']} [{r['low_pct']}, {r['high_pct']}] | "
+                  f"{fmt(r['vs_shortest']) if r['vs_shortest'] else '-'} | {r['failed_pieces']} |" for r in sweep["rows"]]
+    if hard_max is not None:
+        lines += ["", "## Acceptance (D47)", ""]
+        for r in results:
+            excess, floor = r["pooled_excess"], r["pooled_placebo"]
+            within = excess["low_pp"] <= 0.0 <= excess["high_pp"] or abs(excess["excess_pp"]) <= max(abs(floor["low_pp"]), abs(floor["high_pp"]))
+            lines.append(f"- {r['arm']}: excess interval includes 0 or is within the noise floor: **{within}**; "
+                         f"longest piece {r['longest_piece_seconds']} s, hard maximum {hard_max:g} s: **{r['longest_piece_seconds'] <= hard_max + 0.5}**")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data", default=str(Path.home() / "Documents/azizam/stt-eval-data"))
+    parser.add_argument("--recordings", required=True, help="comma list of <corpus>/<id> under --data")
+    parser.add_argument("--arm", action="append", required=True, metavar="NAME=REPO",
+                        help="a source tree to test; repeat for a comparison")
+    parser.add_argument("--chunking", action="append", default=[], metavar="NAME=JSON", help="the arm's chunking block")
+    parser.add_argument("--engine-port", type=int, default=8017)
+    parser.add_argument("--model", default="parakeet-tdt-0.6b-v3")
+    parser.add_argument("--phases", type=lambda v: [float(x) for x in v.split(",")], default=[0.0, 7.5],
+                        help="start offsets of the first run of each pair; the second starts half a target later")
+    parser.add_argument("--hard-max", type=float, default=None, help="the longest piece an arm may send (for the acceptance lines)")
+    parser.add_argument("--port", type=int, default=18710, help="first loopback port; each arm uses two")
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--scratch", default=str(Path.home() / ".tmp"))
+    parser.add_argument("--request-timeout", type=float, default=3600.0)
+    parser.add_argument("--resamples", type=int, default=4000)
+    parser.add_argument("--allow-busy-gpu", action="store_true")
+    parser.add_argument("--length-sweep", type=lambda v: [float(x) for x in v.split(",")], default=None,
+                        help="also send consecutive pieces of these lengths (s) straight to the engine, using the last --arm's tree")
+    parser.add_argument("--sweep-seconds", type=float, default=900.0, help="audio per recording used for the length sweep")
+    args = parser.parse_args()
+
+    reason = None if args.allow_busy_gpu else gpu_busy()
+    if reason:
+        raise SystemExit(f"not running: {reason}")
+    try:
+        health = httpx.get(f"http://127.0.0.1:{args.engine_port}/health", timeout=5)
+        if health.status_code != 200:
+            raise SystemExit(f"the engine answered {health.status_code} on /health; it is not started here")
+    except httpx.HTTPError as error:
+        raise SystemExit(f"the engine is not reachable on port {args.engine_port} ({type(error).__name__}); this check never starts it")
+
+    out = Path(args.out)
+    raw = out / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    root = Path(args.data)
+    recordings = [load_recording(root, key) for key in args.recordings.split(",")]
+    chunkings = {name: json.loads(value) for name, _, value in (item.partition("=") for item in args.chunking)}
+    results = []
+    for index, item in enumerate(args.arm):
+        name, _, repo = item.partition("=")
+        chunking = chunkings.get(name, {})
+        run_arm(name, Path(repo).resolve(), chunking, recordings, args, raw, args.port + 2 * index)
+        target = float(chunking.get("target_seconds", 30))
+        results.append(score_arm(name, recordings, raw, offsets_for(args, chunking), target, args.resamples))
+    sweep = None
+    if args.length_sweep:
+        sweep = run_length_sweep(Path(args.arm[-1].partition("=")[2]).resolve(), args.length_sweep, recordings, args, raw,
+                                 args.port + 2 * len(args.arm))
+    public = [{k: v for k, v in r.items() if not k.startswith("_")} for r in results]
+    (out / "results.json").write_text(json.dumps({"results": public, "chunking": chunkings, "length_sweep": sweep}, indent=1))
+    (out / "REPORT.md").write_text(report(results, recordings, args, chunkings, args.hard_max, sweep))
+    print(f"wrote {out / 'REPORT.md'}")
+
+
+if __name__ == "__main__":
+    main()
