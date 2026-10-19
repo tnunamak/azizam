@@ -30,5 +30,6 @@
   "icon-maskable-192.png",
   "icon-maskable-512.png",
   "manifest.webmanifest",
-  "opengraph-image.png"
+  "opengraph-image.png",
+  "robots.txt"
 ]}

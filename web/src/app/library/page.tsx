@@ -4,8 +4,10 @@ import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -54,7 +56,11 @@ import { MakingTile } from "@/components/product/making-tile";
 import { DelayedSpinner } from "@/components/product/status-ui";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
-import { PersonMark } from "@/components/product/person-mark";
+import {
+  PersonMark,
+  type PersonAvatarState,
+} from "@/components/product/person-mark";
+import { useAvatarDirectory } from "@/lib/use-avatars";
 import {
   KeyValueList,
   type KeyValueItem,
@@ -1322,6 +1328,18 @@ function Preview({
 
 type PersonLookup = (asset: MediaAsset) => string | null;
 
+/** A maker's person id and avatar by display name, so every mark draws from the same id. */
+type MakerMarkFor = (name: string) => {
+  personId?: string | null;
+  avatar?: PersonAvatarState | null;
+};
+const MakerMarksContext = createContext<MakerMarkFor>(() => ({}));
+
+function MakerMark(props: Omit<Parameters<typeof PersonMark>[0], "personId" | "avatar">) {
+  const mark = useContext(MakerMarksContext)(props.name);
+  return <PersonMark {...props} {...mark} />;
+}
+
 function usePeople(enabled: boolean, sources: MediaSource[]) {
   const {
     data: users,
@@ -1517,7 +1535,7 @@ const AssetTile = memo(function AssetTile({
           </span>
         ) : null}
         {everyone && person ? (
-          <PersonMark
+          <MakerMark
             name={person}
             size="2xs"
             label={person}
@@ -2040,7 +2058,7 @@ function CreationViewer({
               <p className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1">
                 {person ? (
                   <>
-                    <PersonMark name={person} size="sm" />
+                    <MakerMark name={person} size="sm" />
                     <span className="font-medium">{person}</span>
                   </>
                 ) : (
@@ -2763,7 +2781,7 @@ export default function LibraryPage() {
                     // The household at a glance: up to three people's marks.
                     <span className="flex -space-x-1">
                       {people.slice(0, 3).map((person) => (
-                        <PersonMark
+                        <MakerMark
                           key={person.id}
                           name={person.name}
                           size="xs"
@@ -2772,7 +2790,7 @@ export default function LibraryPage() {
                       ))}
                     </span>
                   ) : (
-                    <PersonMark
+                    <MakerMark
                       name={
                         option.value === "mine"
                           ? (viewerPerson ?? "You")
@@ -2834,7 +2852,20 @@ export default function LibraryPage() {
       ? personFor(selected)
       : viewerPerson
     : null;
+  const avatarDirectory = useAvatarDirectory(canChooseOwner);
+  const makerMarkFor = useCallback<MakerMarkFor>(
+    (name) => {
+      if (name === viewerPerson)
+        return { personId: viewer.id, avatar: viewer.avatar };
+      const person = people.find((entry) => entry.name === name);
+      return person
+        ? { personId: person.id, avatar: avatarDirectory?.[person.id] }
+        : {};
+    },
+    [viewerPerson, viewer.id, viewer.avatar, people, avatarDirectory],
+  );
   return (
+    <MakerMarksContext.Provider value={makerMarkFor}>
     <div>
       {/* The title and count, then one row of controls with search first
           (D1.3: search floated alone at the right, and on a phone four rows
@@ -2944,7 +2975,7 @@ export default function LibraryPage() {
             >
               {visiblePeople.map((person) => (
                 <span key={person} className="inline-flex min-w-0 items-center gap-1.5">
-                  <PersonMark name={person} size="2xs" label={person} />
+                  <MakerMark name={person} size="2xs" label={person} />
                   <span className="min-w-0 break-words">{person}</span>
                 </span>
               ))}
@@ -3296,5 +3327,6 @@ export default function LibraryPage() {
         }}
       />
     </div>
+    </MakerMarksContext.Provider>
   );
 }

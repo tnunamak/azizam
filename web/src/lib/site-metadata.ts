@@ -48,5 +48,7 @@ export function siteMetadata(origin: URL | undefined): Metadata {
       }),
     },
     twitter: { card: origin ? "summary_large_image" : "summary" },
+    // Private service: the page itself says noindex, as the gateway's header and robots.txt do.
+    robots: { index: false, follow: false },
   };
 }

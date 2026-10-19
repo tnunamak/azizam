@@ -35,6 +35,9 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /me/api/media/confirm-folder is new (Library "This is the right media folder"):
   the owner's marker confirmation is its own route, and every other method answers as
   /me/api/media/{asset_id} did before, as for remove-missing;
+* /me/api/profile/avatar, /me/api/profile/avatars and /me/api/profile/avatar/picture are new (a person's avatar and the
+  sign-in picture served from the gateway; tests/test_me_avatar.py covers them): each answers with its own
+  route or that route's 405, and no other method reaches a handler;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -72,6 +75,7 @@ ACCESS_PLAN_API_PREFIXES = (
     "/admin/api/policy/", "/admin/api/settings/lan-placeholder-keys", "/admin/api/operator/user-access-defaults",
 )
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
+AVATAR_PREFIX = "/me/api/profile/avatar"
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 DELETED_PRESETS = "/admin/api/operator/service-presets"
@@ -158,6 +162,8 @@ def _deliberate(key: str) -> str | None:
         return "media_folder"
     if path.startswith(MCP_OAUTH_PREFIXES):
         return "mcp_oauth"
+    if path.startswith(AVATAR_PREFIX):
+        return "avatar"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
@@ -244,6 +250,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new session settings, step-up and sign-out-everywhere routes
         if kind == "secret_entries" and key not in old:
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
+        if kind == "avatar" and key not in old:
+            continue  # new member routes; tests/test_me_avatar.py and tests/test_avatar_signin.py cover them
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -283,7 +291,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "sessions", "secret_entries", "native"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar"}:
             continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key

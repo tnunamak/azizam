@@ -110,6 +110,8 @@ async def safe_fetch_media(
     schemes: frozenset[str] = frozenset({"http", "https"}),
     timeout: float = 60,
     accept: str | None = None,
+    public_only: bool = False,
+    ports: frozenset[int] | None = None,
 ) -> FetchedMedia:
     """Validate every hop, pin its IP, and stream at most the configured bytes.
 
@@ -117,7 +119,9 @@ async def safe_fetch_media(
     normal TLS transport, with certificate validation against the original SNI.
     No caller headers, cookies, credentials, or environment proxies are used.
     Other fetchers of untrusted URLs narrow ``limit``, ``max_redirects``,
-    ``schemes`` and ``timeout``.
+    ``schemes`` and ``timeout``. ``public_only`` ignores AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS (a
+    private or loopback address is refused whatever the operator allowed for media inputs), and
+    ``ports`` limits every hop, redirects included, to those destination ports.
     """
     limit = max_bytes() if limit is None else limit
     async with asyncio.timeout(timeout):
@@ -135,9 +139,11 @@ async def safe_fetch_media(
                     return internal
             host = parsed.hostname.lower().rstrip(".")
             port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if ports is not None and port not in ports:
+                raise MediaFetchError("media URL uses a port that is not allowed")
             addresses = await _resolve_addresses(host, port)
             if not addresses or any(
-                not _address_allowed(address, host in _private_hosts())
+                not _address_allowed(address, not public_only and host in _private_hosts())
                 for address in addresses
             ):
                 raise MediaFetchError("media URL resolves to a blocked network address")

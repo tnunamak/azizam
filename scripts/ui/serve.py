@@ -72,6 +72,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
            # A fixed signing key, so the step-up journey (web/e2e/step-up.spec.ts) can forge a
            # session whose last password check is days old. Test-only; a household run sets its own.
            'AZIZAM_ADMIN_SESSION_KEY': 'ui-e2e-fixture-session-key-not-production'}
+    if os.environ.get('UI_E2E_AVATAR_PICTURE'):
+        env['UI_E2E_AVATAR_PICTURE'] = os.environ['UI_E2E_AVATAR_PICTURE']
     if os.environ.get('UI_E2E_ALLOWED_PORTS'):
         env['UI_E2E_ALLOWED_PORTS'] = os.environ['UI_E2E_ALLOWED_PORTS']
     for name, filename in {

@@ -72,9 +72,11 @@ from gateway import (
     admin_store,
     audio_media_jobs,
     browser_sessions,
+    avatars,
     frontend_mount,
     media_jobs,
     me_prompt_memory,
+    me_avatar,
     me_make,
     me_media,
     native_lane,
@@ -14246,6 +14248,14 @@ app.include_router(
     )
 )
 
+app.include_router(
+    me_avatar.create_me_avatar_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
+        admin_db_path=lambda: ADMIN_STORE.path,
+    )
+)
+
 # Inbound frontends: owned modules register their own routes through this registry;
 # the route rows mount last, at the end of this file (gateway/frontend_mount.py).
 FRONTEND_TRANSLATORS = frontend_mount.Translators()
@@ -17298,6 +17308,9 @@ async def admin_oidc_callback(request: Request):
         signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
         effective_roles = {grant["role"] for grant in effective_grants}
         role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
+        # Kept only for a person who is let in: the URL the provider shared (https and short);
+        # the browser never loads it (gateway/me_avatar.py serves it).
+        await asyncio.to_thread(avatars.record_sign_in_picture, str(user["id"]), claims.get("picture"), path=ADMIN_STORE.path)
         label = user.get("email") or user.get("display_name") or user["id"]
         app = admin_store.ensure_personal_app_for_user(
             str(user["id"]),
@@ -30384,6 +30397,9 @@ from gateway.json_compression import JsonCompressionMiddleware
 app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
+# Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
+from gateway.noindex import NoIndexHeaderMiddleware
+app.add_middleware(NoIndexHeaderMiddleware)
 
 
 # =============================================================================

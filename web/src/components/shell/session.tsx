@@ -11,6 +11,8 @@ export interface Viewer {
   authenticated: boolean;
   /** The signed-in person's id; absent for service keys. */
   id?: string | null;
+  /** The signed-in person's avatar: the choice and a gateway path for the sign-in picture. */
+  avatar?: { choice: string; picture_url: string | null } | null;
   serviceAdmin?: boolean;
   name: string;
   email: string | null;
@@ -37,7 +39,13 @@ export async function fetchViewer(): Promise<Viewer> {
     const role = snapshot.user.role;
     return {
       authenticated: true,
-      id: snapshot.user.id ?? null,
+      id: snapshot.user.person_id ?? snapshot.user.id ?? null,
+      ...(snapshot.user.avatar && {
+        avatar: {
+          choice: snapshot.user.avatar.choice,
+          picture_url: snapshot.user.avatar.picture_url ?? null,
+        },
+      }),
       name: formatPersonName(snapshot.user.name, "Your account"),
       email: snapshot.user.email,
       role,

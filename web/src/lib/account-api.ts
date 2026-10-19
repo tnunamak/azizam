@@ -33,11 +33,20 @@ export type TrySessionKey = Credential & {
     | { reused: true; api_key?: undefined }
     | { reused: false; api_key: string }
   );
+/** A person's avatar as the gateway stores it. `picture_url` is a gateway path, never the sign-in provider's address. */
+export interface AvatarSetting {
+  choice: string;
+  person_id: string;
+  picture_url: string | null;
+}
 export interface AccountSnapshot {
   authenticated: boolean;
   csrf_token: string;
   user?: {
     id: string;
+    /** The stable id the generated avatar is drawn from. */
+    person_id?: string;
+    avatar?: AvatarSetting;
     email: string | null;
     name: string;
     role: string;
@@ -172,6 +181,19 @@ export const accountApi = {
       method: "PUT",
       body: value,
     }).then(rejectPendingCleanup),
+  /** The signed-in person's avatar choice. */
+  avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
+  /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */
+  saveAvatar: (choice: string) =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar", {
+      method: "PUT",
+      body: { choice },
+    }),
+  /** Avatar choices the viewer may see: their own, and everyone's for an owner or admin. */
+  avatars: () =>
+    accountRequest<{
+      people: Record<string, { choice: string; picture_url: string | null }>;
+    }>("/me/api/profile/avatars").then((r) => r.people),
   /** MCP clients this person connected by signing in. */
   mcpConnections: () =>
     accountRequest<{ connections: McpConnection[] }>(

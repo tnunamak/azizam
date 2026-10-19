@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import LibraryPage from "./page";
 import { productApi } from "@/lib/product-api";
+import { getGeneratedAvatar } from "@/components/product/person-avatar";
 
 
 const navigation = vi.hoisted(() => ({
@@ -1370,6 +1371,41 @@ describe("Library media identity and tile playback", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
       open.blur();
     }
+  });
+
+  test("draws each maker's mark from the person id and their chosen avatar, and a rename keeps the colour", async () => {
+    const markFill = async (samName: string, avatars: Record<string, { choice: string; picture_url: string | null }>) => {
+      session.viewer = { role: "owner", name: "Alex", id: "usr_alex" } as typeof session.viewer;
+      routeFetch((path) =>
+        path.startsWith("/me/api/media?")
+          ? list([
+              picture("sam-image", "Sam image", { owner_name: samName }),
+              { ...audioAsset, prompt: "Alex audio", owner_name: "Alex" },
+            ])
+          : path.includes("/admin/api/users")
+            ? Response.json({ users: [{ id: "usr_sam", display_name: samName }, { id: "usr_alex", display_name: "Alex" }] })
+            : path.endsWith("/me/api/profile/avatars")
+              ? Response.json({ people: avatars })
+              : undefined,
+      );
+      const view = renderLibrary();
+      const key = await screen.findByRole("group", { name: "Creation makers" });
+      const fill = (name: string) =>
+        (within(key).getByRole("img", { name }).firstElementChild as HTMLElement).style.backgroundImage;
+      await waitFor(() => expect(fill(samName)).not.toBe(""));
+      const fills = { sam: fill(samName), alex: fill("Alex") };
+      view.unmount();
+      return fills;
+    };
+    const before = await markFill("Sam", {});
+    const renamed = await markFill("Samantha Quill", {});
+    // Same id, new name, same colour.
+    expect(renamed.sam).toBe(before.sam);
+    expect(before.sam).toBe(getGeneratedAvatar("usr_sam").background);
+    expect(before.alex).toBe(getGeneratedAvatar("usr_alex").background);
+    // A chosen avatar shows in the marks of other people too.
+    const chosen = await markFill("Sam", { usr_sam: { choice: "v4", picture_url: null } });
+    expect(chosen.sam).toBe(getGeneratedAvatar("usr_sam", "v4").background);
   });
 
   test("shows a one-line key for distinct visible makers and hides it when a filter leaves one", async () => {

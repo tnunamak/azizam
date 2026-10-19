@@ -138,10 +138,24 @@ const fetchMock = vi.fn();
 const hex = "c".repeat(64);
 const libraryAssets = {
   assets: [
-    { asset_id: `img_${hex}`, kind: "image", prompt: "A teal fish", available: true },
+    { asset_id: `img_${hex}`, kind: "image", prompt: "A teal fish", available: true, thumbnail_url: "http://gateway.test/v1/assets/signed-thumbnail" },
     { asset_id: `img_${"d".repeat(64)}`, kind: "image", prompt: "Gone", available: false },
   ],
 };
+const SIGNED = "http://gateway.test/v1/assets/signed-picture";
+const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+const link = () => json({ asset_id: `img_${hex}`, download_url: SIGNED });
+const pictureBytes = () =>
+  new Response(PNG_SIGNATURE, { headers: { "content-type": "image/png" } });
+/** The Library as the picker sees it: the list, a signed link, then the file. */
+function serveLibrary() {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.startsWith("/me/api/media?")) return json(libraryAssets);
+    if (url.includes("/download")) return link();
+    if (url === SIGNED) return pictureBytes();
+    return json({}, 404);
+  });
+}
 const PNG = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "boat.png", {
   type: "image/png",
 });
@@ -300,7 +314,13 @@ describe("an image-to-video workflow on Try", () => {
     expect(await screen.findByText(/not a picture/)).toBeVisible();
   });
 
-  it("chooses from the Library and sends the asset id", async () => {
+  it("chooses from the Library and sends the picture itself, not its id", async () => {
+    const baseline = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (!init?.method && url.includes("/download")) return link();
+      if (url === SIGNED) return pictureBytes();
+      return baseline(url, init);
+    });
     const user = userEvent.setup();
     await openWorkflow();
     await user.type(
@@ -315,14 +335,14 @@ describe("an image-to-video workflow on Try", () => {
     expect(within(dialog).queryByRole("button", { name: "Gone" })).toBeNull();
     await user.click(tiles[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(await screen.findByRole("img", { name: "Chosen picture" })).toHaveAttribute(
-      "src",
-      `/me/api/media/img_${hex}/download?scope=me`,
+    expect(await screen.findByText("From your Library")).toBeVisible();
+    expect(screen.getByRole("img", { name: "Chosen picture" }).getAttribute("src")).toMatch(
+      /^data:image\/png;base64,/,
     );
-    expect(screen.getByText("From your Library")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(postedBody().input_reference).toBe(`img_${hex}`);
+    expect(postedBody().input_reference).toMatch(/^data:image\/png;base64,/);
+    expect(postedBody().input_reference).not.toContain(`img_${hex}`);
   });
 
   it("takes a pasted Library link under Advanced", async () => {
@@ -681,14 +701,16 @@ describe("media input states", () => {
 
   it("keeps a Library tile pickable when its thumbnail fails", async () => {
     const onChange = vi.fn();
-    fetchMock.mockImplementation(async () => json(libraryAssets));
+    serveLibrary();
     render(<MediaInput id="m" label="Picture" kind="image" onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
     const tile = await screen.findByRole("button", { name: "A teal fish" });
     fireEvent.error(tile.querySelector("img")!);
     expect(within(tile).getByText("Preview unavailable")).toBeVisible();
     fireEvent.click(tile);
-    expect(onChange).toHaveBeenCalledWith(`img_${hex}`);
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(expect.stringMatching(/^data:image\/png;base64,/)),
+    );
   });
 
   it("says a picture is being added and holds the form until it is", async () => {
@@ -713,13 +735,14 @@ describe("media input states", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(submitted).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Wait for it to finish");
+    fetchMock.mockImplementation(async (url: string) =>
+      url === SIGNED ? pictureBytes() : json(libraryAssets));
     await act(async () => {
-      const response = new Response();
-      vi.spyOn(response, "blob").mockResolvedValue(new Blob(["x"], { type: "image/png" }));
-      finish(response);
+      finish(link());
       await download;
     });
     await waitFor(() => expect(screen.queryByText(/Adding picture…/)).toBeNull());
+    expect(screen.getByText("From your Library")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(submitted).toHaveBeenCalledTimes(1);
   });

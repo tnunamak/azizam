@@ -322,6 +322,16 @@ CREATE TABLE IF NOT EXISTS account_oidc_verification (
 CREATE TABLE IF NOT EXISTS account_login_limits (
  bucket TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL
 );
+-- A person's avatar: one word from a fixed list, plus the https picture URL the sign-in
+-- provider shared (gateway.avatars). A table of its own so no people list returns the URL.
+CREATE TABLE IF NOT EXISTS user_avatars (
+ user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ choice TEXT NOT NULL DEFAULT 'auto'
+  CHECK (choice IN ('auto','picture','v1','v2','v3','v4','v5','v6','v7','v8')),
+ picture_url TEXT CHECK (picture_url IS NULL OR (length(picture_url) <= 2048 AND picture_url LIKE 'https://%')),
+ picture_set_at INTEGER,
+ updated_at INTEGER NOT NULL
+);
 """
 
 # Run after any migration to schema 7: these name columns only schema 7 has.

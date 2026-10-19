@@ -75,6 +75,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useAvatarSetting } from "./avatar-setting";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 // Keep the shortcut listener in the shell; load the palette and account menu
 // outside the first paint, then fetch them once the page is idle so the first
@@ -167,6 +168,7 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
 
 function AccountMenu({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
+  const avatar = useAvatarSetting();
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const openMenu = () => {
@@ -183,6 +185,8 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
               <AccountMenuPlaceholder
                 compact={compact}
                 name={viewer.name}
+                personId={viewer.id}
+                avatar={viewer.avatar}
                 expanded={open}
                 onClick={openMenu}
               />
@@ -194,12 +198,15 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
             compact={compact}
             open={open}
             onOpenChange={setOpen}
+            {...avatar}
           />
         </Suspense>
       ) : (
         <AccountMenuPlaceholder
           compact={compact}
           name={viewer.name}
+          personId={viewer.id}
+          avatar={viewer.avatar}
           onClick={openMenu}
           onFocus={() => void import("./account-menu-content")}
           onPointerEnter={() => void import("./account-menu-content")}
@@ -218,12 +225,16 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
 function AccountMenuPlaceholder({
   compact,
   name,
+  personId,
+  avatar,
   expanded = false,
   onClick,
   ...props
 }: {
   compact: boolean;
   name: string;
+  personId?: string | null;
+  avatar?: { choice: string; picture_url: string | null } | null;
   expanded?: boolean;
   onClick: () => void;
   onFocus?: () => void;
@@ -244,7 +255,12 @@ function AccountMenuPlaceholder({
       onClick={onClick}
       {...props}
     >
-      <PersonMark name={name} size={compact ? "md" : "sm"} />
+      <PersonMark
+        name={name}
+        personId={personId}
+        avatar={avatar}
+        size={compact ? "md" : "sm"}
+      />
       {!compact && (
         <span className="shell-nav-label text-chrome-foreground min-w-0 flex-1 truncate text-left font-medium">
           {name}
