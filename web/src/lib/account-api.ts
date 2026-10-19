@@ -153,6 +153,18 @@ export const accountApi = {
       method: "POST",
       body: { name },
     }).then((r) => r.app),
+  /** Rename an app. The answer is the saved record: show its name, not the one sent. */
+  renameApp: (appId: string, name: string) =>
+    accountRequest<{ app: AccountApp }>(
+      `/me/api/apps/${encodeURIComponent(appId)}`,
+      { method: "PATCH", body: { name } },
+    ).then((r) => r.app),
+  /** Rename a key. The answer is the saved record: show its label, not the one sent. */
+  renameKey: (credentialId: string, displayName: string) =>
+    accountRequest<{ credential: Credential }>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}`,
+      { method: "PATCH", body: { display_name: displayName } },
+    ).then((r) => r.credential),
   mintKey: (appId: string, label: string) =>
     accountRequest<{ credential: MintedCredential }>(
       `/me/api/apps/${encodeURIComponent(appId)}/keys`,

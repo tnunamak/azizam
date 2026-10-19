@@ -40,6 +40,7 @@ import os
 import secrets
 import sqlite3
 import time
+import unicodedata
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -1858,14 +1859,70 @@ def get_app(
     return _row_to_dict(row)
 
 
+NAME_MAX_LENGTH = 80
+# Characters that change how text reads without showing: bidirectional overrides and marks.
+_HIDDEN_DIRECTION_CHARACTERS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+class NameRejected(ValueError):
+    """A new App name or key label the gateway will not take.
+
+    ``code`` says why (``app_name_too_long``, ``key_label_taken``, ...) and ``status_code`` is the HTTP answer.
+    ``str(error)`` is plain words for the person who typed the name.
+    """
+
+    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+def clean_name(value: object, *, code: str, noun: str) -> str:
+    """The trimmed name, 1 to 80 characters with no control or hidden characters, or ``NameRejected``.
+
+    ``code`` is ``app_name`` or ``key_label``; ``noun`` is the singular word for the copy ("app", "key").
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        raise NameRejected(f"{code}_required", f"Give the {noun} a name.")
+    if len(text) > NAME_MAX_LENGTH:
+        raise NameRejected(f"{code}_too_long", f"A {noun} name must be {NAME_MAX_LENGTH} characters or fewer.")
+    if any(unicodedata.category(c) in {"Cc", "Zl", "Zp"} or c in _HIDDEN_DIRECTION_CHARACTERS for c in text):
+        raise NameRejected(f"{code}_not_allowed", f"A {noun} name can't contain line breaks or other hidden characters.")
+    return text
+
+
+def _check_new_app_name(conn: sqlite3.Connection, app: sqlite3.Row, name: str) -> None:
+    """Refuse a name the Try page owns, or one another of the same person's active Apps already has."""
+    if name == app["name"]:
+        return
+    try_name = TRY_APP_NAME.lower()
+    if name.lower() == try_name or (app["kind"] == "personal" and str(app["name"]).lower() == try_name):
+        raise NameRejected(
+            "app_name_reserved", f"The Try page uses the app named \u201c{TRY_APP_NAME}\u201d, so that name can't be given or changed.",
+            status_code=409)
+    if conn.execute(
+        "SELECT 1 FROM apps WHERE owner_user_id = ? AND id <> ? AND disabled_at IS NULL AND lower(name) = lower(?) "
+        "AND id NOT IN (SELECT app_id FROM session_apps)", (app["owner_user_id"], app["id"], name),
+    ).fetchone():
+        raise NameRejected("app_name_taken", "Another app already has that name. Choose a different name.", status_code=409)
+
+
 def update_app(
     app_id: str,
     *,
     name: str | None = None,
     access_plan: str | None = None,
+    owner_user_id: str | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Rename an App or change its assignment. An assignment is never cleared."""
+    """Rename an App or change its assignment. An assignment is never cleared.
+
+    ``name`` is already cleaned (``clean_name``); a name another of the person's active Apps has, or the Try
+    page's, raises ``NameRejected``. ``owner_user_id`` makes the write apply only to that person's App (``None``
+    when it is not there). ``session`` is the browser sign-in that asked, checked in this transaction.
+    """
     assignments: list[str] = []
     params: list[Any] = []
     if name is not None:
@@ -1882,14 +1939,18 @@ def update_app(
     params.append(app_id)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        current = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        if current is None or (owner_user_id is not None and current["owner_user_id"] != owner_user_id):
+            return None
+        if name is not None:
+            _check_new_app_name(conn, current, name)
         if access_plan is not None:
             _check_app_assignment(conn, access_plan)
-        cur = conn.execute(
+        conn.execute(
             f"UPDATE apps SET {', '.join(assignments)} WHERE id = ?",
             params,
         )
-        if cur.rowcount == 0:
-            return None
         conn.commit()
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
@@ -2151,6 +2212,51 @@ def revoke_credential_in(conn: sqlite3.Connection, cred_id: str, *, now: int | N
         (ts, cred_id),
     )
     return cur.rowcount > 0
+
+
+def rename_app_credential(
+    cred_id: str,
+    display_name: str,
+    *,
+    app_id: str | None = None,
+    owner_user_id: str | None = None,
+    now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Give an active App key a new label: ``(before, after)``, or ``None`` when there is no such key.
+
+    Only the label changes; the key, its hash and its App stay as they are, so this makes no credential and
+    needs no step-up. ``display_name`` is already cleaned (``clean_name``); a label another active key of the
+    same App has raises ``NameRejected``. ``app_id`` and ``owner_user_id`` narrow the match to one App and one
+    accountable person. ``session`` is the browser sign-in that asked, checked in this transaction.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > ?)", (cred_id, ts),
+        ).fetchone()
+        if row is None:
+            return None
+        key_app = str(row["app_id"] or row["subject_id"] or "")
+        app = conn.execute("SELECT owner_user_id FROM apps WHERE id = ?", (key_app,)).fetchone()
+        if app is None or (app_id is not None and key_app != app_id) or (
+                owner_user_id is not None and app["owner_user_id"] != owner_user_id):
+            return None
+        if display_name != row["display_name"] and conn.execute(
+            "SELECT 1 FROM credentials WHERE subject_kind = 'app' AND COALESCE(NULLIF(app_id, ''), subject_id) = ? "
+            "AND id <> ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) "
+            "AND lower(display_name) = lower(?)", (key_app, cred_id, ts, display_name),
+        ).fetchone():
+            raise NameRejected(
+                "key_label_taken", "Another key on this app already has that name. Choose a different name.", status_code=409)
+        conn.execute("UPDATE credentials SET display_name = ? WHERE id = ?", (display_name, cred_id))
+        conn.commit()
+        after = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
+    return _credential_row_to_dict(row), _credential_row_to_dict(after)
 
 
 def revoke_older_session_credentials(

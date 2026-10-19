@@ -55,12 +55,13 @@ import {
 } from "@/components/product";
 import { cn } from "@/lib/cn";
 import { keyPromptNote } from "@/lib/prompt-memory";
-import { api, queryKeys, type AccessPlan } from "@/lib/api";
+import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
 import { keyApps, suggestedModel } from "@/lib/app-guides";
 import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
+import { RenameAppDialog, RenameKeysDialog } from "./rename";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
@@ -200,6 +201,9 @@ function AppsContents() {
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [action, setAction] = useState<KeyAction | null>(null);
   const [trustingApp, setTrustingApp] = useState<AccountApp | null>(null);
+  const [renamingApp, setRenamingApp] = useState<AccountApp | null>(null);
+  // Only the id: the keys dialog reads the live app, so a saved name shows at once.
+  const [renamingKeysOf, setRenamingKeysOf] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
   // Only the owner and admins may give an app a different plan.
@@ -424,6 +428,39 @@ function AppsContents() {
     }
   }
 
+  // The gateway's saved record goes into the list as it came back.
+  function putApp(saved: AccountApp) {
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) =>
+              item.id === saved.id ? saved : item,
+            ),
+          }
+        : current,
+    );
+    void refresh();
+  }
+
+  function putKey(saved: Credential) {
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) => ({
+              ...item,
+              credentials: item.credentials.map((key) =>
+                key.id === saved.id ? saved : key,
+              ),
+            })),
+          }
+        : current,
+    );
+    toast.success("Key renamed");
+    void refresh();
+  }
+
   async function changeAccess() {
     if (!accessApp) return;
     setBusy(true);
@@ -602,6 +639,7 @@ function AppsContents() {
   }
 
   const apps = accountData?.apps ?? [];
+  const keysApp = apps.find((item) => item.id === renamingKeysOf) ?? null;
   const actionAppName = action
     ? formatAppName(action.app.name, accountData?.user?.email)
     : "";
@@ -814,6 +852,23 @@ function AppsContents() {
                             {blockedReason}
                           </p>
                         )}
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setRenamingApp(app);
+                          }}
+                        >
+                          Rename app
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!app.credentials.length}
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setRenamingKeysOf(app.id);
+                          }}
+                        >
+                          Rename keys
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           disabled={!app.can_mint_keys || busy}
                           onSelect={() => void mintFromMenu(app, appName)}
@@ -1066,6 +1121,30 @@ function AppsContents() {
             : ""
         }
         onClose={() => setTrustingApp(null)}
+      />
+      <RenameAppDialog
+        app={renamingApp}
+        appName={
+          renamingApp
+            ? formatAppName(renamingApp.name, accountData?.user?.email)
+            : ""
+        }
+        onSaved={(saved) => {
+          putApp(saved);
+          toast.success("App renamed");
+          setRenamingApp(null);
+        }}
+        onClose={() => setRenamingApp(null)}
+        onCloseAutoFocus={restoreDialogFocus}
+      />
+      <RenameKeysDialog
+        app={keysApp}
+        appName={
+          keysApp ? formatAppName(keysApp.name, accountData?.user?.email) : ""
+        }
+        onSaved={putKey}
+        onClose={() => setRenamingKeysOf(null)}
+        onCloseAutoFocus={restoreDialogFocus}
       />
       <Dialog open={reveal !== null} onOpenChange={() => {}}>
         <DialogContent

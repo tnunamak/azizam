@@ -27,6 +27,10 @@ __all__ = [
     "delete_user_app",
     "get_user_app_credential",
     "mint_user_app_key",
+    "rename_person_app",
+    "rename_person_key",
+    "rename_user_app",
+    "rename_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
 ]
@@ -565,6 +569,164 @@ def delete_user_app(
             "revoked_credentials": revoked,
         }
     }
+
+
+def _name_error(exc: admin_store.NameRejected) -> UserPortalError:
+    return UserPortalError(exc.code, str(exc), status_code=exc.status_code)
+
+
+def _rename_app(
+    user: Mapping[str, Any], app: Mapping[str, Any], name: str, *,
+    browser_session: session_guard.BrowserSession | None, via: str | None, path: Path,
+) -> dict[str, Any]:
+    try:
+        cleaned = admin_store.clean_name(name, code="app_name", noun="app")
+        renamed = admin_store.update_app(
+            str(app["id"]), name=cleaned, owner_user_id=str(user["id"]), session=browser_session, path=path)
+    except admin_store.NameRejected as exc:
+        raise _name_error(exc) from None
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if renamed is None:
+        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
+    admin_store.record_audit(
+        "app.self_rename",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=str(app["id"]),
+        metadata={"name": renamed["name"], "previous_name": app.get("name"), **({"via": via} if via else {})},
+        path=path,
+    )
+    return {"app": _app_payload(renamed, path=path)}
+
+
+def _rename_key(
+    user: Mapping[str, Any], before: Mapping[str, Any], display_name: str, *,
+    browser_session: session_guard.BrowserSession | None, via: str | None, path: Path,
+) -> dict[str, Any]:
+    try:
+        label = admin_store.clean_name(display_name, code="key_label", noun="key")
+        renamed = admin_store.rename_app_credential(
+            str(before["id"]), label, owner_user_id=str(user["id"]), session=browser_session, path=path)
+    except admin_store.NameRejected as exc:
+        raise _name_error(exc) from None
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if renamed is None:
+        raise _credential_not_found()
+    _, after = renamed
+    admin_store.record_audit(
+        "credential.self_rename",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="credential",
+        target_id=str(before["id"]),
+        metadata={"app_id": after.get("app_id") or after.get("subject_id"), "prefix": after.get("prefix"),
+                  "name": after.get("display_name"), "previous_name": before.get("display_name"),
+                  **({"via": via} if via else {})},
+        path=path,
+    )
+    out = _sanitize_credential(after)
+    out["active"] = True
+    return out
+
+
+def rename_user_app(
+    session: AdminSession,
+    app_id: str,
+    name: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Give an App owned by ``session.subject`` a new name.
+
+    The name is not a credential, so no step-up; the write checks in its own transaction that the sign-in is
+    still live. Receipts already written keep the name they were made with.
+    """
+    user = _user_from_session(session, path=path)
+    app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    return _rename_app(user, app, name, browser_session=session_guard.BrowserSession.of(session, str(user["id"])),
+                       via=None, path=path)
+
+
+def rename_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    display_name: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Give an active key of an App owned by ``session.subject`` a new label.
+
+    Only the label changes: no new key and no new destination, so no step-up.
+    """
+    user = _user_from_session(session, path=path)
+    before = get_user_app_credential(session, credential_id, path=path)
+    return _rename_key(user, before, display_name,
+                       browser_session=session_guard.BrowserSession.of(session, str(user["id"])), via=None, path=path)
+
+
+def _person(person_id: str, *, path: Path) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=path)
+    if user is None:
+        raise UserPortalError(
+            "session_user_not_found", "Signed-in user was not found in the admin store", status_code=401)
+    return user
+
+
+def _find_app(user_id: str, ref: str, *, path: Path) -> dict[str, Any]:
+    """The person's own App an MCP client names: by its id, or by its name when exactly one has it."""
+    ref = str(ref or "").strip()
+    apps = admin_store.list_apps_for_user(user_id, path=path)
+    sessions = admin_store.session_app_ids([str(app["id"]) for app in apps], path=path)
+    owned = [app for app in apps if not app.get("disabled_at") and str(app["id"]) not in sessions]
+    matches = [app for app in owned if app["id"] == ref] or [
+        app for app in owned if ref and str(app["name"]).lower() == ref.lower()]
+    if not matches:
+        raise UserPortalError("app_not_found", f"No app of yours is named \u201c{ref}\u201d.", status_code=404)
+    if len(matches) > 1:
+        raise UserPortalError(
+            "app_ambiguous", f"More than one app is named \u201c{ref}\u201d. Use an app id instead: "
+            + ", ".join(str(app["id"]) for app in matches) + ".", status_code=409)
+    return matches[0]
+
+
+def _find_key(app: Mapping[str, Any], ref: str, *, path: Path) -> dict[str, Any]:
+    """An active key of ``app`` an MCP client names: by id, or by its name when exactly one has it."""
+    ref = str(ref or "").strip()
+    keys = admin_store.list_active_credentials(subject_kind="app", app_id=str(app["id"]), path=path)
+    matches = [key for key in keys if key["id"] == ref] or [
+        key for key in keys if ref and str(key.get("display_name") or "").lower() == ref.lower()]
+    if not matches:
+        raise UserPortalError(
+            "credential_not_found", f"No key of \u201c{app['name']}\u201d is named \u201c{ref}\u201d.", status_code=404)
+    if len(matches) > 1:
+        raise UserPortalError(
+            "key_ambiguous", f"More than one key of \u201c{app['name']}\u201d is named \u201c{ref}\u201d. "
+            "Use a key id instead: " + ", ".join(str(key["id"]) for key in matches) + ".", status_code=409)
+    return matches[0]
+
+
+def rename_person_app(
+    person_id: str, app_ref: str, name: str, *, via: str, path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """A signed-in client renames one of ``person_id``'s own Apps. No browser sign-in asks, so ``via`` names the client path.
+
+    The person's own rules apply, as for ``rename_user_app``: only their own Apps, never someone else's.
+    """
+    user = _person(person_id, path=path)
+    app = _find_app(str(user["id"]), app_ref, path=path)
+    return _rename_app(user, app, name, browser_session=None, via=via, path=path)
+
+
+def rename_person_key(
+    person_id: str, app_ref: str, key_ref: str, name: str, *, via: str, path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """A signed-in client renames an active key of one of ``person_id``'s own Apps."""
+    user = _person(person_id, path=path)
+    app = _find_app(str(user["id"]), app_ref, path=path)
+    return _rename_key(user, _find_key(app, key_ref, path=path), name, browser_session=None, via=via, path=path)
 
 
 def request_user_access(

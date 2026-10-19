@@ -4089,6 +4089,118 @@
         ]
       }
     },
+    "/admin/api/apps/{app_id}/keys/{credential_id}": {
+      "patch": {
+        "description": "Give an App's key a new label. The key itself stays; this is not a credential change.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_patch_admin_api_apps_app_id_keys_credential_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Rename Key",
+        "tags": [
+          "apps and keys"
+        ]
+      }
+    },
     "/admin/api/apps/{app_id}/trusted-addresses": {
       "get": {
         "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
