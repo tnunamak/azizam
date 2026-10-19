@@ -169,7 +169,7 @@ export function ModelsBlock({
               </div>
               <div className="grid gap-3 pl-7 sm:grid-cols-2">
                 <FormField
-                  label="Public name"
+                  label="Name apps use"
                   tag={model.suggestedName ? <Tag tone="suggest">Suggested</Tag> : undefined}
                   error={model.on && dup.has(effectiveName(model)) ? `Two models use the public name “${effectiveName(model)}”. Each needs its own.` : undefined}
                 >
@@ -185,8 +185,8 @@ export function ModelsBlock({
                   )}
                 </FormField>
                 <FormField
-                  label="Context window"
-                  help="Leave empty if you don’t know."
+                  label="Context limit (tokens)"
+                  help="The model’s maximum input and output size in tokens. Leave empty if unknown."
                   tag={model.reportedWindow ? <Tag tone="suggest">Reported by server</Tag> : undefined}
                 >
                   {(control) => (

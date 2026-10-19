@@ -94,12 +94,12 @@ class TestLoadedModelIdentity:
             assert proxy.currently_loaded_model(service_id) == f"/models/{service_id}.gguf"
             assert proxy.currently_loaded_model("plain") == "/models/other.gguf"
 
-    def test_current_model_id_comes_from_the_service_own_url(self, service_id):
-        async def served(base_url: str) -> str:
-            return "served-id" if base_url == "http://127.0.0.1:5051" else "wrong-service"
+    def test_current_model_id_comes_from_the_service_itself(self, service_id):
+        async def served(backend: str) -> str:
+            return "served-id" if backend == service_id else "wrong-service"
 
         cfg, seed = self._patched(service_id, loaded_model_identity="path")
-        with cfg, seed, patch.object(proxy, "get_served_model_id", served):
+        with cfg, seed, patch.object(proxy, "served_model_id_for_backend", served):
             proxy._loaded_state.clear()
             assert asyncio.run(proxy.current_llm_model_for_backend(service_id)) == "served-id"
             assert asyncio.run(proxy.effective_llm_model_for_host("http://127.0.0.1:5051")) == "served-id"
@@ -141,7 +141,7 @@ class TestAuxProbe:
             proxy, "_BACKEND_STATE_STRATEGIES", {"llama_cpp": {"endpoint": "/props", "model_key": "model_path"}}
         ), patch.object(proxy, "_seed_loaded_state", wraps=proxy._seed_loaded_state), patch.object(
             proxy.subprocess, "run", pgrep
-        ), patch("urllib.request.urlopen", side_effect=OSError("no server")):
+        ), patch.object(proxy, "_engine_probe_json_sync", side_effect=OSError("no server")):
             return proxy._currently_loaded_aux_for(service_id), pgrep
 
     def test_aux_is_read_from_the_process_on_the_service_port(self, service_id):
@@ -234,6 +234,10 @@ class TestContextWindowProbe:
         backends = {service_id: _path_service(5051, **fields), "other": _path_service(5052, **fields)}
         with patch.object(proxy, "config", {"backends": backends}), patch.object(
             proxy, "LLM_BACKEND_HOSTS", {service_id: fake.base_url, "other": "http://unreachable.fk.test"}
+        ), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", return_value={"services": {
+                service_id: {"config": {**backends[service_id], "base_url": f"{fake.base_url}/v1"}},
+            }}
         ), patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}):
             first = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))
             second = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))

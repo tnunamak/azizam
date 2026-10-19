@@ -39,6 +39,7 @@ export function ConnectionFields({
   onFixPath,
   onOpenExisting,
   onRecheck,
+  protocolDispatch = false,
 }: {
   definition: EngineDefinition;
   draft: ConnectionDraft;
@@ -51,6 +52,7 @@ export function ConnectionFields({
   onFixPath: (action: FindingAction) => void;
   onOpenExisting: (serviceId: string) => void;
   onRecheck: () => void;
+  protocolDispatch?: boolean;
 }) {
   const address = fieldOf(definition, "address");
   const key = fieldOf(definition, "api_key");
@@ -83,12 +85,12 @@ export function ConnectionFields({
         <FormField
           label={address.label}
           required
-          help={address.help}
+          help={protocolDispatch ? "The root address. The installed protocol description supplies the request paths." : address.help}
           error={errors.address}
           extraDescribedBy={describes("address")}
           after={
             <>
-              <CallLine definition={definition} values={{ address: draft.address }} />
+              {!protocolDispatch && <CallLine definition={definition} values={{ address: draft.address }} />}
               {card("address")}
               {finding?.field === "key" && (
                 <p className="text-meta text-success flex items-center gap-1.5">
@@ -104,7 +106,7 @@ export function ConnectionFields({
               {...control}
               aria-invalid={control["aria-invalid"] ?? (finding?.field === "address" && finding.severity === "error" ? true : undefined)}
               type="url"
-              placeholder={address.placeholder}
+              placeholder={protocolDispatch ? "http://127.0.0.1:8080" : address.placeholder}
               value={draft.address}
               disabled={disabled}
               autoComplete="off"
@@ -204,4 +206,3 @@ export function SummaryLine({ finding }: { finding: Finding }) {
     </p>
   );
 }
-

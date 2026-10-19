@@ -17,6 +17,7 @@ This module is management-safe: it stores and deletes secrets and never decrypts
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -61,6 +62,8 @@ def carrier_kind(carrier: Any) -> str | None:
     """``headers``, ``env``, ``argv``, ``url`` or ``secret`` for a carrier path the record model declares; None otherwise."""
     if not isinstance(carrier, str):
         return None
+    if carrier == "config.api_key":
+        return "provider_key"
     if carrier == record_carriers.HEADER_PATH:
         return "headers"
     container, _, key = carrier.rpartition(".")
@@ -129,8 +132,19 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
         extra = set(command) - _ALLOWED_KEYS[operation]
         if extra:
             raise CommandError("invalid_command", f"command {index + 1} has a field the {operation} operation does not take")
-        if carrier_kind(command.get("carrier")) is None:
+        kind = carrier_kind(command.get("carrier"))
+        if kind is None:
             raise CommandError("unknown_carrier", f"command {index + 1} names a carrier the record model does not have")
+        allowed_operations = {
+            "headers": {"add", "replace", "rename", "retain", "clear"},
+            "env": {"add", "replace", "retain", "clear"},
+            "argv": {"set"},
+            "url": {"set_credentials", "clear_credentials"},
+            "secret": {"add", "replace", "retain", "clear"},
+            "provider_key": {"add", "replace", "retain", "clear"},
+        }
+        if operation not in allowed_operations[kind]:
+            raise CommandError("invalid_command", f"command {index + 1} has an operation that does not apply to this carrier")
         entry_id = command.get("entry_id")
         if "entry_id" in _ALLOWED_KEYS[operation]:
             if not secret_refs.is_entry_id(entry_id):
@@ -333,6 +347,79 @@ def _argv(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Out
     out.changed = True
 
 
+def provider_key_entry_id(record: Mapping[str, Any]) -> str:
+    """A server-issued identity for an engine's inference-key slot, independent of its value or source."""
+    return "ent_" + hashlib.sha256((str(record.get("id") or "") + ":inference-key").encode()).hexdigest()[:16]
+
+
+def bind_protocol_inference(config: dict[str, Any], *, connection: dict[str, Any] | None = None) -> None:
+    """Project the selected inference-key binding into explicitly opted-in protocol data.
+
+    The control credential remains independent. References and environment names
+    are copied as metadata; a management write never reads the key back.
+    """
+    if connection is None:
+        connection = config.get("connection")
+    if not isinstance(connection, dict) or connection.get("dispatch") != "protocol":
+        return
+    reference = config.get("api_key_secret_id")
+    environment = config.get("api_key_env") or config.get("api_key_ref")
+    if environment:
+        reference = "os.environ/" + str(environment)
+    if not reference:
+        return
+    origin = config.get("credential_origin")
+    if not origin or record_carriers.endpoint_origin({"address": connection.get("address")}) != origin:
+        return
+    credentials = connection.get("credentials")
+    if not isinstance(credentials, dict):
+        credentials = {}
+        connection["credentials"] = credentials
+    credentials["inference"] = {"secret_ref": reference, "origin": origin, "header": "Authorization", "scheme": "Bearer"}
+
+
+def _provider_key(record: dict[str, Any], command: Mapping[str, Any], put: Put, origin: str | None, out: Outcome) -> None:
+    from gateway.engine_contract_view import connection_config
+
+    config = record.setdefault("config", {})
+    connection = connection_config(record)
+    if connection.get("dispatch") == "protocol":
+        origin = secret_refs.origin_or_none(str(connection.get("address") or ""))
+    held = bool(config.get("api_key_secret_id") or config.get("api_key_env") or config.get("api_key_ref")
+                or (record.get("secret_refs") or {}).get("api_key"))
+    operation = command["operation"]
+    if operation == "add":
+        if held:
+            raise CommandError("duplicate_name", "an inference key is already configured; replace it by its entry id")
+    elif not held or command.get("entry_id") != provider_key_entry_id(record):
+        raise CommandError("unknown_entry", "no inference-key entry with that id")
+    if operation == "retain":
+        return
+    if operation not in ("add", "replace", "clear"):
+        raise CommandError("invalid_command", "that operation does not apply to an inference key")
+    if config.get("api_key_secret_id"):
+        out.retired.append(str(config["api_key_secret_id"]))
+    if operation in ("add", "replace"):
+        if not origin:
+            raise CommandError("carrier_unavailable", "the inference key needs an engine address with an origin")
+        reference = put(validate_value(command.get("value")), origin)
+        out.created.append(reference)
+        config["api_key_secret_id"] = reference
+        config["credential_origin"] = origin
+    else:
+        config.pop("api_key_secret_id", None)
+        config.pop("credential_origin", None)
+    config.pop("api_key_env", None)
+    config.pop("api_key_ref", None)
+    record.get("secret_refs", {}).pop("api_key", None)
+    if operation == "clear":
+        if isinstance(connection, dict) and connection.get("dispatch") == "protocol" and isinstance(connection.get("credentials"), dict):
+            connection["credentials"].pop("inference", None)
+    else:
+        bind_protocol_inference(config, connection=connection if isinstance(connection, dict) else None)
+    out.changed = True
+
+
 def _scalar(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     held = parent.get(key)
@@ -399,10 +486,27 @@ def apply_commands(record: Mapping[str, Any], commands: list[dict[str, Any]], pu
     out_record = copy.deepcopy(dict(record))
     outcome = Outcome()
     origin = record_carriers.endpoint_origin(out_record.get("config"))
+    if len(commands) > 1:
+        # The batch has one origin snapshot. Refuse a destination move before
+        # storing anything, independent of whether it precedes a key or header.
+        for command in commands:
+            if command.get("operation") != "set_credentials" or not isinstance(command.get("url"), str):
+                continue
+            try:
+                endpoint, _parts = record_carriers.split_url(command["url"])
+            except ValueError:
+                continue  # the URL operation returns its fixed validation error
+            parent, key = _parent(out_record, command["carrier"])
+            previous_origin = secret_refs.origin_or_none(str(parent.get(key) or "")) or origin
+            next_origin = secret_refs.origin_or_none(endpoint)
+            if next_origin is not None and next_origin != previous_origin:
+                raise CommandError("invalid_command", "save a URL that changes origin separately from other secret commands")
     try:
         for command in commands:
             kind = carrier_kind(command["carrier"])
-            if kind == "headers":
+            if kind == "provider_key":
+                _provider_key(out_record, command, put, origin, outcome)
+            elif kind == "headers":
                 _headers(out_record, command, put, origin, outcome)
             elif kind == "env":
                 _env(out_record, command, put, outcome)
@@ -415,4 +519,14 @@ def apply_commands(record: Mapping[str, Any], commands: list[dict[str, Any]], pu
     except CommandError as error:
         error.created = list(outcome.created)  # type: ignore[attr-defined]
         raise
+    if outcome.changed and any(command["operation"] != "retain" and (
+        command["carrier"] in {"config.headers", "config.api_key", "config.host", "config.address", "config.url",
+                                "config.base_url", "config.api_base", "config.default_base_url", "config.endpoint",
+                                "config.upstream", "config.gateway_lifecycle_base_url", "config.connection.address"}
+        or _is_model_url(command["carrier"])
+    ) for command in commands):
+        config = out_record.get("config")
+        if isinstance(config, dict):
+            config.pop("engine_check", None)
+            config.pop("engine_tests", None)
     return out_record, outcome

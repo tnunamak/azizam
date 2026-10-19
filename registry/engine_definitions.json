@@ -548,7 +548,7 @@
           "group": "Request headers",
           "order": 10,
           "default": [],
-          "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. They are saved as plain text, so don’t put a key here."
+          "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. Values are stored as write-only secrets. Use the API key field for the inference key."
         },
         {
           "key": "reply_timeout_s",
@@ -768,7 +768,7 @@
           "group": "Request headers",
           "order": 10,
           "default": [],
-          "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. They are saved as plain text, so don’t put a key here."
+          "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. Values are stored as write-only secrets. Use the API key field for the inference key."
         },
         {
           "key": "reply_timeout_s",

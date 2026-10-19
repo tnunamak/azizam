@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { enginesApi, type CheckResult, type EngineView } from "@/lib/engines-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient } from "../__fixtures__/test-utils";
 import { EngineRecordPage } from "./engine-record-page";
@@ -69,6 +69,7 @@ describe("a failed Save is shown at its field", () => {
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
     await edit(user);
     vi.spyOn(enginesApi, "update").mockRejectedValue(error);
+    vi.spyOn(api.services, "edit").mockRejectedValue(error);
     await user.click(screen.getByRole("button", { name: button }));
     await screen.findByText("The changes could not be saved");
     return user;
@@ -116,15 +117,27 @@ describe("a failed Save is shown at its field", () => {
     expect(onOpenEngine).toHaveBeenCalledWith("kitchen");
   });
 
-  it("key: the key box opens, is invalid, is described by the finding and takes focus", async () => {
-    const refused = check("oai_auth");
-    await failSave(refusal(422, "engine_check_failed", refused.findings[0].what, "key", refused), async (user) => {
-      await user.type(await screen.findByLabelText("Name"), "!");
-    });
-    const key = await screen.findByPlaceholderText("Paste the key");
-    expect(key).toHaveAttribute("aria-invalid", "true");
-    expect(key).toHaveAccessibleDescription(expect.stringContaining(refused.findings[0].fix));
-    expect(key).toHaveFocus();
+  it("key: a refused command keeps the replacement draft and offers an explicit retry", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-4"' });
+    const key = await screen.findByLabelText("API key");
+    const error = refusal(400, "invalid_value", "The replacement key is not valid.");
+    const write = vi.spyOn(enginesApi, "secretEntries").mockRejectedValueOnce(error).mockResolvedValueOnce({ schema_version: 1, services: {} } as never);
+    const update = vi.spyOn(enginesApi, "update");
+    await user.type(key, "replacement-key");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("The changes could not be saved")).toBeVisible();
+    expect(screen.getByText(error.message)).toBeVisible();
+    expect(key).toHaveValue("replacement-key");
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+    await user.clear(key);
+    await user.type(key, "corrected-key");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+    expect(write.mock.calls[1][1]).toEqual([{ carrier: "config.api_key", operation: "replace", entry_id: "ent_fixture_key", value: "corrected-key" }]);
+    expect(await screen.findByText("Saved.")).toBeVisible();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
   });
 
   it("an option field: More options opens, the field shows the message, and it takes focus", async () => {
@@ -142,18 +155,26 @@ describe("a failed Save is shown at its field", () => {
     expect(timeout).toHaveFocus();
   });
 
-  it("headers: More options opens and the message sits with the headers", async () => {
-    await failSave(
-      refusal(400, "invalid_engine", "Header 1 needs a name and a value.", "headers"),
-      async (user) => {
-        await user.type(await screen.findByLabelText("Name"), "!");
-      },
-    );
-    const more = screen.getByText("More options", { selector: "summary span" }).closest("details") as HTMLElement;
-    expect(more).toHaveAttribute("open");
-    const group = within(more).getByRole("group", { name: "Request headers" });
-    expect(group).toHaveAccessibleDescription("Header 1 needs a name and a value.");
-    expect(group).toHaveFocus();
+  it("headers: a refused command retains the row so the owner can fix and retry it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: "Add a header" }));
+    await user.type(screen.getByLabelText("Header name"), "X-Old");
+    await user.type(screen.getByLabelText("Value for X-Old"), "private-header");
+    const write = vi.spyOn(enginesApi, "secretEntries").mockRejectedValueOnce(refusal(400, "invalid_name", "This header name is not allowed.")).mockResolvedValueOnce({ schema_version: 1, services: {} } as never);
+    const update = vi.spyOn(enginesApi, "update");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("The changes could not be saved")).toBeVisible();
+    expect(screen.getByText("This header name is not allowed.")).toBeVisible();
+    const group = screen.getByRole("group", { name: "Request headers" });
+    expect(group).toBeVisible();
+    expect(within(group).getByLabelText("Value for X-Old")).toHaveValue("private-header");
+    await user.clear(within(group).getByLabelText("Header name"));
+    await user.type(within(group).getByLabelText("Header name"), "X-New");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+    expect(write.mock.calls[1][1]).toEqual([{ carrier: "config.headers", operation: "add", name: "X-New", value: "private-header" }]);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("the general message stays as a summary", async () => {
@@ -196,11 +217,11 @@ describe("Retry on the record page", () => {
   });
 });
 
-describe("technical details", () => {
-  it("the stored record and Other settings sit in a collapsed Technical details disclosure", async () => {
+describe("stored record", () => {
+  it("the stored record and Other settings sit in a collapsed Stored record disclosure", async () => {
     const user = userEvent.setup();
     mount();
-    const summary = await screen.findByText("Technical details", { selector: "summary" });
+    const summary = (await screen.findByRole("heading", { name: "Stored record" })).closest("summary") as HTMLElement;
     const details = summary.closest("details") as HTMLElement;
     expect(details).not.toHaveAttribute("open");
     expect(within(details).getByText("Saved configuration for troubleshooting. Secrets are hidden.")).toBeInTheDocument();

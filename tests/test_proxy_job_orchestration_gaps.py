@@ -108,9 +108,9 @@ def test_video_existing_submission_settles_failures_and_deadline(
                                     AssertionError("polled again after the outcome or deadline")])
     content = AsyncMock(return_value=content_response)
     store_asset = Mock(side_effect=AssertionError("failed video published an asset"))
-    monkeypatch.setattr(proxy, "proxy_comfy_video_create", submit)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_status", status)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_content", content)
+    monkeypatch.setattr(proxy, "proxy_graph_video_create", submit)
+    monkeypatch.setattr(proxy, "proxy_graph_video_status", status)
+    monkeypatch.setattr(proxy, "proxy_graph_video_content", content)
     monkeypatch.setattr(proxy, "store_asset_bytes", store_asset)
     monkeypatch.setattr(proxy, "_media_job_admission_response",
                         Mock(side_effect=AssertionError("existing video was re-admitted")))
@@ -232,8 +232,8 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
                         lambda: tmp_path / "migration.json")
     monkeypatch.setattr(proxy.state, "shutdown_requested", False)
     # Remember the previous value so monkeypatch restores the lifespan assignment.
-    monkeypatch.setattr(proxy.comfy_object_info, "DISK_CACHE_DIR",
-                        proxy.comfy_object_info.DISK_CACHE_DIR)
+    monkeypatch.setattr(proxy.node_info, "DISK_CACHE_DIR",
+                        proxy.node_info.DISK_CACHE_DIR)
 
     async def parked(*args, **kwargs):
         await asyncio.Event().wait()
@@ -304,7 +304,7 @@ def test_image_attempt_cancellation_has_a_durable_terminal_receipt(jobs, tmp_pat
                         lambda _: proxy.NO_AUTH_CONTEXT)
     monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)
     provider = AsyncMock(side_effect=asyncio.CancelledError())
-    monkeypatch.setattr(proxy, "proxy_comfy_request", provider)
+    monkeypatch.setattr(proxy, "proxy_graph_image_request", provider)
 
     async def scenario():
         semaphore = asyncio.Semaphore(1)

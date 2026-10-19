@@ -462,12 +462,23 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         engine_record_v2_migration.migrate_registry(conn)
         if int(row[0]) >= _ACCESS_PLANS_VERSION:
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
-    if row is not None and int(row[0]) < _SECRET_REFS_VERSION:
-        from gateway import secret_externalize_migration
+    # Both branches allocated schema 11 independently. A named receipt makes each
+    # migration run once even on a database already stamped 11 by either branch.
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migration_steps (name TEXT PRIMARY KEY)")
+    for name in ("secret-references-v11", "hop-timeout-v11"):
+        if row is not None and int(row[0]) >= _SECRET_REFS_VERSION and conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
+            continue
+        if name == "secret-references-v11":
+            from gateway import secret_externalize_migration
 
-        secret_externalize_migration.migrate(conn)
-        if int(row[0]) >= _ACCESS_PLANS_VERSION:
-            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+            secret_externalize_migration.migrate(conn)
+        else:
+            from gateway import hop_timeout_migration
+
+            hop_timeout_migration.migrate_registry(conn)
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
+    if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     _backfill_credential_creators(conn)
     current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()

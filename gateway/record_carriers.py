@@ -748,7 +748,7 @@ def _echo_view(policy_name: str, held: Any) -> Any:
 def restore_echoed_record(record: dict[str, Any], stored: Mapping[str, Any] | None) -> None:
     """Replace, in ``record``, a reference slot that came back as the read showed it with what the store holds.
 
-    A read shows a provider's key reference (``config.api_key_secret_id``) and the record's ``secret_refs`` as
+    A read shows provider and connection credential references and the record's ``secret_refs`` as
     ``{"configured": true}`` and as names: no id, nothing to retain by. A write that sends back exactly that view
     leaves the slot as stored; it is the same rule as for the carriers (``ingest_service``), and the view is compared
     with what a read of the stored record shows now, never taken as a command. Anything else that is not an id
@@ -768,6 +768,27 @@ def restore_echoed_record(record: dict[str, Any], stored: Mapping[str, Any] | No
                 config["api_key_secret_id"] = held
             else:
                 raise EchoRefused("config.api_key_secret_id is not a reference id and is not what a read shows for the stored one")
+    for container, held_container in ((record, stored or {}), (config or {}, stored_config)):
+        connection = container.get("connection")
+        held_connection = held_container.get("connection")
+        credentials = connection.get("credentials") if isinstance(connection, Mapping) else None
+        held_credentials = held_connection.get("credentials") if isinstance(held_connection, Mapping) else {}
+        if not isinstance(credentials, Mapping):
+            continue
+        for kind in ("inference", "control"):
+            credential = credentials.get(kind)
+            held_credential = held_credentials.get(kind) if isinstance(held_credentials, Mapping) else None
+            if not isinstance(credential, dict) or "secret_ref" not in credential:
+                continue
+            value = credential["secret_ref"]
+            held = held_credential.get("secret_ref") if isinstance(held_credential, Mapping) else None
+            if isinstance(value, str) and value.strip() in RESERVED_TEXTS:
+                raise EchoRefused("connection credential holds a marker text, not a reference id")
+            if isinstance(value, (Mapping, list)):
+                if isinstance(held, str) and held and isinstance(value, Mapping) and dict(value) == _echo_view("configured", held):
+                    credential["secret_ref"] = held
+                else:
+                    raise EchoRefused("connection credential is not a reference id and is not what a read shows for the stored one")
     refs = record.get("secret_refs")
     if isinstance(refs, Mapping) and any(isinstance(item, (Mapping, list)) for item in refs.values()):
         held_refs = stored.get("secret_refs") if isinstance(stored, Mapping) else None

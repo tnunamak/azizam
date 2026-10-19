@@ -250,7 +250,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         for intent, worker, fake_name, fake in (
             ("audio.generate", proxy._run_audio_media_job, "proxy_audio_generate", fake_audio),
-            ("video.generate", proxy._run_video_media_job, "proxy_comfy_video_create", fake_video),
+            ("video.generate", proxy._run_video_media_job, "proxy_graph_video_create", fake_video),
         ):
             job = media_jobs.MediaJob(intent=intent, request_id=f"req_{intent}", metadata={"mode": "test"})
             media_jobs.create(job, path=self.jobs)
@@ -368,8 +368,8 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload), \
                 patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0), \
                 patch.object(proxy, "COMFY_VIDEO_TIMEOUT", 1), \
-                patch.object(proxy, "proxy_comfy_video_status", status), \
-                patch.object(proxy, "proxy_comfy_video_content", content):
+                patch.object(proxy, "proxy_graph_video_status", status), \
+                patch.object(proxy, "proxy_graph_video_content", content):
             await asyncio.wait_for(proxy._run_video_media_job(job.job_id), 10)
         return media_jobs.get(job.job_id, audience="internal", path=self.jobs), calls
 

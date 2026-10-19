@@ -343,11 +343,84 @@ def supports_swap(driver: Any) -> bool:
 # Shared health-check helper
 # ---------------------------------------------------------------------------
 
+def engine_read_request(
+    service: Mapping[str, Any], endpoint: str, *, fallback_root: str = "", db_path: Optional[Path] = None,
+) -> Optional[tuple[str, dict[str, str]]]:
+    """The URL and headers of a read-only GET at a service endpoint, from its saved connection.
+
+    ``service`` is a saved service record (``config`` plus ``secret_refs``) or
+    the flat runtime backend dict the drivers receive (its ``config`` only).
+
+    The scheme, address, path prefix, plain headers and inference credential
+    come from the same resolution as the final inference request. This GET
+    reads what inference reads (a health or model-list path), so only the
+    inference credential, bound to its origin, may go with it; control
+    credentials never do. ``endpoint`` is written from the server root, like
+    ``health_endpoint``: ``/v1/...`` joins the protocol base, so a base that
+    ends in /v1 is not doubled. Health paths keep the saved explicit base URL
+    or the host/port root; other read paths join that base without /v1.
+    Legacy records retain their original root-relative, keyless probes.
+    A missing inference key does not prevent an unauthenticated probe.
+    """
+    from gateway import admin_store
+    from gateway.engine_check import join_url
+    from gateway.engine_connection import InferenceConnectionError, inference_connection
+
+    record = service if isinstance(service.get("config"), Mapping) else {
+        "config": service, "secret_refs": service.get("secret_refs") or {},
+    }
+    config = record["config"]
+    # Existing transport probes keep their root-relative paths and carry no
+    # inference credential. A saved engine-page connection opts into the
+    # protocol prefix, safe headers and origin-bound inference credential.
+    if not config.get("probe_with_inference_connection"):
+        root = fallback_root
+        if not root and config.get("port"):
+            root = f"http://{config.get('host', '127.0.0.1')}:{config['port']}"
+        return (f"{root.rstrip('/')}/{endpoint.lstrip('/')}", {}) if root else None
+    if not fallback_root and config.get("port"):
+        fallback_root = f"http://{config.get('host', '127.0.0.1')}:{config.get('port')}"
+    try:
+        connection = inference_connection(
+            record, "", fallback_address=f"{fallback_root}/v1" if fallback_root else "",
+            fallback_timeout=0.0, db_path=db_path or admin_store.DB_PATH, env=get_env, allow_unavailable_key=True,
+        )
+    except InferenceConnectionError:
+        return None
+    base = connection.url
+    if not base:
+        return None
+    if endpoint == "/v1" or endpoint.startswith("/v1/"):
+        from urllib.parse import urlsplit
+        # A legacy root URL names no protocol path. Its declared endpoint
+        # already supplies /v1; a saved protocol base replaces that prefix.
+        path = endpoint.removeprefix("/v1") if urlsplit(base).path.strip("/") else endpoint
+        url = join_url(base, path)
+    elif endpoint == str(config.get("health_endpoint") or "/health"):
+        # A connection save adds safe headers/auth, but must not move existing
+        # health endpoints. Explicit base URLs retain their entire path;
+        # host/port records historically probe from the server root.
+        from urllib.parse import urlsplit, urlunsplit
+        explicit_base = config.get("base_url") or config.get("api_base") or config.get("default_base_url")
+        parts = urlsplit(base)
+        health_base = base if explicit_base else urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+        url = join_url(health_base, endpoint)
+    else:
+        url = join_url(base.removesuffix("/v1"), endpoint)
+    return url, {name: value for name, value in connection.headers.items() if name != "content-type"}
+
+
+def _get_kwargs(headers: Mapping[str, str], **kwargs: Any) -> dict[str, Any]:
+    """Pass headers only when there are some, so a plain service's call is unchanged."""
+    return {**({"headers": dict(headers)} if headers else {}), **kwargs}
+
+
 async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     """Poll the backend health endpoint until it responds 200 or timeout_s elapses.
 
-    Reads host, port, health_endpoint from the svc (config["backends"][id]) dict.
-    Polls every 0.5 s.  Returns False immediately if host/port are missing.
+    Reads health_endpoint and the connection (see engine_read_request) from
+    the svc (config["backends"][id]) dict. Polls every 0.5 s. Returns False
+    immediately when the svc has no usable address.
     """
     from gateway.engine_contract_view import observations_config
 
@@ -366,12 +439,10 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
 
     import httpx  # local import to avoid circular at module level
 
-    host = svc.get("host", "127.0.0.1")
-    port = svc.get("port")
-    if not port:
+    request = engine_read_request(svc, svc.get("health_endpoint", "/health"))
+    if request is None:
         return False
-    endpoint = svc.get("health_endpoint", "/health")
-    url = f"http://{host}:{port}{endpoint}"
+    url, headers = request
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -379,7 +450,7 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     while True:
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=min(interval * 2, 5.0))
+                resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0)))
                 if resp.status_code == 200:
                     return True
         except Exception:
@@ -1296,16 +1367,18 @@ class SystemdDriver:
     ) -> Optional[float]:
         """Poll the health endpoint; return seconds until 200, or None on timeout."""
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
+        request = engine_read_request(svc_for_poll, health_ep)
         start = time.time()
         deadline = start + health_timeout
         interval = 1.0
         while True:
             try:
                 import httpx  # local import — same as _poll_health
+                if request is None:
+                    raise ValueError("no usable health request")
+                url, headers = request
                 async with httpx.AsyncClient(timeout=httpx.Timeout(3)) as client:
-                    resp = await client.get(
-                        f"http://{svc_for_poll.get('host', '127.0.0.1')}:{svc_for_poll.get('port')}{health_ep}"
-                    )
+                    resp = await client.get(url, **_get_kwargs(headers))
                     if resp.status_code == 200:
                         return time.time() - start
             except Exception:

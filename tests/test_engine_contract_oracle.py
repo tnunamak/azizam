@@ -100,10 +100,14 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
 
     catalog = load_engine_catalog()
     engine = engine_admin.engine_view(catalog, _service(), db_path=tmp_path / "empty.db")
-    # The old web client consumes these fields; adding v2 beside them cannot
-    # silently change their content.
+    # W5 adds protocol dispatch and configured-key metadata. Verify those additions,
+    # then freeze the pre-existing public catalog separately so another change cannot hide in a new digest.
     old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "9a785c4869f79e2ec12d5b916f55b08f7befdb94b1d730783f868f468083b0f5"
+    assert old_engine["values"].pop("dispatch") == ""
+    assert old_engine["values"].pop("protocol_description") == ""
+    assert old_engine["key"].pop("entry_id").startswith("ent_")
+    assert old_engine["key"].pop("availability") == "unavailable"
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "e4be4df70e3ab15ee7db581f005d4188078d45e500356fe20b6391dbbf606a84"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

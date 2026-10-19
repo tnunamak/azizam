@@ -1,4 +1,4 @@
-"""Tests for gateway.comfy_ui_graph (API graph -> ComfyUI UI workflow)."""
+"""Tests for gateway.engine_protocol.node_ui_graph (API graph -> ComfyUI UI workflow)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway.comfy_ui_graph import derive_ui_workflow
+from gateway.engine_protocol.node_ui_graph import derive_ui_workflow
 
 SAMPLERS = ["euler", "dpmpp_2m"]
 OBJECT_INFO = {

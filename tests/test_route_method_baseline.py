@@ -16,7 +16,8 @@ baseline's paths and its own. Only these differences are allowed:
 * the MCP authorization server's paths are new (/.well-known/oauth-authorization-server,
   /oauth/..., /me/api/mcp/...): each answers with its own route or that route's
   405; in r18 they fell to the catch-all;
-* Add engine replaced the engine preset list: /admin/api/engine-definitions and
+* Add engine replaced the engine preset list: /admin/api/engine-definitions,
+  /admin/api/engine-protocols (installed description discovery), and
   /admin/api/engines/... are new admin routes (tests/test_engine_admin_routes.py
   covers them), and /admin/api/operator/service-presets is deleted and falls to
   the catch-all or a 405;
@@ -69,6 +70,7 @@ ACCESS_PLAN_API_PREFIXES = (
 )
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
+ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
 LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
@@ -128,6 +130,8 @@ def _deliberate(key: str) -> str | None:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
     if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
+    if path == ENGINE_PROTOCOLS_PATH:
+        return "engine_protocols"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if path == HOST_COMMANDS:
@@ -221,6 +225,13 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # a new lane; tests/test_native_passthrough.py covers it
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
+        if kind == "engine_protocols" and key not in old:
+            method = _method_of(key)
+            expected = (f"{ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "GET"
+                        else f"405 allow=GET via {ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "HEAD"
+                        else "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
         if kind == "host_commands" and key not in old:
             continue  # new owner command permission route
         if kind == "secret_entries" and key not in old:
@@ -266,6 +277,15 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         kind = _deliberate(key)
         if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "secret_entries", "native"}:
             continue
+        if kind == "engine_protocols" and key not in old:
+            assert _method_of(key) != "GET", key
+            # HEAD has only a partial GET match. Other methods reach the unchanged
+            # catch-all, whose authentication rules reject these three callers.
+            expected = ("; ".join(f"{principal}: 405 application/json allow=GET" for principal in ("none", "app", "admin"))
+                        if _method_of(key) == "HEAD" else
+                        "none: 401 application/json; app: 404 application/json; admin: 401 application/json")
+            if new.get(key) == expected:
+                continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "media_folder" and key not in old:

@@ -260,13 +260,13 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
             return "vid_" + "c" * 64
 
-        with patch.object(proxy, "proxy_comfy_video_create", fake_create), patch.object(
+        with patch.object(proxy, "proxy_graph_video_create", fake_create), patch.object(
             proxy,
-            "proxy_comfy_video_status",
+            "proxy_graph_video_status",
             fake_status,
         ), patch.object(
             proxy,
-            "proxy_comfy_video_content",
+            "proxy_graph_video_content",
             fake_content,
         ), patch.object(
             proxy,
