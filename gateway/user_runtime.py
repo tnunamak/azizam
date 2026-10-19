@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from gateway import admin_store
+from gateway import admin_store, avatars
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -226,10 +226,15 @@ def build_user_portal_snapshot(
         for app in listed
     ]
 
+    person_id = str(user["id"])
     return {
         "authenticated": True,
         "user": {
             "id": user.get("id"),
+            # The stable id the generated avatar is drawn from (a rename keeps the colour), and the
+            # choice. The picture URL is a gateway path, never the identity provider's address.
+            "person_id": person_id,
+            "avatar": avatars.public_view(person_id, avatars.get(person_id, path=path), viewer_id=person_id),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
             "role": _live_role_for_user(str(user["id"]), path=path),

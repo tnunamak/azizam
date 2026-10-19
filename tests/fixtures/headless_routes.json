@@ -1225,6 +1225,38 @@
   },
   {
     "method": "GET",
+    "path": "/me/api/profile/avatar",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_avatar",
+    "schema": false
+  },
+  {
+    "method": "PUT",
+    "path": "/me/api/profile/avatar",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.put_avatar",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatars",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.list_avatars",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatar/picture",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_picture",
+    "schema": false
+  },
+  {
+    "method": "GET",
     "path": "/me/api/prompt-memory",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",

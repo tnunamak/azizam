@@ -368,6 +368,10 @@ Selected successful workflows are exercised separately.
 | `GET /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.media_detail`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/media/{asset_id}/download` | session-only | denied | `gateway.me_media.media_download`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/models/catalog` | session-only | denied | `gateway.models_catalog.models_catalog`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.get_avatar`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.put_avatar`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatars` | session-only | denied | `gateway.me_avatar.list_avatars`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar/picture` | session-only | denied | `gateway.me_avatar.get_picture`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.get_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `PUT /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.put_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/prompt-memory/prompts` | session-only | denied | `gateway.me_prompt_memory.delete_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |

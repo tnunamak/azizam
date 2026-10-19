@@ -475,6 +475,8 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
                 conn.execute("UPDATE admin_role_assignments SET revoked_at=? WHERE subject_kind='user' AND subject_id=?", (ts, user_id))
             if remove:
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
+                # Nothing the identity provider shared outlives the person: not the sign-in picture URL.
+                conn.execute("DELETE FROM user_avatars WHERE user_id=?", (user_id,))
         metadata: dict[str, Any] = {"disabled": disabled}
         if plan_id is not _UNCHANGED:
             metadata["plan_id"] = plan_id
