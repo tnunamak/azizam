@@ -31,13 +31,29 @@ VOLATILE_KEYS = {
 }
 
 
+# The two attention texts admin_api builds from an app's request counters (error rate, median latency). The app items
+# built from configuration ("has no access plan", "has no active key") are not matched and stay compared.
+LIVE_TRAFFIC_DETAIL = re.compile(r"\d+% errors across \d+ requests in the last 24h\.|Median latency is \d+(?:\.\d+)?s\.")
+
+
+def _live_traffic_item(value) -> bool:
+    """An attention item computed from an app's request counters of the last 24 h (admin_api: error rate, latency).
+
+    Those counters are live, like the routes in NOT_A_FUNCTION_OF_STATE: this test's own reads move them, so the item's
+    numbers, and whether it appears at all, are not a function of the stored configuration."""
+    return (
+        isinstance(value, dict) and value.get("kind") == "app" and isinstance(value.get("detail"), str)
+        and LIVE_TRAFFIC_DETAIL.fullmatch(value["detail"]) is not None
+    )
+
+
 def _normalize(text: str) -> str:
-    """The reading with the approved differences set aside: a revision number and the time of a change."""
+    """The reading with the approved differences set aside: a revision number, the time of a change, live traffic."""
     def clean(value):
         if isinstance(value, dict):
             return {key: clean(item) for key, item in value.items() if key not in VOLATILE_KEYS}
         if isinstance(value, list):
-            return [clean(item) for item in value]
+            return [clean(item) for item in value if not _live_traffic_item(item)]
         return value
 
     try:
@@ -127,3 +143,10 @@ def test_the_reading_does_change_when_a_public_field_changes(gateway, host_isola
     later = {**evidence, "observed_at_s": 1792370521, "last_attempt_at_s": 1792370521, "last_success_at_s": 1792370510}
     assert _normalize(json.dumps({"evidence": evidence})) == _normalize(json.dumps({"evidence": later}))
     assert _normalize(json.dumps({"evidence": evidence})) != _normalize(json.dumps({"evidence": {**later, "status": "unavailable"}}))
+
+    # An app's live error-rate item is no difference (this test's own reads move the counters); a configuration item still is.
+    app_item = {"kind": "app", "target_kind": "app", "severity": "problem", "detail": "32% errors across 106 requests in the last 24h."}
+    plan_item = {"kind": "app", "target_kind": "app", "severity": "problem", "detail": "It can't run anything. Choose a plan."}
+    assert _normalize(json.dumps({"items": [app_item, plan_item]})) == _normalize(json.dumps({"items": [{**app_item, "detail": "68% errors across 318 requests in the last 24h."}, plan_item]}))
+    assert _normalize(json.dumps({"items": [app_item]})) == _normalize(json.dumps({"items": []}))
+    assert _normalize(json.dumps({"items": [plan_item]})) != _normalize(json.dumps({"items": []}))
