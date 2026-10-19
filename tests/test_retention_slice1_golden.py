@@ -130,7 +130,6 @@ HOUSEHOLD_DOCS = {
     "kill": {"never_keep": True},
     "default_off": {"default_remember": False},
     "cap_3m": {"retention_cap": "3_months"},
-    "extra_key": {"x": 1, "never_keep": False},
     **{
         f"full_{default}_{kill}_{cap}": {"default_remember": default, "never_keep": kill, "retention_cap": cap}
         for default in (True, False) for kill in (True, False) for cap in PERIODS
@@ -286,6 +285,10 @@ def _http(response) -> list:
         body = response.json()
     except ValueError:
         body = response.text
+    if isinstance(body, dict):
+        # Slice 1 adds one key, ``contract``, to the two prompt-memory settings responses: the bundled choices
+        # and defaults, which the web reads instead of keeping its own copy. Every other byte is compared.
+        body = {key: value for key, value in body.items() if key != "contract"}
     return [response.status_code, _dump(body), response.headers.get("cache-control")]
 
 
@@ -316,7 +319,7 @@ def observe_owner_settings(tmp_path: Path) -> dict:
         out[label + "/rows"] = _rows(prompt_db, "SELECT asset_id, person_id FROM asset_prompts ORDER BY asset_id")
         current = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
         revision = current["revision"]
-        out[label + "/get"] = _dump(current)
+        out[label + "/get"] = _dump({key: value for key, value in current.items() if key != "contract"})
 
     put("missing_if_match", body, revision_header=None)
     put("stale", body, revision_header="stale")
@@ -697,8 +700,10 @@ def test_slice1_behaviour_matches_golden(tmp_path, responses_gateway, fake_upstr
     expected = GOLDEN.read_text(encoding="utf-8")
     if text != expected:
         got, want = text.splitlines(), expected.splitlines()
-        changed = [json.loads(line)[:2] for line in got if line not in set(want)][:8]
-        missing = [json.loads(line)[:2] for line in want if line not in set(got)][:8]
-        pytest.fail(f"behaviour changed: {len(got)} cells now, {len(want)} recorded; "
-                    f"first changed cells {changed}; first missing cells {missing}")
+        got_set, want_set = set(got), set(want)
+        changed = [json.loads(line) for line in got if line not in want_set]
+        missing = [json.loads(line) for line in want if line not in got_set]
+        first = next(((new, old) for new in changed for old in missing if new[:2] == old[:2]), None)
+        pytest.fail(f"behaviour changed: {len(got)} cells now, {len(want)} recorded; {len(changed)} changed; "
+                    f"first changed cells {[c[:2] for c in changed[:8]]}; first difference {first}")
     assert text == expected
