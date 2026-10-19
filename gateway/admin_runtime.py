@@ -1145,6 +1145,7 @@ class AdminSQLiteStore:
                 "workflow_count": len(value.get("workflows") or {}),
                 "capability_count": len(value.get("capabilities") or {}),
             },
+            session=actor.browser_session,
             path=self.path,
         )
         return record
@@ -1230,6 +1231,7 @@ class AdminSQLiteStore:
             audit_metadata={
                 "service_count": len(value.get("services") or {}), **(extra or {})
             },
+            session=actor.browser_session,
             path=self.path,
         )
         return record
@@ -1670,6 +1672,7 @@ class AdminSQLiteStore:
                         },
                     },
                 ],
+                session=actor.browser_session,
                 path=self.path,
             )
         except BaseException:
@@ -1748,6 +1751,7 @@ class AdminSQLiteStore:
                 "target_id": package_id,
                 "metadata": {"affected_records": affected},
             }],
+            session=actor.browser_session,
             path=self.path,
         )
         # What a removal took out of the registry and the index no longer needs its secrets: the entries of the removed
@@ -2161,6 +2165,8 @@ class AdminAuthenticator:
                             ),
                             session_id=session.session_id,
                             session_family=session.family_id,
+                            session_absolute_expires_at=(
+                                None if session.absolute_expires_at is None else int(session.absolute_expires_at)),
                             session_expires_at=int(session.expires_at),
                             authenticated_at=int(session.last_authenticated),
                         )

@@ -3111,23 +3111,31 @@ def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[s
 def write_service_registry(
     value: Mapping[str, Any], *, updated_by: str | None = None,
     expected_generation: int, now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
 
     This is the sole production writer for ``operator.service_registry``.  It
     intentionally owns no artifact/reload effect: those occur after commit.
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction; None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        next_generation = write_service_registry_in_transaction(
-            conn, value, updated_by=updated_by,
-            expected_generation=expected_generation, now=ts,
-        )
-        conn.commit()
+        try:
+            session_guard.require_live(conn, session)
+            next_generation = write_service_registry_in_transaction(
+                conn, value, updated_by=updated_by,
+                expected_generation=expected_generation, now=ts,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"key": "service_registry", "value": dict(value), "updated_at": ts,
             "updated_by": updated_by, "operator_settings_generation": next_generation}
 
@@ -3145,6 +3153,7 @@ def write_service_registry_with_audit(
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
     now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
@@ -3152,6 +3161,10 @@ def write_service_registry_with_audit(
     This is the production writer for ordinary registry mutations.  Artifact
     publication and reload stay outside this transaction because they observe
     the committed registry rather than participating in SQLite atomicity.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -3159,6 +3172,7 @@ def write_service_registry_with_audit(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn,
                 value,
@@ -3256,6 +3270,7 @@ def write_service_registry_and_setting_with_audits(
     setting_value: Mapping[str, Any],
     audits: Iterable[Mapping[str, Any]],
     now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     precheck: Callable[[sqlite3.Connection], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -3268,6 +3283,10 @@ def write_service_registry_and_setting_with_audits(
     lock, before any row is written, and may raise to refuse the whole change;
     a caller that must read other tables consistently with the write reads them
     there. Artifact publication and reload stay with the caller, after the commit.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
     """
     setting_name = str(setting_key or "").strip()
     if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
@@ -3279,6 +3298,7 @@ def write_service_registry_and_setting_with_audits(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            session_guard.require_live(conn, session)
             if precheck is not None:
                 precheck(conn)
             next_generation = write_service_registry_in_transaction(

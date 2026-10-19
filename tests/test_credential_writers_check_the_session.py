@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway import accounts, admin_store, mcp_oauth_store
+from gateway import accounts, admin_store, mcp_oauth_store, session_guard
 from gateway.session_guard import BrowserSession, SessionEnded
 from tests.support import call_graph
 from tests.support.access import store_plan
@@ -52,6 +52,11 @@ GUARDED = {
     "gateway/admin_store.py::set_local_password_verifier": "the owner's password",
     "gateway/accounts.py::create_link": "invitation and password-reset links",
     "gateway/mcp_oauth_store.py::Store.create_grant": "an MCP connection (consent)",
+    # A registry save can move where a stored key is sent (the credential binding), so the writers of the
+    # registry are credential writers too. They are found by their call of write_service_registry_in_transaction.
+    "gateway/admin_store.py::write_service_registry": "a registry save",
+    "gateway/admin_store.py::write_service_registry_with_audit": "a registry save with its audit fact",
+    "gateway/admin_store.py::write_service_registry_and_setting_with_audits": "a registry save with a setting and audit facts",
 }
 
 # Writers no browser sign-in starts, with why.
@@ -66,10 +71,13 @@ EXEMPT = {
 # Where production code passes ``session=None`` on purpose.
 NO_BROWSER = {
     "gateway/admin_runtime.py::create_admin_service_account_key": "the operator's CLI",
+    "gateway/service_registry.py::ensure_service_registry": "the gateway seeding or backfilling its own registry at start",
 }
 
 # The guarded writers by the name callers use, and the keyword that carries the sign-in.
-CALLED_AS = {"create_credential_hash", "set_local_password_verifier", "create_link", "create_grant"}
+REGISTRY_WRITERS = {"write_service_registry", "write_service_registry_with_audit",
+                    "write_service_registry_and_setting_with_audits"}
+CALLED_AS = {"create_credential_hash", "set_local_password_verifier", "create_link", "create_grant"} | REGISTRY_WRITERS
 
 
 def _functions(tree: ast.AST):
@@ -95,13 +103,56 @@ def _own_nodes(function):
         yield from _own_nodes(child)
 
 
+EXECUTE = {"execute", "executemany", "executescript"}
+
+
+def _module_strings(tree: ast.AST) -> dict[str, str]:
+    """The module-level names bound to a plain string."""
+    return {target.id: node.value.value
+            for node in getattr(tree, "body", []) if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+            for target in node.targets if isinstance(target, ast.Name)}
+
+
+def _assembled(node: ast.AST, strings: dict[str, str]) -> str:
+    """The text of a SQL argument as far as its parts are written out; ``{}`` stands for a part that is not."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _assembled(node.left, strings) + _assembled(node.right, strings)
+    if isinstance(node, ast.Name) and node.id in strings:
+        return strings[node.id]
+    return "{}"
+
+
+def _is_literal_sql(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Constant) and isinstance(node.value, str)) or (
+        isinstance(node, ast.JoinedStr) and all(isinstance(v, ast.Constant) for v in node.values))
+
+
+def _execute_calls(function):
+    for node in _own_nodes(function):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in EXECUTE
+                and node.args):
+            yield node
+
+
 def writers_in(source: str, rel: str) -> set[str]:
+    """Functions that write a credential table: by a string that says so, by SQL put together from written-out
+    parts, or (the registry) by a call of ``write_service_registry_in_transaction``."""
+    tree = ast.parse(source)
+    strings = _module_strings(tree)
     found = set()
-    for qualname, function in _functions(ast.parse(source)):
-        for node in _own_nodes(function):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str) and CREATES.search(node.value):
-                found.add(f"{rel}::{qualname}")
-                break
+    for qualname, function in _functions(tree):
+        hit = any(isinstance(node, ast.Constant) and isinstance(node.value, str) and CREATES.search(node.value)
+                  for node in _own_nodes(function))
+        hit = hit or any(CREATES.search(_assembled(call.args[0], strings)) for call in _execute_calls(function))
+        hit = hit or any(isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", ""))
+                         == "write_service_registry_in_transaction" for node in _own_nodes(function))
+        if hit and not qualname.endswith("write_service_registry_in_transaction"):
+            found.add(f"{rel}::{qualname}")
     return found
 
 
@@ -110,6 +161,59 @@ def writers() -> set[str]:
     for file in call_graph.production_files():
         found |= writers_in(file.read_text(), str(file.relative_to(call_graph.ROOT)))
     return found
+
+
+# SQL that is not one written-out string, in the modules that write credential tables, with why it cannot hide a
+# credential write. Each function is listed, not each call; the strings in it are still searched (``writers_in``).
+DYNAMIC_SQL = {
+    "gateway/admin_store.py::_exec_schema": "executes the module's own schema and migration text",
+    "gateway/admin_store.py::_drop_identity_profile_grants": "drops and counts retired tables by a name from a fixed tuple",
+    "gateway/admin_store.py::get_users": "SELECT with a placeholder per id",
+    "gateway/admin_store.py::find_user_by_email": "SELECT; the statement is chosen from two written-out ones",
+    "gateway/admin_store.py::person_plan_ids": "SELECT with a placeholder per id",
+    "gateway/admin_store.py::session_app_ids": "SELECT with a placeholder per id",
+    "gateway/admin_store.py::update_app": "UPDATE apps, columns from a fixed set",
+    "gateway/admin_store.py::list_trusted_addresses": "SELECT with an optional WHERE",
+    "gateway/admin_store.py::runtime_access_row": "SELECT over the fixed runtime-access view",
+    "gateway/admin_store.py::runtime_access_rows": "SELECT over the fixed runtime-access view",
+    "gateway/admin_store.py::list_active_credentials": "SELECT with an optional WHERE",
+    "gateway/admin_store.py::list_active_credentials_for_apps": "SELECT with a placeholder per app",
+    "gateway/admin_store.py::list_admin_roles": "SELECT with an optional WHERE",
+    "gateway/admin_store.py::list_audit": "SELECT with an optional WHERE",
+    "gateway/admin_store.py::put_operator_setting_in": "SELECT of the fixed setting columns",
+    "gateway/admin_store.py::get_operator_setting": "SELECT of the fixed setting columns",
+    "gateway/admin_store.py::get_operator_setting_in": "SELECT of the fixed setting columns",
+    "gateway/admin_store.py::list_operator_settings": "SELECT of the fixed setting columns",
+    "gateway/admin_store.py::_record_prompt_erasure": "INSERT into one of two prompt-erasure tables named in a fixed tuple",
+    "gateway/accounts.py::initialize": "executes the module's own schema text",
+    "gateway/accounts.py::require_live_session_in": "SELECT from one of two fixed table names",
+    "gateway/accounts.py::revoke_family_in": "DELETE and UPDATE that revoke; a placeholder per session id",
+    "gateway/mcp_oauth_store.py::grants_in": "SELECT with a placeholder per person",
+    "gateway/mcp_oauth_store.py::Store._conn": "executes the module's own schema text",
+    "gateway/mcp_oauth_store.py::Store.revoke_grant": "UPDATE that revokes, with an optional person filter",
+}
+
+
+def dynamic_sql_in(source: str, rel: str) -> set[str]:
+    tree = ast.parse(source)
+    return {f"{rel}::{qualname}" for qualname, function in _functions(tree)
+            for call in _execute_calls(function) if not _is_literal_sql(call.args[0])}
+
+
+def credential_modules() -> list[str]:
+    return sorted({key.split("::")[0] for key in set(GUARDED) | set(EXEMPT)})
+
+
+def test_sql_in_the_modules_that_write_credentials_is_written_out_or_listed_with_a_reason():
+    found = set()
+    for rel in credential_modules():
+        found |= dynamic_sql_in((call_graph.ROOT / rel).read_text(), rel)
+
+    assert sorted(found - set(DYNAMIC_SQL)) == [], (
+        "These functions run SQL that is not one written-out string, in a module that writes credential tables, "
+        "so the writer search cannot read it. Write the statement out, or list the function in DYNAMIC_SQL with why "
+        "it cannot write a credential.")
+    assert sorted(set(DYNAMIC_SQL) - found) == [], "a listed function no longer builds its SQL"
 
 
 def test_discovery_sees_a_new_writer_however_it_is_spelled():
@@ -126,6 +230,39 @@ def test_discovery_sees_a_new_writer_however_it_is_spelled():
         "        conn.execute('UPDATE credentials SET revoked_at=1')\n")
 
     assert writers_in(source, "x.py") == {"x.py::Store.mint", "x.py::Store.other.inner", "x.py::Store.other"}
+
+
+def test_discovery_reads_sql_put_together_from_written_out_parts():
+    source = (
+        "TABLE = 'credentials'\n"
+        "PREFIX = 'INSERT INTO '\n"
+        "def joined(conn):\n"
+        "    conn.execute('INSERT INTO ' + 'credentials(id) VALUES (?)', (1,))\n"
+        "def named(conn):\n"
+        "    conn.execute(PREFIX + 'mcp_oauth_grants(id) VALUES (?)', (1,))\n"
+        "def f_string(conn):\n"
+        "    conn.execute(f'INSERT INTO credentials(id) VALUES ({1})')\n"
+        "def registry(conn):\n"
+        "    write_service_registry_in_transaction(conn, {})\n"
+        "def innocent(conn):\n"
+        "    conn.execute('SELECT ' + '1')\n")
+
+    assert writers_in(source, "x.py") == {"x.py::joined", "x.py::named", "x.py::f_string", "x.py::registry"}
+
+
+def test_discovery_flags_sql_it_cannot_read():
+    source = (
+        "def opaque(conn, parts):\n"
+        "    conn.execute(' '.join(parts), (1,))\n"
+        "def variable(conn, sql):\n"
+        "    conn.execute(sql)\n"
+        "def literal(conn):\n"
+        "    conn.execute('SELECT 1')\n"
+        "    conn.execute(f'SELECT 2')\n"
+        "def interpolated(conn, name):\n"
+        "    conn.execute(f'SELECT * FROM {name}')\n")
+
+    assert dynamic_sql_in(source, "x.py") == {"x.py::opaque", "x.py::variable", "x.py::interpolated"}
 
 
 def test_every_writer_of_a_credential_is_guarded_or_has_a_reason_no_browser_starts_it():
@@ -233,11 +370,36 @@ def world(tmp_path):
     def end(session):
         accounts.revoke_session(session.session_id, int(time.time()) + 3600, path=db, family_id=session.family_id)
 
+    def generation():
+        record = admin_store.get_service_registry_with_generation(path=db)
+        return 0 if record is None else record["operator_settings_generation"]
+
+    def audit(session=None):
+        return {"audit_action": "t", "audit_actor_kind": "user", "audit_actor_id": "u", "audit_actor_label": "u",
+                "audit_target_kind": "operator_setting", "audit_target_id": "service_registry", "session": session}
+
+    def make_registry_plain(session):
+        return admin_store.write_service_registry({"services": {}}, expected_generation=generation(),
+                                                  session=session, path=db)
+
+    def make_registry_audited(session):
+        return admin_store.write_service_registry_with_audit(
+            {"services": {}}, expected_generation=generation(), updated_by="u", path=db, **audit(session))
+
+    def make_registry_and_setting(session):
+        return admin_store.write_service_registry_and_setting_with_audits(
+            {"services": {}}, expected_generation=generation(), updated_by="u", setting_key="some_setting",
+            setting_value={"a": 1}, audits=[{"action": "t"}], session=session, path=db)
+
+    # writer name -> (make, a number that grows by one with each write)
     writes = {
-        "create_credential_hash": (make_key, "credentials"),
-        "create_link": (make_link, "account_links"),
-        "set_local_password_verifier": (make_password, "local_password_credentials"),
-        "create_grant": (make_grant, "mcp_oauth_grants"),
+        "create_credential_hash": (make_key, lambda: count("credentials")),
+        "create_link": (make_link, lambda: count("account_links")),
+        "set_local_password_verifier": (make_password, lambda: count("local_password_credentials")),
+        "create_grant": (make_grant, lambda: count("mcp_oauth_grants")),
+        "write_service_registry": (make_registry_plain, generation),
+        "write_service_registry_with_audit": (make_registry_audited, generation),
+        "write_service_registry_and_setting_with_audits": (make_registry_and_setting, generation),
     }
     return type("World", (), {"db": db, "sign_in": staticmethod(sign_in), "count": staticmethod(count),
                               "end": staticmethod(end), "writes": writes})
@@ -249,42 +411,42 @@ def _refused(error: BaseException) -> bool:
 
 @pytest.mark.parametrize("writer", sorted(CALLED_AS))
 def test_a_guarded_writer_writes_for_a_live_sign_in_and_nothing_for_an_ended_one(world, writer):
-    write, table = world.writes[writer]
+    write, counter = world.writes[writer]
     live = world.sign_in("live-session")
     ended = world.sign_in("ended-session")
 
     write(live)
-    after_live = world.count(table)
+    after_live = counter()
     world.end(ended)
     with pytest.raises((SessionEnded, accounts.AccountError)) as caught:
         write(ended)
 
     assert _refused(caught.value), caught.value
-    assert world.count(table) == after_live
+    assert counter() == after_live
 
 
 @pytest.mark.parametrize("writer", sorted(CALLED_AS))
 def test_a_guarded_writer_with_no_sign_in_writes(world, writer):
-    write, table = world.writes[writer]
-    before = world.count(table)
+    write, counter = world.writes[writer]
+    before = counter()
 
     write(None)
 
-    assert world.count(table) == before + 1 or table == "local_password_credentials"
+    assert counter() == before + 1 or writer == "set_local_password_verifier"   # the password row is replaced, not added
 
 
 @pytest.mark.parametrize("writer", sorted(CALLED_AS))
 def test_a_signed_out_everywhere_person_cannot_write_through_any_of_their_sessions(world, writer):
-    write, table = world.writes[writer]
+    write, counter = world.writes[writer]
     session = world.sign_in("everywhere-session")
-    before = world.count(table)
+    before = counter()
     accounts.revoke_person_sessions(session.user_id, path=world.db)
 
     with pytest.raises((SessionEnded, accounts.AccountError)) as caught:
         write(session)
 
     assert _refused(caught.value)
-    assert world.count(table) == before
+    assert counter() == before
 
 
 # -- the two sequences the review ran, and the routes beside them ------------------------------------
@@ -368,3 +530,77 @@ def test_the_owner_password_is_not_set_after_sign_out_everywhere(sg, monkeypatch
 
     assert response.status_code == 401, response.text
     assert sg.rows("SELECT verifier FROM local_password_credentials") == before
+
+
+# -- a session that ran out is not live, whatever registration is required --------------------------
+
+def _conn(db):
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def test_a_writer_refuses_a_session_whose_stored_row_has_run_out(world):
+    write, counter = world.writes["create_credential_hash"]
+    session = world.sign_in("ran-out")
+    with closing(_conn(world.db)) as conn:
+        conn.execute("UPDATE account_sessions SET expires_at=? WHERE session_id=?", (int(time.time()) - 1, "ran-out"))
+        conn.commit()
+        assert [row[0] for row in conn.execute("SELECT require_registered_session FROM account_access")] in ([], [0])
+    before = counter()
+
+    with pytest.raises(SessionEnded):
+        write(session)
+
+    assert counter() == before
+
+
+@pytest.mark.parametrize("column, make", [
+    ("row", lambda s, at: s),
+    ("cookie idle deadline", lambda s, at: BrowserSession(s.user_id, s.session_id, s.family_id, expires_at=at)),
+    ("cookie absolute deadline", lambda s, at: BrowserSession(s.user_id, s.session_id, s.family_id, absolute_expires_at=at)),
+])
+def test_the_deadline_is_inclusive_at_the_boundary(world, column, make):
+    deadline = int(time.time()) + 1000
+    session = world.sign_in("boundary")
+    with closing(_conn(world.db)) as conn:
+        conn.execute("UPDATE account_sessions SET expires_at=? WHERE session_id=?", (deadline, "boundary"))
+        conn.commit()
+        checked = make(session, deadline)
+
+        session_guard.require_live(conn, checked, now=deadline - 1)       # the last second it is live
+        with pytest.raises(SessionEnded):
+            session_guard.require_live(conn, checked, now=deadline)       # at the deadline it is not
+        with pytest.raises(SessionEnded):
+            session_guard.require_live(conn, checked, now=deadline + 1)
+
+
+def test_a_retired_ids_stored_row_that_ran_out_is_refused_too(world):
+    session = world.sign_in("old-id")
+    accounts.rotate_session(session.user_id, "old-id", "old-id", "new-id", old_expires_at=int(time.time()) + 100,
+                            expires_at=int(time.time()) + 1000, path=world.db)
+    with closing(_conn(world.db)) as conn:
+        conn.execute("UPDATE account_session_lineage SET expires_at=? WHERE session_id=?", (int(time.time()) - 5, "new-id"))
+        conn.commit()
+        with pytest.raises(SessionEnded):
+            session_guard.require_live(conn, BrowserSession(session.user_id, "new-id", "old-id"))
+
+
+def test_a_permanent_key_is_not_made_by_a_request_whose_session_ran_out_while_it_was_in_flight(sg, monkeypatch):
+    client = owner_client(sg)
+    headers = {**csrf(client), **ACT}
+    app_id = client.post("/me/api/apps", json={"name": "mine"}, headers=headers).json()["app"]["id"]
+    sid = cookie_session(client).session_id
+    original = admin_store.create_credential_hash
+
+    def expire_then_write(*args, **kwargs):
+        with accounts.connection(sg.path) as conn:
+            conn.execute("UPDATE account_sessions SET expires_at=? WHERE session_id=?", (int(time.time()) - 1, sid))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(admin_store, "create_credential_hash", expire_then_write)
+
+    response = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "late"}, headers=headers)
+
+    assert response.status_code == 401, response.text
+    assert sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,)) == []

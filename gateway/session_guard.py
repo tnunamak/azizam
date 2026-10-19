@@ -23,11 +23,16 @@ class BrowserSession:
     user_id: str
     session_id: str
     family_id: str
+    # The deadlines the request's cookie carried: idle (``expires_at``) and absolute. A write that comes after
+    # either is refused, even for a session the server never registered.
+    expires_at: float | None = None
+    absolute_expires_at: float | None = None
 
     @classmethod
     def of(cls, session, user_id: str) -> "BrowserSession":
         """The sign-in behind an ``AdminSession`` (anything with ``session_id`` and ``family_id``)."""
-        return cls(str(user_id), str(session.session_id), str(session.family_id))
+        return cls(str(user_id), str(session.session_id), str(session.family_id),
+                   getattr(session, "expires_at", None), getattr(session, "absolute_expires_at", None))
 
 
 class SessionEnded(Exception):
@@ -41,7 +46,7 @@ class SessionEnded(Exception):
         super().__init__(self.message)
 
 
-def require_live(conn: sqlite3.Connection, session: BrowserSession | None) -> None:
+def require_live(conn: sqlite3.Connection, session: BrowserSession | None, *, now: float | None = None) -> None:
     """Inside the caller's open write transaction: raise ``SessionEnded`` when the sign-in has ended.
 
     With ``session=None`` nothing is checked: no browser sign-in started the write.
@@ -52,12 +57,14 @@ def require_live(conn: sqlite3.Connection, session: BrowserSession | None) -> No
     from gateway import accounts
 
     try:
-        accounts.require_live_session_in(conn, session.user_id, session.session_id, session.family_id)
+        accounts.require_live_session_in(
+            conn, session.user_id, session.session_id, session.family_id,
+            expires_at=session.expires_at, absolute_expires_at=session.absolute_expires_at, now=now)
     except accounts.AccountError:
         raise SessionEnded() from None
 
 
-def begin_write(conn: sqlite3.Connection, session: BrowserSession | None) -> None:
+def begin_write(conn: sqlite3.Connection, session: BrowserSession | None, *, now: float | None = None) -> None:
     """Open the write transaction, then ``require_live`` inside it; a refusal rolls it back.
 
     With ``session=None`` nothing is opened and nothing is checked.
@@ -66,7 +73,7 @@ def begin_write(conn: sqlite3.Connection, session: BrowserSession | None) -> Non
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        require_live(conn, session)
+        require_live(conn, session, now=now)
     except BaseException:
         conn.rollback()
         raise

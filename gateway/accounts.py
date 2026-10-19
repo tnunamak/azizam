@@ -206,9 +206,25 @@ def session_allowed(user_id: str, session_id: str, *, path: Path, family_id: str
     return session_verdict(user_id, session_id, family_id, path=path) in {LIVE, GRACE}
 
 
-def require_live_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None) -> None:
-    """Refuse inside the caller's transaction when the session was revoked or retired; used before a mint."""
-    if session_verdict_in(conn, user_id, session_id, family_id) != LIVE:
+def require_live_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
+                            expires_at: float | None = None, absolute_expires_at: float | None = None,
+                            now: float | None = None) -> None:
+    """Refuse inside the caller's transaction when the session was revoked, retired or ran out; used before a mint.
+
+    A session that ran out is refused whatever ``require_registered_session`` says: its idle deadline
+    (``expires_at``, from the cookie and from the stored rows of the id) or its absolute deadline has passed.
+    A request that was already in flight when its session expired must not make a lasting credential.
+    """
+    ts = time.time() if now is None else now
+    if (expires_at is not None and ts >= expires_at) or (absolute_expires_at is not None and ts >= absolute_expires_at):
+        raise AccountError("login_required", "Sign in again to do this.", 401)
+    for table in ("account_sessions", "account_session_lineage"):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:
+            continue
+        row = conn.execute(f"SELECT expires_at FROM {table} WHERE session_id=?", (session_id,)).fetchone()  # noqa: S608 - fixed names
+        if row is not None and ts >= row[0]:
+            raise AccountError("login_required", "Sign in again to do this.", 401)
+    if session_verdict_in(conn, user_id, session_id, family_id, now=ts) != LIVE:
         raise AccountError("login_required", "Sign in again to do this.", 401)
 
 

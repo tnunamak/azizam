@@ -84,13 +84,15 @@ class AdminContext:
     authenticated_at: int | None = None
     # The first id of the browser sign-in; revoking it ends every renewal.
     session_family: str | None = None
+    session_absolute_expires_at: int | None = None
 
     @property
     def browser_session(self) -> BrowserSession | None:
         """The browser sign-in behind this request, or None for an admin key."""
         if not self.session_id:
             return None
-        return BrowserSession(self.audit_actor_id, self.session_id, self.session_family or self.session_id)
+        return BrowserSession(self.audit_actor_id, self.session_id, self.session_family or self.session_id,
+                              self.session_expires_at, self.session_absolute_expires_at)
 
     @property
     def is_admin(self) -> bool:

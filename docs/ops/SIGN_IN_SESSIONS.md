@@ -197,6 +197,16 @@ Every credential a browser sign-in creates (an App key, an admin key, a Try key,
 connection, an invitation or reset link, the owner's password) checks, inside the database transaction
 that writes it, that the sign-in is still live. A request that passed its cookie check a moment before
 "Sign out everywhere" committed therefore gets `401` (`login_required`) and writes nothing.
+
+The same check runs inside every service-registry save made from a browser sign-in (the registry
+save, adding, editing, enabling or removing an engine or provider, secret commands, fixing a left-out
+record, enabling or removing an extension package). Such a save can move where a stored key is sent, so a
+sign-out that committed between its binding check and its commit stops it.
+
+"Live" includes the deadlines. A request whose session ran past its idle timeout or its absolute
+lifetime while the request was in flight is refused too, whether or not the server requires a stored
+record for that person's sessions: the cookie's deadlines and the stored row's deadline are both
+checked, and the deadline second itself counts as ended.
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 

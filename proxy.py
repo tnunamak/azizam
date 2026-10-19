@@ -15639,6 +15639,16 @@ def _reauth_required_response(subject: str) -> Response:
     return step_up.reauth_required_response(methods=methods or ["sign_in"], window_seconds=_step_up_window())
 
 
+@app.exception_handler(session_guard.SessionEnded)
+async def _session_ended_handler(request: Request, exc: session_guard.SessionEnded) -> Response:
+    """A write whose browser sign-in ended before it committed (decision D41): nothing was written."""
+    from gateway.egress import SafeErrorResponse  # proxy imports the egress module near its end
+
+    return SafeErrorResponse(
+        {"error": {"code": exc.code, "message": exc.message}},
+        status_code=exc.status_code, headers={"Cache-Control": "no-store"})
+
+
 @app.exception_handler(step_up.StepUpRequired)
 async def _step_up_required_handler(request: Request, exc: step_up.StepUpRequired) -> Response:
     """A change that is risky only in some forms (a moved credential) asks inside its handler."""
