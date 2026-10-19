@@ -295,7 +295,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path, only: fro
             stack.enter_context(patch.object(proxy, "_stt_execution_snapshot", return_value=execution))
             stack.enter_context(patch.object(stt_chunking, "probe_audio", AsyncMock(return_value=stt_chunking.ProbedAudio(duration, 16000, 1))))
             stack.enter_context(patch.object(stt_chunking, "detect_silences", AsyncMock(return_value=silences)))
-            stack.enter_context(patch.object(stt_chunking, "plan_silence_only_segments", plan))
+            stack.enter_context(patch.object(stt_chunking, "plan_silence_preferred_segments", plan))
             stack.enter_context(patch.object(stt_chunking, "extract_segment", extract))
             stack.enter_context(patch.object(proxy.receipt_store, "begin"))
             stack.enter_context(patch.object(proxy.receipt_store, "finalize", return_value=True))
