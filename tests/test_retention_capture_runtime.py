@@ -1,5 +1,4 @@
 """Capture uses configured state and keeps optional evidence off the hot path."""
-import copy
 import logging
 import sqlite3
 import time
@@ -7,7 +6,7 @@ import time
 import pytest
 
 import proxy
-from gateway import admin_store, media_jobs, receipt_store, retention_facts
+from gateway import admin_store, media_jobs, receipt_store, retention_facts, receipts as receipt_helpers
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt
 
 
@@ -28,7 +27,10 @@ def capture_stores(tmp_path, monkeypatch):
         "connection": {"protocol": "openai", "base_url": "http://127.0.0.1:18080"},
         "retention_facts": [],
     }}}}
-    admin_store.put_operator_setting("service_registry", registry, path=admin)
+    admin_store.write_service_registry(registry, expected_generation=0, path=admin)
+    cached = getattr(receipt_helpers, "_captured_retention_generation", None)
+    if cached is not None:
+        cached.cache_clear()
     return admin, media, registry
 
 
