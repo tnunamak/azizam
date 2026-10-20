@@ -37,6 +37,7 @@ def test_real_router_freezes_outer_evidence_before_owner_edits_at_egress(tmp_pat
             lambda *args, _original=original, **kwargs: _original(*args, **{**kwargs, "path": receipts}))
 
     registry = _registry()
+    registry["services"]["openrouter"]["config"]["price"]["output_usd_per_million_tokens"] = "2.00"
     registry["services"]["local"] = {"name": "Original local engine", "config": {}}
     target_id = "local" if route == "local" else "openrouter"
     fact = copy.deepcopy(load_provider_catalog()["openai"].retention_facts[0])
@@ -83,7 +84,7 @@ def test_real_router_freezes_outer_evidence_before_owner_edits_at_egress(tmp_pat
             response = await proxy._forward_litellm_proxy_request(
                 _request(body), request_path="/v1/chat/completions", auth_context=auth,
                 body_json=body, runtime_config=runtime, parent_request_id=outer.request_id)
-            assert response.status_code == 200
+            assert response.status_code == 200, response.body
             owner.report(status="succeeded", reason="completed")
     asyncio.run(run())
 
