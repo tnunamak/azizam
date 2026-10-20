@@ -223,7 +223,7 @@ def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operat
                 assert response.headers.get("Retry-After") == (None if cap else "5")
                 finalize.assert_called_once()
                 if not cap:
-                    assert (receipt.status, receipt.termination_reason) == ("rejected", "resource_admission_denied")
+                    assert (receipt.status, receipt.metadata["terminal_reason"]) == ("rejected", "resource_admission_denied")
                     assert "busy" in error["message"]
                     reasons = receipt.to_dict()["resource_decision"]["reasons"]
                     assert any(r["code"] == ("queue_full" if shortage == "queue" else "capacity_insufficient")
