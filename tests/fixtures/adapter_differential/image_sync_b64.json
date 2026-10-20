@@ -299,7 +299,18 @@
         "destination_id": "litellm",
         "metadata_json": {
           "kind": "system",
-          "name": "Litellm"
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "comfyui",
+        "metadata_json": {
+          "address": "127.0.0.1:7890",
+          "kind": "engine",
+          "name": "ComfyUI (Image + Video Generation)",
+          "reach": "Azizam reaches it on this computer"
         },
         "source_id": "<req:1>",
         "source_kind": "receipt"
