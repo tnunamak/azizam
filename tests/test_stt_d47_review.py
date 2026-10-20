@@ -35,6 +35,7 @@ def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channel
     async def run(limit, limited_disk=False):
         sent = []
         async def post(path, _name):
+            assert (tmp_path / "extraction-source.pcm").exists() == (not limited_disk and limit > 150000)
             with wave.open(str(path)) as audio:
                 sent.append(audio.readframes(audio.getnframes()))
             return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
@@ -217,6 +218,30 @@ def test_understated_metadata_tops_up_before_each_decode_trial(tmp_path):
             assert destination.stat().st_size == 19200
         finally:
             destination.unlink(missing_ok=True)
+            lease.release()
+    asyncio.run(run())
+
+
+def test_wav_preparation_still_accepts_high_rate_source_audio(tmp_path):
+    from types import SimpleNamespace
+    from gateway.engine_protocol.chunked_stt import _RunWire
+
+    async def run():
+        source = wav(tmp_path / "high-rate.wav", 0.1, 96000, 2)
+        execution = config(tmp_path)
+        cleanup = stt.SttCleanupOwner()
+        lease = stt.SttResourceGate().acquire(request_id="normalize", config=execution)
+        lease.workspace = tmp_path
+        request = SimpleNamespace(workspace=tmp_path, cleanup=cleanup, execution=execution,
+            resource_lease=lease, cancellation_waiters=(),
+            deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+        try:
+            with source.open("rb") as handle:
+                result = await _RunWire("test", None, "unused", request).prepared_wav(SimpleNamespace(file=handle))
+            with wave.open(str(result)) as audio:
+                assert (audio.getframerate(), audio.getnchannels(), audio.getnframes()) == (16000, 1, 1600)
+        finally:
+            await cleanup.aclose()
             lease.release()
     asyncio.run(run())
 
