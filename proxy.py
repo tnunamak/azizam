@@ -10841,8 +10841,6 @@ async def proxy_graph_video_create(
             media_type="application/json",
         )
     _begin_media_delivery(auth_context, receipt)
-    receipt.backend = _GRAPH_BACKEND_ID
-    _capture_retention_facts(receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
@@ -10946,6 +10944,7 @@ async def proxy_graph_video_create(
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
         ),
+        receipt,
     )
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
@@ -10965,6 +10964,9 @@ async def proxy_graph_video_create(
             status_code=500,
             media_type="application/json"
         )
+
+    receipt.backend = _GRAPH_BACKEND_ID
+    _capture_retention_facts(receipt)
 
     # Video-conditioned workflows (remix, character replace) take a source video
     # as an extension input. Resolve and probe it now: its frame rate and length
@@ -11451,7 +11453,7 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     return None, None
 
 
-def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> Response | None:
+def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *, receipt: RouteReceipt | None = None) -> Response | None:
     decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -11464,6 +11466,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
         ),
+        receipt,
     )
     if decision.denied:
         return _policy_denied_response(decision)
@@ -11613,9 +11616,15 @@ async def _submit_video_chain(
         return _json_error(400, "input_reference is not supported on extensions; the source video is the context",
                            param="input_reference", code="unsupported_parameter")
 
-    denial = _chain_policy_denial(auth_context, requested_model, workflow_name)
+    delivery = media_delivery.current()
+    receipt = delivery.receipt if delivery is not None else None
+    denial = _chain_policy_denial(auth_context, requested_model, workflow_name, receipt=receipt)
     if denial is not None:
         return denial
+
+    if receipt is not None:
+        receipt.backend = _GRAPH_BACKEND_ID
+        _capture_retention_facts(receipt)
 
     # Source video: resolve, probe, then upload to ComfyUI only after validation.
     probe = None
@@ -11793,8 +11802,6 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     except _VideoFormParseError as exc:
         return _json_error(400, str(exc))
     _begin_media_delivery(auth_context, receipt)
-    receipt.backend = _GRAPH_BACKEND_ID
-    _capture_retention_facts(receipt)
     memory_error = _note_media_metadata_body(body)
     if memory_error is not None:
         return memory_error
@@ -13964,7 +13971,8 @@ def _snapshot_retention_facts(receipt: Any) -> None:
         print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
 
 
-def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext | None = None) -> None:
+def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext | None = None,
+                             service_id: str | None = None) -> None:
     """Freeze the dated ledger before dispatch without writing an orphan reference."""
     if not receipt.backend:
         return
@@ -13975,14 +13983,9 @@ def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext
         receipt.capture_retention_facts(
             registry=ADMIN_STORE.get_service_registry(),
             overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+            service_id=service_id,
+            outer=auth_context.retention_receipt if auth_context is not None else None,
         )
-        if getattr(receipt, "_retention_fact_snapshot", None) is not None:
-            # A protocol loopback carries its outer receipt in the existing
-            # authenticated handoff, so both owners freeze the dispatched facts.
-            outer = auth_context.retention_receipt if auth_context is not None else None
-            if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
-                outer.backend = receipt.backend
-                outer._retention_fact_snapshot = receipt._retention_fact_snapshot
     except Exception as error:
         print(f"[proxy] retention fact capture unavailable: {type(error).__name__}", flush=True)
 
@@ -14055,7 +14058,8 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
                     destination.update(saved)
                 else:
                     destination.update(name=destination["id"], kind="former_destination")
-            for destination_id, facts in grouped.items():
+            for destination_id in grouped.keys() | saved_destinations.keys():
+                facts = grouped.get(destination_id, [])
                 view["destinations"].append({"id": destination_id, "name": destination_id,
                                              "kind": "former_destination", "facts": facts,
                                              **saved_destinations.pop(destination_id, {})})
@@ -23775,8 +23779,6 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         form = await request.form()
         input_specs = record.manifest.get("inputs") or {}
         _begin_media_delivery(auth_context, receipt)
-        receipt.backend = _GRAPH_BACKEND_ID
-        _capture_retention_facts(receipt)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
         form_fields = set(form.keys())
         prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
@@ -23841,6 +23843,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             status_code=500, media_type="application/json",
         )
 
+    if receipt is not None:
+        receipt.backend = _GRAPH_BACKEND_ID
+        _capture_retention_facts(receipt)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         graph = _graph(client, "videos")
@@ -24264,9 +24269,6 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
     _begin_media_delivery(auth_context, receipt)
-    if receipt is not None:
-        receipt.backend = _GRAPH_BACKEND_ID
-        _capture_retention_facts(receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
@@ -24383,6 +24385,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             capability_trust_tier="stable",
             capability_resource_tier="batch",
         ),
+        receipt,
     )
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
@@ -24463,6 +24466,9 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             )
         workflow = extension_result.request
 
+    if receipt is not None:
+        receipt.backend = _GRAPH_BACKEND_ID
+        _capture_retention_facts(receipt)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
@@ -28786,6 +28792,7 @@ async def _forward_litellm_proxy_request(
             admin_db_path=ADMIN_DB_PATH,
             paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
             requested_model=getattr(request.state, "provider_requested_model", None),
+            capture_retention_facts=lambda receipt: _capture_retention_facts(receipt, auth_context=auth_context),
         )
 
     try:
@@ -28856,6 +28863,7 @@ async def _forward_litellm_proxy_request(
     resolved_service_id = str(getattr(attribution_target, "logical_service_id", "") or runtime.service_id or "")
     if resolved_service_id:
         receipt.metadata["service_id"] = resolved_service_id
+    _capture_retention_facts(receipt, auth_context=auth_context, service_id=resolved_service_id)
     receipt.stream = bool(body_for_litellm.get("stream"))
     receipt.effective_output_limit = effective_output_limit(body_for_litellm)
     receipt.metadata["request_shape"] = request_shape_fields(body_for_litellm)
