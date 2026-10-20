@@ -13969,8 +13969,6 @@ def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext
         return
     try:
         receipt.capture_retention_facts(
-            registry=ADMIN_STORE.get_service_registry(),
-            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
             service_id=service_id,
             outer=auth_context.retention_receipt if auth_context is not None else None,
         )

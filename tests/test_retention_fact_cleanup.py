@@ -175,9 +175,9 @@ def test_startup_schedules_maintenance_before_initial_failure(monkeypatch):
     import proxy
     async def run():
         calls = []
+        loop = asyncio.get_running_loop()
         def fail(*args, **kwargs):
-            calls.append("maintain")
-            assert any(t.get_name() == "receipt-maintenance" for t in asyncio.all_tasks())
+            calls.append(any(t.get_name() == "receipt-maintenance" for t in asyncio.all_tasks(loop)))
             raise sqlite3.DatabaseError("broken receipts")
         monkeypatch.setattr(receipt_store, "maintain", fail)
         stop = asyncio.Event()
@@ -185,7 +185,7 @@ def test_startup_schedules_maintenance_before_initial_failure(monkeypatch):
         assert not task.done()
         stop.set()
         await task
-        assert calls == ["maintain"]
+        assert calls == [True]
     asyncio.run(run())
 
 
