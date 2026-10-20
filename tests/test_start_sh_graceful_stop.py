@@ -117,7 +117,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             env = {**os.environ, "AZIZAM_MANAGE_LITELLM": "false", "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
             result = subprocess.run(["/bin/bash", "start.sh"], cwd=work, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 5) + " []")
+            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 5) + " ['.owner.lock']")
 
     def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

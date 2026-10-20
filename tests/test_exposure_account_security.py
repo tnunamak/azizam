@@ -91,11 +91,9 @@ def test_compose_setup_allowance_matches_defined_gateway():
 def test_compose_prepares_the_private_temp_directory_before_the_app():
     import yaml
     compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
-    command = " ".join(compose["services"]["gateway"]["command"])
-    prepare = command.index("python3 -m gateway.private_tmp prepare")
-    assert prepare < command.index("exec python3 -m uvicorn")
-    for name in ("TMPDIR", "TMP", "TEMP"):
-        assert f"{name}=" in command[prepare:command.index("exec python3 -m uvicorn")]
+    command = compose["services"]["gateway"]["command"]
+    assert command[:5] == ["python3", "-m", "gateway.private_tmp", "exec", "python3"]
+    assert command[5:8] == ["-m", "uvicorn", "proxy:app"]
 
 
 def test_compose_keeps_data_and_creations_in_named_volumes():

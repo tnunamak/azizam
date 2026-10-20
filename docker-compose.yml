@@ -1,8 +1,8 @@
 services:
   gateway:
     build: .
-    # Every temporary file goes to one private directory (REQUEST_RETENTION.md 5.1), as start.sh does on a host install.
-    command: ["sh", "-c", "d=$$(python3 -m gateway.private_tmp prepare) && export TMPDIR=\"$$d\" TMP=\"$$d\" TEMP=\"$$d\" AZIZAM_PRIVATE_TMPDIR=\"$$d\" && exec python3 -m uvicorn proxy:app --host 0.0.0.0 --port 5000 --log-level warning --no-proxy-headers"]
+    # Sweep request scratch under a lock that survives exec into the gateway (REQUEST_RETENTION.md 5.1).
+    command: ["python3", "-m", "gateway.private_tmp", "exec", "python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning", "--no-proxy-headers"]
     ports:
       - "127.0.0.1:${AZIZAM_PORT-5000}:5000"
     env_file:

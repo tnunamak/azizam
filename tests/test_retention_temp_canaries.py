@@ -68,7 +68,7 @@ class World:
         return found
 
     def files_anywhere(self) -> list[Path]:
-        return [Path(path, name) for root in self.roots for path, _dirs, names in os.walk(root) for name in names]
+        return [Path(path, name) for root in self.roots for path, _dirs, names in os.walk(root) for name in names if name != ".owner.lock"]
 
     def held_files_holding(self) -> list[str]:
         """Open descriptors of this process (deleted files included) that point into a place under test and hold the marker.
@@ -104,10 +104,16 @@ def world(host_disk_dir: Path, monkeypatch: pytest.MonkeyPatch) -> World:
     built = World(host_disk_dir)
     monkeypatch.setattr(tempfile, "tempdir", str(built.os_tmp))  # what /tmp is for this process before the gateway starts
     monkeypatch.setattr(private_tmp, "_active", None)
+    monkeypatch.setattr(private_tmp, "_lock_fd", None)
+    monkeypatch.setattr(private_tmp, "_lock_pid", None)
+    monkeypatch.delenv(private_tmp.ENV_LOCK_FD, raising=False)
+    monkeypatch.setenv(private_tmp.ENV_PREPARED, "")
     for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR):
         monkeypatch.setenv(name, str(built.os_tmp))
     private_tmp.activate(built.private)
-    return built
+    yield built
+    if private_tmp._lock_fd is not None:
+        os.close(private_tmp._lock_fd)
 
 
 @pytest.fixture
@@ -255,7 +261,7 @@ def _stt_config(world: World, **chunking: object) -> stt_chunking.SttExecutionCo
         service_config={"host": "127.0.0.1", "port": 9876, "default_model": "local-stt", "chunking": settings},
         config_directory=world.private.parent,
     )
-    assert config.spool_is_private and config.spool_dir == world.private / "stt"
+    assert config.spool_dir == world.private / "stt"
     return config
 
 
@@ -402,7 +408,6 @@ def test_no_route_reads_a_form_without_closing_it() -> None:
     """A direct ``request.form()`` leaves its spilled files open until garbage collection; ``read_form`` closes them."""
     root = Path(__file__).resolve().parent.parent
     allowed = {  # file: how many direct calls may remain, and why
-        "proxy.py": 2,  # the two video readers, which close their form in a finally block
         "gateway/mcp_oauth.py": 2,  # urlencoded forms: no file parts, nothing spills
     }
     found: dict[str, int] = {}
@@ -495,6 +500,51 @@ def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World
                 pass
         assert task.cancelled()
         assert all(not path.exists() for path in paths)
+        world.assert_nothing_left()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["mp3", "opus", "peak", "sample"])
+def test_conversion_cancellation_waits_for_cleanup_even_when_repeated(world: World, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    from gateway import voice_audio
+
+    started, release = threading.Event(), threading.Event()
+    paths = []
+
+    def convert(command, **kwargs):
+        paths.append(Path(command[command.index("-i") + 1]))
+        started.set()
+        assert release.wait(5)
+        raise RuntimeError("conversion failed after cancellation")
+
+    monkeypatch.setattr(proxy.subprocess, "run", convert)
+    function, args = {
+        "mp3": (proxy.convert_wav_to_mp3, (MARKER.encode(),)),
+        "opus": (proxy.convert_wav_to_audio_format, (MARKER.encode(), "opus")),
+        "peak": (proxy._peak_normalize_audio, (MARKER.encode(), "audio/wav", -1)),
+        "sample": (voice_audio.process_sample, (MARKER.encode(), voice_audio.SampleLimits())),
+    }[kind]
+
+    async def scenario():
+        task = asyncio.create_task(private_tmp.run_worker(function, *args))
+        for _ in range(1000):
+            if started.is_set():
+                break
+            if task.done():
+                await task
+            await asyncio.sleep(0.001)
+        try:
+            assert started.is_set() and world.files_holding(world.private)
+            assert paths and all(path.is_relative_to(world.private) for path in paths)
+            for _ in range(2):
+                task.cancel()
+                await asyncio.sleep(0.01)
+                assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
         world.assert_nothing_left()
 
     asyncio.run(scenario())

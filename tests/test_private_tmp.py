@@ -17,15 +17,21 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def clean_process(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_process(monkeypatch: pytest.MonkeyPatch):
     """Let a test call ``activate`` and leave this process's temporary-file settings as they were."""
     monkeypatch.setattr(tempfile, "tempdir", tempfile.tempdir)
     monkeypatch.setattr(private_tmp, "_active", None)
-    for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR, private_tmp.ENV_PREPARED):
+    monkeypatch.setattr(private_tmp, "_lock_fd", None)
+    monkeypatch.setattr(private_tmp, "_lock_pid", None)
+    for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR, private_tmp.ENV_PREPARED, private_tmp.ENV_LOCK_FD):
         previous = os.environ.get(name)
         monkeypatch.setenv(name, previous if previous is not None else "")  # records how to undo the change
         if previous is None:
             monkeypatch.delenv(name)
+    monkeypatch.delenv(private_tmp.ENV_LOCK_FD, raising=False)
+    yield
+    if private_tmp._lock_fd is not None:
+        os.close(private_tmp._lock_fd)
 
 
 def test_default_directory_sits_beside_the_admin_database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -68,7 +74,7 @@ def test_prepare_empties_stale_files_and_follows_no_link(host_disk_dir: Path) ->
     (target / "request-1" / "nested" / "upload.part").write_text("old audio")
     (target / "link").symlink_to(outside)
     private_tmp.prepare(target)
-    assert list(target.iterdir()) == []
+    assert [p.name for p in target.iterdir()] == [".owner.lock"]
     assert (outside / "keep").read_text() == "kept"
 
 
@@ -92,7 +98,18 @@ def test_prepare_refuses_a_link(host_disk_dir: Path) -> None:
 def test_prepare_refuses_a_directory_of_another_user(host_disk_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = host_disk_dir / "private-tmp"
     target.mkdir()
-    monkeypatch.setattr(os, "geteuid", lambda: os.stat(target).st_uid + 1)
+    fstat = os.fstat
+    target_info = target.stat()
+
+    def foreign_owner(fd):
+        info = fstat(fd)
+        if info.st_ino == target_info.st_ino and info.st_dev == target_info.st_dev:
+            fields = list(info)
+            fields[4] = os.geteuid() + 1
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(os, "fstat", foreign_owner)
     with pytest.raises(private_tmp.PrivateTmpError, match="belongs to another user"):
         private_tmp.prepare(target)
 
@@ -140,7 +157,7 @@ def test_activate_points_this_process_and_its_children_at_the_directory(host_dis
 
 def test_activate_does_not_sweep_after_the_launcher_did(host_disk_dir: Path, clean_process: None, monkeypatch: pytest.MonkeyPatch) -> None:
     target = host_disk_dir / "private-tmp"
-    private_tmp.prepare(target)
+    private_tmp.activate(target)
     (target / "litellm-live").write_text("written after start.sh swept")
     monkeypatch.setenv(private_tmp.ENV_PREPARED, str(target))
     private_tmp.activate(target)
@@ -156,7 +173,7 @@ def test_the_launcher_command_prints_the_swept_directory(host_disk_dir: Path) ->
         env={**os.environ, private_tmp.ENV_DIR: str(target)}, capture_output=True, text=True,
     )
     assert (done.returncode, done.stdout.strip()) == (0, str(target)), done.stderr
-    assert list(target.iterdir()) == []
+    assert [p.name for p in target.iterdir()] == [".owner.lock"]
     (host_disk_dir / "blocker").write_text("a file")
     broken = subprocess.run(
         [sys.executable, "-m", "gateway.private_tmp", "prepare"], cwd=ROOT,
@@ -167,11 +184,9 @@ def test_the_launcher_command_prints_the_swept_directory(host_disk_dir: Path) ->
 
 def test_start_script_prepares_before_anything_runs() -> None:
     script = (ROOT / "start.sh").read_text()
-    call = 'AZIZAM_PRIVATE_TMPDIR="$(python3 -m gateway.private_tmp prepare)" || exit 1'
+    call = 'exec python3 -m gateway.private_tmp exec /bin/bash "$0" "$@"'
     prepare = script.index(call)
-    exports = script[prepare:script.index("# Config via environment")]
-    for name in ("TMPDIR", "TMP", "TEMP", "AZIZAM_PRIVATE_TMPDIR_PREPARED"):
-        assert f"{name}=" in exports
+    assert 'AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-' in script[:prepare]
     for later in ("start_litellm()", "python3 proxy.py", "gateway.provider_sidecar run"):
         assert script.index(later) > prepare
 
@@ -184,13 +199,13 @@ def test_the_unit_does_not_claim_a_private_tmp_it_cannot_get() -> None:
 def test_relative_stt_workspace_is_inside_the_private_directory(host_disk_dir: Path, clean_process: None) -> None:
     private = private_tmp.activate(host_disk_dir / "private-tmp")
     config = stt_chunking.SttExecutionConfig.from_service(service_id="s", service_config={}, config_directory=host_disk_dir)
-    assert config.spool_dir == private / "stt" and config.spool_is_private
+    assert config.spool_dir == private / "stt"
     named = stt_chunking.SttExecutionConfig.from_service(
         service_id="s", service_config={"chunking": {"spool_dir": "data/stt-spool"}}, config_directory=host_disk_dir)
-    assert named.spool_dir == private / "data" / "stt-spool" and named.spool_is_private
+    assert named.spool_dir == private / "data" / "stt-spool"
     explicit = stt_chunking.SttExecutionConfig.from_service(
         service_id="s", service_config={"chunking": {"spool_dir": str(host_disk_dir / "mine")}}, config_directory=host_disk_dir)
-    assert explicit.spool_dir == host_disk_dir / "mine" and not explicit.spool_is_private
+    assert explicit.spool_dir == host_disk_dir / "mine"
 
 
 @pytest.mark.parametrize("command", ["prepare", "gateway"])
@@ -245,3 +260,23 @@ def test_relative_stt_spool_cannot_escape_the_private_directory(host_disk_dir: P
     with pytest.raises(stt_chunking.SttConfigurationError, match="inside"):
         stt_chunking.SttExecutionConfig.from_service(
             service_id="s", service_config={"chunking": {"spool_dir": "../outside"}}, config_directory=host_disk_dir)
+
+
+def test_exec_holds_the_lock_in_the_serving_process(host_disk_dir: Path) -> None:
+    target = host_disk_dir / "private-tmp"
+    code = "from gateway import private_tmp; import os,sys; private_tmp.activate(); p=private_tmp.current(); (p/'live').write_text('upload'); print(os.getpid(), flush=True); sys.stdin.read()"
+    owner = subprocess.Popen([sys.executable, "-m", "gateway.private_tmp", "exec", sys.executable, "-c", code],
+                             cwd=ROOT, env={**os.environ, private_tmp.ENV_DIR: str(target)},
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert int(owner.stdout.readline()) == owner.pid, "launcher must exec, preserving PID and lock"
+        refused = subprocess.run([sys.executable, "-m", "gateway.private_tmp", "prepare"],
+                                 cwd=ROOT, env={**os.environ, private_tmp.ENV_DIR: str(target)},
+                                 capture_output=True, text=True, timeout=10)
+        assert refused.returncode == 1 and "in use" in refused.stderr
+        assert (target / "live").read_text() == "upload"
+    finally:
+        owner.communicate(timeout=10)
+    assert owner.returncode == 0
+    private_tmp.prepare(target)
+    assert not (target / "live").exists(), "dead owners release the lock and permit startup sweep"
