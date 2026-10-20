@@ -107,7 +107,8 @@ def world(host_disk_dir: Path, monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(private_tmp, "_active", None)
     monkeypatch.setattr(private_tmp, "_lock_fd", None)
     monkeypatch.setattr(private_tmp, "_lock_pid", None)
-    monkeypatch.delenv(private_tmp.ENV_LOCK_FD, raising=False)
+    monkeypatch.setenv(private_tmp.ENV_LOCK_FD, "")
+    monkeypatch.delenv(private_tmp.ENV_LOCK_FD)
     monkeypatch.setenv(private_tmp.ENV_PREPARED, "")
     for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR):
         monkeypatch.setenv(name, str(built.os_tmp))

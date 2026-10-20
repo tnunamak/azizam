@@ -211,7 +211,7 @@ def test_relative_stt_workspace_is_inside_the_private_directory(host_disk_dir: P
 @pytest.mark.parametrize("command", ["prepare", "gateway"])
 def test_a_second_owner_cannot_sweep_live_files(host_disk_dir: Path, command: str) -> None:
     target = host_disk_dir / "private-tmp"
-    env = {**os.environ, private_tmp.ENV_DIR: str(target)}
+    env = {**os.environ, private_tmp.ENV_DIR: str(target), private_tmp.ENV_PREPARED: str(target)}
     owner_code = "from gateway import private_tmp; import sys; p=private_tmp.activate(); (p/'live').write_text('upload'); print('ready', flush=True); sys.stdin.read()"
     owner = subprocess.Popen([sys.executable, "-c", owner_code], cwd=ROOT, env=env,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
