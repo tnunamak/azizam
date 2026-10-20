@@ -136,6 +136,16 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_host_gpu_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default to absent GPU data; a GPU-specific test can replace these probes."""
+    import proxy
+
+    monkeypatch.setattr(proxy, "_resolve_gpu0_uuid", lambda: None)
+    monkeypatch.setattr(proxy, "_resolve_comfy_pids", lambda: set())
+    monkeypatch.setattr(proxy, "_sample_comfy_vram_bytes", lambda _pids, _uuid: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_media_delivery_context(monkeypatch: pytest.MonkeyPatch) -> None:
     """`media_delivery.begin` sets a ContextVar on the calling thread. A test that
     begins a delivery without a request scope would otherwise leak that context

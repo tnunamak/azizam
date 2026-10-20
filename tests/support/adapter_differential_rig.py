@@ -297,11 +297,6 @@ class GatewayRig:
         patch(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.tmp / "payloads")
         patch(proxy, "_image_url_signing_secret", b"adapter-differential-secret")
         patch(proxy, "COMFY_ENABLED", True)
-        # The sandbox has no ComfyUI process or GPU. Keep the probe's absent-data
-        # result deterministic without launching the host's nvidia-smi.
-        patch(proxy, "_resolve_gpu0_uuid", lambda: None)
-        patch(proxy, "_resolve_comfy_pids", lambda: set())
-        patch(proxy, "_sample_comfy_vram_bytes", lambda _pids, _uuid: None)
         # The VRAM probe samples on a real-time timer; one sample before and one after a round is the
         # deterministic part (a round that outlasts the interval would add a timer-driven /system_stats).
         patch(proxy, "_VRAM_PROBE_INTERVAL_MIN_S", 3600.0)

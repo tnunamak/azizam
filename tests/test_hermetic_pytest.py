@@ -102,6 +102,14 @@ def test_real_gpu_probe_is_rejected_before_spawn(command: str) -> None:
         subprocess.run([command, "--query-gpu=index,uuid"], check=False)
 
 
+def test_gpu_probe_defaults_to_absent_data() -> None:
+    import proxy
+
+    assert proxy._resolve_gpu0_uuid() is None
+    assert proxy._resolve_comfy_pids() == set()
+    assert proxy._sample_comfy_vram_bytes({123}, "GPU-test") is None
+
+
 def test_process_signalling_is_rejected_before_effect() -> None:
     with pytest.raises(pytest.fail.Exception, match="process signalling"):
         os.kill(os.getpid(), signal.SIGTERM)
