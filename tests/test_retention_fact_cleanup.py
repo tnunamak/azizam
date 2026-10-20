@@ -209,3 +209,19 @@ def test_hourly_maintenance_survives_a_failed_run(monkeypatch):
         await proxy._receipts_maintenance_loop(stop)
         assert len(attempts) == 2
     asyncio.run(run())
+
+
+def test_failed_batch_cleanup_rolls_back_on_request_scoped_connection(stores):
+    from gateway import request_connections
+    _save(stores, "receipt", "source", _fact())
+    with sqlite3.connect(stores["facts"]) as conn:
+        conn.executescript("""CREATE TRIGGER refuse_destination_delete
+            BEFORE DELETE ON retention_fact_destinations BEGIN
+            SELECT RAISE(ABORT, 'test cleanup failure'); END;""")
+    with request_connections.request_scope():
+        with pytest.raises(sqlite3.IntegrityError, match="test cleanup failure"):
+            media_jobs.release_fact_reference_batch("receipt", ["source"], path=stores["facts"])
+        with media_jobs._conn(stores["facts"]) as conn:
+            assert not conn.in_transaction
+        assert media_jobs.fact_revisions_for_source("receipt", "source", path=stores["facts"])
+    assert media_jobs.fact_destinations_for_source("receipt", "source", path=stores["facts"])
