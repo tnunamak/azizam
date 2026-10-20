@@ -191,3 +191,57 @@ def test_relative_stt_workspace_is_inside_the_private_directory(host_disk_dir: P
     explicit = stt_chunking.SttExecutionConfig.from_service(
         service_id="s", service_config={"chunking": {"spool_dir": str(host_disk_dir / "mine")}}, config_directory=host_disk_dir)
     assert explicit.spool_dir == host_disk_dir / "mine" and not explicit.spool_is_private
+
+
+@pytest.mark.parametrize("command", ["prepare", "gateway"])
+def test_a_second_owner_cannot_sweep_live_files(host_disk_dir: Path, command: str) -> None:
+    target = host_disk_dir / "private-tmp"
+    env = {**os.environ, private_tmp.ENV_DIR: str(target)}
+    owner_code = "from gateway import private_tmp; import sys; p=private_tmp.activate(); (p/'live').write_text('upload'); print('ready', flush=True); sys.stdin.read()"
+    owner = subprocess.Popen([sys.executable, "-c", owner_code], cwd=ROOT, env=env,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert owner.stdout.readline().strip() == "ready"
+        args = ["-m", "gateway.private_tmp", "prepare"] if command == "prepare" else ["-c", "from gateway import private_tmp; private_tmp.activate()"]
+        other = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+        assert (target / "live").read_text() == "upload"
+        assert other.returncode != 0 and "in use" in other.stderr
+    finally:
+        owner.communicate(timeout=10)
+    assert owner.returncode == 0
+
+
+def test_a_directory_swapped_for_a_link_cannot_sweep_outside(host_disk_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target, moved, outside = [host_disk_dir / name for name in ("private-tmp", "moved", "outside")]
+    target.mkdir()
+    outside.mkdir()
+    (outside / "keep").write_text("retained")
+    filesystem = private_tmp._filesystem_type
+
+    def swap(path):
+        target.rename(moved)
+        target.symlink_to(outside, target_is_directory=True)
+        return filesystem(path)
+
+    monkeypatch.setattr(private_tmp, "_filesystem_type", swap)
+    try:
+        private_tmp.prepare(target)
+    except private_tmp.PrivateTmpError:
+        pass
+    assert (outside / "keep").read_text() == "retained"
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o770])
+def test_prepare_refuses_an_untrusted_parent(host_disk_dir: Path, mode: int) -> None:
+    parent = host_disk_dir / "shared"
+    parent.mkdir()
+    parent.chmod(mode)
+    with pytest.raises(private_tmp.PrivateTmpError, match="parent"):
+        private_tmp.prepare(parent / "private-tmp")
+
+
+def test_relative_stt_spool_cannot_escape_the_private_directory(host_disk_dir: Path, clean_process: None) -> None:
+    private_tmp.activate(host_disk_dir / "private-tmp")
+    with pytest.raises(stt_chunking.SttConfigurationError, match="inside"):
+        stt_chunking.SttExecutionConfig.from_service(
+            service_id="s", service_config={"chunking": {"spool_dir": "../outside"}}, config_directory=host_disk_dir)

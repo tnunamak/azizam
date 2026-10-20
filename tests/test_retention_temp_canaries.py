@@ -17,6 +17,7 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -412,3 +413,82 @@ def test_no_route_reads_a_form_without_closing_it() -> None:
         if count:
             found[str(path.relative_to(root))] = count
     assert found == allowed
+
+
+@pytest.mark.parametrize("reader", [request_forms.read_form, proxy._read_video_create_form_body, proxy._read_video_request_body])
+@pytest.mark.parametrize("failure", ["disconnect", "cancel"])
+def test_interrupted_multipart_closes_spill_with_traceback_kept(world: World, reader, failure: str) -> None:
+    body, content_type = _multipart(_large_upload())
+    retained = []
+
+    async def scenario():
+        sent = False
+        waiting = asyncio.Event()
+
+        async def receive():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body[:-100], "more_body": True}
+            assert world.held_files_holding(), "positive control: spill before interruption"
+            waiting.set()
+            if failure == "disconnect":
+                return {"type": "http.disconnect"}
+            await asyncio.Future()
+
+        request = Request({"type": "http", "method": "POST", "path": "/upload",
+                           "headers": [(b"content-type", content_type.encode())]}, receive)
+        task = asyncio.create_task(reader(request))
+        await asyncio.wait_for(waiting.wait(), 5)
+        if failure == "cancel":
+            task.cancel()
+        try:
+            await task
+        except BaseException as error:
+            retained.append(error)
+        assert retained and retained[0].__traceback__ is not None
+        world.assert_nothing_left()
+
+    asyncio.run(scenario())
+    assert retained  # traceback remains alive after the assertion, too
+
+
+def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    started, release = threading.Event(), threading.Event()
+    paths = []
+
+    def probe(command, **kwargs):
+        paths.append(Path(command[-1]))
+        started.set()
+        assert release.wait(5)
+        return type("Result", (), {"returncode": 1, "stdout": b""})()
+
+    monkeypatch.setattr(proxy.shutil, "which", lambda name: "/fake/ffprobe")
+    monkeypatch.setattr(proxy.subprocess, "run", probe)
+    monkeypatch.setattr(proxy, "_resolve_video_workflow_asset", AsyncMock(return_value=(MARKER.encode(), "source.mp4", "video/mp4")))
+
+    async def scenario():
+        task = asyncio.create_task(proxy._resolve_video_workflow_assets(
+            {"extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"source": "a video"}}},
+            {"inputs": {"source": {"type": "video"}}}, {"source_video_input": "source"}, None))
+        while not started.is_set():
+            if task.done():
+                await task
+            await asyncio.sleep(0.001)
+        try:
+            assert paths[0].is_file()
+            task.cancel()
+            await asyncio.sleep(0.01)
+            assert not task.done(), "cancel must wait for the worker's finally block"
+            assert all(path.is_relative_to(world.private) for path in paths)
+        finally:
+            release.set()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        assert task.cancelled()
+        assert all(not path.exists() for path in paths)
+        world.assert_nothing_left()
+
+    asyncio.run(scenario())
