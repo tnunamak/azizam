@@ -374,8 +374,8 @@ class SttExecutionConfig:
 
     @property
     def workspace_limit_bytes(self) -> int:
-        # Normalized input can remain live beside a segment WAV and its verification PCM.
-        return self.max_input_bytes + 3 * self.max_decoded_bytes
+        # Normalized input, shared source PCM, segment WAV and verification PCM can coexist.
+        return self.max_input_bytes + 4 * self.max_decoded_bytes
 
     def chunking_view(self) -> dict[str, Any]:
         """What the owner is shown about long-audio cutting: the numbers in force and which come from the bundled defaults."""
@@ -1180,7 +1180,9 @@ async def extract_segment(
             str(seek_sample / rate),
             "-i",
             os.fspath(source_path),
-            "-af", trim,
+            "-af", trim + ",asetpts=PTS-STARTPTS",
+            "-t", str(_segment_sample_count(start_seconds, end_seconds, rate) / rate),
+            "-fs", str(config.max_decoded_bytes),
             "-vn",
             "-acodec",
             "pcm_s16le",

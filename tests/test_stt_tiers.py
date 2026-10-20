@@ -117,7 +117,7 @@ class SttServiceSelectionTests(SttCase):
 
         async def command(argv, **_kwargs):
             destination = Path(argv[-1])
-            if destination.name == "planning-16k.pcm":
+            if destination.name in {"planning-16k.pcm", "extraction-source.pcm"}:
                 write_pcm(destination, 60)
             elif destination.suffix == ".pcm":
                 with wave.open(argv[argv.index("-i") + 1], "rb") as audio:

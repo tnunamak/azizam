@@ -22,15 +22,19 @@ _LOUD_PERIOD = struct.pack(f"<{_PERIOD_SAMPLES}h", *(int(9000 * (((index * 7919)
 _LOUD_SECOND = _LOUD_PERIOD * (SAMPLE_RATE // _PERIOD_SAMPLES)
 
 
-def pcm_bytes(duration_seconds: float, quiet_at: Iterable[float] = (), *, quiet_width: float = 0.3, floor: int = 0) -> bytes:
+def pcm_bytes(duration_seconds: float, quiet_at: Iterable[float] = (), *, quiet_width: float = 0.3, floor: int = 0,
+              sample_rate: int = SAMPLE_RATE, channels: int = 1) -> bytes:
     """Loud everywhere except ``quiet_width`` seconds centred on each time in ``quiet_at`` (samples ``floor`` loud)."""
-    total = int(duration_seconds * SAMPLE_RATE)
-    loud = bytearray((_LOUD_SECOND * (total // SAMPLE_RATE + 1))[: total * 2])
-    quiet = struct.pack("<h", floor) * 1
+    total = int(duration_seconds * sample_rate)
+    second = _LOUD_SECOND if sample_rate == SAMPLE_RATE else (_LOUD_PERIOD * (sample_rate // _PERIOD_SAMPLES + 1))[:sample_rate*2]
+    if channels != 1:
+        second = b"".join(second[index:index+2] * channels for index in range(0, len(second), 2))
+    loud = bytearray((second * (total // sample_rate + 1))[: total * channels * 2])
+    quiet = struct.pack("<h", floor) * channels
     for centre in quiet_at:
-        first = max(0, int((centre - quiet_width / 2) * SAMPLE_RATE))
-        last = min(total, int((centre + quiet_width / 2) * SAMPLE_RATE))
-        loud[first * 2 : last * 2] = quiet * (last - first)
+        first = max(0, int((centre - quiet_width / 2) * sample_rate))
+        last = min(total, int((centre + quiet_width / 2) * sample_rate))
+        loud[first * channels * 2 : last * channels * 2] = quiet * (last - first)
     return bytes(loud)
 
 
@@ -42,7 +46,8 @@ def planning_pcm(duration_seconds: float, quiet_at: Iterable[float] = (), **kwar
     """Patch the planning decode so it writes the synthetic signal instead of running ffmpeg."""
     quiet = tuple(quiet_at)
 
-    async def decode(_source, destination, **_ignored: Any):
-        write_pcm(Path(destination), duration_seconds, quiet, **kwargs)
+    async def decode(_source, destination, **options: Any):
+        write_pcm(Path(destination), duration_seconds, quiet, sample_rate=options.get("sample_rate", SAMPLE_RATE),
+                  channels=options.get("channels", 1), **kwargs)
 
     return patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=decode))

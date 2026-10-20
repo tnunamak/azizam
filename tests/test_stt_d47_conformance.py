@@ -494,8 +494,8 @@ def test_disk_lease_covers_segment_and_verification_pcm(tmp_path):
     with patch.object(stt, "_disk_free_bytes", return_value=10**12):
         lease = gate.acquire(request_id="verify-peak", config=execution)
     try:
-        assert gate._reserved_bytes == 4 * mib
-        assert execution.request_claim().disk_mb == 4
+        assert gate._reserved_bytes == 5 * mib
+        assert execution.request_claim().disk_mb == 5
     finally:
         lease.release()
 
@@ -591,7 +591,7 @@ def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
                 deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
         assert outcome.attempts_started == len(sent) == 3
         commands = [call.args[0] for call in media.await_args_list]
-        extracts = [command for command in commands if command[-1].endswith(".wav")]
+        extracts = [command for command in commands if command[0] == "ffmpeg" and command[-1].endswith(".wav")]
         assert len(extracts) == 3
         assert all(command.index("-ss") < command.index("-i") for command in extracts)
         whole_decodes = [command for command in commands if command[0] == "ffmpeg"
