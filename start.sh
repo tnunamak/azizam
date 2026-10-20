@@ -152,7 +152,8 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
         done
     }
 
-    watch_litellm_config &
+    # The watcher and LiteLLM use no scratch files of ours; a LiteLLM that outlived us must not hold the lock.
+    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &
     LITELLM_WATCHER_PID=$!
 
     cleanup() {
