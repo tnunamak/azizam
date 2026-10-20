@@ -33,6 +33,7 @@ S = canary.MARKERS
 PARAMETERS = {
     "service_id": "engine-a", "engine_id": "engine-a", "id": "engine-a", "provider_id": "provider-a",
     "provider": "provider-a", "package_id": "package-a",
+    "system_id": "gateway",
     "section": "services", "record_id": "held-url",  # the routes that fix or remove a record the registry leaves out
 }
 UNSEEDED_ID = "unseeded-id"
