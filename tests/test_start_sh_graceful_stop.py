@@ -96,11 +96,12 @@ WATCHER_HARNESS = textwrap.dedent(
 class StartScriptGracefulStopTests(unittest.TestCase):
     def setUp(self) -> None:
         # start.sh empties the gateway's private temporary directory, which must be on disk; the hermetic temp dir is RAM.
-        self.private = Path(tempfile.mkdtemp(prefix="start-private-", dir=os.environ["HERMETIC_HOST_DISK_DIR"]))
+        self.private = Path(tempfile.mkdtemp(prefix="start-private-", dir=os.environ["HERMETIC_HOST_DISK_DIR"])) / "private-tmp"
+        self.private.mkdir(mode=0o700)
         patcher = patch.dict(os.environ, {"AZIZAM_PRIVATE_TMPDIR": str(self.private)})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(shutil.rmtree, self.private, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.private.parent, ignore_errors=True)
 
     def test_the_private_temporary_directory_is_emptied_before_the_proxy_starts_and_handed_to_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -47,6 +47,7 @@ class World:
         self.os_tmp.mkdir()
         self.legacy_spool = root / "data" / "stt-spool"
         self.legacy_spool.mkdir(parents=True)
+        (root / "data").chmod(0o700)
         self.private = root / "data" / "private-tmp"
 
     @property

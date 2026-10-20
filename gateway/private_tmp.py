@@ -115,7 +115,7 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
     parent_fd = directory_fd = lock_fd = None
     keep_lock = False
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         # Traverse without following ancestor links, then require a trusted immediate parent.
         parent_fd = os.open("/", os.O_DIRECTORY | os.O_NOFOLLOW)
         for component in target.parent.parts[1:]:
