@@ -181,7 +181,7 @@ def test_stt_refusal_keeps_decision_on_exception(tmp_path):
     from types import SimpleNamespace
     config = SimpleNamespace(max_input_bytes=1024, max_decoded_bytes=1024, min_free_bytes=0,
                              spool_dir=tmp_path, global_concurrency=0,
-                             request_claim=lambda: ResourceClaim(disk_mb=1))
+                             request_claim=lambda reservation: ResourceClaim(disk_mb=1))
     with patch.object(stt_chunking, "_disk_free_bytes", return_value=1024 * 1024):
         with pytest.raises(stt_chunking.SttResourceLimitExceeded) as caught:
             stt_chunking.SttResourceGate().acquire(request_id="req", config=config)

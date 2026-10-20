@@ -568,14 +568,14 @@
                 "observed_at": "<time>",
                 "quality": "declared",
                 "resource_class": "disk",
-                "value": 12
+                "value": 6
               },
               {
                 "name": "total_disk_mb",
                 "observed_at": "<time>",
                 "quality": "measured",
                 "resource_class": "disk",
-                "value": 10240
+                "value": 10243
               },
               {
                 "name": "used_disk_mb",
@@ -589,7 +589,7 @@
                 "observed_at": "<time>",
                 "quality": "declared",
                 "resource_class": "disk",
-                "value": 10240
+                "value": 10243
               }
             ],
             "outcome": "accepted",

@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "7d6792dc2bc2c790246c02eb2993d0ac34bd015ad2becdc4b8b9d8d1a59a3c31",
+ "openapi_sha256": "a67a9cdf25f41ac573b5fcd09005d17d773de373fa91f84974bc993df19d1c5e",
  "policy": {
   "aliases": [
    {
@@ -7581,7 +7581,7 @@
     "POST"
    ],
    "name": "audio_transcriptions",
-   "openapi_extra": "6c8e96c0b6b81b5211c6f4220faf0835d35351d239a5fff40ebcdaeaa6c2090d",
+   "openapi_extra": "5215a7b53dd91f162421553a9d9de742b3910f3ed6be0b9712f3e10a634b93b6",
    "path": "/openai/v1/audio/transcriptions",
    "response_class": null,
    "status_code": null,
@@ -7594,7 +7594,7 @@
     "POST"
    ],
    "name": "audio_transcriptions",
-   "openapi_extra": "6c8e96c0b6b81b5211c6f4220faf0835d35351d239a5fff40ebcdaeaa6c2090d",
+   "openapi_extra": "5215a7b53dd91f162421553a9d9de742b3910f3ed6be0b9712f3e10a634b93b6",
    "path": "/v1/audio/transcriptions",
    "response_class": null,
    "status_code": null,
@@ -7607,7 +7607,7 @@
     "POST"
    ],
    "name": "audio_translations",
-   "openapi_extra": "c031404b3744ef9c4cd501b4de7786bae3c96fbb0855c621ddac5de9a1075ddc",
+   "openapi_extra": "498da4ebee7cf3b42de539e5424f34b01ae9ac92d0040f12787b6ff0fded45a3",
    "path": "/openai/v1/audio/translations",
    "response_class": null,
    "status_code": null,
@@ -7620,7 +7620,7 @@
     "POST"
    ],
    "name": "audio_translations",
-   "openapi_extra": "c031404b3744ef9c4cd501b4de7786bae3c96fbb0855c621ddac5de9a1075ddc",
+   "openapi_extra": "498da4ebee7cf3b42de539e5424f34b01ae9ac92d0040f12787b6ff0fded45a3",
    "path": "/v1/audio/translations",
    "response_class": null,
    "status_code": null,
