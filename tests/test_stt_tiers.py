@@ -600,6 +600,8 @@ class SttRuntimeFallbackTests(SttCase):
         self.assertEqual(resp.status_code, 200)
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertEqual([r.backend for r in receipts], ["stt-parakeet-gpu", "stt"])
+        self.assertEqual([r.metadata["stt"]["attempts_started"] for r in receipts], [1, 1])
+        self.assertNotEqual(receipts[0].request_id, receipts[1].request_id)
         self.assertNotIn("parakeet-gpu->parakeet (busy)", receipts[0].fallback_reasons)
         self.assertIn("parakeet-gpu->parakeet (busy)", receipts[1].fallback_reasons)
 
