@@ -16,6 +16,7 @@ from starlette.datastructures import Headers
 
 from gateway import media_metadata, private_tmp, prompt_metadata_migration as migration
 from gateway import stt_chunking as stt, stt_measurement, thumbnails, video_inputs
+from tests.support.stt_pcm import planning_pcm
 
 
 def test_video_probe_rejects_external_workdir_before_writing(tmp_path, monkeypatch):
@@ -153,7 +154,10 @@ def test_metadata_sweep_waits_for_an_active_migration(tmp_path, monkeypatch):
         assert staged.wait(10)
         second.start()
         assert second_started.wait(10)
-        assert not migration._SCAN_LOCK.acquire(blocking=False), "active staging must hold the scan lock"
+        acquired = migration._SCAN_LOCK.acquire(blocking=False)
+        if acquired:
+            migration._SCAN_LOCK.release()
+        assert not acquired, "active staging must hold the scan lock"
     finally:
         release.set()
         first.join(10)
@@ -233,6 +237,45 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
     command.assert_not_awaited()
     assert sentinel.read_bytes() == b"keep"
     assert uncut.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("collision", ["source", "symlink"])
+@pytest.mark.parametrize("owned_cleanup", [False, True])
+def test_rejected_segment_is_never_owned_or_unlinked(tmp_path, monkeypatch, collision, owned_cleanup):
+    from dataclasses import replace
+    config = replace(execution(tmp_path), threshold_seconds=30, target_seconds=20,
+                     max_segment_seconds=40, max_segment_declared=True)
+    workspace = stt.create_request_workspace(config)
+    segment = workspace / "segment-000.wav"
+    source = segment if collision == "source" else workspace / "upload.part"
+    source.write_bytes(b"original-request-media")
+    sentinel = tmp_path / "keep"
+    sentinel.write_bytes(b"durable")
+    if collision == "symlink":
+        segment.symlink_to(sentinel)
+    command = AsyncMock(side_effect=AssertionError("invalid extraction must not start"))
+    post = AsyncMock()
+    monkeypatch.setattr(stt, "run_media_command", command)
+    monkeypatch.setattr(stt, "probe_audio", AsyncMock(return_value=stt.ProbedAudio(45, 16000, 1)))
+
+    async def run():
+        cleanup = stt.SttCleanupOwner() if owned_cleanup else None
+        try:
+            with planning_pcm(45), pytest.raises(stt.SttConfigurationError):
+                await stt.execute_chunking(source_path=source, source_stem="upload", fields=[], config=config,
+                    post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
+                    on_cancel=None, cleanup=cleanup)
+        finally:
+            if cleanup is not None:
+                await cleanup.aclose()
+
+    asyncio.run(run())
+    assert source.read_bytes() == b"original-request-media"
+    if collision == "symlink":
+        assert segment.is_symlink()
+    assert sentinel.read_bytes() == b"durable"
+    command.assert_not_awaited()
+    post.assert_not_awaited()
 
 
 @pytest.mark.parametrize("failure", ["native", "libc"])
