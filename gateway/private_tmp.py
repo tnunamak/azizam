@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import grp
-import logging
 import os
 import pwd
 import shutil
@@ -242,15 +241,6 @@ def activate(directory: Path | None = None) -> Path:
     for name in ("TMPDIR", "TMP", "TEMP", ENV_DIR):
         os.environ[name] = str(target)
     os.environ[ENV_LOCK_FD] = str(_lock_fd)
-    if _active is None:
-        from gateway import admin_store
-
-        legacy_spool = admin_store.DB_PATH.parent / "stt-spool"
-        if legacy_spool.is_dir() and next(legacy_spool.iterdir(), None) is not None:
-            logging.getLogger(__name__).warning(
-                "Legacy STT spool %s is non-empty; follow the one-time removal in "
-                "docs/design/REQUEST_RETENTION.md section 5.1 row 4.", legacy_spool,
-            )
     _active = target
     return target
 

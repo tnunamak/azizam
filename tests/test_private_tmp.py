@@ -359,19 +359,3 @@ def test_read_only_ancestor_validation_never_creates_directories(host_disk_dir):
     with pytest.raises(FileNotFoundError):
         private_tmp.validate_ancestors(missing)
     assert not missing.exists()
-
-
-@pytest.mark.parametrize("nonempty", [False, True])
-def test_activation_warns_once_about_legacy_spool(host_disk_dir, clean_process, monkeypatch, caplog, nonempty):
-    monkeypatch.setattr(admin_store, "DB_PATH", host_disk_dir / "data" / "admin.db")
-    spool = admin_store.DB_PATH.parent / "stt-spool"
-    spool.mkdir(parents=True)
-    if nonempty:
-        (spool / "old-upload").write_text("leftover")
-    private_tmp.activate(host_disk_dir / "private-tmp")
-    private_tmp.activate(host_disk_dir / "private-tmp")
-    warnings = [record.message for record in caplog.records if "Legacy STT spool" in record.message]
-    assert len(warnings) == int(nonempty)
-    if nonempty:
-        assert "docs/design/REQUEST_RETENTION.md" in warnings[0]
-        assert (spool / "old-upload").read_text() == "leftover"
