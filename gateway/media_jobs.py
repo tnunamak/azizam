@@ -467,20 +467,22 @@ def init_db(path: Path = DB_PATH) -> None:
 
 
 @contextmanager
-def _conn(path: Path = DB_PATH):
+def _conn(path: Path = DB_PATH, *, timeout: float = 5.0):
     def open_connection() -> sqlite3.Connection:
         scoped = request_connections.active()
-        conn = connect(path, timeout=5.0, check_same_thread=not scoped)
+        conn = connect(path, timeout=timeout, check_same_thread=not scoped)
         if scoped:
             conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
         try:
             _apply_pragmas(conn)
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(timeout * 1000))}")
         except BaseException:
             conn.close()
             raise
         return conn
 
-    with request_connections.scoped("media_jobs", path, open_connection) as conn:
+    namespace = "media_jobs" if timeout == 5.0 else "media_jobs_nowait"
+    with request_connections.scoped(namespace, path, open_connection) as conn:
         yield conn
 
 
@@ -1423,17 +1425,15 @@ def save_fact_revisions(
     )
 
 
-def save_fact_snapshot(
-    destinations: list[Mapping[str, Any]], *, source_kind: str, source_id: str,
-    path: Path = DB_PATH, now: int | None = None,
-) -> list[str]:
-    """Save a captured ledger's destinations and exact facts in one transaction.
+@dataclass(frozen=True)
+class PreparedFactSnapshot:
+    """Validated, hashed, serialized evidence reusable for one captured generation."""
 
-    Display-only annotations are omitted before revision hashing. Empty fact
-    lists still preserve the destination the request was sent through.
-    """
-    if source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128:
-        raise ValueError("invalid fact revision reference")
+    entries: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]
+    hashes: tuple[str, ...]
+
+
+def prepare_fact_snapshot(destinations: list[Mapping[str, Any]]) -> PreparedFactSnapshot:
     from gateway.retention_facts import revision, validate_facts
 
     entries = []
@@ -1455,20 +1455,33 @@ def save_fact_snapshot(
                     if key in destination}
         if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
             raise ValueError("invalid retention destination metadata")
-        entries.append((destination_id, metadata, list(zip(revisions, checked))))
+        entries.append((destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True), tuple(
+            (digest, json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            for digest, fact in zip(revisions, checked)
+        )))
         hashes.extend(revisions)
+    return PreparedFactSnapshot(tuple(entries), tuple(dict.fromkeys(hashes)))
+
+
+def save_fact_snapshot(
+    destinations: list[Mapping[str, Any]] | PreparedFactSnapshot, *, source_kind: str, source_id: str,
+    path: Path = DB_PATH, now: int | None = None, timeout: float = 5.0,
+) -> list[str]:
+    """Save exact captured evidence atomically; request writers can decline a busy store."""
+    if source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128:
+        raise ValueError("invalid fact revision reference")
+    prepared = destinations if isinstance(destinations, PreparedFactSnapshot) else prepare_fact_snapshot(destinations)
     timestamp = int(time.time()) if now is None else now
-    with _conn(path) as conn:
+    with _conn(path, timeout=timeout) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for destination_id, metadata, facts in entries:
+            for destination_id, metadata_json, facts in prepared.entries:
                 conn.execute(
                     "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json) "
                     "VALUES(?,?,?,?)",
-                    (source_kind, source_id, destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True)),
+                    (source_kind, source_id, destination_id, metadata_json),
                 )
-                for digest, fact in facts:
-                    encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                for digest, encoded in facts:
                     conn.execute(
                         "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
                         (digest, encoded, timestamp),
@@ -1481,7 +1494,7 @@ def save_fact_snapshot(
         except BaseException:
             conn.rollback()
             raise
-    return list(dict.fromkeys(hashes))
+    return list(prepared.hashes)
 
 
 def fact_revisions(hashes: list[str], *, path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -1533,29 +1546,39 @@ def fact_destinations_for_source(
     return {destination_id: json.loads(metadata) for destination_id, metadata in rows}
 
 
+def receipt_fact_source_ids(*, after: str = "", limit: int = 500, path: Path = DB_PATH) -> list[str]:
+    """Page receipt sources, including snapshots with no facts."""
+    with _conn(path) as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT source_id FROM ("
+            "SELECT source_id FROM retention_fact_references WHERE source_kind='receipt' "
+            "UNION SELECT source_id FROM retention_fact_destinations WHERE source_kind='receipt') "
+            "WHERE source_id > ? ORDER BY source_id LIMIT ?", (after, limit),
+        )]
+
+
 def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB_PATH) -> int:
     """Release one source and prune only versions with no remaining references."""
-    if source_kind not in {"receipt", "kept_record"}:
-        raise ValueError("invalid fact revision reference")
+    return release_fact_reference_batch(source_kind, [source_id], path=path)
+
+
+def release_fact_reference_batch(source_kind: str, source_ids: list[str], *, path: Path = DB_PATH) -> int:
+    """Release a bounded batch in one transaction, retaining shared versions."""
+    if source_kind not in {"receipt", "kept_record"} or len(source_ids) > 500:
+        raise ValueError("invalid fact revision reference batch")
+    if not source_ids:
+        return 0
+    placeholders = ",".join("?" for _ in source_ids)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        try:
-            conn.execute(
-                "DELETE FROM retention_fact_references WHERE source_kind=? AND source_id=?",
-                (source_kind, source_id),
-            )
-            conn.execute(
-                "DELETE FROM retention_fact_destinations WHERE source_kind=? AND source_id=?",
-                (source_kind, source_id),
-            )
-            removed = conn.execute(
-                "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
-                "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
-            ).rowcount
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        for table in ("retention_fact_references", "retention_fact_destinations"):
+            conn.execute(f"DELETE FROM {table} WHERE source_kind=? AND source_id IN ({placeholders})",
+                         (source_kind, *source_ids))
+        removed = conn.execute(
+            "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
+        ).rowcount
+        conn.commit()
     return removed
 
 
