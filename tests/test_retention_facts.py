@@ -141,7 +141,7 @@ def test_service_save_rejects_invalid_retention_facts(facts) -> None:
     from gateway.service_registry import upsert_service_in_registry
     with pytest.raises(ValueError, match="retention_facts"):
         upsert_service_in_registry({"services": {}}, service_id="test", raw={
-            "config": {"retention_facts": facts},
+            "retention_facts": facts,
         })
 
 
@@ -149,7 +149,7 @@ def test_service_save_rejects_future_retention_facts() -> None:
     from gateway.service_registry import upsert_service_in_registry
     with pytest.raises(ValueError, match="future"):
         upsert_service_in_registry({"services": {}}, service_id="test", raw={
-            "config": {"retention_facts": [{**_fact(), "checked": "9999-01-01"}]},
+            "retention_facts": [{**_fact(), "checked": "9999-01-01"}],
         })
 
 
