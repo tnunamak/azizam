@@ -1,0 +1,1270 @@
+{
+  "baseline_commit": "d1a12cc1",
+  "fixed_commit": "edbd18e6",
+  "fixtures": {
+    "test_default_measurement_pairs_shared_deletions_and_reports_abstention[False]": {
+      "after": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.5,
+            "failed": false,
+            "high_pct": 14.11,
+            "length": 20,
+            "low_pct": 9.06,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 45,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1800
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.67,
+            "failed": false,
+            "high_pct": 14.1,
+            "length": 30,
+            "low_pct": 7.13,
+            "paired_deletion": {
+              "excess_pp": -0.91,
+              "high_pp": -0.24,
+              "low_pp": -1.64,
+              "points": 30,
+              "words": 1650
+            },
+            "pieces": 30,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1950
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.75,
+            "failed": false,
+            "high_pct": 13.54,
+            "length": 40,
+            "low_pct": 9.63,
+            "paired_deletion": {
+              "excess_pp": -0.65,
+              "high_pp": 0.12,
+              "low_pp": -1.44,
+              "points": 30,
+              "words": 1680
+            },
+            "pieces": 21,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1890
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.5,
+            "failed": false,
+            "high_pct": 12.9,
+            "length": 50,
+            "low_pct": 10.14,
+            "paired_deletion": {
+              "excess_pp": -0.06,
+              "high_pp": 0.76,
+              "low_pp": -0.8,
+              "points": 30,
+              "words": 1710
+            },
+            "pieces": 18,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 2070
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.95,
+            "failed": false,
+            "high_pct": 12.57,
+            "length": 60,
+            "low_pct": 11.29,
+            "paired_deletion": {
+              "excess_pp": 0.56,
+              "high_pp": 1.5,
+              "low_pp": -0.39,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 15,
+            "reason": "Paired CI crosses the 1 percentage-point gross-harm margin.",
+            "state": "inconclusive",
+            "words": 2100
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 50.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 50 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 1 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 1.0,
+          "target_seconds": 37
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": -0.01,
+              "high_pp": 1.83,
+              "low_pp": -1.62,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 1.15,
+            "low_pp": -1.61,
+            "noise": {
+              "excess_pp": -0.22,
+              "high_pp": 0.89,
+              "low_pp": -1.56,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": -0.67,
+              "high_pp": 1.56,
+              "low_pp": -2.92,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 0.89,
+            "low_pp": -1.18,
+            "noise": {
+              "excess_pp": 0.44,
+              "high_pp": 2.44,
+              "low_pp": -1.33,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 1,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": -0.01,
+              "high_pp": 2.06,
+              "low_pp": -2.01,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 1.14,
+            "low_pp": -1.65,
+            "noise": {
+              "excess_pp": -0.22,
+              "high_pp": 1.33,
+              "low_pp": -1.78,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 2,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": 1.33,
+              "high_pp": 3.16,
+              "low_pp": -0.45,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": 0.0,
+            "high_pp": 1.36,
+            "low_pp": -1.16,
+            "noise": {
+              "excess_pp": -1.33,
+              "high_pp": -0.22,
+              "low_pp": -2.67,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired CI crosses the 3 percentage-point gross-harm margin.",
+            "search": 5,
+            "state": "inconclusive",
+            "words": 435
+          }
+        ]
+      },
+      "before": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.5,
+            "failed": false,
+            "high_pct": 14.11,
+            "length": 20,
+            "low_pct": 9.06,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 45,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1800
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.67,
+            "failed": false,
+            "high_pct": 14.1,
+            "length": 30,
+            "low_pct": 7.13,
+            "paired_deletion": {
+              "excess_pp": -0.91,
+              "high_pp": -0.24,
+              "low_pp": -1.64,
+              "points": 30,
+              "words": 1650
+            },
+            "pieces": 30,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1950
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.75,
+            "failed": false,
+            "high_pct": 13.54,
+            "length": 40,
+            "low_pct": 9.63,
+            "paired_deletion": {
+              "excess_pp": -0.65,
+              "high_pp": 0.12,
+              "low_pp": -1.44,
+              "points": 30,
+              "words": 1680
+            },
+            "pieces": 21,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 1890
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.5,
+            "failed": false,
+            "high_pct": 12.9,
+            "length": 50,
+            "low_pct": 10.14,
+            "paired_deletion": {
+              "excess_pp": -0.06,
+              "high_pp": 0.76,
+              "low_pp": -0.8,
+              "points": 30,
+              "words": 1710
+            },
+            "pieces": 18,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 2070
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.95,
+            "failed": false,
+            "high_pct": 12.57,
+            "length": 60,
+            "low_pct": 11.29,
+            "paired_deletion": {
+              "excess_pp": 0.56,
+              "high_pp": 1.5,
+              "low_pp": -0.39,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 15,
+            "reason": "Paired CI crosses the 1 percentage-point gross-harm margin.",
+            "state": "inconclusive",
+            "words": 2100
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 50.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 50 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 1 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 1.0,
+          "target_seconds": 37
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": -0.01,
+              "high_pp": 1.83,
+              "low_pp": -1.62,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 1.15,
+            "low_pp": -1.61,
+            "noise": {
+              "excess_pp": -0.22,
+              "high_pp": 0.89,
+              "low_pp": -1.56,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": -0.67,
+              "high_pp": 1.56,
+              "low_pp": -2.92,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 0.89,
+            "low_pp": -1.18,
+            "noise": {
+              "excess_pp": 0.44,
+              "high_pp": 2.44,
+              "low_pp": -1.33,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 1,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": -0.01,
+              "high_pp": 2.06,
+              "low_pp": -2.01,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": -0.23,
+            "high_pp": 1.14,
+            "low_pp": -1.65,
+            "noise": {
+              "excess_pp": -0.22,
+              "high_pp": 1.33,
+              "low_pp": -1.78,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 2,
+            "state": "recommended",
+            "words": 435
+          },
+          {
+            "difference": {
+              "excess_pp": 1.33,
+              "high_pp": 3.16,
+              "low_pp": -0.45,
+              "points": 90,
+              "words": 885
+            },
+            "excess_pp": 0.0,
+            "high_pp": 1.36,
+            "low_pp": -1.16,
+            "noise": {
+              "excess_pp": -1.33,
+              "high_pp": -0.22,
+              "low_pp": -2.67,
+              "points": 45,
+              "words": 450
+            },
+            "points": 45,
+            "reason": "Paired CI crosses the 3 percentage-point gross-harm margin.",
+            "search": 5,
+            "state": "inconclusive",
+            "words": 435
+          }
+        ]
+      },
+      "identical": true
+    },
+    "test_default_measurement_pairs_shared_deletions_and_reports_abstention[True]": {
+      "after": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 20,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 30,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 40,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 50,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 60,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          }
+        ],
+        "recommendation": null,
+        "recommendation_state": "inconclusive",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 0,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 1,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 2,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 5,
+            "state": "inconclusive",
+            "words": 0
+          }
+        ]
+      },
+      "before": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 20,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 30,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 40,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 50,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 20.0,
+            "failed": false,
+            "high_pct": 20.0,
+            "length": 60,
+            "low_pct": 20.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 3,
+              "words": 15
+            },
+            "pieces": 3,
+            "reason": "Insufficient paired words/blocks or pairs, or invalid interval.",
+            "state": "inconclusive",
+            "words": 15
+          }
+        ],
+        "recommendation": null,
+        "recommendation_state": "inconclusive",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 0,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 1,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 2,
+            "state": "inconclusive",
+            "words": 0
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 0,
+              "words": 0
+            },
+            "points": 0,
+            "reason": "Insufficient seam or noise pairs/words.",
+            "search": 5,
+            "state": "inconclusive",
+            "words": 0
+          }
+        ]
+      },
+      "identical": true
+    },
+    "test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost[15]": {
+      "after": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 20,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 6,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 96
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 40,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 3,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 108
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 40.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 40 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 0 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 0.0,
+          "target_seconds": 30
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 26
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 15,
+            "state": "recommended",
+            "words": 26
+          }
+        ]
+      },
+      "before": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 20,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 6,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 96
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 40,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 3,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 108
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 40.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 40 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 0 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 0.0,
+          "target_seconds": 30
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 26
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 15,
+            "state": "recommended",
+            "words": 26
+          }
+        ]
+      },
+      "identical": true
+    },
+    "test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost[2]": {
+      "after": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 20,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 6,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 96
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 40,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 3,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 108
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 40.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 40 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 2 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 2.0,
+          "target_seconds": 30
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 26
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 2,
+            "state": "recommended",
+            "words": 26
+          }
+        ]
+      },
+      "before": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 20,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 6,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 96
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 0.0,
+            "failed": false,
+            "high_pct": 0.0,
+            "length": 40,
+            "low_pct": 0.0,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 4,
+              "words": 96
+            },
+            "pieces": 3,
+            "reason": "Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "state": "recommended",
+            "words": 108
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 40.0,
+          "native_long_audio_offline": false,
+          "native_long_audio_streaming": false,
+          "reasons": [
+            "Maximum 40 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 2 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 2.0,
+          "target_seconds": 30
+        },
+        "recommendation_state": "recommended",
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 0,
+            "state": "recommended",
+            "words": 26
+          },
+          {
+            "difference": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 14,
+              "words": 54
+            },
+            "excess_pp": 0.0,
+            "high_pp": 0.0,
+            "low_pp": 0.0,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 7,
+              "words": 28
+            },
+            "points": 7,
+            "reason": "Paired upper CI is within the 3 percentage-point gross-harm margin.",
+            "search": 2,
+            "state": "recommended",
+            "words": 26
+          }
+        ]
+      },
+      "identical": true
+    }
+  },
+  "perfect_recipe_wer": {
+    "test_each_recipe_perfect_transcription_scores_zero[ami-words]": {
+      "after": 0.0,
+      "before": 25.0
+    },
+    "test_each_recipe_perfect_transcription_scores_zero[earnings21]": {
+      "after": 0.0,
+      "before": 0.0
+    },
+    "test_each_recipe_perfect_transcription_scores_zero[icsi-words]": {
+      "after": 0.0,
+      "before": 0.0
+    }
+  }
+}

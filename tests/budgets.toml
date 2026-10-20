@@ -38,7 +38,11 @@
 # Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
 # legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
-pytest = 14959
+# STT scoring: +5 overlapping-word window/counting paths, +3 perfect recipe scores,
+# +1 Unicode/split/drop timing case, +2 interrupted-download cleanup cases,
+# +1 rights visibility case, and +4 source-rights/provenance schema cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 14975 (14959 + 16).
+pytest = 14975
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 
