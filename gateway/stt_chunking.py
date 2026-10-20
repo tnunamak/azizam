@@ -1319,13 +1319,18 @@ async def execute_chunking(
 ) -> ChunkingOutcome:
     """Keep shared decoded media alive for the run, with one cleanup owner."""
     owner = cleanup if cleanup is not None else SttCleanupOwner()
+    completed = False
     try:
-        return await _execute_chunking(source_path=source_path, source_stem=source_stem, fields=fields, config=config,
+        outcome = await _execute_chunking(source_path=source_path, source_stem=source_stem, fields=fields, config=config,
             post_file=post_file, cancellation_waiters=cancellation_waiters, deadline_at=deadline_at,
             on_cancel=on_cancel, on_attempt_started=on_attempt_started, cleanup=owner)
+        completed = True
+        return outcome
     finally:
         if cleanup is None:
             await owner.aclose()
+            if completed and owner.failed:
+                raise SttCleanupFailure("STT request cleanup failed")
 
 
 async def _execute_chunking(

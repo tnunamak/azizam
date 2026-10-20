@@ -601,7 +601,7 @@ def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("rate", [44100, 48000])
+@pytest.mark.parametrize("rate", [48000, 96000])
 def test_resampled_passthrough_still_checks_one_source_sample_over_cap(tmp_path, fake_upstreams, rate):
     async def run():
         source = wav(tmp_path / "boundary.wav", 0.3 + 1/rate, rate)
