@@ -121,3 +121,77 @@ def test_ledger_drops_url_credentials_and_ignores_non_data_ids() -> None:
     destination = ledger(registry, kinds={})["destinations"][-1]
     assert destination["address"] == "https://example.test/v1"
     assert destination["facts"] == []
+
+
+def test_fact_ids_reject_trailing_newline() -> None:
+    with pytest.raises(ValueError, match="retention_facts"):
+        validate_facts([{**_fact(), "id": "valid-id\n"}])
+
+
+def test_future_checked_is_rejected_only_on_write() -> None:
+    fact = {**_fact(), "checked": "9999-01-01"}
+    assert validate_facts([fact])[0] == fact
+    assert revision(fact)
+    with pytest.raises(ValueError, match="future"):
+        validate_facts([fact], for_write=True)
+
+
+@pytest.mark.parametrize("facts", [None, {}, [{"id": "incomplete"}]])
+def test_service_save_rejects_invalid_retention_facts(facts) -> None:
+    from gateway.service_registry import upsert_service_in_registry
+    with pytest.raises(ValueError, match="retention_facts"):
+        upsert_service_in_registry({"services": {}}, service_id="test", raw={
+            "config": {"retention_facts": facts},
+        })
+
+
+def test_service_save_rejects_future_retention_facts() -> None:
+    from gateway.service_registry import upsert_service_in_registry
+    with pytest.raises(ValueError, match="future"):
+        upsert_service_in_registry({"services": {}}, service_id="test", raw={
+            "config": {"retention_facts": [{**_fact(), "checked": "9999-01-01"}]},
+        })
+
+
+def test_ledger_reuses_parsed_bundled_data_and_isolates_results(monkeypatch) -> None:
+    from pathlib import Path
+    import gateway.retention_facts as facts_module
+    facts_module._file_data.cache_clear()
+    reads = []
+    original = Path.read_text
+    def read(path, *args, **kwargs):
+        reads.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", read)
+    registry = {"services": {"p": {"config": {
+        "remote_provider": True, "preset_id": "openai",
+    }}, "e": {"config": {"connection": {"protocol": "node-graph"}}}}}
+    first = ledger(registry)
+    first["destinations"][0]["facts"][0]["holds"] = "changed"
+    second = ledger(registry)
+    assert second["destinations"][0]["facts"][0]["holds"] != "changed"
+    assert len(reads) == len(set(reads)) == 4
+    facts_module._file_data.cache_clear()
+
+
+def test_system_names_and_never_save_paragraphs_come_from_data() -> None:
+    view = ledger({"services": {}})
+    assert next(row for row in view["destinations"] if row["id"] == "litellm")["name"] == "LiteLLM"
+    paragraphs = view["never_save_text"].split("\n\n")
+    assert len(paragraphs) == 1 + sum(len(row["facts"]) for row in view["destinations"])
+
+
+def test_provider_evidence_covers_files_unpaid_review_and_zdr_conflict() -> None:
+    presets = load_provider_catalog()
+    google = {row["id"]: row for row in presets["google-openai"].retention_facts}
+    assert google["feature-state"]["evidence_url"] == "https://ai.google.dev/gemini-api/docs/files"
+    assert "48 hours" in google["feature-state"]["how_long"]
+    unpaid = google["unpaid-improvement"]
+    assert unpaid["evidence_url"] == "https://ai.google.dev/gemini-api/terms"
+    assert "human" in unpaid["reach"]
+    assert "EEA" in unpaid["condition"] and "Switzerland" in unpaid["condition"] and "UK" in unpaid["condition"]
+    router = {row["id"]: row for row in presets["openrouter"].retention_facts}
+    assert router["provider-routing"]["evidence_url"] == "https://openrouter.ai/docs/guides/features/zdr"
+    conflict = router["retention-routing-contradiction"]
+    assert conflict["evidence_url"] == "https://openrouter.ai/docs/guides/privacy/provider-logging"
+    assert "conflict" in conflict["control"].lower()
