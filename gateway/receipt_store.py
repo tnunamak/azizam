@@ -700,12 +700,12 @@ def retention_days(admin_path: Path) -> int | None:
 
 def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
           *, fact_store_path: Path | None = None) -> int:
-    """Delete expired history only when a finite window is explicitly supplied."""
+    """Delete expired history and release facts from the configured media store."""
     if retain_s is None:
         return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
-        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
     _release_expired_fact_refs(expired_ids, fact_store_path)
@@ -734,10 +734,14 @@ def _expired_ids(conn: sqlite3.Connection, cutoff: int | None) -> list[str]:
 
 
 def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> None:
-    if fact_store_path is None or not ids:
+    if not ids:
         return
     from gateway import media_jobs
 
+    fact_store_path = media_jobs.DB_PATH if fact_store_path is None else fact_store_path
+    # A receipt-only installation has no fact references to release.
+    if not Path(fact_store_path).exists():
+        return
     for request_id in ids:
         media_jobs.release_fact_references("receipt", request_id, path=fact_store_path)
 
@@ -781,7 +785,7 @@ def save_retention(
             if count != preview["delete_count"]:
                 raise RetentionPreviewChanged("Receipt count changed. Review the new deletion count.")
         save_setting()
-        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
     _release_expired_fact_refs(expired_ids, fact_store_path)
@@ -795,7 +799,7 @@ def maintain(admin_path: Path, *, path: Path = DB_PATH,
         conn.execute("BEGIN IMMEDIATE")
         days = retention_days(admin_path)
         cutoff = int(time.time()) - days * 86400 if days is not None else None
-        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()

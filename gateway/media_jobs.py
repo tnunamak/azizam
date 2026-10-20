@@ -1414,41 +1414,74 @@ def save_fact_revisions(
     destination: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Append exact fact versions and link them to a receipt or kept record."""
-    if (source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128
-            or not destination_id or len(destination_id) > 128):
+    from gateway.retention_facts import validate_facts
+
+    checked = [validate_facts([fact])[0] for fact in facts]
+    return save_fact_snapshot(
+        [{**(destination or {}), "id": destination_id, "facts": checked}],
+        source_kind=source_kind, source_id=source_id, path=path, now=now,
+    )
+
+
+def save_fact_snapshot(
+    destinations: list[Mapping[str, Any]], *, source_kind: str, source_id: str,
+    path: Path = DB_PATH, now: int | None = None,
+) -> list[str]:
+    """Save a captured ledger's destinations and exact facts in one transaction.
+
+    Display-only annotations are omitted before revision hashing. Empty fact
+    lists still preserve the destination the request was sent through.
+    """
+    if source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128:
         raise ValueError("invalid fact revision reference")
     from gateway.retention_facts import revision, validate_facts
 
-    checked = [validate_facts([fact])[0] for fact in facts]
-    hashes = [revision(fact) for fact in checked]
-    metadata = {key: destination[key] for key in ("name", "kind", "address", "reach")
-                if destination is not None and key in destination}
-    if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
-        raise ValueError("invalid retention destination metadata")
+    entries = []
+    hashes = []
+    for destination in destinations:
+        destination_id = destination.get("id")
+        if not isinstance(destination_id, str) or not destination_id or len(destination_id) > 128:
+            raise ValueError("invalid fact revision reference")
+        facts = destination.get("facts", [])
+        if not isinstance(facts, list) or any(not isinstance(fact, Mapping) for fact in facts):
+            raise ValueError("retention facts must be a list of mappings")
+        checked = validate_facts([
+            {key: value for key, value in fact.items()
+             if key not in {"revision", "stale", "stale_label", "source"}}
+            for fact in facts
+        ])
+        revisions = [revision(fact) for fact in checked]
+        metadata = {key: destination[key] for key in ("name", "kind", "address", "reach")
+                    if key in destination}
+        if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
+            raise ValueError("invalid retention destination metadata")
+        entries.append((destination_id, metadata, list(zip(revisions, checked))))
+        hashes.extend(revisions)
+    timestamp = int(time.time()) if now is None else now
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            if destination is not None:
+            for destination_id, metadata, facts in entries:
                 conn.execute(
                     "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json) "
                     "VALUES(?,?,?,?)",
                     (source_kind, source_id, destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True)),
                 )
-            for digest, fact in zip(hashes, checked):
-                encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                conn.execute(
-                    "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
-                    (digest, encoded, int(time.time()) if now is None else now),
-                )
-                conn.execute(
-                    "INSERT OR IGNORE INTO retention_fact_references(source_kind,source_id,destination_id,revision) VALUES(?,?,?,?)",
-                    (source_kind, source_id, destination_id, digest),
-                )
+                for digest, fact in facts:
+                    encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
+                        (digest, encoded, timestamp),
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_references(source_kind,source_id,destination_id,revision) VALUES(?,?,?,?)",
+                        (source_kind, source_id, destination_id, digest),
+                    )
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
-    return hashes
+    return list(dict.fromkeys(hashes))
 
 
 def fact_revisions(hashes: list[str], *, path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -1580,6 +1613,7 @@ __all__ = [
     "events",
     "count",
     "save_fact_revisions",
+    "save_fact_snapshot",
     "fact_revisions",
     "fact_revisions_for_source",
     "fact_destinations_for_source",
