@@ -1158,9 +1158,16 @@ async def extract_segment(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    source_format: tuple[int, int],
 ) -> None:
     _validate_media_paths(source_path, config, destination_path)
     expected = end_seconds - start_seconds
+    rate, channels = source_format
+    # Seeking in shared PCM avoids decoder warm-up and container timestamp
+    # rounding. Trim on its integer sample grid, not clock ticks.
+    start_sample = round(start_seconds * rate)
+    seek_sample = (start_sample // rate) * rate
+    trim = f"atrim=start_sample={start_sample-seek_sample}:end_sample={round(end_seconds*rate)-seek_sample}"
     await run_media_command(
         [
             "ffmpeg",
@@ -1168,12 +1175,12 @@ async def extract_segment(
             "-loglevel",
             "error",
             "-y",
+            "-f", "s16le", "-ar", str(rate), "-ac", str(channels),
             "-ss",
-            f"{start_seconds}",
+            str(seek_sample / rate),
             "-i",
             os.fspath(source_path),
-            "-t",
-            f"{expected}",
+            "-af", trim,
             "-vn",
             "-acodec",
             "pcm_s16le",
@@ -1301,6 +1308,24 @@ def _unplanned_outcome(
 
 
 async def execute_chunking(
+    *, source_path: Path, source_stem: str, fields: Sequence[tuple[str, str]], config: SttExecutionConfig,
+    post_file: Callable[[Path, str], Awaitable[UpstreamResponse]],
+    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
+    on_cancel: Callable[[], None] | None, on_attempt_started: Callable[[int], None] | None = None,
+    cleanup: "SttCleanupOwner | None" = None,
+) -> ChunkingOutcome:
+    """Keep shared decoded media alive for the run, with one cleanup owner."""
+    owner = cleanup if cleanup is not None else SttCleanupOwner()
+    try:
+        return await _execute_chunking(source_path=source_path, source_stem=source_stem, fields=fields, config=config,
+            post_file=post_file, cancellation_waiters=cancellation_waiters, deadline_at=deadline_at,
+            on_cancel=on_cancel, on_attempt_started=on_attempt_started, cleanup=owner)
+    finally:
+        if cleanup is None:
+            await owner.aclose()
+
+
+async def _execute_chunking(
     *,
     source_path: Path,
     source_stem: str,
@@ -1322,6 +1347,8 @@ async def execute_chunking(
     planning_duration: float | None = None
     verified_duration: float | None = None
     source_sample_rate = _PLANNING_SAMPLE_RATE
+    source_channels = 1
+    extraction_source = source_path.parent / "extraction-source.pcm"
     pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
@@ -1332,6 +1359,7 @@ async def execute_chunking(
             on_cancel=on_cancel,
         )
         source_sample_rate = probed.sample_rate
+        source_channels = probed.channels
         if cleanup is not None:
             cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         try:
@@ -1362,6 +1390,16 @@ async def execute_chunking(
             max_segments=config.max_segments,
             sample_rate=source_sample_rate,
         )
+        if len(segments) > 1:
+            if cleanup is not None:
+                cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
+            await decode_planning_pcm(source_path, extraction_source, config=config,
+                cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
+                sample_rate=source_sample_rate, channels=source_channels)
+            planning_duration = extraction_source.stat().st_size / (source_sample_rate * source_channels * 2)
+            verified_duration = planning_duration
+            probed = ProbedAudio(planning_duration, source_sample_rate, source_channels)
+            segments[-1] = (segments[-1][0], planning_duration)
     except (
         asyncio.CancelledError,
         SttCancelled,
@@ -1414,7 +1452,7 @@ async def execute_chunking(
         try:
             try:
                 await extract_segment(
-                    source_path,
+                    extraction_source,
                     chunk_path,
                     start_seconds=start,
                     end_seconds=end,
@@ -1422,6 +1460,7 @@ async def execute_chunking(
                     cancellation_waiters=cancellation_waiters,
                     deadline_at=deadline_at,
                     on_cancel=on_cancel,
+                    source_format=(source_sample_rate, source_channels),
                 )
             except SttSetupFailure as error:
                 # Extraction failure before the first backend attempt may use

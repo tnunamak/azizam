@@ -163,7 +163,7 @@ def test_extraction_checks_decoded_piece_even_when_probe_understates_it(tmp_path
         ):
             async def extract():
                 await stt.extract_segment(tmp_path / "source.wav", destination, start_seconds=0,
-                    end_seconds=0.3, config=config(tmp_path, target_seconds=0.25, max_segment_seconds=0.3),
+                    end_seconds=0.3, source_format=(rate, 1), config=config(tmp_path, target_seconds=0.25, max_segment_seconds=0.3),
                     cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
             if extra_samples:
                 with pytest.raises(stt.SttSetupFailure, match="hard maximum"):
@@ -571,17 +571,31 @@ def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
         await stt.decode_planning_pcm(source, planning, config=execution, sample_rate=rate,
             cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
         full = planning.read_bytes()
-        # Non-frame-aligned cuts late in the stream expose decoder resets and rounded seeks.
-        for first, last in [(rate * 6 + 17, rate * 7 + 131), (rate * 10 + 113, rate * 11 + 71)]:
-            destination = tmp_path / "segment.wav"
-            with patch.object(stt, "run_media_command", wraps=stt.run_media_command) as media:
-                await stt.extract_segment(source, destination, start_seconds=first/rate, end_seconds=last/rate,
-                    config=execution, cancellation_waiters=(),
-                    deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
-            command = media.await_args_list[0].args[0]
-            assert command.index("-ss") < command.index("-i"), command
-            with wave.open(str(destination)) as audio:
+        # Run the real executor: every codec is decoded once for shared extraction PCM.
+        cuts = [0, rate * 6 + 17, rate * 10 + 113, rate * 12]
+        segments = [(first/rate, last/rate) for first, last in zip(cuts, cuts[1:])]
+        sent = []
+        async def post(path, _filename):
+            index = len(sent)
+            with wave.open(str(path)) as audio:
                 assert audio.getframerate() == rate
                 actual = audio.readframes(audio.getnframes())
-            assert actual == full[first*2:last*2], (extension, first, len(actual), (last-first)*2)
+            assert actual == full[cuts[index]*2:cuts[index+1]*2], (extension, index)
+            sent.append(path)
+            return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
+        with patch.object(stt, "plan_quietest_frame_segments", return_value=segments), \
+             patch.object(stt, "run_media_command", wraps=stt.run_media_command) as media:
+            outcome = await stt.execute_chunking(source_path=source, source_stem="source", fields=[],
+                config=config(tmp_path, target_seconds=4, threshold_seconds=5, max_segment_seconds=8),
+                post_file=post, cancellation_waiters=(),
+                deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+        assert outcome.attempts_started == len(sent) == 3
+        commands = [call.args[0] for call in media.await_args_list]
+        extracts = [command for command in commands if command[-1].endswith(".wav")]
+        assert len(extracts) == 3
+        assert all(command.index("-ss") < command.index("-i") for command in extracts)
+        whole_decodes = [command for command in commands if command[0] == "ffmpeg"
+                         and command[command.index("-i")+1] == str(source)]
+        assert len(whole_decodes) == 2  # planning plus shared source-rate PCM, independent of segment count
+        assert not list(tmp_path.glob("extraction-*.pcm"))
     asyncio.run(run())

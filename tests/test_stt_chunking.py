@@ -478,7 +478,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(stt_chunking.SttSetupFailure):
                     await stt_chunking.extract_segment(
-                        root / "source.wav", destination, start_seconds=0, end_seconds=40, config=config,
+                        root / "source.pcm", destination, start_seconds=0, end_seconds=40, source_format=(16000, 1), config=config,
                         cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
                     )
 
