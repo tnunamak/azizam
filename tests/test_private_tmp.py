@@ -195,7 +195,7 @@ def test_the_image_keeps_scratch_out_of_the_data_mount() -> None:
     # A bind-mounted /app/data belongs to a host user, which the root container must not trust as a scratch parent.
     env = [line.split("=", 1) for line in (ROOT / "Dockerfile").read_text().splitlines()
            if line.startswith("ENV AZIZAM_PRIVATE_TMPDIR=")]
-    assert len(env) == 1 and not env[0][1].startswith("/app/")
+    assert env == [["ENV AZIZAM_PRIVATE_TMPDIR", "/var/lib/azizam/private-tmp"]]
 
 
 def test_the_unit_does_not_claim_a_private_tmp_it_cannot_get() -> None:
