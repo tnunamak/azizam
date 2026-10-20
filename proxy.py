@@ -4039,7 +4039,9 @@ async def _reference_transcript(
     except stt_chunking.SttDeadlineExceeded as error:
         raise custom_voices.VoiceError(504, "stt_request_deadline", "The voice reference transcription deadline exceeded.", param="voice") from error
     except stt_chunking.SttResourceLimitExceeded as error:
-        if error.decision is not None and any(reason.code == "queue_full" for reason in error.decision.details.reasons):
+        if isinstance(error, stt_chunking.SttStorageUnavailable) or (error.decision is not None and any(
+            reason.code == "queue_full" or reason.resource_class == "disk" for reason in error.decision.details.reasons
+        )):
             raise custom_voices.VoiceError(503, "resource_admission_denied", "Shared capacity is busy. Retry shortly.",
                 param="voice", retry_after=5) from error
         raise custom_voices.VoiceError(
@@ -4104,8 +4106,9 @@ async def _apply_custom_voice(
         try:
             body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
-            response = openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
-            retry_after = client_errors.retry_after(str(exc.retry_after))
+            response = openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code,
+                error_type="api_error" if exc.status >= 500 else "invalid_request_error")
+            retry_after = client_errors.retry_after(str(exc.retry_after)) if exc.retry_after is not None else None
             if retry_after is not None:
                 response.headers["Retry-After"] = retry_after
             return response
