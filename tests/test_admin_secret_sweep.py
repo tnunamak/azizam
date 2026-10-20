@@ -112,7 +112,7 @@ def _leaks(response) -> list[str]:
 
 
 @pytest.fixture
-def host_isolated(monkeypatch):
+def host_isolated(monkeypatch, isolated_receipts):
     """The sweeps call real routes; the host answers "nothing here" so no route reaches outside the test."""
     def no_host_command(*args, **kwargs):
         raise FileNotFoundError("no host command runs in this test")
@@ -132,13 +132,12 @@ def host_isolated(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse_async)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
-    # The routes open the process-default job and receipt stores: create them for this test and take them away after it,
-    # so a later test starts as if no sweep had run (a store left behind changes which code path a route takes).
-    created = [path for path in (media_jobs.DB_PATH, receipt_store.DB_PATH) if not path.exists()]
-    media_jobs.init_db()
-    receipt_store.init_db()
+    # The receipt seed belongs to this test's private store. Only the job store
+    # uses the worker default; remove it afterward if this sweep created it.
+    created = [media_jobs.DB_PATH] if not media_jobs.DB_PATH.exists() else []
+    media_jobs.init_db(path=media_jobs.DB_PATH)
     receipt_store.record(RouteReceipt(request_id=PARAMETERS["request_id"], protocol="test", intent="video.generate"),
-                         path=receipt_store.DB_PATH)
+                         path=isolated_receipts)
     yield
     for path in created:
         for leftover in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
