@@ -21,30 +21,45 @@ async def chunk(source, execution, post, **kwargs):
         deadline_at=asyncio.get_running_loop().time() + 120, on_cancel=None, **kwargs)
 
 
+@pytest.mark.parametrize("constraint", ["decode_cap", "disk"])
 @pytest.mark.parametrize("rate,channels,codec,suffix", [
     (48000, 2, "libmp3lame", "mp3"), (22050, 1, "libmp3lame", "mp3"),
     (48000, 2, "libopus", "ogg"),
 ])
-def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channels, codec, suffix):
+def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channels, codec, suffix, constraint):
     source = tmp_path / f"noise.{suffix}"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
         f"anoisesrc=r={rate}:d=4:seed=47", "-ac", str(channels), "-c:a", codec,
         *(["-q:a", "4"] if codec == "libmp3lame" else []), str(source)], check=True)
 
-    async def run(limit):
+    async def run(limit, limited_disk=False):
         sent = []
         async def post(path, _name):
             with wave.open(str(path)) as audio:
                 sent.append(audio.readframes(audio.getnframes()))
             return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
-        outcome = await chunk(source, config(tmp_path, target_seconds=0.4, search_seconds=0.1,
-            threshold_seconds=0.5, max_segment_seconds=0.5, max_decoded_bytes=limit), post)
+        execution = config(tmp_path, target_seconds=0.4, search_seconds=0.1,
+            threshold_seconds=0.5, max_segment_seconds=0.5, max_decoded_bytes=limit, min_free_bytes=1)
+        if limited_disk:
+            total = source.stat().st_size + 4 * 32000 + 2 * round(0.5 * rate) * channels * 2 + 4096
+            def free_bytes(_root):
+                return total - sum(path.stat().st_size for path in tmp_path.iterdir() if path.is_file())
+            gate = stt.SttResourceGate()
+            with patch.object(stt, "_disk_free_bytes", side_effect=free_bytes):
+                lease = gate.acquire(request_id="disk", config=execution, upload_bytes=source.stat().st_size)
+                try:
+                    outcome = await chunk(source, execution, post, resource_lease=lease)
+                finally:
+                    lease.release()
+            assert gate.active_count == gate._reserved_bytes == 0
+        else:
+            outcome = await chunk(source, execution, post)
         assert outcome.mode == "chunked"
         return sent
 
     shared = asyncio.run(run(2**20))
     # Enough for planning and two segment buffers, but not the full source PCM.
-    streamed = asyncio.run(run(150000))
+    streamed = asyncio.run(run(150000 if constraint == "decode_cap" else 2**20, constraint == "disk"))
     assert streamed == shared
     assert not list(tmp_path.glob("*.pcm"))
 
