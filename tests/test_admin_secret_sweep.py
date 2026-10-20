@@ -21,6 +21,7 @@ import httpx
 import pytest
 
 from gateway import admin_store, egress, lifecycle_drivers, media_jobs, receipt_store, record_carriers
+from gateway.receipts import RouteReceipt
 from tests.support import canary
 from tests.support.route_discovery import discover
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
@@ -34,6 +35,7 @@ PARAMETERS = {
     "service_id": "engine-a", "engine_id": "engine-a", "id": "engine-a", "provider_id": "provider-a",
     "provider": "provider-a", "package_id": "package-a",
     "system_id": "gateway",
+    "request_id": "sweep-request",
     "section": "services", "record_id": "held-url",  # the routes that fix or remove a record the registry leaves out
 }
 UNSEEDED_ID = "unseeded-id"
@@ -59,6 +61,8 @@ OWNER_EXPORT_ROUTES = frozenset({"/admin/api/config/export"})
 def _seed_registry(gateway) -> None:
     """Plant every canary: records moved into the store, left-out records written raw, a package source."""
     registry = canary.seed_direct(gateway)
+    receipt_store.record(RouteReceipt(request_id=PARAMETERS["request_id"], protocol="test", intent="video.generate"),
+                         path=receipt_store.DB_PATH)
     # The long-audio options route is a real success path for a transcription
     # engine. Keep the other canary carriers intact while making engine-a fit.
     registry["services"]["engine-a"]["capabilities"].append("transcriptions")
