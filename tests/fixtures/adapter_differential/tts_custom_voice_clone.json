@@ -468,6 +468,12 @@
           "manifest_version": null,
           "metadata": {
             "status_code": 200,
+            "stt": {
+              "attempts_started": 1,
+              "chunked": false,
+              "field_count": 1,
+              "file_count": 1
+            },
             "terminal_reason": "http_200"
           },
           "owner_key_hash": "app:app_test",
