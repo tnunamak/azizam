@@ -3,10 +3,11 @@
 
 Run with ./venv/bin/python scripts/benchmark-stt-workspace.py REVISION [...].
 No HTTP requests are made. Peak logical workspace bytes are sampled every 10 ms;
-the compressed input is reported separately. Fixtures are deleted on exit.
+including the compressed input (whose size is also reported separately). Fixtures are deleted on exit.
 """
 import asyncio
 import json
+import inspect
 from pathlib import Path
 import subprocess
 import sys
@@ -24,10 +25,16 @@ async def measure(module, revision, source, workspace, seconds, rate, channels):
             "threshold_seconds": 600, "max_segment_seconds": 600, "search_seconds": 10,
             "max_segments": 64 if seconds == 14400 else 16,
             "deadline_seconds": 3600, "backend_timeout_seconds": 3600}})
+    gate = module.SttResourceGate()
+    lease = gate.acquire(request_id="benchmark", config=execution)
+    if hasattr(lease, "workspace"):
+        lease.workspace = workspace
+    lease_options = {"resource_lease": lease} if "resource_lease" in inspect.signature(module.execute_chunking).parameters else {}
     peak = 0
+    peak_reservation = gate._reserved_bytes
     finished = False
     async def monitor():
-        nonlocal peak
+        nonlocal peak, peak_reservation
         while not finished:
             size = 0
             for path in workspace.iterdir():
@@ -36,6 +43,7 @@ async def measure(module, revision, source, workspace, seconds, rate, channels):
                 except FileNotFoundError:
                     pass
             peak = max(peak, size)
+            peak_reservation = max(peak_reservation, gate._reserved_bytes)
             await asyncio.sleep(0.01)
     posts = 0
     async def post(_path, _filename):
@@ -47,7 +55,7 @@ async def measure(module, revision, source, workspace, seconds, rate, channels):
     try:
         outcome = await module.execute_chunking(source_path=source, source_stem="noise", fields=[],
             config=execution, post_file=post, cancellation_waiters=(),
-            deadline_at=started + 3600, on_cancel=None)
+            deadline_at=started + 3600, on_cancel=None, **lease_options)
         status = outcome.mode
     except module.SttExecutionError as error:
         status = type(error).__name__
@@ -55,9 +63,10 @@ async def measure(module, revision, source, workspace, seconds, rate, channels):
         elapsed = time.monotonic() - started
         finished = True
         await task
+        lease.release()
     print(json.dumps(dict(revision=revision, hours=seconds/3600, rate=rate, channels=channels,
         seconds=round(elapsed, 3), peak_workspace_bytes=peak, input_bytes=source.stat().st_size,
-        status=status, segments=posts)), flush=True)
+        status=status, segments=posts, peak_reserved_bytes=peak_reservation)), flush=True)
 
 
 def main():
@@ -68,7 +77,7 @@ def main():
         module.__file__ = str(ROOT / "gateway/stt_chunking.py")
         sys.modules[module.__name__] = module
         exec(compile(code, module.__file__, "exec"), module.__dict__)
-        modules.append((revision, module))
+        modules.append((subprocess.check_output(["git", "rev-parse", revision], cwd=ROOT, text=True).strip(), module))
     scratch = Path.home() / ".tmp"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="d47-noise-", dir=scratch) as directory:

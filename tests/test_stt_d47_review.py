@@ -169,6 +169,58 @@ def test_voice_reference_reserves_clip_size_on_two_gib_host(tmp_path, fake_upstr
     asyncio.run(run())
 
 
+def test_written_lease_bytes_are_credited_once_and_failed_topup_is_atomic(tmp_path):
+    mib = 1024**2
+    execution = config(tmp_path, max_input_bytes=mib, min_free_bytes=mib)
+    gate = stt.SttResourceGate()
+    with patch.object(stt, "_disk_free_bytes", return_value=6 * mib) as free:
+        first = gate.acquire(request_id="first", config=execution)
+        second = gate.acquire(request_id="second", config=execution)
+        try:
+            first.workspace = tmp_path
+            (tmp_path / "upload.part").write_bytes(b"x" * (mib // 2))
+            free.return_value -= mib // 2
+            first.resize(4 * mib)
+            assert gate._reserved_bytes == 5 * mib
+            with pytest.raises(stt.SttResourceLimitExceeded):
+                second.resize(2 * mib)
+            assert gate._reserved_bytes == 5 * mib
+            assert second._reserved_bytes == mib
+            assert gate.active_count == 2
+        finally:
+            first.release()
+            second.release()
+    assert gate.active_count == gate._reserved_bytes == 0
+
+
+def test_understated_metadata_tops_up_before_each_decode_trial(tmp_path):
+    async def run():
+        source = wav(tmp_path / "source.wav", 0.6, 48000, 2)
+        destination = tmp_path / "planning.pcm"
+        execution = config(tmp_path, max_duration_seconds=1, max_decoded_bytes=40000)
+        gate = stt.SttResourceGate()
+        lease = gate.acquire(request_id="metadata", config=execution, upload_bytes=source.stat().st_size)
+        lease.workspace = tmp_path
+        command = stt.run_media_command
+        limits = []
+        async def decode(argv, **kwargs):
+            limit = int(argv[argv.index("-fs") + 1])
+            assert source.stat().st_size + limit <= lease._reserved_bytes
+            limits.append(limit)
+            return await command(argv, **kwargs)
+        try:
+            with patch.object(stt, "run_media_command", side_effect=decode):
+                await stt.decode_planning_pcm(source, destination, config=execution,
+                    cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10,
+                    on_cancel=None, resource_lease=lease, expected_duration_seconds=0.1)
+            assert len(limits) > 1
+            assert destination.stat().st_size == 19200
+        finally:
+            destination.unlink(missing_ok=True)
+            lease.release()
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("error,status,code", [
     (stt.SttInvalidAudio("bad"), 400, "invalid_value"),
     (stt.SttDeadlineExceeded("deadline"), 504, "stt_request_deadline"),
