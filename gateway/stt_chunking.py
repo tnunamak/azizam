@@ -613,9 +613,11 @@ async def parse_bounded_multipart(
 
 
 def _validated_workspace(workspace: Path, config: SttExecutionConfig) -> Path:
+    """A request owns a strict child of the spool, never the shared spool itself."""
     workspace = workspace.resolve()
-    if not workspace.is_relative_to(config.spool_dir.resolve()):
-        raise SttConfigurationError("STT workspace must stay inside the configured spool directory")
+    spool = config.spool_dir.resolve()
+    if workspace == spool or not workspace.is_relative_to(spool):
+        raise SttConfigurationError("STT workspace must be a request directory inside the configured spool directory")
     return workspace
 
 
