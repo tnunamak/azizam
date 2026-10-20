@@ -10765,7 +10765,10 @@ async def proxy_graph_video_create(
     """
     if receipt is None:
         from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.generate", protocol="openai.video")
+        receipt = await media_ingestion.start_receipt(
+            request, auth_context, intent="video.generate", protocol="openai.video",
+            route_path=str(getattr(getattr(request, "url", None), "path", "/v1/videos")),
+        )
         try:
             response = await proxy_graph_video_create(
                 request, auth_context, body_override=body_override,
@@ -11757,7 +11760,10 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     """
     if receipt is None:
         from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.extend", protocol="openai.video")
+        receipt = await media_ingestion.start_receipt(
+            request, auth_context, intent="video.extend", protocol="openai.video",
+            route_path=str(getattr(getattr(request, "url", None), "path", "/v1/videos/extensions")),
+        )
         try:
             response = await proxy_graph_video_extend(request, auth_context, receipt=receipt)
         except BaseException as error:
@@ -23727,7 +23733,10 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
     """Run an upload-driven video-edit manifest and return its rendered asset."""
     if receipt is None:
         from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.edit", protocol="openai.video")
+        receipt = await media_ingestion.start_receipt(
+            request, auth_context, intent="video.edit", protocol="openai.video",
+            route_path=str(getattr(getattr(request, "url", None), "path", f"/gateway/v1/workflows/{workflow_id}/run")),
+        )
         try:
             response = await _execute_video_manifest_workflow(request, workflow_id, auth_context, receipt=receipt)
         except BaseException as error:
@@ -24225,7 +24234,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     """
     if receipt is None:
         from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate")
+        receipt = await media_ingestion.start_receipt(
+            request, auth_context, intent="audio.generate",
+            route_path=str(getattr(getattr(request, "url", None), "path", "/v1/audio/generate")),
+        )
         try:
             response = await proxy_audio_generate(request, auth_context, store_full=store_full, receipt=receipt)
         except BaseException as error:
