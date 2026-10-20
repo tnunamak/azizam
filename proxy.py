@@ -4035,9 +4035,17 @@ async def _reference_transcript(
         )
         text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
     except stt_chunking.SttInvalidAudio as error:
-        raise custom_voices.VoiceError(400, "invalid_audio", "The voice reference is not readable audio.", param="file") from error
+        raise custom_voices.VoiceError(400, "invalid_value", "The voice reference is not readable audio.", param="voice") from error
     except stt_chunking.SttDeadlineExceeded as error:
-        raise custom_voices.VoiceError(504, "stt_deadline_exceeded", "The voice reference transcription deadline exceeded.") from error
+        raise custom_voices.VoiceError(504, "stt_request_deadline", "The voice reference transcription deadline exceeded.", param="voice") from error
+    except stt_chunking.SttResourceLimitExceeded as error:
+        if error.decision is not None and any(reason.code == "queue_full" for reason in error.decision.details.reasons):
+            raise custom_voices.VoiceError(503, "resource_admission_denied", "Shared capacity is busy. Retry shortly.",
+                param="voice", retry_after=5) from error
+        raise custom_voices.VoiceError(
+            503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
+            param="voice",
+        ) from error
     except stt_chunking.SttExecutionError as error:
         raise custom_voices.VoiceError(
             503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
@@ -4096,7 +4104,10 @@ async def _apply_custom_voice(
         try:
             body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
-            return openai_error_response(exc.message, status_code=exc.status, code=exc.code)
+            response = openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
+            if exc.retry_after is not None:
+                response.headers["Retry-After"] = str(exc.retry_after)
+            return response
     return None
 
 
@@ -5166,6 +5177,7 @@ async def proxy_stt_request(
             # reservation must outlive the form, files, and workspace.
             cleanup.add("capacity_lease", lambda: lease.release())
             workspace = stt_chunking.create_request_workspace(execution)
+            lease.workspace = workspace
             cleanup.add("request_workspace", lambda: stt_chunking.remove_request_workspace(workspace))
             parsed = await stt_chunking.parse_bounded_multipart(
                 request,
@@ -5245,6 +5257,7 @@ async def proxy_stt_request(
                     lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
                         request_id=receipt.request_id, config=execution,
                     )
+                    lease.workspace = workspace
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:
@@ -5285,6 +5298,7 @@ async def proxy_stt_request(
             streams = wants_stream and native_stream and len(uploads) == 1
 
             def record_outcome(outcome: stt_chunking.ChunkingOutcome) -> None:
+                receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
                 stt_measurement.observe_outcome(outcome)
                 # Receipts are core's: the adapter reports the chunking outcome before any later request.
                 receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
@@ -5304,6 +5318,7 @@ async def proxy_stt_request(
                     op="stt.translate" if operation == "translations" else "stt.transcribe",
                     headers=headers,
                     execution=execution,
+                    resource_lease=lease,
                     fields=fields,
                     multipart_fields=multipart_fields,
                     uploads=uploads,

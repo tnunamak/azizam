@@ -99,6 +99,7 @@ class SttRun(CanonicalRequest):
     on_whole_file_attempt: Callable[[], None] | None = None   # called when the whole upload is sent in one request
     wav16k_input: bool = False      # the engine reads only 16 kHz mono WAV: decode the upload first
     stream: bool = False            # relay the engine's event stream when no chunked answer settled the run
+    resource_lease: stt_chunking.SttResourceLease | None = None
 
 
 @dataclass(frozen=True)
@@ -227,21 +228,36 @@ class _RunWire:
         stt_chunking._validate_media_paths(stt_chunking.source_path(upload), run.execution, destination)
         run.cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
         pcm_limit = min(run.execution.max_decoded_bytes, int(run.execution.max_duration_seconds * 16000) * 2)
+        trial_limit = pcm_limit + 2
         try:
-            await stt_chunking.run_media_command(
-                [
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", os.fspath(stt_chunking.source_path(upload)),
-                    "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
-                    "-t", str((pcm_limit + 2) / 32000), "-fs", str(pcm_limit + 80),
-                    os.fspath(destination),
-                ],
-                timeout_seconds=run.execution.timeout_seconds,
-                cancellation_waiters=run.cancellation_waiters,
-                deadline_at=run.deadline_at,
-                on_cancel=run.on_cancel,
-                max_output_bytes=run.execution.max_media_output_bytes,
-            )
+            if run.resource_lease is not None:
+                probed = await stt_chunking.probe_audio(stt_chunking.source_path(upload), config=run.execution,
+                    cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel)
+                if probed.duration_seconds > 0:
+                    trial_limit = min(trial_limit, (int(probed.duration_seconds * 16000) + 2) * 2)
+            while True:
+                if run.resource_lease is not None:
+                    existing = run.resource_lease.written_bytes - (destination.stat().st_size if destination.exists() else 0)
+                    run.resource_lease.ensure(existing + trial_limit + 128)
+                await stt_chunking.run_media_command(
+                    [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", os.fspath(stt_chunking.source_path(upload)),
+                        "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
+                        "-t", str(trial_limit / 32000), "-fs", str(trial_limit + 128),
+                        os.fspath(destination),
+                    ],
+                    timeout_seconds=run.execution.timeout_seconds,
+                    cancellation_waiters=run.cancellation_waiters,
+                    deadline_at=run.deadline_at,
+                    on_cancel=run.on_cancel,
+                    max_output_bytes=run.execution.max_media_output_bytes,
+                )
+                with wave.open(os.fspath(destination)) as audio:
+                    decoded_bytes = audio.getnframes() * 2
+                if decoded_bytes < trial_limit or trial_limit == pcm_limit + 2:
+                    break
+                trial_limit = min(pcm_limit + 2, trial_limit * 2)
         except stt_chunking.SttMediaCommandFailed as error:
             # ffmpeg ran and refused the file: the caller sent something that is not audio.
             raise stt_chunking.SttInvalidAudio("STT input is not readable audio") from error
@@ -317,15 +333,17 @@ class ChunkedSttAdapter:
             if sum(len(content) for _filename, content, _media_type in request.parts.values()) > execution.max_input_bytes:
                 raise stt_chunking.SttResourceLimitExceeded("Uploaded audio exceeds the configured STT limit")
             if stt_chunking.uncut_upload_needs_decode(execution):
-                lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id="voice-reference", config=execution)
+                lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id="voice-reference", config=execution,
+                    upload_bytes=sum(len(content) for _filename, content, _media_type in request.parts.values()))
                 workspace = stt_chunking.create_request_workspace(execution)
+                lease.workspace = workspace
                 paths = []
                 for index, (_filename, content, _media_type) in enumerate(request.parts.values()):
                     path = workspace / f"upload-{index}.part"
                     path.write_bytes(content)
                     paths.append(path)
                 await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
-                    deadline_at=deadline_at, on_cancel=None)
+                    deadline_at=deadline_at, on_cancel=None, resource_lease=lease)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if request.on_whole_file_attempt is not None:
                     request.on_whole_file_attempt()
@@ -365,6 +383,7 @@ class ChunkedSttAdapter:
                 on_cancel=run.on_cancel,
                 on_attempt_started=run.on_attempt_started,
                 cleanup=run.cleanup,
+                resource_lease=run.resource_lease,
             )
         else:
             outcome = stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")
@@ -381,6 +400,7 @@ class ChunkedSttAdapter:
                 [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
                 config=execution, cancellation_waiters=run.cancellation_waiters,
                 deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
+                resource_lease=run.resource_lease,
             )
         if run.on_whole_file_attempt is not None:
             run.on_whole_file_attempt()
