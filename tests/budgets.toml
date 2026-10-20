@@ -87,7 +87,10 @@
 # D47 round-2 review: +4 multitrack first-audio-stream shared/fallback cases,
 # +2 lease receipt/unlink-race cases, +5 voice failure/retry-shape cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15300.
-pytest = 15300
+# D47 admission followups: +10 transcription/translation status cases,
+# +2 gate disk-classification cases and +3 voice denial/receipt cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15315.
+pytest = 15315
 vitest = 3051
 playwright = 492
 

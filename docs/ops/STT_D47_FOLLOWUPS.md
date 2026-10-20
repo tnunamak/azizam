@@ -55,3 +55,23 @@ reference transcription. Receipts retain `capacity_insufficient` with resource
 class `disk`, or `queue_full` with resource class `queue`. Disk headroom checks
 also retain their denial evidence. OpenAPI describes these statuses and the
 retry header for both audio routes.
+
+### Admission verification
+
+Before implementation, the new regression matrix reproduced eight failures;
+the two upload-cap cases already passed. The final hermetic run from committed
+head `b4307bdf` passed **1,293 tests and 203 subtests in 134.23 seconds**.
+It included all `tests/test_stt*.py`, `test_custom_voice_speech.py`,
+`test_proxy_audio_handler_gaps.py`, all `*receipt*.py`, the five client-error
+files named above, `test_engine_knowledge_boundary.py`, and
+`test_openapi_media_schema_honesty.py`.
+
+The matrix checks upload and media cap refusals on both audio routes, disk
+shortages at 900 and 1024 MiB free with a 512 MiB lease held, concurrency
+exhaustion, retry headers, and receipt reasons. Voice checks also cover both
+disk shortages and concurrency evidence. Existing replay-dispatch regressions
+now assert the retryable refusal and disk receipt reason.
+
+Full hermetic collection measured **15,315 cases**; `tests/budgets.toml` records
+that ceiling, up from 15,300. `git diff --check` passed. No inference, live
+gateway or GPU was used. Confidence is high for the covered admission paths.
