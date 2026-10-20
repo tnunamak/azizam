@@ -29,7 +29,7 @@ OK, SUBSTITUTED, DELETED = 0, 1, 2
 
 
 def normalize(text: str, drop: frozenset[str] = frozenset()) -> list[str]:
-    """Canonical reference and hypothesis tokens: Unicode words, internal underscores and joined apostrophes.
+    """Canonical reference and hypothesis tokens: casefolded Unicode words with marks and joined apostrophes.
 
     Punctuation splits words; annotation tags, standalone underscores and ``drop`` words are removed.
     Timed reference readers attach the source interval to each resulting token.

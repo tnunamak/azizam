@@ -66,8 +66,8 @@ interface Options {
     speakers: number;
     timing: string;
     licence: string;
-    audio_rights_unstated: boolean;
-    audio_rights_note: string;
+    rights_unstated: boolean;
+    rights_note: string;
     download_bytes: number;
   }[];
   job: Job | null;
@@ -318,9 +318,9 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
                     {sample.licence} ·{" "}
                     {Math.ceil(sample.download_bytes / 1048576)} MB ·{" "}
                     {sample.timing} timing
-                    {sample.audio_rights_unstated && (
+                    {sample.rights_unstated && (
                       <span className="block font-medium">
-                        Audio licence not stated. {sample.audio_rights_note}
+                        Sample rights not stated. {sample.rights_note}
                       </span>
                     )}
                   </span>
@@ -379,11 +379,11 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
             Settings stay unchanged until you apply a recommendation.
           </p>
           {options.samples
-            .filter((sample) => sample.audio_rights_unstated
+            .filter((sample) => sample.rights_unstated
               && (samples ?? options.policy.sample_ids).includes(sample.id))
             .map((sample) => (
               <p key={sample.id} role="note" className="text-meta font-medium">
-                Audio rights not stated for {sample.title}. {sample.audio_rights_note}
+                Sample rights not stated for {sample.title}. {sample.rights_note}
               </p>
             ))}
           <div className="flex flex-wrap gap-2">
