@@ -5073,13 +5073,15 @@ def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse, request
 
 def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, receipt: RouteReceipt) -> Response:
     busy = isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable))
+    status_code = 503 if busy else 413
+    retry_value = client_errors.retry_after("5")
     response = _stt_error(
         "Shared capacity is busy. Retry shortly." if busy else str(error),
-        status_code=503 if busy else 413,
+        status_code=status_code,
         code="resource_admission_denied" if busy else "stt_resource_limit",
     )
     if busy:
-        response.headers["Retry-After"] = client_errors.retry_after("5")
+        response.headers["Retry-After"] = retry_value
     if error.decision is None:
         return response
     evidence = error.decision.details.as_dict(error.decision.status.value)
@@ -5090,8 +5092,8 @@ def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, r
     body["error"]["decision"] = projected
     if projected["reasons"] and not busy:
         body["error"]["message"] = projected["reasons"][0]["message"]
-    return Response(content=json.dumps(body), status_code=response.status_code,
-                    headers={"Retry-After": response.headers["Retry-After"]} if busy else None,
+    return Response(content=json.dumps(body), status_code=status_code,
+                    headers={"Retry-After": retry_value} if busy else None,
                     media_type="application/json")
 
 

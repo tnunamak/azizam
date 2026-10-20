@@ -507,7 +507,11 @@ class SttRuntimeFallbackTests(SttCase):
             fits_attempt_only = service.max_input_bytes + service.min_free_bytes + 1024 * 1024
             with patch.object(stt_chunking, "_disk_free_bytes", return_value=fits_attempt_only):
                 resp = self._post([("model", "whisper-1")])
-            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "resource_admission_denied"))
+            self.assertEqual(resp.headers.get("Retry-After"), "5")
+            reasons = proxy.receipt_store.finalize.call_args.args[0].resource_decision["reasons"]
+            self.assertTrue(any(reason["code"] == "capacity_insufficient" and reason["resource_class"] == "disk"
+                                for reason in reasons))
             self.assertEqual(seen, [])
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
 
@@ -518,7 +522,11 @@ class SttRuntimeFallbackTests(SttCase):
             proxy.receipt_store.finalize.reset_mock()
             with patch.object(stt_chunking, "_disk_free_bytes", return_value=1):
                 resp = self._post([("model", "whisper-1")])
-            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "resource_admission_denied"))
+            self.assertEqual(resp.headers.get("Retry-After"), "5")
+            reasons = proxy.receipt_store.finalize.call_args.args[0].resource_decision["reasons"]
+            self.assertTrue(any(reason["code"] == "capacity_insufficient" and reason["resource_class"] == "disk"
+                                for reason in reasons))
             self.assertEqual(seen, [])
             self.assertEqual((proxy.receipt_store.begin.call_count, proxy.receipt_store.finalize.call_count), (1, 1))
             self.assertEqual(proxy.receipt_store.finalize.call_args.args[0].status, "failed")
