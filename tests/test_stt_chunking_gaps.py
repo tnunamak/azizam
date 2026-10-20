@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -51,6 +52,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                         extracted = []
                         durations = {}
                         posted = []
+                        extracted_payloads = []
                         started = []
 
                         async def spawn(*command, **kwargs):
@@ -75,7 +77,10 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                             start = float(args[args.index("-ss") + 1])
                             length = float(args[args.index("-t") + 1])
                             durations[target.name] = length
-                            target.write_bytes(b"x" * 100)
+                            with wave.open(str(target), "wb") as audio:
+                                audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                                audio.writeframes(pcm_bytes(length))
+                            extracted_payloads.append(target.read_bytes())
                             return Process()
 
                         async def post(path, filename):
@@ -110,7 +115,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
 
                         self.assertEqual(
                             posted,
-                            [] if failure_index == 0 else [("source.chunk000.wav", b"x" * 100)],
+                            [] if failure_index == 0 else [("source.chunk000.wav", extracted_payloads[0])],
                         )
                         self.assertEqual(started, [] if failure_index == 0 else [1])
                         self.assertEqual(len(extracted), failure_index + 1)

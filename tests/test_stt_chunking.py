@@ -1435,10 +1435,19 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                         )
                     if "s16le" in command:
                         await block_or_return("plan", cancellation_waiters, deadline_at, on_cancel)
-                        Path(command[-1]).write_bytes(pcm_bytes(75, [20.0, 40.0]))
+                        input_path = Path(command[command.index("-i") + 1])
+                        if input_path.name.startswith("segment-"):
+                            with wave.open(str(input_path)) as audio:
+                                duration = audio.getnframes() / audio.getframerate()
+                        else:
+                            duration = 75
+                        Path(command[-1]).write_bytes(pcm_bytes(duration, [20.0, 40.0]))
                         return b"", b""
                     await block_or_return("extract", cancellation_waiters, deadline_at, on_cancel)
-                    Path(command[-1]).write_bytes(b"RIFF" + b"x" * 64)
+                    length = float(command[command.index("-t") + 1])
+                    with wave.open(str(command[-1]), "wb") as audio:
+                        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                        audio.writeframes(pcm_bytes(length))
                     return b"", b""
 
                 class DelayedResponse:
