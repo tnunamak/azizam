@@ -207,11 +207,15 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
         self.assertEqual([r for r in _FakeClient.requests if "/transcriptions" in r["url"]], [])
 
         cloned = self.make_voice()
-        self.assertEqual(self.speak({"id": cloned["id"]}, model="omnivoice").status_code, 200)
+        with patch.object(receipt_store, "finalize", wraps=receipt_store.finalize) as finalized:
+            self.assertEqual(self.speak({"id": cloned["id"]}, model="omnivoice").status_code, 200)
+        self.assertEqual(finalized.call_args.args[0].metadata["stt"]["attempts_started"], 1)
         self.assertEqual(_FakeClient.requests[-1]["body"]["ref_text"], "this is the reference transcript")
         self.assertEqual(self.store.get_voice("key-a", cloned["id"])["transcript"], "this is the reference transcript")
         transcriptions = len([r for r in _FakeClient.requests if "/transcriptions" in r["url"]])
-        self.speak({"id": cloned["id"]}, model="omnivoice")
+        with patch.object(receipt_store, "finalize", wraps=receipt_store.finalize) as finalized:
+            self.speak({"id": cloned["id"]}, model="omnivoice")
+        self.assertNotIn("stt", finalized.call_args.args[0].metadata)
         self.assertEqual(len([r for r in _FakeClient.requests if "/transcriptions" in r["url"]]), transcriptions)  # cached
 
     def test_clients_cannot_inject_voice_ref_with_a_built_in_voice(self) -> None:
