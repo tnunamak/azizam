@@ -142,7 +142,7 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
     if failure == "invalid_config":
         assert next(d for d in view["destinations"] if d["id"] == "destination")["facts"] == []
         assert any(d["facts"] for d in view["destinations"] if d["id"] != "destination")
-        assert view["fact_basis"] == "Facts saved for this request."
+        assert view["fact_basis"] == "Facts saved for this request. Some destination facts are unavailable."
     else:
         assert view["fact_basis"].startswith("Today's facts")
 

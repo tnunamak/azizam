@@ -156,3 +156,42 @@ def test_startup_reports_pruned_count(monkeypatch, capsys):
         await (await proxy._start_receipts_maintenance(stop))
     asyncio.run(scenario())
     assert "17" in capsys.readouterr().out
+
+
+def test_cancellation_drains_ordered_writes_before_return(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    writes = []
+
+    def persist(_self):
+        entered.set()
+        assert release.wait(5)
+        writes.append("facts")
+
+    def finalize(_receipt):
+        writes.append("finalize")
+
+    monkeypatch.setattr(RouteReceipt, "persist_retention_facts", persist)
+
+    async def scenario():
+        async def request():
+            async with ReceiptLifecycleOwner(RouteReceipt(protocol="test", intent="test"),
+                                             begin=lambda _r: None, finalize=finalize):
+                pass
+        task = asyncio.create_task(request())
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            for _ in range(2):
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done(), "cancellation detached the terminal write"
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert writes == ["facts", "finalize"]
+        finally:
+            release.set()
+            if not task.done():
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
