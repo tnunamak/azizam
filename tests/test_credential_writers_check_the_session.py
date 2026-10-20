@@ -399,6 +399,8 @@ NOT_CREDENTIAL_TABLES = {
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
     "audit_events", "media_hidden_assets", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
     "media_jobs_migrations", "media_jobs_schema_version", "media_volume_identity", "operator_settings_generations",
+    # Dated retention descriptions and their source links hold no credential or authority.
+    "retention_fact_destinations", "retention_fact_overrides", "retention_fact_references", "retention_fact_revisions",
     # Measurement job payloads contain experiment settings and reports, not credentials or authority.
     "measurements",
     "policy_active", "policy_audit", "policy_snapshots", "prompt_memory_erasure_cutoffs",
