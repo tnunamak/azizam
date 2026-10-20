@@ -193,7 +193,7 @@ def test_launcher_uses_yaml_admin_db_resolution(tmp_path, monkeypatch):
 def test_watcher_records_launched_hash_instead_of_prelaunch_hash(tmp_path):
     source = (ROOT / "start.sh").read_text()
     start = source.index("    watch_litellm_config() {")
-    end = source.index("\n    watch_litellm_config &", start)
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
     watcher = source[start:end]
     artifact = tmp_path / "selected.yaml"
     artifact.write_text("exists")
