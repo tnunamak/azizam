@@ -398,7 +398,7 @@ def test_maintenance_retries_kill_switch_cleanup_once_per_switch_on(hh, monkeypa
     spool = _spool(hh, "mj_old", turned_on - 10)
     with sqlite3.connect(hh.admin) as conn:
         conn.execute("INSERT OR REPLACE INTO operator_settings(key, value_json, updated_at, updated_by) "
-                     "VALUES ('prompt_memory', ?, ?, NULL)", (json.dumps({"never_keep": True}), turned_on))
+                     "VALUES ('retention', ?, ?, NULL)", (json.dumps({"never_keep": True}), turned_on))
     proxy._maintain_prompt_memory()
     assert prompt_memory.get("img_" + "a" * 64, person) is None
     assert not spool.exists()

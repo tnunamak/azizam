@@ -86,6 +86,7 @@ from gateway import (
     native_lane,
     prompt_memory,
     receipt_store,
+    retention,
     resource_admission_http,
     resource_decisions,
     route_registry,
@@ -12701,12 +12702,24 @@ def _migrate_host_command_permission() -> None:
     )
 
 
+async def _repair_prompt_deadlines_at_startup() -> None:
+    try:
+        await asyncio.to_thread(prompt_memory.tighten_contract_periods,
+                                admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
+    except Exception as exc:
+        print(f"[proxy] prompt deadline repair pending: {type(exc).__name__}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    # The retention defaults are data (registry/retention.yml); without a valid file the gateway has none.
+    await asyncio.to_thread(retention.require_bundled)
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    # Try deadline repair before serving; recurring maintenance retries failures.
+    await _repair_prompt_deadlines_at_startup()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver
@@ -20300,8 +20313,8 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        retention = policy["retention"]
-    prompt_memory.tighten_retention(retention, person_id=person_id)
+        period = retention.normalize_period(policy["retention"], kind=retention.LIBRARY_PROMPT, owner_cap=False)
+    prompt_memory.tighten_retention(period, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
@@ -25370,15 +25383,8 @@ class _PreviousResponseNotFound(Exception):
 
 
 def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
-    """Match the creator person and stable App (or legacy credential) scope."""
-    if not row:
-        return False
-    scope = _responses_scope(auth_context)
-    if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
-        return False
-    if scope["app_id"]:
-        return row.get("app_id") == scope["app_id"]
-    return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+    """Match the creator person and stable App (or legacy credential) scope (retention.conversation_row_visible)."""
+    return retention.conversation_row_visible(row, _responses_scope(auth_context))
 
 
 def _responses_scope(auth_context) -> dict[str, str | None] | None:
@@ -26807,6 +26813,7 @@ async def create_response(request: Request):
                 _auth_person_id(auth_context),
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
+                kind=retention.CONVERSATION,
             )
         except prompt_memory.PromptModeError as exc:
             return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")
@@ -26873,15 +26880,11 @@ async def create_response(request: Request):
         )
         created_at = int(time.time())
         stream = bool(req_body.get("stream"))
-        store = req_body.get("store")
-        if store is None:
-            store = prompt_decision.person_id is not None
         response_scope = _responses_scope(auth_context)
-        if response_scope is None:
-            store = False
-        if not prompt_decision.keep and prompt_decision.reason != "no_person":
-            store = False
-        req_body["store"] = bool(store)
+        store = retention.conversation_store(
+            prompt_decision, req_body.get("store"), has_scope=response_scope is not None,
+        )
+        req_body["store"] = store
         access = _access_for_auth_context(auth_context)
         outer_receipt = RouteReceipt(
             protocol="openai.responses",
@@ -26944,23 +26947,20 @@ async def create_response(request: Request):
                         final_obj = translator.build_final_response()
                         if store:
                             try:
-                                with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                                    if (not policy["never_keep"]
-                                        and created_at > int(policy.get("forgot_before") or 0)
-                                        and (prompt_decision.person_id is None or (
-                                        policy["remember"]
-                                        and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                                    ))):
-                                        responses_store.save(
-                                            response_id,
-                                            created_at=created_at,
-                                            model=final_obj.get("model"),
-                                            previous_response_id=req_body.get("previous_response_id"),
-                                            request_json=req_body,
-                                            response_json=final_obj,
-                                            api_key_name=_api_key_name(auth_context),
-                                            **response_scope,
-                                        )
+                                retention.write(
+                                    retention.CONVERSATION, admin_path=ADMIN_STORE.path,
+                                    person_id=prompt_decision.person_id, decision=prompt_decision, created_at=created_at,
+                                    commit=lambda _deadline: responses_store.save(
+                                        response_id,
+                                        created_at=created_at,
+                                        model=final_obj.get("model"),
+                                        previous_response_id=req_body.get("previous_response_id"),
+                                        request_json=req_body,
+                                        response_json=final_obj,
+                                        api_key_name=_api_key_name(auth_context),
+                                        **response_scope,
+                                    ),
+                                )
                             except Exception:  # noqa: BLE001
                                 for ev in translator.fail("Azizam could not persist the response."):
                                     yield ev
@@ -27029,23 +27029,20 @@ async def create_response(request: Request):
 
             if store:
                 try:
-                    with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                        if (not policy["never_keep"]
-                            and created_at > int(policy.get("forgot_before") or 0)
-                            and (prompt_decision.person_id is None or (
-                            policy["remember"]
-                            and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                        ))):
-                            responses_store.save(
-                                response_id,
-                                created_at=created_at,
-                                model=resp_json.get("model"),
-                                previous_response_id=req_body.get("previous_response_id"),
-                                request_json=req_body,
-                                response_json=resp_json,
-                                api_key_name=_api_key_name(auth_context),
-                                **response_scope,
-                            )
+                    retention.write(
+                        retention.CONVERSATION, admin_path=ADMIN_STORE.path,
+                        person_id=prompt_decision.person_id, decision=prompt_decision, created_at=created_at,
+                        commit=lambda _deadline: responses_store.save(
+                            response_id,
+                            created_at=created_at,
+                            model=resp_json.get("model"),
+                            previous_response_id=req_body.get("previous_response_id"),
+                            request_json=req_body,
+                            response_json=resp_json,
+                            api_key_name=_api_key_name(auth_context),
+                            **response_scope,
+                        ),
+                    )
                 except Exception:  # noqa: BLE001
                     owner.report(status="failed", reason="failed")
                     return _responses_error(

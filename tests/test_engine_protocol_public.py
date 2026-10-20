@@ -87,16 +87,19 @@ def test_public_models_invokes_the_description(engine):
 
 
 @pytest.mark.parametrize('sync', [False,True])
-def test_public_images_use_core_assets_and_jobs(engine, sync):
-    if sync:
-        doc = description.parse_description_text((FIXTURE/'prism.yml').read_text(), source='prism.yml')
-        from dataclasses import replace
-        doc = replace(doc, operations={**doc.operations,'images':doc.operations['images_sync']})
-        from unittest.mock import patch
-        with patch.object(description, 'load_registry', return_value={'prism':doc}):
+def test_public_images_use_core_assets_and_jobs(engine, sync, monkeypatch):
+    # The response and job store read the clock independently. Keep both in one second.
+    with monkeypatch.context() as clock:
+        clock.setattr(proxy.time, 'time', lambda: 1700000000)
+        if sync:
+            doc = description.parse_description_text((FIXTURE/'prism.yml').read_text(), source='prism.yml')
+            from dataclasses import replace
+            doc = replace(doc, operations={**doc.operations,'images':doc.operations['images_sync']})
+            from unittest.mock import patch
+            with patch.object(description, 'load_registry', return_value={'prism':doc}):
+                response = engine.client.post('/v1/images/generations', json={'model':'prism-image','prompt':'blue','response_format':'b64_json'})
+        else:
             response = engine.client.post('/v1/images/generations', json={'model':'prism-image','prompt':'blue','response_format':'b64_json'})
-    else:
-        response = engine.client.post('/v1/images/generations', json={'model':'prism-image','prompt':'blue','response_format':'b64_json'})
     assert response.status_code == 200, response.text
     item = response.json()['data'][0]
     assert base64.b64decode(item['b64_json']) == engine.fake.image

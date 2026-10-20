@@ -10,18 +10,14 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, prompt_memory, receipt_store, session_policy
+from gateway import admin_store, prompt_memory, receipt_store, retention, session_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 from gateway import egress
 from gateway.projection import public_json
 
 INSTANCE_SETTING_KEY = "instance_presentation"
-PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
-PROMPT_MEMORY_DEFAULT = {
-    "default_remember": True,
-    "never_keep": False,
-    "retention_cap": "never",
-}
+# The prompts group's view of the household policy (gateway/retention.py): the resource the owner's screen edits.
+PROMPT_MEMORY_SETTING_KEY = retention.PROMPTS_VIEW_KEY
 
 
 def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -33,26 +29,8 @@ def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> 
 
 
 def prompt_memory_settings(path: Path) -> dict[str, Any]:
-    stored = admin_store.get_operator_setting(PROMPT_MEMORY_SETTING_KEY, path=path)
-    value = dict(PROMPT_MEMORY_DEFAULT)
-    if stored:
-        value.update(_validate_prompt_memory(stored["value"]))
-    return value
-
-
-def _validate_prompt_memory(value: Mapping[str, Any]) -> dict[str, Any]:
-    default_remember = value.get("default_remember", PROMPT_MEMORY_DEFAULT["default_remember"])
-    never_keep = value.get("never_keep", PROMPT_MEMORY_DEFAULT["never_keep"])
-    retention_cap = value.get("retention_cap", PROMPT_MEMORY_DEFAULT["retention_cap"])
-    if not isinstance(default_remember, bool) or not isinstance(never_keep, bool):
-        raise ValueError("prompt memory switches must be booleans")
-    if retention_cap not in {"never", "3_months", "1_year"}:
-        raise ValueError("retention_cap must be never, 3_months, or 1_year")
-    return {
-        "default_remember": default_remember,
-        "never_keep": never_keep,
-        "retention_cap": retention_cap,
-    }
+    stored = admin_store.get_operator_setting(retention.SETTING_KEY, path=path)
+    return retention.household(stored["value"] if stored else None)
 
 
 def _has_pending_purge(value: Any) -> bool:
@@ -97,10 +75,10 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
 
     def prompt_memory_response(*, extra: Mapping[str, Any] | None = None,
                                status_code: int = 200) -> JSONResponse:
-        record = admin_store.get_operator_setting(PROMPT_MEMORY_SETTING_KEY, path=admin_path)
-        value = dict(PROMPT_MEMORY_DEFAULT)
-        if record:
-            value.update(_validate_prompt_memory(record["value"]))
+        record = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path)
+        document = record["value"] if record else None
+        value = retention.household(document)
+        unoffered_cap = retention.unoffered_household_cap(document)
         purge = dict(purge_status_provider() if purge_status_provider else {})
         if prompt_memory.erasure_pending("*", admin_path=admin_path):
             purge.update(pending=True, database_pending=True, retry_scheduled=True)
@@ -109,7 +87,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             extra["prompt_purge"] = {**extra.get("prompt_purge", {}), **purge}
         return JSONResponse(
             {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record),
-             "source": "admin.db", "apply_mode": "live",
+             "source": "admin.db", "apply_mode": "live", "contract": retention.public_contract(),
+             **({"unoffered": {"retention_cap": unoffered_cap}} if unoffered_cap else {}),
              **({"prompt_purge": purge} if purge.get("pending") else {}), **(extra or {})},
             status_code=status_code,
             headers={"Cache-Control": "no-store"},
@@ -244,9 +223,15 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             return ctx
         try:
             body = await request.json()
-            if not isinstance(body, Mapping) or set(body) != {"default_remember", "never_keep", "retention_cap"}:
+            if not isinstance(body, Mapping) or set(body) != retention.PROMPTS_VIEW_FIELDS:
                 raise ValueError
-            body = _validate_prompt_memory(body)
+            stored = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path)
+            existing_cap = None
+            if stored:
+                groups = stored["value"].get("groups")
+                group = groups.get(retention.GROUP_PROMPTS) if isinstance(groups, Mapping) else None
+                existing_cap = group.get("retention_cap") if isinstance(group, Mapping) else None
+            body = retention.validate_prompts_view(body, existing_cap=existing_cap)
         except (ValueError, TypeError):
             return JSONResponse(
                 {"error": {"code": "invalid_prompt_memory", "message": "Supply default_remember, never_keep and retention_cap."}},
@@ -273,7 +258,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         purge_failed = False
         if not body["never_keep"]:
             try:
-                await asyncio.to_thread(prompt_memory.tighten_retention, body["retention_cap"], path=prompt_memory_path)
+                cap = retention.normalize_period(body["retention_cap"], kind=retention.LIBRARY_PROMPT, owner_cap=True)
+                await asyncio.to_thread(prompt_memory.tighten_retention, cap, path=prompt_memory_path)
             except Exception:
                 return JSONResponse({"error": {"code": "prompt_retention_pending",
                     "message": "The setting was saved. Older prompt cleanup is pending and will be retried."}},
