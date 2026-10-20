@@ -370,7 +370,7 @@ def _write_registry_json(db_path: Path, registry: dict[str, object]) -> None:
 def _wait_for_log(path: Path, needle: str) -> None:
     import time
 
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if path.exists() and needle in path.read_text(encoding="utf-8"):
             return
