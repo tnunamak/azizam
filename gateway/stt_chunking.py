@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import time
+import wave
 from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from itertools import accumulate
@@ -1042,16 +1043,18 @@ async def decode_planning_pcm(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    sample_rate: int = _PLANNING_SAMPLE_RATE,
+    channels: int = 1,
 ) -> None:
-    """Decode once within the upload's disk, duration, deadline and cancellation budgets."""
-    bytes_per_second = _PLANNING_SAMPLE_RATE * 2
+    """Decode bounded PCM; planning defaults to mono 16 kHz, strict duration checks retain the source format."""
+    bytes_per_second = sample_rate * channels * 2
     max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * bytes_per_second))
     # Ask for one extra sample to detect an over-limit stream without decoding an unbounded input.
     await run_media_command(
         [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-i", os.fspath(source_path),
-            "-vn", "-ac", "1", "-ar", str(_PLANNING_SAMPLE_RATE), "-f", "s16le",
+            "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
             "-t", str((max_pcm_bytes + 2) / bytes_per_second), "-fs", str(max_pcm_bytes + 2),
             os.fspath(destination_path),
         ],
@@ -1206,9 +1209,21 @@ async def extract_segment(
         raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured limit")
     pcm_path = destination_path.with_suffix(".verify.pcm")
     try:
+        # The extractor promises PCM16 WAV. Retain its sample rate/channels:
+        # resampling can round a one-source-sample overrun down to the maximum.
+        try:
+            with wave.open(os.fspath(destination_path)) as audio:
+                rate, channels = audio.getframerate(), audio.getnchannels()
+                if audio.getsampwidth() != 2:
+                    raise SttSetupFailure("STT segment extraction did not create PCM16 audio")
+        except (wave.Error, EOFError) as error:
+            raise SttSetupFailure("STT segment extraction did not create PCM16 audio") from error
+        if rate > config.max_sample_rate or channels > config.max_channels:
+            raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured audio format")
         await decode_planning_pcm(destination_path, pcm_path, config=config,
-            cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel)
-        actual_duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+            cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
+            sample_rate=rate, channels=channels)
+        actual_duration = pcm_path.stat().st_size / (rate * channels * 2)
         if actual_duration > config.max_segment_seconds:
             raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
         if abs(actual_duration - expected) > 0.1:
@@ -1253,11 +1268,12 @@ async def guard_uncut_uploads(
     for index, path in enumerate(paths):
         pcm_path = path.parent / f"uncut-{index}-16k.pcm"
         try:
-            await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
-                              deadline_at=deadline_at, on_cancel=on_cancel)
+            probed = await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
+                                       deadline_at=deadline_at, on_cancel=on_cancel)
             await decode_planning_pcm(path, pcm_path, config=config, cancellation_waiters=cancellation_waiters,
-                                      deadline_at=deadline_at, on_cancel=on_cancel)
-            duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+                                      deadline_at=deadline_at, on_cancel=on_cancel,
+                                      sample_rate=probed.sample_rate, channels=probed.channels)
+            duration = pcm_path.stat().st_size / (probed.sample_rate * probed.channels * 2)
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
         finally:

@@ -164,11 +164,12 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
     assert list((tmp_path / "spool").iterdir()) == []
 
 
-@pytest.mark.parametrize("envelope", ["disabled", "timestamps", "streaming", "multiple_files", "setup_failure"])
+@pytest.mark.parametrize("envelope", ["disabled", "timestamps", "streaming", "multiple_files", "setup_failure", "sample_boundary"])
 @pytest.mark.parametrize("policy", ["known", "unknown", "native_offline", "native_streaming"])
 def test_final_whole_file_guard_covers_every_run_path(tmp_path, fake_upstreams, envelope, policy):
     async def run():
-        paths = [wav(tmp_path / "request.wav", 0.6)]
+        paths = [wav(tmp_path / "request.wav", 0.3 + 1 / 48000, 48000) if envelope == "sample_boundary"
+                 else wav(tmp_path / "request.wav", 0.6)]
         if envelope == "multiple_files":
             paths.append(wav(tmp_path / "request-2.wav", 0.7))
         contacted = []
@@ -178,7 +179,7 @@ def test_final_whole_file_guard_covers_every_run_path(tmp_path, fake_upstreams, 
             return httpx.Response(200, json={"text": "whole"})
 
         fake_upstreams.router.add_transport("guard.fk.test:9876", HandlerTransport(handle))
-        execution = config(tmp_path, enabled=envelope != "disabled", target_seconds=0.25,
+        execution = config(tmp_path, enabled=envelope not in {"disabled", "sample_boundary"}, target_seconds=0.25,
             threshold_seconds=0.3, search_seconds=0.05,
             max_segment_seconds=None if policy == "unknown" else 0.3,
             native_long_audio_offline=policy == "native_offline",
