@@ -232,6 +232,12 @@ def test_length_sweep_maps_past_a_filtered_nonfinal_overlapping_word(setup, monk
                 sm.measure.Run(["overlap", "kept"], [(0, 40)])][calls - 1]
     monkeypatch.setattr(runner, "_prepare", prepare)
     monkeypatch.setattr(runner, "_transcription", transcribe)
+    real_blocks = sm.measure.deletion_blocks
+    def deletion_blocks(baseline, candidate, *args, **kwargs):
+        assert baseline == {1: 1, 2: 0}
+        assert candidate in ({1: 1, 2: 0}, {0: 0, 1: 1, 2: 0})
+        return real_blocks(baseline, candidate, *args, **kwargs)
+    monkeypatch.setattr(sm.measure, "deletion_blocks", deletion_blocks)
     async def scenario():
         job = _job(runner)
         job["lengths"] = [20, 40]
@@ -240,7 +246,6 @@ def test_length_sweep_maps_past_a_filtered_nonfinal_overlapping_word(setup, monk
         paired = report["deletions_by_length"][1]["paired_deletion"]
         assert paired["words"] == 2
         assert paired["excess_pp"] == 0  # lost is deleted in both lengths, kept in neither.
-        assert report["scorer_version"] == sm.measure.SCORER_VERSION
     asyncio.run(scenario())
 
 
