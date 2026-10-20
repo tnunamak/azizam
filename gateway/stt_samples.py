@@ -6,9 +6,9 @@ downloads the sources into a cache (one file per sha256, so an archive that seve
 converts the audio to a 16 kHz mono PCM16 WAV with ffmpeg and builds the word list ``[(word, t0, t1), ...]`` sorted by
 time.
 
-The three recipes port ``build.py`` of the private evaluation set (~/Documents/azizam/stt-eval-data/scripts): the same
-normalisation, the same gap filling for ICSI and the same interpolation for Earnings-21, so the output equals its
-``ref.json``. Every function here blocks; a caller on an event loop runs them in a thread. The network is used only
+The three recipes port the gap filling and interpolation of ``build.py`` of the private evaluation set
+(~/Documents/azizam/stt-eval-data/scripts), and use the scorer's canonical word normalization.
+Every function here blocks; a caller on an event loop runs them in a thread. The network is used only
 inside ``fetch_sample``, through ``client_factory``.
 """
 
@@ -30,6 +30,8 @@ from urllib.parse import urlsplit
 
 import httpx
 import yaml
+
+from gateway.stt_measure import normalize as norm_token
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "registry" / "stt_samples.yml"
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024
@@ -99,15 +101,6 @@ class PreparedSample:
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Reference words: the three recipes
-
-
-def norm_token(tok: str) -> list[str]:
-    """Lowercase; drop punctuation (hyphens split words); keep internal apostrophes; drop tags like <inaudible>."""
-    t = tok.lower().replace("’", "'")
-    if re.search(r"[<\[{].*[>\]}]", t):
-        return []
-    t = re.sub(r"[^\w']", " ", t)
-    return [p for p in (x.strip("'") for x in t.split()) if p and p != "_"]
 
 
 def _xml_members(archive: Path, members: list[str]) -> list[ET.Element]:

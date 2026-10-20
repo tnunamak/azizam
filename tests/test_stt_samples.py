@@ -332,7 +332,7 @@ def _recipe_case(kind: str) -> tuple[dict[str, bytes], dict, list[tuple[str, flo
                                                                       "words/Other.A.words.xml": AMI_B})}
         params = {"audio": "audio", "annotations": "annotations",
                   "word_members": ["words/M.B.words.xml", "words/M.A.words.xml"]}
-        words = [("hello", 0.1, 0.4), ("don't", 0.2, 0.3), ("well", 0.8, 1.0), ("known", 0.8, 1.0)]
+        words = [("hello", 0.1, 0.4), ("dont", 0.2, 0.3), ("well", 0.8, 1.0), ("known", 0.8, 1.0)]
     elif kind == "icsi-words":
         bodies = {"audio": _wav_bytes(), "annotations": _zip_bytes({"ICSI/Words/M.A.words.xml": ICSI_A})}
         params = {"audio": "audio", "annotations": "annotations", "word_members": ["ICSI/Words/M.A.words.xml"]}
