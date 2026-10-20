@@ -1577,7 +1577,7 @@ def release_fact_reference_batch(source_kind: str, source_ids: list[str], *, pat
     if not source_ids:
         return 0
     placeholders = ",".join("?" for _ in source_ids)
-    with _conn(path) as conn:
+    with _conn(path) as conn, conn:
         conn.execute("BEGIN IMMEDIATE")
         for table in ("retention_fact_references", "retention_fact_destinations"):
             conn.execute(f"DELETE FROM {table} WHERE source_kind=? AND source_id IN ({placeholders})",
@@ -1586,7 +1586,6 @@ def release_fact_reference_batch(source_kind: str, source_ids: list[str], *, pat
             "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
             "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
         ).rowcount
-        conn.commit()
     return removed
 
 
