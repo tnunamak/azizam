@@ -737,13 +737,20 @@ def _expired_ids(conn: sqlite3.Connection, cutoff: int | None) -> list[str]:
 
 def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> bool:
     """Release metadata after receipt expiry commits; failure never restores history."""
-    if not ids or fact_store_path is None or not Path(fact_store_path).exists():
+    if not ids:
         return True
+    if fact_store_path is None or not Path(fact_store_path).exists():
+        logging.getLogger(__name__).warning("Receipt fact cleanup pending: fact store path is missing")
+        return False
     from gateway import media_jobs
 
     try:
-        for offset in range(0, len(ids), 500):
-            media_jobs.release_fact_reference_batch("receipt", ids[offset:offset + 500], path=fact_store_path)
+        for offset in range(0, len(ids), 100):
+            if offset:
+                # Maintenance runs in a worker. Release the write lock long
+                # enough for waiting request writers before the next batch.
+                time.sleep(0.01)
+            media_jobs.release_fact_reference_batch("receipt", ids[offset:offset + 100], path=fact_store_path)
     except Exception as error:
         logging.getLogger(__name__).warning("Receipt fact cleanup pending: %s", type(error).__name__)
         return False
@@ -752,6 +759,7 @@ def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> 
 
 def _sweep_orphan_fact_refs(path: Path, fact_store_path: Path | None) -> None:
     if fact_store_path is None or not Path(fact_store_path).exists():
+        logging.getLogger(__name__).warning("Receipt fact orphan sweep pending: fact store path is missing")
         return
     from gateway import media_jobs
 

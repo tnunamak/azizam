@@ -599,7 +599,7 @@ class RouteReceipt:
 
         self.retention_facts = media_jobs.save_fact_snapshot(
             captured[2], source_kind="receipt", source_id=self.request_id,
-            path=media_jobs.DB_PATH, timeout=0.0,
+            path=media_jobs.DB_PATH, timeout=0.2,
         )
         self._retention_facts_persisted = True
 
