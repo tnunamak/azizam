@@ -176,7 +176,8 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertAlmostEqual(quietest(20, 25, 20.0), 20.0, delta=0.006)
         # The result always lies inside the window, also past the end of the data.
         self.assertTrue(55 <= quietest(55, 70, 69.0) <= 70)
-        self.assertEqual(quietest(100, 110, 105.0), 105.0)
+            with self.assertRaises(stt_chunking.SttSetupFailure):
+                quietest(100, 110, 105.0)
 
     def test_the_quietest_frame_of_a_lower_floor_beats_a_nearer_quiet_one(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -1049,7 +1050,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 "format": {},
                 "streams": [{
                     "codec_type": "audio",
-                    "sample_rate": "48000",
+                    "sample_rate": "16000",
                     "channels": 1,
                 }],
             }).encode()
