@@ -705,10 +705,15 @@ def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
         return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
-        _release_expired_fact_refs(expired_ids, fact_store_path)
-        conn.commit()
+        try:
+            _release_expired_fact_refs(expired_ids, fact_store_path)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
     return deleted
 
 
@@ -789,8 +794,12 @@ def save_retention(
         deleted = _delete_before(conn, cutoff)
         # If fact cleanup is busy, roll back receipt deletion so maintenance
         # can rediscover these IDs and retry. The stores commit separately.
-        _release_expired_fact_refs(expired_ids, fact_store_path)
-        conn.commit()
+        try:
+            _release_expired_fact_refs(expired_ids, fact_store_path)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
     return deleted
 
 
@@ -803,8 +812,12 @@ def maintain(admin_path: Path, *, path: Path = DB_PATH,
         cutoff = int(time.time()) - days * 86400 if days is not None else None
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
-        _release_expired_fact_refs(expired_ids, fact_store_path)
-        conn.commit()
+        try:
+            _release_expired_fact_refs(expired_ids, fact_store_path)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
     return deleted
 

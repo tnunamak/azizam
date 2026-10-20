@@ -543,7 +543,7 @@ class RouteReceipt:
     def persist_retention_facts(self) -> None:
         """Persist the evidence captured before dispatch, once per receipt."""
         captured = getattr(self, "_retention_fact_snapshot", None)
-        if self.retention_facts or captured is None or captured[0] != self.backend:
+        if self.retention_facts or getattr(self, "_retention_facts_persisted", False) or captured is None or captured[0] != self.backend:
             return
         from gateway import media_jobs
 
@@ -551,6 +551,7 @@ class RouteReceipt:
             captured[1]["destinations"], source_kind="receipt", source_id=self.request_id,
             path=media_jobs.DB_PATH,
         )
+        self._retention_facts_persisted = True
 
     def attach_manifest(
         self,

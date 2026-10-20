@@ -240,9 +240,24 @@ def test_busy_fact_cleanup_preserves_receipts_for_retry(stores, monkeypatch, ope
         return receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0])
     real_release = media_jobs.release_fact_references
     monkeypatch.setattr(media_jobs, "release_fact_references", lambda *_a, **_kw: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
-    with pytest.raises(sqlite3.OperationalError):
-        run()
-    assert receipt_store.get(row.request_id) is not None
+    from gateway import request_connections
+    with request_connections.request_scope():
+        with pytest.raises(sqlite3.OperationalError):
+            run()
+        assert receipt_store.get(row.request_id) is not None
     monkeypatch.setattr(media_jobs, "release_fact_references", real_release)
     assert run() == 1
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1]) == {}
+
+
+def test_empty_snapshot_stays_empty_after_all_facts_are_removed(stores):
+    for system in ("gateway", "litellm"):
+        admin_store.put_retention_fact_override("system", system, [], updated_by="owner", path=proxy.ADMIN_STORE.path)
+    stores[2]["services"]["destination"]["config"]["retention_facts"] = []
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    proxy._capture_retention_facts(row)
+    proxy._record_retention_receipt(row, path=stores[0])
+    stores[2]["services"] = {}
+    view = proxy._gateway_retention_ledger(request()[0], row.request_id)
+    assert view["fact_basis"] == "Facts saved for this request."
+    assert next(d for d in view["destinations"] if d["id"] == "destination")["facts"] == []

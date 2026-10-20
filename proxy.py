@@ -13964,8 +13964,6 @@ def _snapshot_retention_facts(receipt: Any) -> None:
     if not isinstance(receipt, RouteReceipt) or not receipt.backend or receipt.retention_facts:
         return
     try:
-        if getattr(receipt, "_retention_fact_snapshot", None) is None:
-            _capture_retention_facts(receipt)
         receipt.persist_retention_facts()
     except Exception as error:
         print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
@@ -14032,20 +14030,22 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
             if kind["id"] in by_kind:
                 kind.update({key: by_kind[kind["id"]][key] for key in ("decision", "reason", "kept_until_ms") if key in by_kind[kind["id"]]})
         hashes = receipt.get("retention_facts") or []
-        if hashes:
-            try:
-                grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
-                saved_destinations = media_jobs.fact_destinations_for_source("receipt", request_id, path=media_jobs.DB_PATH)
-            except Exception as error:
-                print(f"[proxy] saved retention facts unavailable: {type(error).__name__}", flush=True)
-                view["fact_basis"] = "Today's facts. Saved fact revisions are temporarily unavailable."
-                return view
+        try:
+            grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+            saved_destinations = media_jobs.fact_destinations_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+        except Exception as error:
+            print(f"[proxy] saved retention facts unavailable: {type(error).__name__}", flush=True)
+            view["fact_basis"] = "Today's facts. Saved fact revisions are temporarily unavailable."
+            return view
+        if hashes or saved_destinations:
             if set(hashes) != {fact["revision"] for facts in grouped.values() for fact in facts}:
                 for destination in view["destinations"]:
                     destination["facts"] = []
                 view["fact_basis"] = "The facts saved for this request are no longer kept."
                 view["never_save_text"] = retention_facts.assemble_never_save(view)
                 return view
+            view["destinations"] = [destination for destination in view["destinations"]
+                                    if destination["id"] in grouped or destination["id"] in saved_destinations]
             for destination in view["destinations"]:
                 destination["facts"] = grouped.pop(destination["id"], [])
                 saved = saved_destinations.pop(destination["id"], None)
@@ -14055,7 +14055,7 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
                     destination.update(saved)
                 else:
                     destination.update(name=destination["id"], kind="former_destination")
-            for destination_id in grouped.keys() | saved_destinations.keys():
+            for destination_id in sorted(grouped.keys() | saved_destinations.keys()):
                 facts = grouped.get(destination_id, [])
                 view["destinations"].append({"id": destination_id, "name": destination_id,
                                              "kind": "former_destination", "facts": facts,
