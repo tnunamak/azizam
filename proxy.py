@@ -21543,7 +21543,7 @@ async def _run_image_media_job(job_id: str) -> None:
                 await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
                 raise
             except Exception as exc:  # noqa: BLE001
-                await run_receipt_write(finish_image_route_receipt, 
+                await run_receipt_write(finish_image_route_receipt,
                     receipt,
                     Response(
                         content=json.dumps({
@@ -30705,7 +30705,7 @@ async def _forward_provider_native(
     entry: native_lane.AllowEntry | None = None
     if native_policy is not None:
         receipt.metadata["native_operation"] = native_operation
-        entry, refusal = classify()
+        entry, refusal = await run_receipt_write(classify)
         if refusal is not None:
             return refusal
     decision = evaluate_and_apply(
@@ -30726,7 +30726,7 @@ async def _forward_provider_native(
         return _policy_denied_response(decision)
     if native_policy is None:
         # The access plan answers first on this route, so its refusals keep the plan's codes.
-        entry, refusal = classify()
+        entry, refusal = await run_receipt_write(classify)
         if refusal is not None:
             return refusal
 
@@ -30745,10 +30745,10 @@ async def _forward_provider_native(
 
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > policy.max_request_bytes:
-        return too_large()
+        return await run_receipt_write(too_large)
     capped = await _read_capped_body(request, policy.max_request_bytes)
     if capped is None:
-        return too_large()
+        return await run_receipt_write(too_large)
     body = capped
     receipt.stream = False
     receipt.effective_output_limit = None

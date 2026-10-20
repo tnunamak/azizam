@@ -740,8 +740,8 @@ def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> 
     if not ids:
         return True
     if fact_store_path is None or not Path(fact_store_path).exists():
-        logging.getLogger(__name__).warning("Receipt fact cleanup pending: fact store path is missing")
-        return False
+        logging.getLogger(__name__).warning("Receipt fact cleanup skipped: fact store path is missing")
+        return True
     from gateway import media_jobs
 
     try:

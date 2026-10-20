@@ -144,7 +144,7 @@ def test_media_fact_failure_logs_request_and_counter(monkeypatch, caplog):
 
 def test_cleanup_missing_fact_path_is_observable(caplog):
     with caplog.at_level(logging.WARNING):
-        assert receipt_store._release_expired_fact_refs(["expired"], None) is False
+        assert receipt_store._release_expired_fact_refs(["expired"], None) is True
     assert "fact" in caplog.text.lower() and "path" in caplog.text.lower()
 
 
