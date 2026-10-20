@@ -66,14 +66,14 @@ it("loads only when opened and shows dated destination facts and server disclosu
     >
       <RetentionLedgerPanel
         id="ledger"
-        endpoint="/admin/api/settings/retention/ledger"
+        endpoint="/admin/api/me/retention/ledger"
       />
     </QueryClientProvider>,
   );
   expect(fetchLedger).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "View ledger" }));
   expect(fetchLedger).toHaveBeenCalledExactlyOnceWith(
-    "/admin/api/settings/retention/ledger",
+    "/admin/api/me/retention/ledger",
   );
   const destination = await screen.findByRole("region", {
     name: "Local server",

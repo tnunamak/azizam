@@ -287,9 +287,6 @@ def _member_model_path(path, route):
 
 def _model_path(path, route):
     parts = [part for part in path.split("/") if part]
-    # Retention ledgers are offline system metadata with an owner/admin gate.
-    if path in {"/gateway/v1/me/retention/ledger"}:
-        return False
     if not parts or parts[0] in {
         "health", "healthz", "admin", "account", "accounts", "auth", "ui", "static",
     }:

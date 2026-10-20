@@ -550,5 +550,9 @@
   "GET /admin/api/requests/{request_id}/retention/ledger": {
     "tag": "retention facts",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/me/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
 }

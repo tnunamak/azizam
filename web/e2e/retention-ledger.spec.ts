@@ -14,6 +14,9 @@ for (const width of [1280, 390]) {
       if (response.url().includes("/retention/ledger")) ledgerStatuses.push(response.status());
     });
     await page.goto("/settings/");
+    const currentLedger = await page.request.get("/admin/api/me/retention/ledger");
+    expect(currentLedger.status()).toBe(200);
+    expect(currentLedger.headers()["cache-control"]).toBe("no-store");
     const settingsLedger = page.getByRole("region", {
       name: "Who could see a request",
     });

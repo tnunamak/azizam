@@ -337,7 +337,6 @@ def create_gateway_router(
     media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
     record_authorizer: RecordAuthorizer | None = None,
-    ledger_provider: LedgerProvider | None = None,
     record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
@@ -613,18 +612,6 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
-
-    @router.get("/me/retention/ledger")
-    def current_retention_ledger(request: Request) -> JSONResponse:
-        if ledger_provider is None:
-            return JSONResponse(status_code=404, content=_error_payload("ledger_unavailable", "Ledger unavailable"))
-        try:
-            view = ledger_provider(request, None)
-        except PermissionError:
-            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
-        if view is None:
-            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
-        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
 
     @router.get("/resources")
     async def list_resources(request: Request) -> JSONResponse:
@@ -963,6 +950,17 @@ def create_request_retention_router(*, ledger_provider: LedgerProvider) -> APIRo
     and masks receipt retention fields for the authenticated viewer.
     """
     router = APIRouter(prefix="/admin/api", route_class=egress.ManagementRoute)
+
+    @router.get("/me/retention/ledger")
+    def current_retention_ledger(request: Request) -> JSONResponse:
+        try:
+            view = ledger_provider(request, None)
+        except PermissionError:
+            return egress.safe_error_response(403, "admin_forbidden", "An owner or administrator is required")
+        if view is None:
+            return egress.safe_error_response(404, "ledger_not_found", "Ledger not found")
+        return egress.plain_json_response({"ledger": view}, response_class="retention_ledger",
+                                          headers={"Cache-Control": "no-store"})
 
     @router.get("/requests/{request_id}/retention/ledger")
     def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:

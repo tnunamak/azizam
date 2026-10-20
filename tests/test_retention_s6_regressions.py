@@ -45,7 +45,7 @@ def stores(tmp_path, monkeypatch):
 def request(person="owner", *, connection=None):
     auth = proxy.AuthContext(identity=RuntimeIdentity(
         name="test", key_hash="fixture-hash", person_id=person, connection_id=connection))
-    return Request({"type": "http", "method": "GET", "path": "/gateway/v1/me/retention/ledger",
+    return Request({"type": "http", "method": "GET", "path": "/admin/api/me/retention/ledger",
                     "headers": [], "auth_context": auth}), auth
 
 
@@ -77,10 +77,10 @@ def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch, 
         async def identity(request, call_next):
             request.scope["auth_context"] = auth
             return await call_next(request)
-        app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=proxy._gateway_retention_ledger))
+        app.include_router(create_gateway_router(WorkflowRegistry()))
         app.include_router(create_request_retention_router(ledger_provider=proxy._gateway_retention_ledger))
         client = TestClient(app)
-        assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
+        assert client.get("/admin/api/me/retention/ledger").status_code == 403
         assert client.get("/admin/api/requests/anything/retention/ledger").status_code == 403
     else:
         from gateway import mcp_server

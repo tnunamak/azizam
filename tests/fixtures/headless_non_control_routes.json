@@ -41,7 +41,6 @@
   ["GET", "/gateway/v1/assets/{asset_id}/content", "proxy.gateway_asset_content"],
   ["GET", "/gateway/v1/capabilities", "gateway.api.list_capabilities"],
   ["GET", "/gateway/v1/extensions", "gateway.api.list_extensions"],
-  ["GET", "/gateway/v1/me/retention/ledger", "gateway.api.current_retention_ledger"],
   ["GET", "/gateway/v1/media/jobs", "gateway.api.list_media_jobs"],
   ["GET", "/gateway/v1/media/jobs/{job_id}", "gateway.api.get_media_job"],
   ["GET", "/gateway/v1/media/jobs/{job_id}/content", "proxy.gateway_media_job_content"],

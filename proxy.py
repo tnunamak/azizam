@@ -14264,7 +14264,6 @@ app.include_router(
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
         record_authorizer=_gateway_record_authorizer,
-        ledger_provider=_gateway_retention_ledger,
         record_scope_provider=_gateway_record_scope,
     )
 )

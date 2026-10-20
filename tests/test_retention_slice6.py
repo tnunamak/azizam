@@ -153,9 +153,9 @@ def test_gateway_ledger_rest_requires_admin_and_returns_saved_request_view():
             raise PermissionError("admin required")
         return {"request_id": request_id, "destinations": []} if request_id != "missing" else None
 
-    app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=provider))
+    app.include_router(create_gateway_router(WorkflowRegistry()))
     app.include_router(create_request_retention_router(ledger_provider=provider))
     client = TestClient(app)
-    assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
+    assert client.get("/admin/api/me/retention/ledger").status_code == 403
     assert client.get("/admin/api/requests/r1/retention/ledger", headers={"x-test-role": "admin"}).json()["ledger"]["request_id"] == "r1"
     assert client.get("/admin/api/requests/missing/retention/ledger", headers={"x-test-role": "owner"}).status_code == 404

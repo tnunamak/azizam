@@ -1116,7 +1116,7 @@ ritual"; Identity item 6).
 | My choices | `GET/PUT /me/api/retention` (session); `GET/PUT /gateway/v1/me/retention` (delegated credential with the privacy permission) | `retention` `mine_get` / `mine_set` | `restish azizam-app get-my-retention` / `put-my-retention` |
 | My kept requests: list, read, delete, delete all | `GET /gateway/v1/requests`, `GET /gateway/v1/requests/{id}`, `DELETE ...{id}`, `DELETE /gateway/v1/requests` | tool `requests`, actions `list` / `get` / `delete` / `delete_all` | `restish azizam-app list-requests` etc. |
 | Library prompt delete (existing) | `DELETE /me/api/prompt-memory/prompts` becomes `DELETE /gateway/v1/requests?kind=library_prompt` | `requests` `delete_all` with `kind` | same |
-| Ledger | `GET /admin/api/requests/{request_id}/retention/ledger`; `GET /admin/api/settings/retention/ledger` | `requests` `ledger` | owner OpenAPI operation `owner_get_admin_api_requests_request_id_retention_ledger`; admin bearer key |
+| Ledger | `GET /admin/api/me/retention/ledger`; `GET /admin/api/requests/{request_id}/retention/ledger`; `GET /admin/api/settings/retention/ledger` | `requests` `ledger` | owner OpenAPI operation `owner_get_admin_api_requests_request_id_retention_ledger`; admin bearer key |
 | Debug window: open, close, list, read | `POST /gateway/v1/debug-windows`, `DELETE .../{id}`, `GET ...`, `GET .../{id}/requests` | tool `debug_window` | `restish azizam-app open-debug-window --engine <name> --minutes 15` |
 | Run again | `POST /gateway/v1/requests/{id}/run-again` (with `dry_run`) | `requests` `run_again` | `restish azizam-app run-again <id> [--dry-run]` |
 | Forget one request | `extensions["com.azizam.prompts"]`, `X-Azizam-Prompts` | the `run` tool accepts `forget: true` | any HTTP client |

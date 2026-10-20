@@ -490,6 +490,14 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.api.current_retention_ledger",
+    "method": "GET",
+    "path": "/admin/api/me/retention/ledger",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.get_host_commands",
     "method": "GET",
     "path": "/admin/api/operator/host-commands",
