@@ -32,7 +32,7 @@ async def read_form(request: Any, **limits: Any) -> FormData:
             for handle in parser._files_to_close_on_error:
                 handle.close()  # synchronous: cleanup must also finish under cancellation
             if isinstance(error, MultiPartException) and "app" in request.scope:
-                raise HTTPException(status_code=400, detail=error.message) from error
+                raise HTTPException(status_code=400, detail="The multipart form is malformed or exceeds a form limit.") from error
             raise
         form = request._form
     else:

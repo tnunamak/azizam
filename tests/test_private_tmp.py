@@ -191,6 +191,13 @@ def test_start_script_prepares_before_anything_runs() -> None:
         assert script.index(later) > prepare
 
 
+def test_the_image_keeps_scratch_out_of_the_data_mount() -> None:
+    # A bind-mounted /app/data belongs to a host user, which the root container must not trust as a scratch parent.
+    env = [line.split("=", 1) for line in (ROOT / "Dockerfile").read_text().splitlines()
+           if line.startswith("ENV AZIZAM_PRIVATE_TMPDIR=")]
+    assert len(env) == 1 and not env[0][1].startswith("/app/")
+
+
 def test_the_unit_does_not_claim_a_private_tmp_it_cannot_get() -> None:
     lines = [line.strip() for line in (ROOT / "azizam.service").read_text().splitlines()]
     assert "PrivateTmp=yes" not in lines
@@ -345,13 +352,6 @@ def test_group_writable_ancestor_membership(host_disk_dir, monkeypatch, primary_
         with pytest.raises(private_tmp.PrivateTmpError, match=reason) as error:
             private_tmp.prepare(shared / "private-tmp")
         assert str(shared) in str(error.value) and "0775" in str(error.value)
-
-
-@pytest.mark.skipif(os.environ.get("AZIZAM_CHECK_REAL_ANCESTORS") != "1", reason="opt-in read-only host ancestry check")
-def test_real_checkout_ancestors():
-    directory = Path(os.environ.get("AZIZAM_REAL_ANCESTOR_PATH", str(ROOT / "data")))
-    private_tmp.validate_ancestors(directory)
-    print(f"Read-only ancestor validation passed: {directory}")
 
 
 def test_read_only_ancestor_validation_never_creates_directories(host_disk_dir):

@@ -23,6 +23,9 @@ COPY --from=web-build /app/web/out /app/web/out
 # Persistent state lives in /app/data; mount a volume there.
 VOLUME ["/app/data"]
 
+# Request scratch stays on the image's own disk, not in a data mount another host user may own (REQUEST_RETENTION.md 5.1).
+ENV AZIZAM_PRIVATE_TMPDIR=/var/lib/azizam/private-tmp
+
 EXPOSE 5000
 
 CMD ["python3", "proxy.py"]
