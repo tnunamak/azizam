@@ -26,7 +26,25 @@ from gateway.service_registry import is_remote_provider_config
 
 _ROOT = Path(__file__).resolve().parent.parent
 _FACT_SCHEMA = json.loads((_ROOT / "registry/retention_fact.schema.json").read_text(encoding="utf-8"))
-_VALIDATOR = jsonschema.Draft202012Validator(_FACT_SCHEMA, format_checker=jsonschema.FormatChecker())
+_FORMAT_CHECKER = jsonschema.FormatChecker()
+
+
+@_FORMAT_CHECKER.checks("uri", raises=ValueError)
+def _absolute_uri(value: Any) -> bool:
+    # URI format extras are optional in jsonschema. Enforce the HTTP evidence
+    # contract even when those extras are absent from a deployment.
+    if not isinstance(value, str):
+        return True
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*", value):
+        return False
+    if re.search(r"%(?![0-9A-Fa-f]{2})", value):
+        return False
+    parsed = urlsplit(value)
+    _ = parsed.port  # Validate a supplied port without normalizing the evidence.
+    return bool(parsed.hostname)
+
+
+_VALIDATOR = jsonschema.Draft202012Validator(_FACT_SCHEMA, format_checker=_FORMAT_CHECKER)
 _DATA_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _READER_DESCRIPTIONS = {
     "maker": "The maker and holders of their personal App keys",
@@ -156,12 +174,22 @@ def ledger(
     today = now.date() if isinstance(now, datetime) else (now or date.today())
     stale_days = contract["stale_after_days"]
     destinations: list[dict[str, Any]] = []
+    unavailable = False
+
+    def destination_facts(raw: Any, *, owner: bool) -> list[dict[str, Any]]:
+        nonlocal unavailable
+        try:
+            return _with_status(validate_facts(raw), now=today, stale_after_days=stale_days, owner=owner)
+        except ValueError:
+            # Legacy data can predate validation. Keep the other destinations
+            # usable without replacing this destination's explicit owner list.
+            unavailable = True
+            return []
 
     for system_id, bundled in contract.get("system_facts", {}).items():
         owner_facts = _owner_facts(overrides, "system", system_id)
-        facts = _with_status(
-            validate_facts(owner_facts if owner_facts is not None else bundled["facts"]),
-            now=today, stale_after_days=stale_days, owner=owner_facts is not None,
+        facts = destination_facts(
+            owner_facts if owner_facts is not None else bundled["facts"], owner=owner_facts is not None,
         )
         destinations.append({"id": system_id, "name": bundled["name"], "kind": "system", "facts": facts})
 
@@ -193,10 +221,13 @@ def ledger(
                 bundled = definition["retention_facts"]
         if "retention_facts" in config:
             bundled = config["retention_facts"]
-        facts = validate_facts(owner_facts if owner_facts is not None else bundled)
+        facts = destination_facts(
+            owner_facts if owner_facts is not None else bundled,
+            owner=owner_facts is not None or "retention_facts" in config,
+        )
         row: dict[str, Any] = {
             "id": target_id, "name": str(service.get("name") or item_id), "kind": target_type,
-            "facts": _with_status(facts, now=today, stale_after_days=stale_days, owner=owner_facts is not None or "retention_facts" in config),
+            "facts": facts,
         }
         if address:
             row["address"] = address
@@ -213,6 +244,8 @@ def ledger(
         "destinations": destinations,
         "stale_after_days": stale_days,
     }
+    if unavailable:
+        result["fact_basis"] = "Today's facts. Some destination facts are unavailable."
     result["never_save_text"] = assemble_never_save(result)
     return result
 

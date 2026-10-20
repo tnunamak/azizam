@@ -14,7 +14,7 @@
     "condition": {"type": ["string", "null"], "maxLength": 500},
     "reach": {"type": "string", "minLength": 1, "maxLength": 500},
     "control": {"type": "string", "minLength": 1, "maxLength": 500},
-    "evidence_url": {"type": "string", "format": "uri", "pattern": "^https://"},
+    "evidence_url": {"type": "string", "format": "uri", "pattern": "^https://[^\\s]+$(?![\\s\\S])"},
     "checked": {"type": "string", "format": "date"},
     "confidence": {"enum": ["documented", "inferred", "unknown"]}
   }

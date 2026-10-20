@@ -3517,6 +3517,17 @@ def write_service_registry_in_transaction(
         raise OperatorSettingsGenerationConflict(
             f"operator settings generation mismatch: current={generation}"
         )
+    # A service id owns its overrides. Remove them in the same transaction as
+    # the registry change so deleting and recreating an id cannot revive facts.
+    previous = conn.execute(
+        "SELECT value_json FROM operator_settings WHERE key='service_registry'"
+    ).fetchone()
+    old_services = json.loads(previous[0]).get("services", {}) if previous else {}
+    removed_ids = set(old_services) - set(value.get("services") or {})
+    conn.executemany(
+        "DELETE FROM retention_fact_overrides WHERE target_type IN ('engine','provider') AND target_id=?",
+        [(str(service_id),) for service_id in removed_ids],
+    )
     next_generation = generation + 1
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(
