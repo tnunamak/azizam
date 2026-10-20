@@ -8,6 +8,7 @@ import struct
 import time
 import unittest
 import unittest.mock
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ import proxy
 from tests.support.access import access_context, plan_for
 from gateway import speech_stream, stt_chunking
 
-from tests.support.stt_pcm import planning_pcm
+from tests.support.stt_pcm import planning_pcm, write_pcm
 from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart, _wav_bytes
 
 
@@ -116,7 +117,14 @@ class SttServiceSelectionTests(SttCase):
 
         async def command(argv, **_kwargs):
             destination = Path(argv[-1])
-            destination.write_bytes(b"RIFF" + b"x" * 100)
+            if destination.name == "planning-16k.pcm":
+                write_pcm(destination, 60)
+            elif destination.suffix == ".pcm":
+                with wave.open(argv[argv.index("-i") + 1], "rb") as audio:
+                    destination.write_bytes(audio.readframes(audio.getnframes()))
+            else:
+                duration = float(argv[argv.index("-t") + 1])
+                destination.write_bytes(_wav_bytes(16000, 1, duration))
             return b"", b""
 
         async def checked_extract(source, destination, **kwargs):
@@ -133,7 +141,7 @@ class SttServiceSelectionTests(SttCase):
         async def probe(path, **_kwargs):
             return stt_chunking.ProbedAudio(20 if path.name.startswith("segment-") else 60, 16000, 1)
 
-        with patch.object(stt_chunking, "probe_audio", side_effect=probe), planning_pcm(60), \
+        with patch.object(stt_chunking, "probe_audio", side_effect=probe), \
                 patch.object(stt_chunking, "run_media_command", side_effect=command), \
                 patch.object(stt_chunking, "extract_segment", side_effect=checked_extract):
             response, body = self._post_file_first_past_peek([("model", "stt-fast")])
