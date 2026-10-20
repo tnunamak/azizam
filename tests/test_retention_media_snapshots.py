@@ -76,3 +76,25 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
             assert media_jobs.fact_destinations_for_source("receipt", receipt["request_id"], path=rig.media_jobs_db)[proxy._GRAPH_BACKEND_ID]["name"] == "Captured destination"
 
         asyncio.run(drive())
+
+
+@pytest.mark.parametrize("prefix", ["", "/openai"])
+@pytest.mark.parametrize("path,body", [
+    ("/v1/audio/generate", {"prompt": "sound", "model": "missing-workflow"}),
+    ("/v1/videos", {"prompt": "waves", "model": "missing-workflow"}),
+    ("/v1/videos/extensions", {"prompt": "more waves"}),
+])
+def test_invalid_media_request_does_not_claim_backend_dispatch(tmp_path, prefix, path, body):
+    with GatewayRig("retention-invalid-media", tmp_path) as rig:
+        _audio_comfy(rig, strict=False)
+
+        async def drive():
+            response = await rig.call("POST", prefix + path, json_body=body)
+            assert response.status_code in {400, 404}, response.text
+            receipts = receipt_store.recent(path=rig.receipts_db, audience="internal")
+            assert len(receipts) == 1
+            assert receipts[0]["backend"] is None
+            assert not receipts[0].get("retention_facts")
+            assert not rig.recorder.engine
+
+        asyncio.run(drive())
