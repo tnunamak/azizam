@@ -147,6 +147,103 @@ def test_options_exposes_unstated_audio_rights_before_sample_selection(setup):
     assert all(s["provenance"] and s["human_transcribed_evidence"] for s in sample["sources"])
 
 
+def test_default_samples_and_generated_start_command_exclude_unstated_audio(setup):
+    import shlex
+    _, _, _, runner, ctx = setup
+    options = asyncio.run(operate(runner, ctx, "speech-test", "options"))
+    by_id = {s["id"]: s for s in options["samples"]}
+    assert "earnings21-4366522" not in options["policy"]["sample_ids"]
+    assert all(not by_id[sid]["audio_rights_unstated"] for sid in options["policy"]["sample_ids"])
+    command = shlex.split(options["commands"]["start"])
+    assert "Public hosting does not establish reuse rights" in options["commands"]["start"]
+    body = json.loads(command[command.index("--data") + 1])
+    async def scenario():
+        result = await operate(runner, ctx, "speech-test", "start", body=body)
+        assert result["job"]["sample_ids"] == options["policy"]["sample_ids"]
+        await runner.cancel("speech-test", result["job"]["id"])
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("surface", ["rest", "mcp"])
+def test_start_and_durable_status_include_selected_rights_before_work(setup, monkeypatch, surface):
+    from gateway import mcp_server
+    _, owner, _, runner, ctx = setup
+    async def wait_without_preparing(*args):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(runner, "_run", wait_without_preparing)
+    async def scenario():
+        async def action(name, **kwargs):
+            if surface == "rest":
+                return await operate(runner, ctx, "speech-test", name, **kwargs)
+            async def measurement(_request, _auth, args):
+                return await operate(runner, ctx, "speech-test", args["action"], **kwargs)
+            result = await mcp_server.call_tool(SimpleNamespace(stt_measurement=measurement), None, ctx,
+                                                "stt_measurement", {"action": name})
+            payload = result["structuredContent"]
+            assert json.loads(result["content"][0]["text"]) == payload
+            return payload
+        result = await action("start", body={"sample_ids": ["earnings21-4366522"]})
+        job = result["job"]
+        try:
+            assert job["samples"][0]["id"] == "earnings21-4366522"
+            assert job["samples"][0]["rights_unstated"] is True
+            assert "no separate" in job["samples"][0]["rights_note"].lower()
+            status = owner.get(f'/admin/api/engines/speech-test/stt-measurements/{job["id"]}')
+            assert status.status_code == 200
+            assert status.json()["job"]["samples"] == job["samples"]
+            assert runner.get("speech-test", job["id"])["samples"] == job["samples"]
+            assert (await action("status", job_id=job["id"]))["job"]["samples"] == job["samples"]
+        finally:
+            await runner.cancel("speech-test", job["id"])
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("version", [None, 0])
+def test_apply_refuses_reports_from_an_older_or_unversioned_scorer(setup, version):
+    gw, _, _, runner, ctx = setup
+    job = _job(runner)
+    job.update(status="succeeded", report={"recommendation": {"target_seconds": 25}})
+    if version is not None:
+        job["report"]["scorer_version"] = version
+    runner._save(job)
+    before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    with pytest.raises(sm.EngineRouteError, match="re-run the measurement"):
+        runner.apply(ctx, "speech-test", job["id"], generation)
+    assert gw.proxy.ADMIN_STORE.get_service_registry_snapshot() == (before, generation)
+
+
+def test_length_sweep_maps_past_a_filtered_nonfinal_overlapping_word(setup, monkeypatch, tmp_path):
+    _, _, _, runner, ctx = setup
+    reference = [sm.measure.RefWord("overlap", 0, 36), sm.measure.RefWord("lost", 5, 6),
+                 sm.measure.RefWord("kept", 8, 9)]
+    async def prepare(job, spec, folder, policy):
+        path = folder / "audio.wav"
+        with wave.open(str(path), "wb") as output:
+            output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            output.writeframes(b'\0\0' * 16000 * 40)
+        return path, reference
+    calls = 0
+    async def transcribe(*args):
+        nonlocal calls
+        calls += 1
+        # First 20s piece returns only 15s: score_run filters overlap (mid=18),
+        # but retains the following lost/kept words in transcript order.
+        return [sm.measure.Run(["kept"], [(0, 15)]), sm.measure.Run([], [(0, 20)]),
+                sm.measure.Run(["overlap", "kept"], [(0, 40)])][calls - 1]
+    monkeypatch.setattr(runner, "_prepare", prepare)
+    monkeypatch.setattr(runner, "_transcription", transcribe)
+    async def scenario():
+        job = _job(runner)
+        job["lengths"] = [20, 40]
+        policy = {**runner.options()["policy"], "audio_seconds_per_sample": 40, "resamples": 10}
+        report = await runner._measure(ctx, job, policy, tmp_path)
+        paired = report["deletions_by_length"][1]["paired_deletion"]
+        assert paired["words"] == 2
+        assert paired["excess_pp"] == 0  # lost is deleted in both lengths, kept in neither.
+        assert report["scorer_version"] == sm.measure.SCORER_VERSION
+    asyncio.run(scenario())
+
+
 def test_options_survives_invalid_saved_chunking_for_repair(setup):
     gw, owner, _, runner, _ = setup
     registry, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()

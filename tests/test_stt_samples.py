@@ -190,6 +190,24 @@ def test_source_rights_and_provenance_are_required_and_nonempty(tmp_path, field)
 # --- downloads ----------------------------------------------------------------------------------------------------
 
 
+def test_recipe_audio_source_cannot_disclaim_audio_rights_as_not_applicable(tmp_path):
+    # Source names are arbitrary; the recipe identifies the actual audio file.
+    sample = _sample([_source("recording", b"a"), _source("transcript", b"t"), _source("segments", b"s")],
+                     params={"audio": "recording", "transcript": "transcript", "segments": "segments"})
+    sample["sources"][0]["audio_rights"]["status"] = "not-applicable"
+    with pytest.raises(SampleError, match="audio_rights"):
+        _one(tmp_path, sample)
+
+
+def test_unstated_transcript_rights_raise_sample_caveat(tmp_path):
+    sample = _sample([_source("audio", b"a"), _source("transcript", b"t"), _source("segments", b"s")])
+    sample["sources"][0]["audio_rights"]["status"] = "stated"
+    sample["sources"][1]["transcript_rights"] = {"status": "not-stated", "note": "Transcript permission is unstated."}
+    rights = _one(tmp_path, sample).rights_metadata()
+    assert rights["rights_unstated"] is True
+    assert "Transcript permission is unstated." in rights["rights_note"]
+
+
 def _download_spec(tmp_path: Path, body: bytes, declared: bytes | None = None) -> stt_samples.SampleSpec:
     """A spec with one real source ('audio', checksum of ``declared`` or ``body``) and two tiny ones."""
     src = _source("audio", declared if declared is not None else body)

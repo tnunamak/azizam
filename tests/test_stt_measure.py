@@ -55,6 +55,24 @@ def test_normalize_drops_punctuation_and_listed_fillers(record_property) -> None
     assert m.normalize(" ".join(tokens)) == tokens
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("हिन्दी", ["हिन्दी"]),
+    ("สวัสดี", ["สวัสดี"]),
+    ("عَرَبِيّ", ["عَرَبِيّ"]),
+    ("שָׁלוֹם", ["שָׁלוֹם"]),
+    ("Straße STRASSE", ["strasse", "strasse"]),
+    ("İSTANBUL", ["i\u0307stanbul"]),
+    ("can‘t", ["cant"]),
+    ("can’t", ["cant"]),
+    ("can`t", ["cant"]),
+    ("<noise>one</noise> two", ["one", "two"]),
+    ("1,000 12,345,678 1000 1,2", ["1000", "12345678", "1000", "1", "2"]),
+])
+def test_normalize_adversarial_unicode_and_numbers(text, expected):
+    assert m.normalize(text) == expected
+    assert m.normalize(" ".join(expected)) == expected
+
+
 @pytest.mark.parametrize("operation", ["window", "pairs", "pieces", "interior", "buckets"])
 def test_overlapping_words_use_midpoint_membership_without_reordering_alignment(operation):
     reference = [m.RefWord("before", -2, -1), m.RefWord("long", 0, 2),

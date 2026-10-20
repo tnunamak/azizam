@@ -305,6 +305,12 @@ def test_stt_measurement_mcp_settings_schema_exposes_native_audio_by_mode():
     assert "native_long_audio_streaming" in settings
 
 
+def test_stt_measurement_description_carries_sample_rights_caveat():
+    tool = next(tool for tool in mcp_server.TOOLS if tool["name"] == "stt_measurement")
+    assert "Public hosting does not establish reuse rights" in tool["description"]
+    assert "not-stated" in tool["description"]
+
+
 def test_legacy_unknown_method_is_a_200_json_rpc_error(env):
     resp = rpc(env, "resources/list")
     assert resp.status_code == 200 and resp.json()["error"]["code"] == mcp_server.METHOD_NOT_FOUND
