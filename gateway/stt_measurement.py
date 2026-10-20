@@ -226,7 +226,8 @@ class Measurements:
         policy = yaml.safe_load(self.policy_path.read_text())
         specs = stt_samples.load_manifest()
         return {"policy": policy, "samples": [{"id": s.id, "title": s.title, "speakers": s.speakers,
-                "timing": s.timing, "download_bytes": s.download_bytes(), "licence": s.licence.name} for s in specs]}
+                "timing": s.timing, "download_bytes": s.download_bytes(), "licence": s.licence.name,
+                **s.rights_metadata()} for s in specs]}
 
     def configure(self, ctx: Any, service_id: str, body: Any, generation: int) -> dict:
         return EngineService(self.store).configure_stt(ctx, service_id, body, expected_generation=generation)
@@ -449,7 +450,8 @@ class Measurements:
             folder = root / spec.id
             folder.mkdir()
             audio, reference = await self._prepare(job, spec, folder, policy)
-            metadata.append({"id": spec.id, "speakers": spec.speakers, "timing": spec.timing, "licence": spec.licence.name})
+            metadata.append({"id": spec.id, "speakers": spec.speakers, "timing": spec.timing,
+                             "licence": spec.licence.name, **spec.rights_metadata()})
             prepared.append((folder, audio, reference))
         # Finish the length sweep on all samples before selecting one seam trial plan.
         failed_lengths = set()

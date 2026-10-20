@@ -66,6 +66,8 @@ interface Options {
     speakers: number;
     timing: string;
     licence: string;
+    audio_rights_unstated: boolean;
+    audio_rights_note: string;
     download_bytes: number;
   }[];
   job: Job | null;
@@ -316,6 +318,11 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
                     {sample.licence} ·{" "}
                     {Math.ceil(sample.download_bytes / 1048576)} MB ·{" "}
                     {sample.timing} timing
+                    {sample.audio_rights_unstated && (
+                      <span className="block font-medium">
+                        Audio rights not stated. {sample.audio_rights_note}
+                      </span>
+                    )}
                   </span>
                 </label>
               ))}

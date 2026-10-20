@@ -35,6 +35,8 @@ const options = {
       speakers: 4,
       timing: "word",
       licence: "CC BY",
+      audio_rights_unstated: true,
+      audio_rights_note: "No separate audio licence is stated by the source.",
       download_bytes: 100,
     },
   ],
@@ -91,6 +93,9 @@ describe("Long-audio operator controls", () => {
 
   it("starts measurement with manifest samples and exact-cut baseline, without saving", async () => {
     const user = mount();
+    expect(await screen.findByText(/Audio rights not stated/)).toHaveTextContent(
+      options.samples[0].audio_rights_note,
+    );
     await user.click(
       await screen.findByRole("button", {
         name: "Measure long-audio settings",

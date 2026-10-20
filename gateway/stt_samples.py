@@ -23,7 +23,7 @@ import tempfile
 import wave
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
@@ -46,7 +46,9 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TIMINGS = ("word", "segment-interpolated")
 _SAMPLE_KEYS = {"id", "corpus", "title", "licence", "duration_seconds", "speakers", "timing", "sources", "recipe"}
 _LICENCE_KEYS = {"name", "url", "attribution", "note"}
-_SOURCE_KEYS = {"name", "url", "sha256", "bytes"}
+_SOURCE_KEYS = {"name", "url", "sha256", "bytes", "audio_rights", "transcript_rights",
+                "provenance", "human_transcribed_evidence"}
+_RIGHTS_STATUSES = {"stated", "not-stated", "not-applicable"}
 
 
 class SampleError(Exception):
@@ -66,11 +68,21 @@ class Licence:
 
 
 @dataclass(frozen=True)
+class Rights:
+    status: str
+    note: str
+
+
+@dataclass(frozen=True)
 class Source:
     name: str
     url: str
     sha256: str
     bytes: int
+    audio_rights: Rights
+    transcript_rights: Rights
+    provenance: str
+    human_transcribed_evidence: str
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,12 @@ class SampleSpec:
     def download_bytes(self) -> int:
         """Bytes to download for this sample when the cache is empty (a file listed twice counts once)."""
         return sum({s.sha256: s.bytes for s in self.sources}.values())
+
+    def rights_metadata(self) -> dict[str, Any]:
+        """Per-source evidence and any unstated audio rights, shared by choices and reports."""
+        caveats = [s.audio_rights.note for s in self.sources if s.audio_rights.status == "not-stated"]
+        return {"sources": [asdict(s) for s in self.sources], "audio_rights_unstated": bool(caveats),
+                "audio_rights_note": " ".join(caveats)}
 
 
 @dataclass(frozen=True)
@@ -301,6 +319,21 @@ def _https_url(value: Any, where: str) -> str:
     return url
 
 
+def _evidence(value: Any, where: str) -> str:
+    text = _require(value, str, where)
+    if not text.strip():
+        raise SampleError(f"{where} must not be empty.")
+    return text
+
+
+def _rights(value: Any, where: str) -> Rights:
+    raw = _check_keys(value, {"status", "note"}, where)
+    status = _require(raw["status"], str, f"{where} status")
+    if status not in _RIGHTS_STATUSES:
+        raise SampleError(f"{where} status must be stated, not-stated or not-applicable.")
+    return Rights(status, _evidence(raw["note"], f"{where} note"))
+
+
 def _parse_sample(raw: Any, index: int) -> SampleSpec:
     where = f"Sample {index + 1}"
     _check_keys(raw, _SAMPLE_KEYS, where)
@@ -334,7 +367,12 @@ def _parse_sample(raw: Any, index: int) -> SampleSpec:
         if size <= 0:
             raise SampleError(f"{swhere} bytes must be positive.")
         sources.append(Source(name=_require(src["name"], str, f"{swhere} name"),
-                              url=_https_url(src["url"], f"{swhere} url"), sha256=sha, bytes=size))
+                              url=_https_url(src["url"], f"{swhere} url"), sha256=sha, bytes=size,
+                              audio_rights=_rights(src["audio_rights"], f"{swhere} audio_rights"),
+                              transcript_rights=_rights(src["transcript_rights"], f"{swhere} transcript_rights"),
+                              provenance=_evidence(src["provenance"], f"{swhere} provenance"),
+                              human_transcribed_evidence=_evidence(src["human_transcribed_evidence"],
+                                                                 f"{swhere} human_transcribed_evidence")))
     names = [s.name for s in sources]
     if not sources or len(set(names)) != len(names):
         raise SampleError(f"{where} needs at least one source, each with its own name.")

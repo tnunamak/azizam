@@ -479,6 +479,11 @@ def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(se
                                          min_seam_words=10, min_noise_pairs=2, min_noise_words=10)
         result = await runner._measure(ctx, job, {**policy, "audio_seconds_per_sample": 120, "resamples": 40}, tmp_path)
         record_property("measurement_report", json.dumps(result, sort_keys=True))
+        choices = {sample["id"]: sample for sample in runner.options()["samples"]}
+        for sample in result["samples"]:
+            assert sample["sources"] == choices[sample["id"]]["sources"]
+            assert sample["audio_rights_unstated"] == choices[sample["id"]]["audio_rights_unstated"]
+            assert sample["audio_rights_note"] == choices[sample["id"]]["audio_rights_note"]
         assert [row["search"] for row in result["seam_excess"]] == [0, width]
         assert all(row["deletion_pct"] == 0 for row in result["deletions_by_length"])
         assert all(row["points"] > 0 and row["excess_pp"] == 0 and row["noise"]["excess_pp"] == 0 for row in result["seam_excess"])

@@ -85,6 +85,27 @@ crosses the margin; confidently_worse means the lower CI exceeds the margin
 abstain. Reference word timing may be interpolated; reports preserve that label.
 Seam times use the gateway planner and are checked against executed attempts.
 
+References and hypotheses use one tokenizer: lowercase Unicode words, retain
+internal underscores, join apostrophes, split punctuation, and omit annotation
+tags and standalone underscores. Each split reference token keeps its source
+time interval; omitted tokens contribute no alignment position. Alignment stays
+in transcript order. A separate midpoint-sorted index selects words for half-open
+time windows, including overlapping speakers without changing reference identity.
+
+Each manifest source requires `audio_rights` and `transcript_rights` objects with
+`status` (`stated`, `not-stated`, or `not-applicable`) and a nonempty `note`.
+It also requires nonempty `provenance` and `human_transcribed_evidence` strings.
+These fields record source claims and their evidence, not independent verification
+of rights or authorship. Options and reports include these fields under `sources`,
+plus `audio_rights_unstated` and `audio_rights_note`. The sample selector shows
+unstated audio rights before a trial starts. A sample-level `licence` label does
+not establish rights for every source.
+
+Earnings-21 remains available. Its stated CC BY-SA licence covers transcripts and
+alignment files; the source states no separate audio licence. Public hosting does
+not establish audio reuse rights. The operator decides whether to retain and use
+this sample.
+
 **Apply recommended settings** is a separate action. It requires the current
 registry revision and refuses if the engine changed since measurement. Applying
 enables cutting and sets its threshold to the recommended maximum. No trial
