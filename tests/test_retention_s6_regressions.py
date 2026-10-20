@@ -29,9 +29,9 @@ def stores(tmp_path, monkeypatch):
     real_get = receipt_store.get
     real_begin = receipt_store.begin
     real_finalize = receipt_store.finalize
-    monkeypatch.setattr(receipt_store, "get", lambda *a, **kw: real_get(*a, path=receipts, **kw))
-    monkeypatch.setattr(receipt_store, "begin", lambda *a, **kw: real_begin(*a, path=receipts, **kw))
-    monkeypatch.setattr(receipt_store, "finalize", lambda *a, **kw: real_finalize(*a, path=receipts, **kw))
+    monkeypatch.setattr(receipt_store, "get", lambda *a, **kw: real_get(*a, **{"path": receipts, **kw}))
+    monkeypatch.setattr(receipt_store, "begin", lambda *a, **kw: real_begin(*a, **{"path": receipts, **kw}))
+    monkeypatch.setattr(receipt_store, "finalize", lambda *a, **kw: real_finalize(*a, **{"path": receipts, **kw}))
     registry = {"services": {"destination": {"name": "Test service", "config": {
         "connection": {"protocol": "node-graph", "base_url": "http://127.0.0.1:18188"},
     }}}}
@@ -91,7 +91,7 @@ def test_lifecycle_freezes_captured_facts_for_every_receipt_kind(stores, protoco
             proxy._capture_retention_facts(row)
             registry["services"]["destination"]["name"] = "Changed after dispatch"
             registry["services"]["destination"]["config"]["retention_facts"] = []
-            owner.report(status="ok", reason="completed")
+            owner.report(status="succeeded", reason="completed")
     asyncio.run(run())
     stored = receipt_store.get(row.request_id, audience="internal")
     assert stored["retention_facts"]
@@ -117,6 +117,7 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
         monkeypatch.setattr(media_jobs, "save_fact_snapshot", lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")), raising=False)
     row = RouteReceipt(protocol="test", intent="test", backend="destination")
     proxy._capture_retention_facts(row)
+    row.finish("succeeded")
     proxy._record_terminal_retention_receipt(row, path=stores[0])
     assert receipt_store.get(row.request_id) is not None
     view = proxy._gateway_retention_ledger(request()[0], row.request_id)
