@@ -7,6 +7,8 @@ one view and "not recorded" in the other.
 from __future__ import annotations
 
 import json
+import ast
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +19,8 @@ from gateway import admin_store, receipt_store
 from gateway.activity_api import create_activity_router
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_oidc import AdminSession
+from gateway.user_runtime import build_user_activity_snapshot
+from gateway.user_runtime import mint_user_app_key
 
 JOB_CREATED_AT = 1792291546
 
@@ -89,6 +93,7 @@ def detail(monkeypatch, tmp_path):
         pass
     case = Case()
     case.alice, case.bob, case.alice_app, case.bob_app = alice, bob, alice_app, bob_app
+    case.owner_session, case.admin_path, case.receipts_path = sessions["owner"], admin_path, receipts_path
     case.store, case.get, case.listed = store, get, listed
     return case
 
@@ -149,3 +154,97 @@ def test_member_sees_only_their_own_receipts_with_their_own_name(detail):
         assert denied.status_code == 404
         assert "Bob Example" not in denied.text
         assert json.loads(denied.text)["error"]["code"] == "receipt_not_found"
+
+
+@pytest.mark.parametrize("entry", [
+    {"kind": "conversation", "decision": "kept", "reason": "kept",
+     "kept_until_ms": 1792300000000, "parts": ["accepted", "received"],
+     "limited_by": "member_choice"},
+    {"kind": "conversation", "decision": "not_kept", "reason": "member_disabled"},
+])
+def test_retention_detail_is_visible_to_maker_but_not_to_owner_or_admin(detail, entry):
+    receipt = {**CHAT_RECEIPT, "maker_person_id": detail.alice["id"], "retention": [entry]}
+    detail.store("req_private_retention", receipt, detail.alice_app["id"], 1792300000)
+    maker = detail.get("req_private_retention", "alice").json()["retention"]
+    owner = detail.get("req_private_retention", "owner").json()["retention"]
+    admin = detail.listed("req_private_retention")["receipt"]["retention"]
+    home = build_user_activity_snapshot(
+        detail.owner_session, path=detail.admin_path, receipts_path=detail.receipts_path,
+    )["receipts"][0]["retention"]
+    assert maker == receipt["retention"]
+    assert owner == admin == home == [{"kind": entry["kind"], "decision": entry["decision"]}]
+
+
+def test_shared_app_receipt_route_masks_other_makers_retention(detail):
+    from fastapi.testclient import TestClient
+
+    entry = {"kind": "conversation", "decision": "kept", "reason": "kept",
+             "kept_until_ms": 1792300000000, "parts": ["accepted"], "limited_by": "member_choice"}
+    detail.store("req_shared_app", {**CHAT_RECEIPT, "maker_person_id": detail.bob["id"],
+                                    "retention": [entry]}, detail.alice_app["id"], 1792300000)
+    detail.store("req_own_app", {**CHAT_RECEIPT, "maker_person_id": detail.alice["id"],
+                                 "retention": [entry]}, detail.alice_app["id"], 1792300001)
+    alice_session = AdminSession(subject=detail.alice["id"], role="none", email=None,
+                                 issued_at=1, expires_at=4_000_000_000)
+    key = mint_user_app_key(alice_session, detail.alice_app["id"], path=detail.admin_path)["api_key"]
+    client = TestClient(proxy.app)
+    headers = {"Authorization": f"Bearer {key}"}
+    single = client.get("/gateway/v1/receipts/req_shared_app", headers=headers)
+    listing = client.get("/gateway/v1/receipts", headers=headers)
+    assert single.status_code == listing.status_code == 200
+    assert single.json()["retention"] == [{"kind": "conversation", "decision": "kept"}]
+    assert next(row for row in listing.json()["receipts"] if row["request_id"] == "req_shared_app")["retention"] == [
+        {"kind": "conversation", "decision": "kept"}]
+    own = client.get("/gateway/v1/receipts/req_own_app", headers=headers)
+    assert own.status_code == 200
+    assert own.json()["retention"] == [entry]
+    assert next(row for row in listing.json()["receipts"] if row["request_id"] == "req_own_app")["retention"] == [entry]
+
+
+def test_every_non_internal_receipt_store_read_call_passes_viewer():
+    root = Path(__file__).resolve().parent.parent
+    calls = []
+    for path in [root / "proxy.py", *(root / "gateway").rglob("*.py")]:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if not isinstance(node.func.value, ast.Name) or node.func.value.id not in {"receipt_store", "_receipt_store"}:
+                continue
+            if node.func.attr not in {"get", "get_many", "get_with_created_at", "recent"}:
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            audience = keywords.get("audience")
+            if isinstance(audience, ast.Constant) and audience.value == "internal":
+                continue
+            calls.append(f"{path.relative_to(root)}:{node.lineno}")
+            assert "viewer_person_id" in keywords, f"receipt read lacks viewer: {calls[-1]}"
+    assert len(calls) >= 7, calls
+
+
+@pytest.mark.parametrize("read", ["get", "get_many", "get_with_created_at", "recent"])
+@pytest.mark.parametrize("audience", ["client", "admin"])
+def test_receipt_store_reads_deny_retention_detail_without_maker_match(tmp_path, read, audience):
+    path = tmp_path / "receipts.db"
+    receipt_store.init_db(path)
+    entry = {"kind": "conversation", "decision": "kept", "reason": "kept",
+             "kept_until_ms": 1792300000000, "parts": ["accepted"], "limited_by": "member_choice"}
+    receipt_store.record({**CHAT_RECEIPT, "request_id": "req_access", "maker_person_id": "person-b",
+                          "retention": [entry]}, path=path)
+
+    def fetch(viewer):
+        kwargs = {"audience": audience, "path": path}
+        if viewer is not None:
+            kwargs["viewer_person_id"] = viewer
+        if read == "get":
+            return receipt_store.get("req_access", **kwargs)
+        if read == "get_many":
+            return receipt_store.get_many(["req_access"], **kwargs)["req_access"]
+        if read == "get_with_created_at":
+            return receipt_store.get_with_created_at("req_access", **kwargs)[0]
+        return receipt_store.recent(**kwargs)[0]
+
+    summary = [{"kind": "conversation", "decision": "kept"}]
+    assert fetch(None)["retention"] == summary
+    assert fetch("person-a")["retention"] == summary
+    assert fetch("person-b")["retention"] == [entry]
+    assert receipt_store.get("req_access", audience="internal", path=path)["retention"] == [entry]

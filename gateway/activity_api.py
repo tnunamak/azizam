@@ -26,16 +26,16 @@ def create_activity_router(
         if "owner" not in ctx.roles:
             return JSONResponse(status_code=403, content={"error": {
                 "code": "owner_required", "message": "Only the gateway owner can view all requests."}})
-        return None
+        return ctx
 
     @router.get("/requests")
     def requests(request: Request, limit: int = Query(50, ge=1, le=100),
                  person_id: str | None = Query(None, max_length=256),
                  source: str | None = Query(None, max_length=512),
                  before: str | None = Query(None, max_length=512)):
-        denied = authorize(request)
-        if denied is not None:
-            return denied
+        caller = authorize(request)
+        if isinstance(caller, JSONResponse):
+            return caller
         users = admin_store.list_users(path=admin_path)
         people = [{"id": row["id"], "label": person_label(row)} for row in users]
         labels = {person["id"]: person["label"] for person in people}
@@ -76,7 +76,11 @@ def create_activity_router(
                 + " ORDER BY created_at DESC, request_id DESC LIMIT ?", [*params, limit + 1]).fetchall()
         records = []
         for id, timestamp in rows[:limit]:
-            row = receipt_store.get(id, audience="admin", path=receipts_path)
+            row = receipt_store.get(
+                id, audience="admin",
+                viewer_person_id=caller.actor_id if caller.actor_kind == "user" else None,
+                path=receipts_path,
+            )
             if row is None:
                 continue
             records.append({"receipt": row, **receipt_context(

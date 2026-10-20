@@ -16,7 +16,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import os
 
@@ -226,6 +226,7 @@ def put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
     admin_path: Path | None = None, created_at: int | None = None,
+    on_result: Callable[[retention.WriteOutcome], None] | None = None,
 ) -> bool:
     if not asset_id or not person_id or not isinstance(prompt_text, str) or not prompt_text:
         raise ValueError("asset, maker and nonempty prompt text are required")
@@ -249,7 +250,7 @@ def put(
 
     return retention.write(
         retention.LIBRARY_PROMPT, admin_path=admin_path, person_id=person_id, created_at=started,
-        kept_until=kept_until, commit=insert,
+        kept_until=kept_until, commit=insert, on_result=on_result,
     )
 
 
@@ -257,14 +258,17 @@ def safe_put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
     admin_path: Path | None = None, created_at: int | None = None,
+    on_result: Callable[[retention.WriteOutcome], None] | None = None,
 ) -> bool:
     """Best-effort prompt write; storage contention cannot fail media delivery."""
     try:
         return put(
             asset_id, person_id, prompt_text, kept_until=kept_until, metadata=metadata,
-            path=path, admin_path=admin_path, created_at=created_at,
+            path=path, admin_path=admin_path, created_at=created_at, on_result=on_result,
         )
     except Exception:
+        if on_result is not None:
+            on_result(retention.WriteOutcome(False, "write_failed"))
         return False
 
 

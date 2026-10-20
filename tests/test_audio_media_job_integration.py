@@ -71,12 +71,13 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             proxy,
             "_schedule_audio_media_job",
             lambda job_id: scheduled.append(job_id) or True,
-        ):
+        ), patch.object(proxy.receipt_store, "record") as record_receipt:
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
                 payload={"intent": "music.generate", "parameters": body},
                 audience="client",
             )
+        record_receipt.assert_not_called()  # audio submission has a job record, no content receipt yet
 
         assert response is not None
         self.assertEqual(response.status_code, 202)

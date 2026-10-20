@@ -440,6 +440,13 @@
           "requested_workflow": "qwen-image-2.1-inpaint",
           "resolved_model": "qwen-image-2.1-inpaint",
           "resolved_workflow": "qwen-image-2.1-inpaint",
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
           "source_kind": "app",
           "source_label": "test-app",
           "started_at_ms": null,

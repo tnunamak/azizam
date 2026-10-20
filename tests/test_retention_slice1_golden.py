@@ -441,8 +441,13 @@ def _scrub_volatile(value):
 
 
 def _receipts(captured: list) -> list:
-    """Terminal receipts of one request, as the store was asked to keep them."""
-    return sorted((_scrub_volatile(_dump(row)) for row in captured), key=lambda row: json.dumps(row, sort_keys=True))
+    """Compare the Slice 1 receipt shape; Slice 2 retention has its own exact-shape tests."""
+    rows = []
+    for row in captured:
+        legacy = _dump(row)
+        legacy.pop("retention", None)
+        rows.append(_scrub_volatile(legacy))
+    return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
 
 
 def _responses_rows(fixture) -> list:

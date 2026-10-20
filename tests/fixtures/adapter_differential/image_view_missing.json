@@ -378,6 +378,13 @@
           "requested_workflow": "krea2-turbo",
           "resolved_model": "krea2-turbo",
           "resolved_workflow": "krea2-turbo",
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
           "source_kind": "app",
           "source_label": "test-app",
           "started_at_ms": null,

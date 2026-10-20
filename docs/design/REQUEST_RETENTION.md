@@ -1316,8 +1316,9 @@ added to `CLIENT_VISIBLE_FIELDS` (`gateway/receipts.py:29`):
 ```
 
 - `decision` is one of `kept`, `not_kept`, `failed`.
-- `reason` comes from the closed set in section 3.3, plus `write_failed` and
-  `incomplete`.
+- `reason` comes from the closed set in section 3.3, plus `no_scope`,
+  `no_content`, `storage_unavailable`, `erasure_cutoff`, `expired`,
+  `write_failed` and `incomplete` for the existing kinds.
 
 A receipt also gets `replay_of` (Run again) and `retention_facts`: the
 revision hashes of the facts in force (section 6.1). All values are enums, ids,
@@ -1327,6 +1328,27 @@ counts and times. The receipt never holds content ([research] R1;
 The receipt store's guard checks key names only (`receipt_store.py:211`;
 `redaction.py:163,190`). Slice 2 adds a value check for these fields: each
 must be in its enum or be a bounded id.
+
+**Slice 2 as built.** Existing `library_prompt` and `conversation` receipts
+include `retention` as a list with at most one entry per kind. The entry has a
+closed kind, decision and reason vocabulary. A kept entry also has an actual
+`kept_until_ms` (or `null`), captured parts and `limited_by`. The writer sets
+the final value after the content write. A refusal or failed write cannot claim
+`kept`. The receipt store validates values as well as field names before it
+persists them. The current Responses store has no row expiry: its kept
+conversation entry therefore reports `kept_until_ms: null` and
+`limited_by: "unbounded_store"`, even when the member chose a finite period.
+This is the stored fact, not a promise that a later slice has already enforced
+that period.
+
+An image media-job submit receipt has no `retention` field: submission only
+queues work. The worker's separate receipt reports the content write. Audio
+and video job submissions currently create no route receipt. A stored receipt
+with a retired retention value remains readable; its invalid entry is omitted
+and the read logs one structural warning. Writes still refuse invalid values.
+The maker sees the full retention entry. In the owner's Home, receipt detail
+and Activity views, another person's entry contains only `kind` and
+`decision`; `reason`, deadline, parts and limit stay with the maker.
 
 ## 14. AGENTS.md and the extension rung (owner task 11)
 

@@ -58,6 +58,7 @@ AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Iterable[Capability] | Awaitable[Iterable[Capability]]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
+ReceiptViewerResolver = Callable[[Request], str | None]
 ResourceLister = Callable[..., list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
@@ -156,20 +157,23 @@ def _build_receipt_providers(
     store_path = Path(receipt_store_path)
 
     def store_getter(
-        request_id: str, *, audience: str
+        request_id: str, *, audience: str, viewer_person_id: str | None = None,
     ) -> dict[str, Any] | None:
         return _receipt_store.get(
-            request_id, audience=audience, path=store_path
+            request_id, audience=audience, viewer_person_id=viewer_person_id, path=store_path
         )
 
-    def store_many(ids: Iterable[str], *, audience: str) -> dict[str, dict[str, Any]]:
-        return _receipt_store.get_many(ids, audience=audience, path=store_path)
+    def store_many(ids: Iterable[str], *, audience: str, viewer_person_id: str | None = None) -> dict[str, dict[str, Any]]:
+        return _receipt_store.get_many(
+            ids, audience=audience, viewer_person_id=viewer_person_id, path=store_path,
+        )
 
     store_getter.many = store_many  # type: ignore[attr-defined]
 
     def store_lister(
         *,
         audience: str,
+        viewer_person_id: str | None = None,
         limit: int,
         app_profile: str | None = None,
         app_ids: list[str] | None = None,
@@ -179,6 +183,7 @@ def _build_receipt_providers(
         return _receipt_store.recent(
             limit=limit,
             audience=audience,
+            viewer_person_id=viewer_person_id,
             app_profile=app_profile,
             app_ids=app_ids,
             owner_key_hashes=owner_key_hashes,
@@ -318,6 +323,7 @@ def create_gateway_router(
     receipt_getter: ReceiptGetter | None = None,
     receipt_lister: ReceiptLister | None = None,
     receipt_store_path: str | Path | None = None,
+    receipt_viewer_resolver: ReceiptViewerResolver | None = None,
     resource_lister: ResourceLister | None = None,
     asset_url_ttl_s: int | None = None,
     media_job_creator: MediaJobCreator | None = None,
@@ -351,6 +357,9 @@ def create_gateway_router(
       :mod:`gateway.receipt_store` backend automatically. When neither is
       provided, the receipt endpoints return empty lists / protocol-shaped
       404s.
+    * ``receipt_viewer_resolver`` — authenticated person behind the caller's
+      credential or session. Without it, non-internal receipt reads hide
+      retention reasons and deadlines.
 
     Callers wiring real auth must also pass ``record_authorizer``. Audience
     filtering controls field disclosure, not ownership. The authorizer sees
@@ -398,7 +407,8 @@ def create_gateway_router(
             internal = getter(record_id, audience="internal")
             if internal is None or not record_authorizer(request, kind, internal):
                 return None
-        row = getter(record_id, audience=audience)
+        viewer = receipt_viewer_resolver(request) if kind == "receipt" and receipt_viewer_resolver else None
+        row = getter(record_id, audience=audience, viewer_person_id=viewer) if kind == "receipt" else getter(record_id, audience=audience)
         return None if row is None else _record_body(kind, row)
 
     def scoped_rows(
@@ -417,7 +427,8 @@ def create_gateway_router(
             # query. The rows were listed at the internal audience and checked here,
             # so the per-record re-check of an unchanged record is not repeated.
             authorized = [str(row[id_field]) for row in rows if record_authorizer(request, kind, row)]
-            visible_rows = many(authorized, audience=audience)
+            viewer = receipt_viewer_resolver(request) if kind == "receipt" and receipt_viewer_resolver else None
+            visible_rows = many(authorized, audience=audience, viewer_person_id=viewer) if kind == "receipt" else many(authorized, audience=audience)
             return [_record_body(kind, visible_rows[record_id]) for record_id in authorized if record_id in visible_rows]
         allowed: list[dict[str, Any]] = []
         for row in rows:
@@ -564,6 +575,7 @@ def create_gateway_router(
                 rows = list(
                     receipt_lister(
                         audience="internal" if record_authorizer else audience,
+                        viewer_person_id=receipt_viewer_resolver(request) if receipt_viewer_resolver else None,
                         limit=limit,
                         app_profile=app_profile,
                         since_s=since_s,
