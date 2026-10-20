@@ -22,7 +22,7 @@ stale_after_days: 180
 # when that writer is off. The operator must check the effective deployment.
 system_facts:
   gateway:
-    name: Azizam
+    name: Gateway
     facts:
       - id: gateway-temporary-copies
         holds: request bodies while a request runs
