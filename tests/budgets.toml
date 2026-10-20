@@ -38,11 +38,13 @@
 # Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
 # legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
-# D47 conformance: +43 cases for misleading duration metadata, bounded decode,
+# D47 conformance: +54 cases for misleading duration metadata, bounded decode,
 # source-sample hard limits, off-grid frames, whole-file mode/envelope guards,
 # buffered voice references and direct/chunked receipt outcomes.
-# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 15002.
-pytest = 15002
+# Review regressions include frame-grid round trips, fractional source samples,
+# bounded whole-file verification, missing-duration packet scans and internal attempts.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 15013.
+pytest = 15013
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 
