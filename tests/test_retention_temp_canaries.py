@@ -69,7 +69,7 @@ class World:
         return found
 
     def files_anywhere(self) -> list[Path]:
-        return [Path(path, name) for root in self.roots for path, _dirs, names in os.walk(root) for name in names if name != ".owner.lock"]
+        return [Path(path, name) for root in self.roots for path, _dirs, names in os.walk(root) for name in names if Path(path, name) != self.private / ".owner.lock"]
 
     def held_files_holding(self) -> list[str]:
         """Open descriptors of this process (deleted files included) that point into a place under test and hold the marker.
@@ -436,7 +436,7 @@ def test_interrupted_multipart_closes_spill_with_traceback_kept(world: World, re
             nonlocal sent
             if not sent:
                 sent = True
-                return {"type": "http.request", "body": body[:-100], "more_body": True}
+                return {"type": "http.request", "body": body[:body.rfind(b"\r\n--canary-boundary--")], "more_body": True}
             assert world.held_files_holding(), "positive control: spill before interruption"
             waiting.set()
             if failure == "disconnect":
