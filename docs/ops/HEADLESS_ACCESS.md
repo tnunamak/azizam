@@ -445,6 +445,7 @@ Selected successful workflows are exercised separately.
 | `POST /setup/first-app` | session-only | denied | `proxy.setup_create_first_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /setup/local-login` | browser/public | no owner authority | `proxy.setup_local_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /setup/local-owner` | browser/public | no owner authority | `proxy.setup_create_local_owner`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `GET /admin/api/requests/{request_id}/retention/ledger` | owner-bearer | denied | `gateway.api.request_retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/settings/retention/ledger` | owner-bearer | denied | `gateway.retention_fact_api.retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_system_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_system_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
@@ -532,5 +533,3 @@ The invalid-credential case set the profile token to an invalid fixture value.
 The run did not test page-cap exhaustion, interrupted pagination, provider
 mutations, or real engine health. Generic URL commands can reuse credentials
 from a matching registered API; use a separate config for another identity.
-
-| `GET /admin/api/requests/{request_id}/retention/ledger` | owner-bearer | denied | `gateway.api.request_retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
