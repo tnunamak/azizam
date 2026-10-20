@@ -969,7 +969,7 @@ def create_request_retention_router(*, ledger_provider: LedgerProvider) -> APIRo
         try:
             view = ledger_provider(request, request_id)
         except PermissionError:
-            return egress.safe_error_response(403, "admin_required", "An owner or administrator is required")
+            return egress.safe_error_response(403, "admin_forbidden", "An owner or administrator is required")
         if view is None:
             return egress.safe_error_response(404, "ledger_not_found", "Ledger not found")
         return egress.plain_json_response({"ledger": view}, response_class="retention_ledger",
