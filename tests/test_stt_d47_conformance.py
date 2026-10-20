@@ -400,3 +400,188 @@ def test_receipts_count_each_started_attempt_once(tmp_path, fake_upstreams, chun
             assert response.status_code == {"success": 200, "refusal": 400, "timeout": 504}[result]
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("seconds,threshold,reason", [(0.2, 0.3, "below_threshold"), (0.28, 0.25, "single_segment_plan")])
+def test_passthrough_reuses_verified_decode(tmp_path, fake_upstreams, seconds, threshold, reason):
+    async def run():
+        source = wav(tmp_path / "short.wav", seconds)
+        fake_upstreams.router.add_transport("short.fk.test:9876", HandlerTransport(
+            lambda request: httpx.Response(200, json={"text": "whole"})))
+        cleanup = stt.SttCleanupOwner()
+        outcomes = []
+        with source.open("rb") as handle:
+            request = SttRun(op="stt.transcribe", execution=config(tmp_path, target_seconds=0.25,
+                threshold_seconds=threshold, max_segment_seconds=0.3), fields=[], multipart_fields={},
+                uploads=[("file", SimpleNamespace(file=handle, filename="short.wav", content_type="audio/wav"))],
+                workspace=tmp_path, cleanup=cleanup, cancellation_waiters=(),
+                deadline_at=asyncio.get_running_loop().time()+10, on_cancel=lambda: None,
+                on_attempt_started=lambda count: None, on_outcome=outcomes.append)
+            try:
+                with patch.object(stt, "run_media_command", wraps=stt.run_media_command) as media:
+                    result = await ChunkedSttAdapter()._run("http://short.fk.test:9876/v1/audio/transcriptions",
+                        httpx.Timeout(5), request)
+                assert result.status == 200
+                assert outcomes[0].fallback_reason == reason
+                assert media.await_count == 2, [call.args[0] for call in media.await_args_list]
+            finally:
+                await cleanup.aclose()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_reference_without_guard_survives_unhealthy_spool(tmp_path, fake_upstreams, native):
+    source = wav(tmp_path / "reference.wav", 0.2)
+    spool = tmp_path / "unavailable"
+    spool.write_text("not a directory")
+    fake_upstreams.router.add_transport("reference.fk.test:9876", HandlerTransport(
+        lambda request: httpx.Response(200, json={"text": "words"})))
+    service = {"host": "reference.fk.test", "port": 9876, "default_model": "test", "chunking": {
+        "spool_dir": str(spool), "max_segment_seconds": 0.3 if native else None,
+        "target_seconds": 0.25, "native_long_audio_offline": native}}
+    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+         patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()), \
+         patch.object(stt, "create_request_workspace", wraps=stt.create_request_workspace) as create:
+        assert asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source)) == "words"
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("result", ["success", "invalid", "deadline", "cancel"])
+def test_reference_decode_holds_and_releases_resource_lease(tmp_path, fake_upstreams, result):
+    async def run():
+        source = wav(tmp_path / "reference.wav", 0.2)
+        gate = stt.SttResourceGate()
+        observed = []
+        real_decode = stt.decode_planning_pcm
+        async def decode(*args, **kwargs):
+            observed.append(gate.active_count)
+            if result == "invalid":
+                raise stt.SttInvalidAudio("bad reference")
+            if result == "deadline":
+                raise stt.SttDeadlineExceeded("deadline")
+            if result == "cancel":
+                raise asyncio.CancelledError()
+            return await real_decode(*args, **kwargs)
+        fake_upstreams.router.add_transport("reference.fk.test:9876", HandlerTransport(
+            lambda request: httpx.Response(200, json={"text": "words"})))
+        service = {"host": "reference.fk.test", "port": 9876, "default_model": "test", "chunking": {
+            "spool_dir": str(tmp_path / "spool"), "max_segment_seconds": 0.3, "target_seconds": 0.25}}
+        with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+             patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()), \
+             patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), patch.object(stt, "decode_planning_pcm", side_effect=decode):
+            if result == "success":
+                assert await proxy._reference_transcript(None, {"id": "test"}, source) == "words"
+            elif result == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await proxy._reference_transcript(None, {"id": "test"}, source)
+            else:
+                with pytest.raises(custom_voices.VoiceError) as caught:
+                    await proxy._reference_transcript(None, {"id": "test"}, source)
+                error = caught.value
+                assert error.status_code == (400 if result == "invalid" else 504)
+                assert error.code == ("invalid_audio" if result == "invalid" else "stt_deadline_exceeded")
+                assert ("readable audio" if result == "invalid" else "deadline") in str(error)
+        assert observed == [1]
+        assert gate.active_count == gate._reserved_bytes == 0
+        assert list((tmp_path / "spool").iterdir()) == []
+    asyncio.run(run())
+
+
+def test_disk_lease_covers_segment_and_verification_pcm(tmp_path):
+    mib = 1024 * 1024
+    execution = config(tmp_path, max_input_bytes=mib, max_decoded_bytes=mib, min_free_bytes=0)
+    gate = stt.SttResourceGate()
+    with patch.object(stt, "_disk_free_bytes", return_value=10**12):
+        lease = gate.acquire(request_id="verify-peak", config=execution)
+    try:
+        assert gate._reserved_bytes == 3 * mib
+        assert execution.request_claim().disk_mb == 3
+    finally:
+        lease.release()
+
+
+def test_probe_exposes_only_used_audio_facts():
+    assert not hasattr(stt.ProbedAudio(1, 16000, 1), "decoded_bytes")
+
+
+def test_exact_sample_tail_needs_no_extra_segment():
+    segments = stt.plan_quietest_frame_segments(duration_seconds=21.18,
+        quietest_frame=lambda lo, hi, near: near, target_seconds=7.06, search_seconds=0,
+        max_segment_seconds=7.06, max_segments=3)
+    assert segments == [(0, 7.06), (7.06, 14.12), (14.12, 21.18)]
+
+
+def test_final_plan_limit_compares_integer_sample_lengths(tmp_path):
+    async def run():
+        source = wav(tmp_path / "rounding.wav", 0.87)
+        pieces = [(0, 0.29), (0.29, 0.58), (0.58, 0.87)]
+        with patch.object(stt, "plan_quietest_frame_segments", return_value=pieces):
+            outcome = await stt.execute_chunking(source_path=source, source_stem="rounding", fields=[],
+                config=config(tmp_path, target_seconds=0.29, threshold_seconds=0.4, max_segment_seconds=0.29),
+                post_file=AsyncMock(return_value=stt.UpstreamResponse(200, b'{"text":"piece"}', {})),
+                cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+        assert outcome.attempts_started == 3
+    asyncio.run(run())
+
+
+def test_normalized_wav_decode_is_bounded_and_path_checked(tmp_path):
+    from gateway.engine_protocol.chunked_stt import _RunWire
+    async def run():
+        source = wav(tmp_path / "long.wav", 2)
+        cleanup = stt.SttCleanupOwner()
+        execution = config(tmp_path, max_duration_seconds=0.3, max_decoded_bytes=32000)
+        request = SimpleNamespace(workspace=tmp_path, cleanup=cleanup, execution=execution,
+            cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+        wire = _RunWire("test", None, "unused", request)
+        with source.open("rb") as handle:
+            try:
+                with patch.object(stt, "run_media_command", wraps=stt.run_media_command) as media:
+                    with pytest.raises(stt.SttResourceLimitExceeded):
+                        await wire.prepared_wav(SimpleNamespace(file=handle))
+                command = media.await_args.args[0]
+                assert "-t" in command and "-fs" in command
+                assert (tmp_path / "normalized-16k.wav").stat().st_size < 11000
+                request.workspace = tmp_path.parent / "escape"
+                with patch.object(stt, "run_media_command", new=AsyncMock()) as rejected:
+                    with pytest.raises(stt.SttConfigurationError):
+                        await wire.prepared_wav(SimpleNamespace(file=handle))
+                rejected.assert_not_awaited()
+            finally:
+                await cleanup.aclose()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("extension,codec", [("wav", "pcm_s16le"), ("flac", "flac"), ("mp3", "libmp3lame"), ("webm", "libopus")])
+def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
+    import random
+    from array import array
+    async def run():
+        rate = 48000
+        rng = random.Random(47)
+        samples = array("h", (rng.randrange(-12000, 12000) for _ in range(rate * 12)))
+        original = tmp_path / "original.wav"
+        with wave.open(str(original), "wb") as audio:
+            audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            audio.writeframes(samples.tobytes())
+        source = tmp_path / f"source.{extension}"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(original), "-c:a", codec, str(source)],
+                       check=True, capture_output=True)
+        execution = config(tmp_path)
+        planning = tmp_path / "source.pcm"
+        await stt.decode_planning_pcm(source, planning, config=execution, sample_rate=rate,
+            cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+        full = planning.read_bytes()
+        # Non-frame-aligned cuts late in the stream expose decoder resets and rounded seeks.
+        for first, last in [(rate * 6 + 17, rate * 7 + 131), (rate * 10 + 113, rate * 11 + 71)]:
+            destination = tmp_path / "segment.wav"
+            with patch.object(stt, "run_media_command", wraps=stt.run_media_command) as media:
+                await stt.extract_segment(source, destination, start_seconds=first/rate, end_seconds=last/rate,
+                    config=execution, cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+            command = media.await_args_list[0].args[0]
+            assert command.index("-ss") < command.index("-i"), command
+            with wave.open(str(destination)) as audio:
+                assert audio.getframerate() == rate
+                actual = audio.readframes(audio.getnframes())
+            assert actual == full[first*2:last*2], (extension, first, len(actual), (last-first)*2)
+    asyncio.run(run())
