@@ -43,7 +43,7 @@ retention_facts:
   - id: feature-state
     holds: user-uploaded files reusable by reference
     where: provider Files API store
-    how_long: files are automatically deleted after 48 hours
+    how_long: 'Files are automatically deleted after 48 hours.'
     default: conditional
     condition: a file is uploaded through the Files API
     reach: metadata can be read through the API; user-uploaded files cannot be downloaded through it
@@ -68,7 +68,7 @@ retention_facts:
     how_long: unknown
     default: conditional
     condition: unpaid service outside the EEA, Switzerland and UK; active-billing paid projects and those regions receive paid data treatment
-    reach: human reviewers may read, annotate and process API input and output
+    reach: 'human reviewers may read, annotate, and process your API input and output.'
     control: use active-billing paid-project treatment to exclude improvement use; this does not disable abuse monitoring
     evidence_url: https://ai.google.dev/gemini-api/terms
     checked: '2026-10-19'
