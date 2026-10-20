@@ -168,7 +168,7 @@ def execution(root):
         service_config={"chunking": {"spool_dir": str(root / "operator-spool")}})
 
 
-@pytest.mark.parametrize("escape", ["outside", "symlink", "parent"])
+@pytest.mark.parametrize("escape", ["outside", "symlink", "parent", "spool_root"])
 def test_stt_parser_refuses_unconfigured_workspace(tmp_path, escape):
     config = execution(tmp_path)
     config.spool_dir.mkdir()
@@ -176,7 +176,8 @@ def test_stt_parser_refuses_unconfigured_workspace(tmp_path, escape):
     outside.mkdir()
     link = config.spool_dir / "link"
     link.symlink_to(outside, target_is_directory=True)
-    workspace = {"outside": outside, "symlink": link, "parent": config.spool_dir / ".." / "outside"}[escape]
+    workspace = {"outside": outside, "symlink": link, "parent": config.spool_dir / ".." / "outside",
+                 "spool_root": config.spool_dir}[escape]
     with pytest.raises(stt.SttConfigurationError):
         stt.DiskBoundedMultiPartParser(Headers(), None, config=config, workspace=workspace)
     assert list(outside.iterdir()) == []
