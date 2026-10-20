@@ -666,3 +666,23 @@ def test_implicit_owner_reports_cleanup_failure_without_hiding_cancellation(tmp_
         assert not list(tmp_path.glob("segment-*"))
         unlink(tmp_path / "extraction-source.pcm")
     asyncio.run(run())
+
+
+def test_source_sample_tail_is_replanned_instead_of_refused(tmp_path):
+    async def run():
+        source = wav(tmp_path / "tail.wav", 0.9 + 1/48000, 48000)
+        frames = []
+        async def post(path, filename):
+            with wave.open(str(path)) as audio:
+                assert audio.getframerate() == 48000
+                frames.append(audio.getnframes())
+            return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
+        outcome = await stt.execute_chunking(source_path=source, source_stem="tail", fields=[],
+            config=config(tmp_path, target_seconds=0.3, threshold_seconds=0.4,
+                          max_segment_seconds=0.3, search_seconds=0),
+            post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10,
+            on_cancel=None)
+        assert outcome.attempts_started == len(frames) == 4
+        assert sum(frames) == 43201
+        assert max(frames) <= 14400
+    asyncio.run(run())
