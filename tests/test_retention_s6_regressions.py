@@ -70,7 +70,7 @@ def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch, 
     monkeypatch.setattr(proxy, "ADMIN_AUTH", no_browser)
     req, auth = request()
     if surface == "rest":
-        from gateway.api import create_gateway_router
+        from gateway.api import create_gateway_router, create_request_retention_router
         from gateway.discovery import WorkflowRegistry
         app = FastAPI()
         @app.middleware("http")
@@ -78,9 +78,10 @@ def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch, 
             request.scope["auth_context"] = auth
             return await call_next(request)
         app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=proxy._gateway_retention_ledger))
+        app.include_router(create_request_retention_router(ledger_provider=proxy._gateway_retention_ledger))
         client = TestClient(app)
         assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
-        assert client.get("/gateway/v1/requests/anything/ledger").status_code == 403
+        assert client.get("/admin/api/requests/anything/retention/ledger").status_code == 403
     else:
         from gateway import mcp_server
         from types import SimpleNamespace

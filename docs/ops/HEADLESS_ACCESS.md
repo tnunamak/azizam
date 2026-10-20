@@ -532,3 +532,5 @@ The invalid-credential case set the profile token to an invalid fixture value.
 The run did not test page-cap exhaustion, interrupted pagination, provider
 mutations, or real engine health. Generic URL commands can reuse credentials
 from a matching registered API; use a separate config for another identity.
+
+| `GET /admin/api/requests/{request_id}/retention/ledger` | owner-bearer | denied | `gateway.api.request_retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

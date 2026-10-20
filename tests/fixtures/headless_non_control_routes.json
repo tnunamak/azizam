@@ -52,7 +52,6 @@
   ["GET", "/gateway/v1/providers/{provider}/{native_path:path}", "proxy.provider_native_request"],
   ["GET", "/gateway/v1/receipts", "gateway.api.list_receipts"],
   ["GET", "/gateway/v1/receipts/{request_id}", "gateway.api.get_receipt"],
-  ["GET", "/gateway/v1/requests/{request_id}/ledger", "gateway.api.request_retention_ledger"],
   ["GET", "/gateway/v1/resources", "gateway.api.list_resources"],
   ["GET", "/gateway/v1/workflows", "gateway.api.list_workflows"],
   ["GET", "/gateway/v1/workflows/{workflow_id}", "gateway.api.get_workflow"],

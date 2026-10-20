@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from gateway import admin_store, egress, mcp_server, media_jobs, receipt_store, retention_fact_api
-from gateway.api import create_gateway_router
+from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.discovery import WorkflowRegistry
 from gateway.retention_facts import ledger, revision
 
@@ -154,7 +154,8 @@ def test_gateway_ledger_rest_requires_admin_and_returns_saved_request_view():
         return {"request_id": request_id, "destinations": []} if request_id != "missing" else None
 
     app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=provider))
+    app.include_router(create_request_retention_router(ledger_provider=provider))
     client = TestClient(app)
     assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
-    assert client.get("/gateway/v1/requests/r1/ledger", headers={"x-test-role": "admin"}).json()["ledger"]["request_id"] == "r1"
-    assert client.get("/gateway/v1/requests/missing/ledger", headers={"x-test-role": "owner"}).status_code == 404
+    assert client.get("/admin/api/requests/r1/retention/ledger", headers={"x-test-role": "admin"}).json()["ledger"]["request_id"] == "r1"
+    assert client.get("/admin/api/requests/missing/retention/ledger", headers={"x-test-role": "owner"}).status_code == 404

@@ -625,18 +625,6 @@ def create_gateway_router(
             return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
         return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
 
-    @router.get("/requests/{request_id}/ledger")
-    def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:
-        if ledger_provider is None:
-            return JSONResponse(status_code=404, content=_error_payload("ledger_unavailable", "Ledger unavailable"))
-        try:
-            view = ledger_provider(request, request_id)
-        except PermissionError:
-            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
-        if view is None:
-            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
-        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
-
     @router.get("/resources")
     async def list_resources(request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
@@ -963,5 +951,26 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=_job_body(updated))
+
+    return router
+
+
+def create_request_retention_router(*, ledger_provider: LedgerProvider) -> APIRouter:
+    """Expose dated facts through management auth, outside runtime App-key auth.
+
+    The injected provider uses the same owner/admin guard as other ledger reads
+    and masks receipt retention fields for the authenticated viewer.
+    """
+    router = APIRouter(prefix="/admin/api")
+
+    @router.get("/requests/{request_id}/retention/ledger")
+    def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:
+        try:
+            view = ledger_provider(request, request_id)
+        except PermissionError:
+            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
+        if view is None:
+            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
+        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
 
     return router

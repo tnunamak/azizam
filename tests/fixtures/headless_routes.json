@@ -834,6 +834,14 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.api.request_retention_ledger",
+    "method": "GET",
+    "path": "/admin/api/requests/{request_id}/retention/ledger",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.session",
     "method": "GET",
     "path": "/admin/api/session",

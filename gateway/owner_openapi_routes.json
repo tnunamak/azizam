@@ -546,5 +546,9 @@
   "PUT /admin/api/settings/retention/systems/{system_id}/facts": {
     "tag": "retention facts",
     "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/requests/{request_id}/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
 }

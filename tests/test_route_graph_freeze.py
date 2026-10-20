@@ -20,7 +20,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
     "/gateway/v1/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
-    "/gateway/v1/requests/{request_id}/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
+    "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
     "/admin/api/settings/retention/systems/{system_id}/facts": "owner-edited system retention facts; tests/test_retention_slice6.py covers removal",
     "/admin/api/engines/{service_id}/retention/ledger": "engine ledger; tests/test_retention_slice6.py covers it",

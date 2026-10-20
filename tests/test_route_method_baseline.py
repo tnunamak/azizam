@@ -136,7 +136,7 @@ def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
-    if (path in {"/gateway/v1/me/retention/ledger", "/gateway/v1/requests/sample/ledger",
+    if (path in {"/gateway/v1/me/retention/ledger", "/admin/api/requests/sample/retention/ledger",
                  "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
             or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
         return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
