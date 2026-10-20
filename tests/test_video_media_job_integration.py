@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -39,6 +40,7 @@ class _StubJsonRequest:
         return dict(self._body)
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -194,7 +196,7 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         assert response is not None
         job_id = json.loads(response.body.decode("utf-8"))["job_id"]
 
-        async def fake_create(request, _auth_context):
+        async def fake_create(request, _auth_context, *, receipt=None):
             replayed = await request.json()
             self.assertEqual(replayed["prompt"], "private video prompt")
             return Response(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+import pytest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -94,6 +95,7 @@ class _JsonRequest:
         return self._body
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
     async def _create(self, body: dict) -> tuple[int, dict, dict | None]:
         submitted: list[dict] = []

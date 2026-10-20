@@ -12,6 +12,7 @@ import base64
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -324,6 +325,7 @@ class H3RouteBase(RemixReplaceBase):
         return self.client.post("/v1/videos", json=body)
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class ExtensionRouteTests(H3RouteBase):
     def test_an_h3_video_is_extended_by_h3_without_naming_a_model(self) -> None:
         r = self._extend(seconds=8, seed=4)
@@ -431,6 +433,7 @@ class ExtensionRouteTests(H3RouteBase):
         self.assertIn("reason=h3_17np5_frame_grid", r.headers["X-Duration-Adjusted"])
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class CreateLongVideoTests(H3RouteBase):
     probe = None
 

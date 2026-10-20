@@ -331,7 +331,7 @@ def test_successful_audio_worker_preserves_forget_and_releases_payload(
     tagged = b"RIFF" + struct.pack("<I", len(riff_body)) + riff_body
     seen = []
 
-    async def fake_generate(request, auth_context, *, store_full=False):
+    async def fake_generate(request, auth_context, *, store_full=False, receipt=None):
         body = await request.json()
         seen.append(body)
         assert body["prompt"] == sentinel
