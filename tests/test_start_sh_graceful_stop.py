@@ -42,6 +42,9 @@ FAKE_LITELLM = textwrap.dedent(
     #!/bin/bash
     # The handler must exist before the marker the harness waits for.
     trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    if [ -n "${AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-}" ] && [ -e "/proc/$$/fd/$AZIZAM_PRIVATE_TMPDIR_LOCK_FD" ]; then
+      echo "litellm holds the private temporary directory lock" >> "$FAKE_LOG"
+    fi
     echo "litellm started" >> "$FAKE_LOG"
     while true; do sleep 0.1; done
     """
@@ -207,6 +210,8 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 f"LiteLLM stopped before the proxy finished: {lines}",
             )
             self.assertIn("start.sh exit=0", lines)
+            # A LiteLLM that outlives the gateway must not keep the next launch from claiming the directory.
+            self.assertNotIn("litellm holds the private temporary directory lock", lines)
 
     def test_litellm_restarts_when_provider_secret_rotates_and_deletes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
