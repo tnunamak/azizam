@@ -246,11 +246,10 @@ def test_a_directory_swapped_for_a_link_cannot_sweep_outside(host_disk_dir: Path
     assert (outside / "keep").read_text() == "retained"
 
 
-@pytest.mark.parametrize("mode", [0o777, 0o770])
-def test_prepare_refuses_an_untrusted_parent(host_disk_dir: Path, mode: int) -> None:
+def test_prepare_refuses_an_untrusted_parent(host_disk_dir: Path) -> None:
     parent = host_disk_dir / "shared"
     parent.mkdir()
-    parent.chmod(mode)
+    parent.chmod(0o777)
     with pytest.raises(private_tmp.PrivateTmpError, match="parent"):
         private_tmp.prepare(parent / "private-tmp")
 
@@ -312,15 +311,32 @@ def test_group_writable_ancestor_membership(host_disk_dir, monkeypatch, primary_
     shared.mkdir()
     shared.chmod(0o775)
     info = shared.stat()
-    monkeypatch.setattr(private_tmp.pwd, "getpwall", lambda: [
-        SimpleNamespace(pw_uid=info.st_uid + offset, pw_gid=info.st_gid) for offset in primary_ids
-    ])
-    monkeypatch.setattr(private_tmp.pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="owner"))
+    # Give only this ancestor a synthetic group; the sandbox itself can have 0775 ancestors.
+    group_id = 987654
+    real_fstat = os.fstat
+    real_group = private_tmp.grp.getgrgid
+    real_users = private_tmp.pwd.getpwall()
+    owner_name = private_tmp.pwd.getpwuid(info.st_uid).pw_name
+
+    def ancestor_info(fd):
+        result = real_fstat(fd)
+        if (result.st_dev, result.st_ino) == (info.st_dev, info.st_ino):
+            fields = list(result)
+            fields[5] = group_id
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(os, "fstat", ancestor_info)
+    monkeypatch.setattr(private_tmp.pwd, "getpwall", lambda: [*real_users, *[
+        SimpleNamespace(pw_uid=info.st_uid + offset, pw_gid=group_id) for offset in primary_ids
+    ]])
 
     def group(gid):
+        if gid != group_id:
+            return real_group(gid)
         if supplementary is None:
             raise KeyError(gid)
-        return SimpleNamespace(gr_mem=supplementary)
+        return SimpleNamespace(gr_mem=[owner_name if name == "owner" else "someone-else" for name in supplementary])
 
     monkeypatch.setattr(private_tmp.grp, "getgrgid", group)
     if allowed:

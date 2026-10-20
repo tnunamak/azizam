@@ -35,7 +35,10 @@
 # Slice 4 review fixes: +21 cases for interrupted multipart parsing, worker cancellation,
 # lifetime ownership/exec, directory swaps, parent/ancestor permissions and relative STT escape.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14945.
-pytest = 14945
+# Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
+# legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961.
+pytest = 14961
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 
