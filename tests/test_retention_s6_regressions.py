@@ -226,7 +226,7 @@ def test_former_destination_with_no_facts_is_preserved(stores):
 
 
 @pytest.mark.parametrize("operation", ["prune", "save", "maintain"])
-def test_busy_fact_cleanup_preserves_receipts_for_retry(stores, monkeypatch, operation):
+def test_busy_fact_cleanup_commits_expiry_and_sweeps_orphans(stores, monkeypatch, operation):
     import time
     row = RouteReceipt(protocol="test", intent="test", backend="destination")
     proxy._capture_retention_facts(row)
@@ -234,20 +234,19 @@ def test_busy_fact_cleanup_preserves_receipts_for_retry(stores, monkeypatch, ope
     admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY, {"retention_days": 30}, path=proxy.ADMIN_STORE.path)
     def run():
         if operation == "prune":
-            return receipt_store.prune(1, path=stores[0])
+            return receipt_store.prune(1, path=stores[0], fact_store_path=stores[1])
         if operation == "save":
             preview = receipt_store.retention_preview(30, path=stores[0])
-            return receipt_store.save_retention(30, preview, lambda: None, path=stores[0])
-        return receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0])
-    real_release = media_jobs.release_fact_references
-    monkeypatch.setattr(media_jobs, "release_fact_references", lambda *_a, **_kw: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+            return receipt_store.save_retention(30, preview, lambda: None, path=stores[0], fact_store_path=stores[1])
+        return receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0], fact_store_path=stores[1])
+    real_release = media_jobs.release_fact_reference_batch
+    monkeypatch.setattr(media_jobs, "release_fact_reference_batch", lambda *_a, **_kw: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
     from gateway import request_connections
     with request_connections.request_scope():
-        with pytest.raises(sqlite3.OperationalError):
-            run()
-        assert receipt_store.get(row.request_id) is not None
-    monkeypatch.setattr(media_jobs, "release_fact_references", real_release)
-    assert run() == 1
+        assert run() == 1
+        assert receipt_store.get(row.request_id) is None
+    monkeypatch.setattr(media_jobs, "release_fact_reference_batch", real_release)
+    assert receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0], fact_store_path=stores[1]) == 0
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1]) == {}
 
 

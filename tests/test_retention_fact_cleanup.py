@@ -39,7 +39,7 @@ def _save(paths, source_kind, source_id, fact):
 
 
 @pytest.mark.parametrize("delete_path", ["prune", "save_retention", "maintain", "settings_router"])
-def test_default_cleanup_releases_expired_receipt_snapshot_and_preserves_kept_record(stores, delete_path):
+def test_configured_cleanup_releases_expired_receipt_snapshot_and_preserves_kept_record(stores, delete_path):
     fact = _fact()
     shared = _save(stores, "receipt", "expired", fact)
     orphan = _save(stores, "receipt", "expired", {**fact, "how_long": "expired only"})
@@ -51,19 +51,19 @@ def test_default_cleanup_releases_expired_receipt_snapshot_and_preserves_kept_re
                          created_at=NOW, path=stores["receipts"])
     preview = receipt_store.retention_preview(30, path=stores["receipts"])
     if delete_path == "prune":
-        deleted = receipt_store.prune(30 * 86400, path=stores["receipts"])
+        deleted = receipt_store.prune(30 * 86400, path=stores["receipts"], fact_store_path=stores["facts"])
     elif delete_path == "save_retention":
-        deleted = receipt_store.save_retention(30, preview, lambda: None, path=stores["receipts"])
+        deleted = receipt_store.save_retention(30, preview, lambda: None, path=stores["receipts"], fact_store_path=stores["facts"])
     elif delete_path == "maintain":
         admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
             {"retention_days": 30}, updated_by="owner", path=stores["admin"])
-        deleted = receipt_store.maintain(stores["admin"], path=stores["receipts"])
+        deleted = receipt_store.maintain(stores["admin"], path=stores["receipts"], fact_store_path=stores["facts"])
     else:
         app = FastAPI()
         app.include_router(create_settings_router(
             auth=lambda request: AdminContext(subject="owner", roles=frozenset({"owner"}),
                                               auth_method="session", csrf_token="csrf-fixture"),
-            admin_path=stores["admin"], receipts_path=stores["receipts"], config_provider=lambda: {},
+            admin_path=stores["admin"], receipts_path=stores["receipts"], fact_store_path=stores["facts"], config_provider=lambda: {},
         ))
         response = TestClient(app).put("/admin/api/settings/receipts",
             json={"retention_days": 30, "preview": preview},

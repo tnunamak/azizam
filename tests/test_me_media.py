@@ -1260,12 +1260,12 @@ class MeMediaRouterTests(unittest.TestCase):
             preview = receipt_store.retention_preview(30, path=self.receipts_db)
             deleted = receipt_store.save_retention(30, preview,
                 lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
-                    {"retention_days": 30}, path=self.admin_db), path=self.receipts_db)
+                    {"retention_days": 30}, path=self.admin_db), path=self.receipts_db, fact_store_path=self.jobs_db)
             self.assertEqual(deleted, 1)
             for days in (90, 365, None):
                 receipt_store.save_retention(days, receipt_store.retention_preview(days, path=self.receipts_db),
                     lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
-                        {"retention_days": days}, path=self.admin_db), path=self.receipts_db)
+                        {"retention_days": days}, path=self.admin_db), path=self.receipts_db, fact_store_path=self.jobs_db)
                 usage = self.client.get("/me/api/usage/summary").json()
                 self.assertEqual(usage["coverage_start"], "2026-10-01T12:00:00+00:00")
                 self.assertIn("partial", usage["coverage_note"].lower())

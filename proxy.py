@@ -211,7 +211,7 @@ from gateway.admin_runtime import (
     service_account_session_subject,
     session_admin_role_subject,
 )
-from gateway.api import create_gateway_router
+from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
@@ -384,7 +384,8 @@ from gateway.policy import (
     CANNOT_START_MODEL, DENIED, NO_ACCESS, NO_ACCESS_PLAN, NOT_IN_ACCESS_PLAN, RULE_PROVIDER_UNAVAILABLE,
     DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
 )
-from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
+from gateway.receipts import (ReceiptLifecycleOwner, RouteReceipt, new_request_id,
+                              configure_retention_fact_capture, record_retention_fact_failure)
 from gateway.runtime_auth import (
     RuntimeIdentity,
     discovery_allows,
@@ -1967,6 +1968,10 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+configure_retention_fact_capture(lambda: (
+    ADMIN_STORE.get_service_registry() or {},
+    admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+))
 # The command permission is read from this live database, not the import-time default store.
 from gateway import host_commands
 host_commands.bind_admin_db(ADMIN_DB_PATH)
@@ -12920,19 +12925,7 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
 
     receipts_maintenance_stop = asyncio.Event()
-    receipts_maintenance_task = None
-    try:
-        pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path,
-                                         fact_store_path=media_jobs.DB_PATH)
-        receipts_maintenance_task = asyncio.create_task(
-            _receipts_maintenance_loop(receipts_maintenance_stop)
-        )
-        print(
-            f"[proxy] Receipt store initialized (db={receipt_store.DB_PATH}, pruned={pruned})",
-            flush=True,
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Receipt store failed to start: {e}", flush=True)
+    receipts_maintenance_task = await _start_receipts_maintenance(receipts_maintenance_stop)
 
     try:
         _fail_orphaned_identity_jobs()
@@ -13966,7 +13959,7 @@ def _snapshot_retention_facts(receipt: Any) -> None:
     try:
         receipt.persist_retention_facts()
     except Exception as error:
-        print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
+        record_retention_fact_failure("persist", receipt.request_id, error)
 
 
 def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext | None = None,
@@ -13982,7 +13975,7 @@ def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext
             outer=auth_context.retention_receipt if auth_context is not None else None,
         )
     except Exception as error:
-        print(f"[proxy] retention fact capture unavailable: {type(error).__name__}", flush=True)
+        record_retention_fact_failure("capture", receipt.request_id, error)
 
 
 def _record_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
@@ -14275,6 +14268,8 @@ app.include_router(
         record_scope_provider=_gateway_record_scope,
     )
 )
+
+app.include_router(create_request_retention_router(ledger_provider=_gateway_retention_ledger))
 
 # Where a person's Library comes from. The person API and make jobs share it.
 _PERSON_LIBRARY: dict[str, Any] = {
@@ -15814,6 +15809,7 @@ app.include_router(create_settings_router(
     instance_defaults=_instance_presentation_defaults,
     overrides_provider=ADMIN_STORE.operator_overrides,
     prompt_memory_path=media_jobs.DB_PATH,
+    receipts_path=receipt_store.DB_PATH, fact_store_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
     purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
@@ -25782,6 +25778,16 @@ async def status_dashboard_raw(request: Request):
 # computer_use) are rejected with 400 — the proxy backs onto a local llama
 # server with no first-party hosted-tool surface.
 # =============================================================================
+
+async def _start_receipts_maintenance(stop_event: asyncio.Event) -> asyncio.Task:
+    """Schedule retries before the first cleanup, including when startup cleanup fails."""
+    task = asyncio.create_task(_receipts_maintenance_loop(stop_event), name="receipt-maintenance")
+    try:
+        await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
+    except Exception as exc:
+        print(f"[proxy] receipt startup maintenance failed: {type(exc).__name__}", flush=True)
+    return task
+
 
 async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
     """Enforce the saved owner choice without blocking requests."""

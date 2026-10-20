@@ -34,6 +34,7 @@ from gateway.compat import get_env
 from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -708,12 +709,8 @@ def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
         conn.execute("BEGIN IMMEDIATE")
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
-        try:
-            _release_expired_fact_refs(expired_ids, fact_store_path)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        conn.commit()
+    _release_expired_fact_refs(expired_ids, fact_store_path)
     return deleted
 
 
@@ -738,17 +735,38 @@ def _expired_ids(conn: sqlite3.Connection, cutoff: int | None) -> list[str]:
     return [row[0] for row in conn.execute("SELECT request_id FROM receipts WHERE created_at < ?", (cutoff,))]
 
 
-def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> None:
-    if not ids:
+def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> bool:
+    """Release metadata after receipt expiry commits; failure never restores history."""
+    if not ids or fact_store_path is None or not Path(fact_store_path).exists():
+        return True
+    from gateway import media_jobs
+
+    try:
+        for offset in range(0, len(ids), 500):
+            media_jobs.release_fact_reference_batch("receipt", ids[offset:offset + 500], path=fact_store_path)
+    except Exception as error:
+        logging.getLogger(__name__).warning("Receipt fact cleanup pending: %s", type(error).__name__)
+        return False
+    return True
+
+
+def _sweep_orphan_fact_refs(path: Path, fact_store_path: Path | None) -> None:
+    if fact_store_path is None or not Path(fact_store_path).exists():
         return
     from gateway import media_jobs
 
-    fact_store_path = media_jobs.DB_PATH if fact_store_path is None else fact_store_path
-    # A receipt-only installation has no fact references to release.
-    if not Path(fact_store_path).exists():
-        return
-    for request_id in ids:
-        media_jobs.release_fact_references("receipt", request_id, path=fact_store_path)
+    after = ""
+    try:
+        while ids := media_jobs.receipt_fact_source_ids(after=after, path=fact_store_path):
+            after = ids[-1]
+            with _conn(path) as conn:
+                live = {row[0] for row in conn.execute(
+                    "SELECT request_id FROM receipts WHERE request_id IN (" + ",".join("?" for _ in ids) + ")", ids,
+                )}
+            if not _release_expired_fact_refs([item for item in ids if item not in live], fact_store_path):
+                return
+    except Exception as error:
+        logging.getLogger(__name__).warning("Receipt fact orphan sweep pending: %s", type(error).__name__)
 
 
 def retention_preview(days: int | None, *, path: Path = DB_PATH) -> dict[str, Any]:
@@ -766,6 +784,7 @@ def save_retention(
     days: int | None, preview: Mapping[str, Any] | None,
     save_setting: Callable[[], Any], *, path: Path = DB_PATH,
     fact_store_path: Path | None = None,
+    on_cleanup_failure: Callable[[], Any] | None = None,
 ) -> int:
     """Validate the preview under a write lock, save the choice, then delete.
 
@@ -792,14 +811,9 @@ def save_retention(
         save_setting()
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
-        # If fact cleanup is busy, roll back receipt deletion so maintenance
-        # can rediscover these IDs and retry. The stores commit separately.
-        try:
-            _release_expired_fact_refs(expired_ids, fact_store_path)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        conn.commit()
+    if not _release_expired_fact_refs(expired_ids, fact_store_path) and on_cleanup_failure is not None:
+        on_cleanup_failure()
     return deleted
 
 
@@ -812,13 +826,10 @@ def maintain(admin_path: Path, *, path: Path = DB_PATH,
         cutoff = int(time.time()) - days * 86400 if days is not None else None
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
-        try:
-            _release_expired_fact_refs(expired_ids, fact_store_path)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    _sweep_orphan_fact_refs(path, fact_store_path)
     return deleted
 
 

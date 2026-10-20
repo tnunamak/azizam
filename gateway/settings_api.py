@@ -51,6 +51,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
                            receipts_path: Path | None = None,
+                           fact_store_path: Path | None = None,
                            on_prompt_memory_kill: Callable[[], Any] | None = None,
                            purge_status_provider: Callable[[], Mapping[str, Any]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
@@ -152,8 +153,16 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             )
             saved = True
 
+        cleanup_pending = False
+        def mark_cleanup_pending() -> None:
+            nonlocal cleanup_pending
+            cleanup_pending = True
+
         try:
-            deleted = await asyncio.to_thread(receipt_store.save_retention, days, body["preview"], save_setting, path=receipt_path)
+            deleted = await asyncio.to_thread(
+                receipt_store.save_retention, days, body["preview"], save_setting,
+                path=receipt_path, fact_store_path=fact_store_path, on_cleanup_failure=mark_cleanup_pending,
+            )
         except (admin_store.SettingsConflictError, receipt_store.RetentionPreviewChanged) as exc:
             return JSONResponse({"error": {"code": "settings_conflict", "message": str(exc)}}, status_code=409)
         except sqlite3.Error:
@@ -162,7 +171,10 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                 response.status_code = 202
                 return response
             return JSONResponse({"error": {"code": "receipt_retention_unavailable", "message": "The setting wasn’t saved. Try again."}}, status_code=503)
-        return receipts_response(deleted_count=deleted)
+        response = receipts_response(deleted_count=deleted, **({"cleanup_pending": True} if cleanup_pending else {}))
+        if cleanup_pending:
+            response.status_code = 202
+        return response
 
     @router.get("/instance")
     def get_instance(request: Request):
