@@ -119,7 +119,7 @@ def _comfy_scenario(name: str, outputs_key: str, filename: str, media_type: str,
 
 class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
     @pytest.fixture(autouse=True)
-    def _inject(self, fake_upstreams):
+    def _inject(self, fake_upstreams, isolated_receipts):
         self.fakes = fake_upstreams
 
     def setUp(self) -> None:
