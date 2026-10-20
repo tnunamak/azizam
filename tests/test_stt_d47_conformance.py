@@ -686,3 +686,32 @@ def test_source_sample_tail_is_replanned_instead_of_refused(tmp_path):
         assert sum(frames) == 43201
         assert max(frames) <= 14400
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["cancel", "deadline", "media", "success"])
+def test_verification_cleanup_preserves_primary_failure(tmp_path, failure):
+    async def run():
+        errors = {"cancel": asyncio.CancelledError(), "deadline": stt.SttDeadlineExceeded("deadline"),
+                  "media": stt.SttMediaCommandFailed("bad segment")}
+        primary = errors.get(failure)
+        destination = tmp_path / "segment.wav"
+        async def extract(command, **kwargs):
+            wav(destination, 0.3)
+            return b"", b""
+        async def decode(source, pcm, **kwargs):
+            if primary is not None:
+                raise primary
+            pcm.write_bytes(b"\0\0" * 4800)
+        def fail_unlink(path):
+            assert path == destination.with_suffix(".verify.pcm")
+            raise OSError("test verification unlink failure")
+        with patch.object(stt, "run_media_command", side_effect=extract), \
+             patch.object(stt, "decode_planning_pcm", side_effect=decode), \
+             patch.object(stt, "_unlink_chunk_path", side_effect=fail_unlink):
+            with pytest.raises(type(primary) if primary is not None else stt.SttCleanupFailure) as caught:
+                await stt.extract_segment(tmp_path / "source.pcm", destination, start_seconds=0, end_seconds=0.3,
+                    source_format=(16000, 1), config=config(tmp_path), cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
+            if primary is not None:
+                assert caught.value is primary
+    asyncio.run(run())
