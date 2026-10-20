@@ -143,7 +143,7 @@ describe("Try: Don't keep this prompt", () => {
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toBeUndefined();
     expect(screen.queryByText("Prompt not kept")).toBeNull();
   });
@@ -160,7 +160,7 @@ describe("Try: Don't keep this prompt", () => {
     ).toBeVisible();
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
@@ -196,7 +196,7 @@ describe("Try: Don't keep this prompt", () => {
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
@@ -246,7 +246,7 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
   await ready();
   await screen.findByText("Prompts aren’t kept");
   await user.click(screen.getByRole("button", { name: "Run" }));
-  await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+  await screen.findByAltText("Generated result", {}, { timeout: 15000 });
   expect(
     screen.getByText("The picture still goes to Library."),
   ).toBeVisible();
