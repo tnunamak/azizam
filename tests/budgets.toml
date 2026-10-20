@@ -28,11 +28,12 @@
 # Retention Slice 1b + Slice 2: 13 new pytest cases, then 6 first-review
 # and 6 second-review regression cases (14858 -> 14883), and
 # 2 new Vitest cases (3047 -> 3049), remeasured on this branch.
-# Retention Slice 6: 17 collected Python cases, one Vitest case, and two
-# browser viewport cases. Playwright lists 471 + 3 + 18 across the gate configs.
+# Retention Slice 6: 17 direct Python cases plus 25 generated route-probe
+# cases, one Vitest case, and two browser viewport cases. The full hermetic
+# suite collected 14936; Playwright lists 471 + 3 + 18 across gate configs.
 # Round 3: one shared-App route, one structural read-site scan, eight
 # store method/audience cases, and one Library usage case (+11).
-pytest = 14911
+pytest = 14936
 vitest = 3050  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases, +1 ledger case.
 playwright = 492
 
