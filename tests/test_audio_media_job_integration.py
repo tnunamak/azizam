@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import patch
 
+import pytest
 from fastapi import Response
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +40,7 @@ class _StubJsonRequest:
         return dict(self._body)
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

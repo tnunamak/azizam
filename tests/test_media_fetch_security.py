@@ -194,7 +194,7 @@ def test_media_redirect_loop_is_bounded():
     assert len(contacted) == media_fetch.MAX_REDIRECTS + 1
 
 
-def test_video_create_rejects_existing_filesystem_path_with_400(tmp_path):
+def test_video_create_rejects_existing_filesystem_path_with_400(tmp_path, isolated_receipts):
     image = tmp_path / "private.png"
     image.write_bytes(b"private file contents")
     request = SimpleNamespace(

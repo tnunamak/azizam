@@ -4,12 +4,12 @@ import json
 import sys
 import tempfile
 import unittest
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import patch
 
+import pytest
 from fastapi import Response
 
 ROOT = Path(__file__).resolve().parent.parent

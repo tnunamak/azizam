@@ -40,7 +40,7 @@ class _Request:
 
 class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
     @pytest.fixture(autouse=True)
-    def _inject(self, fake_upstreams, monkeypatch):
+    def _inject(self, fake_upstreams, monkeypatch, isolated_receipts):
         self.fakes = fake_upstreams
         self.monkeypatch = monkeypatch
 

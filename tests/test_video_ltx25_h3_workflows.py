@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-import pytest
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
