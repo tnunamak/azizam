@@ -42,7 +42,7 @@ def misleading_audio(tmp_path):
         path = tmp_path / f"duration-{duration}.mka"
         if duration is None:
             path.write_bytes(subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(source),
-                "-c:a", "libopus", "-f", "webm", "pipe:1"]))
+                "-c:a", "flac", "-f", "matroska", "pipe:1"]))
             return path
         element = b"\x44\x89\x88" + struct.pack(">d", duration * 1000)
         path.write_bytes(data[:offset] + element + data[offset + 11:])

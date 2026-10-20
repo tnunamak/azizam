@@ -4007,6 +4007,8 @@ async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], refe
     try:
         clip = chunked_stt.SttUpload(
             op="stt.transcribe",
+            execution=stt_chunking.SttExecutionConfig.from_service(
+                service_id="stt", service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
             body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
         )
