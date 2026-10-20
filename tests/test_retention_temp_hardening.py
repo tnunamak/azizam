@@ -101,11 +101,10 @@ def test_stt_parser_refuses_unconfigured_workspace(tmp_path, escape):
     assert list(outside.iterdir()) == []
 
 
-@pytest.mark.parametrize("helper", ["decode", "extract", "guard", "execute"])
-@pytest.mark.parametrize("escape", ["source", "destination", "symlink"])
+@pytest.mark.parametrize("helper,escape", [
+    (helper, escape) for helper in ("decode", "extract") for escape in ("source", "destination", "symlink")
+] + [("guard", "source"), ("execute", "source")])
 def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monkeypatch, helper, escape):
-    if helper in {"guard", "execute"} and escape != "source":
-        pytest.skip("these entry points derive their destination from the source")
     config = execution(tmp_path)
     workspace = stt.create_request_workspace(config)
     other = stt.create_request_workspace(config)
@@ -151,6 +150,7 @@ def test_memfd_unavailable_fails_closed_without_disk_fallback(tmp_path, monkeypa
         def unavailable(*args):
             raise OSError("memfd disabled")
         monkeypatch.setattr(os, "memfd_create", unavailable, raising=False)
+        monkeypatch.setattr(os, "MFD_CLOEXEC", media_metadata._MFD_CLOEXEC, raising=False)
     else:
         monkeypatch.delattr(os, "memfd_create", raising=False)
         monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: SimpleNamespace())

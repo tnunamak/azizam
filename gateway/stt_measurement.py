@@ -28,7 +28,7 @@ import wave
 import yaml
 
 from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, QueueClass, ResourceClaim, evaluate_admission
-from gateway import stt_chunking, stt_measure as measure, stt_samples
+from gateway import private_tmp, stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
@@ -168,13 +168,20 @@ class Measurements:
             return
         try:
             with self._workspace_lease():
-                scratch = self.path.parent / "stt-measurement-work"
-                if scratch.is_dir():
-                    for folder in scratch.iterdir():
-                        if folder.is_dir() and not folder.is_symlink():
-                            shutil.rmtree(folder)
+                # Sweep pre-upgrade DB-adjacent scratch too, but never allocate there.
+                for scratch in (self._scratch_directory(), self.path.parent / "stt-measurement-work"):
+                    if scratch.is_dir() and not scratch.is_symlink():
+                        for folder in scratch.iterdir():
+                            if folder.is_dir() and not folder.is_symlink():
+                                shutil.rmtree(folder)
         except EngineRouteError:
             pass  # A live worker inherited the lease; never remove its files.
+
+    def _scratch_directory(self) -> Path:
+        scratch = private_tmp.current() / "stt-measurement-work"
+        if scratch.is_symlink() or not private_tmp.inside(scratch):
+            raise private_tmp.PrivateTmpError("Measurement scratch must stay inside the private temporary directory")
+        return scratch
 
     def startup_cleanup(self) -> None:
         """Remove abandoned preparation files before serving owner requests."""
@@ -411,9 +418,10 @@ class Measurements:
             async with asyncio.timeout(policy["deadline_seconds"]):
                 job.update(status="running", phase="Fetching public samples")
                 self._save(job)
-                scratch = self.path.parent / "stt-measurement-work"
-                scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
                 with self._workspace_lease():
+                    scratch = self._scratch_directory()
+                    scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    scratch.chmod(0o700)
                     with tempfile.TemporaryDirectory(dir=scratch, prefix="job-") as root:
                         report = await self._measure(ctx, job, policy, Path(root))
                 job.update(status="succeeded", phase="Complete; review before applying", report=_finite(report))
