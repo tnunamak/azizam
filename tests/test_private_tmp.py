@@ -280,3 +280,18 @@ def test_exec_holds_the_lock_in_the_serving_process(host_disk_dir: Path) -> None
     assert owner.returncode == 0
     private_tmp.prepare(target)
     assert not (target / "live").exists(), "dead owners release the lock and permit startup sweep"
+
+
+@pytest.mark.parametrize("mode,allowed", [(0o777, False), (0o770, False), (0o1777, True)])
+def test_prepare_checks_writable_ancestors_not_only_the_parent(host_disk_dir: Path, mode: int, allowed: bool) -> None:
+    shared = host_disk_dir / "shared"
+    shared.mkdir()
+    shared.chmod(mode)
+    parent = shared / "owned"
+    parent.mkdir(mode=0o700)
+    target = parent / "private-tmp"
+    if allowed:
+        private_tmp.prepare(target)
+    else:
+        with pytest.raises(private_tmp.PrivateTmpError, match="parent"):
+            private_tmp.prepare(target)
