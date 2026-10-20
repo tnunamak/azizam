@@ -1493,6 +1493,23 @@ Each slice lists its own subset in section 17.
     record's ledger still renders, and pruning keeps the revision. With
     request history off and the receipt pruned, a Library prompt's ledger
     shows today's facts with the "no longer kept" label.
+
+    Slice 6 freezes facts before dispatch and persists them through the
+    receipt lifecycle, including translated Responses, chat, speech,
+    transcription, audio and video workers. Fact hashes stay in the admin
+    and internal receipt audiences. Ledger reads reuse the receipt's maker
+    mask: other administrators see the retention decision, but not its
+    reason or deadline. REST requires an admin management credential; MCP
+    requires an owner/admin OAuth connection. Personal App keys cannot read
+    either ledger surface.
+
+    Deletion releases receipt references and destination metadata, then
+    removes revisions with no remaining references. A busy fact store rolls
+    back receipt deletion so maintenance can retry. Each request snapshot
+    writes all destinations in one transaction. A failed fact lookup or
+    write leaves inference working and labels the ledger "Today's facts";
+    missing historical revisions are labelled "no longer kept". Explicitly
+    empty facts and removed destinations keep their captured meaning.
 15. **Conversation scope and readers.** The existing Responses scope tests
     pass unchanged. A conversation row with a null person is never readable
     through a person check. A member's `readers: maker_signed_in` in the
@@ -1621,7 +1638,7 @@ live 5000 or 15000 services.
 | 3 | **LiteLLM keeps nothing.** See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
 | 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
-| 6 | **Facts and ledger.** The `retention_fact` schema and revisions; provider catalog seeds; protocol, definition and record levels; the ledger view and its routes and MCP action; the assembled "never save" text. | Adds views | 16.1.14; schema tests; a removed fact stays removed; the stale label; no network on read; live check 5 |
+| 6 | **Facts and ledger — implemented and corrected after review.** Dated schema and data seeds; cached catalogs; pre-dispatch snapshots for all receipt paths; atomic revision references and expiry cleanup; admin REST and OAuth MCP ledger; maker-only reason/deadline; assembled paragraph disclosure and human destination names. Fact edit audit/CAS and the UI editor remain for a later slice. | Adds views; no inference failure when facts are unavailable | 16.1.14; real gateway audience/App-key regressions; real local/paid router and audio/video worker snapshots; receipt cleanup retry; adapter traces including chat; schema/date validation; removed/empty facts; no-network reads; retention-ledger Vitest and desktop/mobile Playwright specs. Live check 5 remains for a scratch deployment. |
 | 7 | **Debug window.** The windows table; decision step 4; the `sent` part at the internal hop and the egress builder; error-part withholding by role; the engine-page button; the `debug_window` MCP tool and the CLI operations. | New kind | 16.1.4 (Debug reads); 16.1.12; 16.1.11 (window controls); 16.2 with a window open; the administrator on an owner-stored-key withholding case; live check 2 |
 | 8 | **Presets and full data editing.** The preset picker with Custom, and the YAML/JSON editor with the validator's refusals. | New UI views | each preset round-trips to its values; an edited value shows Custom; the UX review of the three layers per the design-review gate |
 | 9 | **Run again.** The dry-run preview (admission outcome, residency, cost), re-authorization, the incomplete-record editor, `replay_of`, and the REST, MCP and CLI action. | New action | live check 3; access-plan and cap refusals through REST and MCP; a state change between preview and dispatch gives the real outcome |
