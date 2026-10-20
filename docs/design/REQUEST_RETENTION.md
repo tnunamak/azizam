@@ -543,18 +543,33 @@ beside that database while holding the lease.
 
 Approved exceptions to the private pathname root are:
 
+- Cached assets (`proxy._store_asset_bytes`) stage as `<digest><suffix>.tmp`
+  beside the target in `IMAGE_CACHE_DIR`, then replace it atomically on the same
+  filesystem. The published asset is a durable artifact. Asset metadata sidecars
+  also stage beside their targets as `<digest>.meta.json.tmp` for atomic replacement.
+- Provider key creation (`gateway.secret_store.load_or_create_secret_key`) stages
+  an owner-only file beside the configured key path, flushes it, then publishes it
+  with an atomic same-filesystem hard link. This durable configuration artifact
+  must be complete before concurrent callers can load it; staging is removed on exit.
 - Retained-media thumbnails stage beside the retained asset for same-filesystem
   atomic replacement.
 - Retained-media metadata migration stages already-stripped bytes as
   `.metadata-clean-*` beside the asset for the same atomic-replacement reason.
   Staging permissions are `0600`, regardless of the old asset mode; the replacement
-  keeps that private mode. Each migration scan removes orphan staging names under
+  keeps that private mode. Release note: rewritten retained assets now use `0600`
+  instead of preserving an existing `0644` mode. Each migration scan removes orphan staging names under
   its scan lock, including bounded or selected-asset scans. A failed unlink is
   reported as pending. Normal completion and errors unlink the staging file.
 - An absolute STT `spool_dir` from validated operator configuration is the
   operator's explicit storage choice (row 4). A caller-supplied helper path does
   not grant this exception: parser workspaces must be strict descendants of that spool root,
   and derived media inside the source request's directory.
+
+The old `cache/media_metadata` directory is legacy request-media scratch, not a
+new allocation exception or a durable artifact. `proxy._strip_queued_prompt_files`
+passes it to the metadata migration for orphan cleanup. Current metadata helpers
+use anonymous buffers; durable cached assets and their sidecars remain in the
+configured asset cache as described above.
 
 Anonymous `memfd` media buffers are also approved: they have no filesystem
 pathname and write no disk file. They live in RAM and close on scope exit or
