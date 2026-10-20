@@ -35,11 +35,11 @@
 # store method/audience cases, and one Library usage case (+11).
 # Merged retention slices 4 and 6: full hermetic collection measured 15091.
 # Vitest list and all three Playwright gate configs remeasured on the merged tree.
-# Round-3 followups: +9 deterministic write/cleanup/honesty/logging cases,
+# Round-3 followups: +10 deterministic write/cleanup/honesty/logging cases,
 # +4 real-auth current-ledger cases and +4 generated management probes.
-# Full hermetic collection on the merged repaired tree measured 15108.
+# Full hermetic collection on the merged repaired tree measured 15109.
 # Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
-pytest = 15108
+pytest = 15109
 vitest = 3050
 playwright = 492
 
