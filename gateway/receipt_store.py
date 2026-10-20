@@ -757,7 +757,10 @@ def _sweep_orphan_fact_refs(path: Path, fact_store_path: Path | None) -> None:
 
     after = ""
     try:
-        while ids := media_jobs.receipt_fact_source_ids(after=after, path=fact_store_path):
+        # Facts commit just before their receipt on some write paths. A new
+        # source is not an orphan until that bounded write window has passed.
+        older_than = int(time.time()) - 300
+        while ids := media_jobs.receipt_fact_source_ids(after=after, older_than=older_than, path=fact_store_path):
             after = ids[-1]
             with _conn(path) as conn:
                 live = {row[0] for row in conn.execute(

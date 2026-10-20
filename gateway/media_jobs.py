@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -386,6 +386,7 @@ CREATE TABLE IF NOT EXISTS retention_fact_destinations (
   source_id TEXT NOT NULL,
   destination_id TEXT NOT NULL,
   metadata_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(source_kind, source_id, destination_id)
 );
 """
@@ -408,7 +409,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, 2, SCHEMA_VERSION):
+    elif int(row[0]) not in (1, 2, 3, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -423,6 +424,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
     if "attempt_number" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
+    destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
+    if "created_at" not in destination_columns:
+        conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
     _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     # Baseline writers omit sequence. SQLite serializes this with their insert,
@@ -1477,9 +1481,9 @@ def save_fact_snapshot(
         try:
             for destination_id, metadata_json, facts in prepared.entries:
                 conn.execute(
-                    "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json) "
-                    "VALUES(?,?,?,?)",
-                    (source_kind, source_id, destination_id, metadata_json),
+                    "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (source_kind, source_id, destination_id, metadata_json, timestamp),
                 )
                 for digest, encoded in facts:
                     conn.execute(
@@ -1546,14 +1550,18 @@ def fact_destinations_for_source(
     return {destination_id: json.loads(metadata) for destination_id, metadata in rows}
 
 
-def receipt_fact_source_ids(*, after: str = "", limit: int = 500, path: Path = DB_PATH) -> list[str]:
-    """Page receipt sources, including snapshots with no facts."""
+def receipt_fact_source_ids(*, after: str = "", limit: int = 500,
+                            older_than: int | None = None, path: Path = DB_PATH) -> list[str]:
+    """Page receipt sources, allowing a grace period for a pending receipt write."""
     with _conn(path) as conn:
         return [row[0] for row in conn.execute(
             "SELECT source_id FROM ("
             "SELECT source_id FROM retention_fact_references WHERE source_kind='receipt' "
-            "UNION SELECT source_id FROM retention_fact_destinations WHERE source_kind='receipt') "
-            "WHERE source_id > ? ORDER BY source_id LIMIT ?", (after, limit),
+            "UNION SELECT source_id FROM retention_fact_destinations WHERE source_kind='receipt') AS sources "
+            "WHERE source_id > ? AND (? IS NULL OR NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_destinations d WHERE d.source_kind='receipt' "
+            "AND d.source_id=sources.source_id AND d.created_at > ?)) "
+            "ORDER BY source_id LIMIT ?", (after, older_than, older_than, limit),
         )]
 
 
