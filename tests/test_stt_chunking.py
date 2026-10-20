@@ -808,7 +808,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_failure_never_replays_the_whole_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, spool_dir=str(root))
+            config = _config(root, spool_dir=str(root.parent))
             source = root / "source.wav"
             source.write_bytes(b"source")
             attempts: list[str] = []
@@ -1046,7 +1046,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             source = root / "source.webm"
             source.write_bytes(b"not examined by the fake probe")
-            config = _config(root, spool_dir=str(root))
+            config = _config(root, spool_dir=str(root.parent))
             format_probe_payload = json.dumps({
                 "format": {},
                 "streams": [{
