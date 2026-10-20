@@ -114,17 +114,22 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
     parent_fd = directory_fd = lock_fd = None
     keep_lock = False
     try:
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # Traverse without following ancestor links, then require a trusted immediate parent.
+        # Validate the whole parent chain: a writable grandparent can replace even a 0700 parent
+        # after activation, redirecting later TMPDIR allocations away from the locked inode.
         parent_fd = os.open("/", os.O_DIRECTORY | os.O_NOFOLLOW)
-        for component in target.parent.parts[1:]:
-            next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        for component in (".", *target.parent.parts[1:]):
+            try:
+                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            except FileNotFoundError:
+                os.mkdir(component, 0o700, dir_fd=parent_fd)
+                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
             os.close(parent_fd)
             parent_fd = next_fd
-        parent_info = os.fstat(parent_fd)
-        if parent_info.st_uid not in {0, os.geteuid()} or (parent_info.st_mode & 0o022 and not parent_info.st_mode & stat.S_ISVTX):
-            raise PrivateTmpError(f"The private temporary directory parent {target.parent} is not trusted "
-                                  f"(uid {parent_info.st_uid}, mode {stat.S_IMODE(parent_info.st_mode):04o}, service uid {os.geteuid()}).")
+            parent_info = os.fstat(parent_fd)
+            if parent_info.st_uid not in {0, os.geteuid()} or (parent_info.st_mode & 0o022 and not parent_info.st_mode & stat.S_ISVTX):
+                raise PrivateTmpError(f"The private temporary directory parent chain for {target.parent} is not trusted "
+                                      f"(ancestor {component}, uid {parent_info.st_uid}, mode {stat.S_IMODE(parent_info.st_mode):04o}, "
+                                      f"service uid {os.geteuid()}).")
         try:
             os.mkdir(target.name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
