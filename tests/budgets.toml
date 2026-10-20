@@ -39,7 +39,9 @@
 # +4 real-auth current-ledger cases and +4 generated management probes.
 # Full hermetic collection on the merged repaired tree measured 15109.
 # Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
-pytest = 15109
+# Admin sweep receipt isolation: +1 pre-existing-store teardown regression.
+# Full hermetic collection remeasured at 15110 after this repair.
+pytest = 15110
 vitest = 3050
 playwright = 492
 

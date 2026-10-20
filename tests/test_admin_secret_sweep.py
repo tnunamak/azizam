@@ -114,6 +114,10 @@ def _leaks(response) -> list[str]:
 @pytest.fixture
 def host_isolated(monkeypatch, isolated_receipts):
     """The sweeps call real routes; the host answers "nothing here" so no route reaches outside the test."""
+    # get() binds its default path at import, before DB_PATH is redirected.
+    original_get = receipt_store.get
+    monkeypatch.setattr(receipt_store, "get", lambda *a, **kw: original_get(*a, **{"path": isolated_receipts, **kw}))
+
     def no_host_command(*args, **kwargs):
         raise FileNotFoundError("no host command runs in this test")
 
