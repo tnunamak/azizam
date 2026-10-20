@@ -1159,14 +1159,17 @@ async def extract_segment(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
     source_format: tuple[int, int],
+    source_is_pcm: bool = False,
 ) -> None:
     _validate_media_paths(source_path, config, destination_path)
     expected = end_seconds - start_seconds
     rate, channels = source_format
-    # Seeking in shared PCM avoids decoder warm-up and container timestamp
-    # rounding. Trim on its integer sample grid, not clock ticks.
+    # Only raw PCM supports exact input seeking. Compressed sources must decode
+    # from the beginning and trim on the same integer sample grid.
     start_sample = round(start_seconds * rate)
-    seek_sample = (start_sample // rate) * rate
+    seek_sample = (start_sample // rate) * rate if source_is_pcm else 0
+    input_options = (["-f", "s16le", "-ar", str(rate), "-ac", str(channels),
+                      "-ss", str(seek_sample / rate)] if source_is_pcm else [])
     trim = f"atrim=start_sample={start_sample-seek_sample}:end_sample={round(end_seconds*rate)-seek_sample}"
     await run_media_command(
         [
@@ -1175,9 +1178,7 @@ async def extract_segment(
             "-loglevel",
             "error",
             "-y",
-            "-f", "s16le", "-ar", str(rate), "-ac", str(channels),
-            "-ss",
-            str(seek_sample / rate),
+            *input_options,
             "-i",
             os.fspath(source_path),
             "-af", trim + ",asetpts=PTS-STARTPTS",
@@ -1323,7 +1324,7 @@ async def execute_chunking(
     on_cancel: Callable[[], None] | None, on_attempt_started: Callable[[int], None] | None = None,
     cleanup: "SttCleanupOwner | None" = None,
 ) -> ChunkingOutcome:
-    """Keep shared decoded media alive for the run, with one cleanup owner."""
+    """Release shared media as soon as chunk processing ends, even with an outer owner."""
     owner = cleanup if cleanup is not None else SttCleanupOwner()
     completed = False
     try:
@@ -1333,6 +1334,7 @@ async def execute_chunking(
         completed = True
         return outcome
     finally:
+        await owner.release("extraction_pcm", lambda: _unlink_chunk_path(source_path.parent / "extraction-source.pcm"))
         if cleanup is None:
             await owner.aclose()
             if completed and owner.failed:
@@ -1362,7 +1364,8 @@ async def _execute_chunking(
     verified_duration: float | None = None
     source_sample_rate = _PLANNING_SAMPLE_RATE
     source_channels = 1
-    extraction_source = source_path.parent / "extraction-source.pcm"
+    extraction_source = source_path
+    source_is_pcm = False
     pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
@@ -1397,7 +1400,10 @@ async def _execute_chunking(
             search_seconds=config.search_seconds, max_segment_seconds=config.max_segment_seconds,
             max_segments=config.max_segments, sample_rate=source_sample_rate)
         segments = await asyncio.to_thread(plan_quietest_frame_segments, duration_seconds=planning_duration, **plan_options)
-        if len(segments) > 1:
+        projected_source_bytes = math.ceil(verified_duration * source_sample_rate) * source_channels * 2
+        if len(segments) > 1 and projected_source_bytes <= config.max_decoded_bytes:
+            extraction_source = source_path.parent / "extraction-source.pcm"
+            source_is_pcm = True
             cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
             if source_sample_rate == _PLANNING_SAMPLE_RATE and source_channels == 1:
                 pcm_path.replace(extraction_source)
@@ -1468,6 +1474,7 @@ async def _execute_chunking(
                     deadline_at=deadline_at,
                     on_cancel=on_cancel,
                     source_format=(source_sample_rate, source_channels),
+                    source_is_pcm=source_is_pcm,
                 )
             except SttSetupFailure as error:
                 # Extraction failure before the first backend attempt may use
