@@ -232,7 +232,8 @@ class _RunWire:
         try:
             if run.resource_lease is not None:
                 probed = await stt_chunking.probe_audio(stt_chunking.source_path(upload), config=run.execution,
-                    cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel)
+                    cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel,
+                    enforce_format_limits=False)  # The output is normalized before format admission.
                 if probed.duration_seconds > 0:
                     trial_limit = min(trial_limit, (int(probed.duration_seconds * 16000) + 2) * 2)
             while True:

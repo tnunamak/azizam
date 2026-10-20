@@ -968,6 +968,7 @@ async def probe_audio(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    enforce_format_limits: bool = True,
 ) -> ProbedAudio:
     stdout, _ = await run_media_command(
         [
@@ -1002,7 +1003,7 @@ async def probe_audio(
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata") from error
     if sample_rate <= 0 or channels <= 0:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
-    if sample_rate > config.max_sample_rate or channels > config.max_channels:
+    if enforce_format_limits and (sample_rate > config.max_sample_rate or channels > config.max_channels):
         raise SttResourceLimitExceeded("Audio format exceeds the configured STT limit")
     # Container and packet durations can be absent or false. Only bounded PCM
     # decoding enforces duration/decoded-byte budgets; this duration is advisory.

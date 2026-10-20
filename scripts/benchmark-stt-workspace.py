@@ -2,12 +2,12 @@
 """Measure offline STT preparation at exact revisions, with disposable noise MP3s.
 
 Run with ./venv/bin/python scripts/benchmark-stt-workspace.py REVISION [...].
-No HTTP requests are made. Peak logical workspace bytes are sampled every 10 ms;
-including the compressed input (whose size is also reported separately). Fixtures are deleted on exit.
+No HTTP requests are made. Peak logical workspace bytes include the compressed
+input and are sampled every 10 ms. Fixtures are deleted on exit.
 """
 import asyncio
-import json
 import inspect
+import json
 from pathlib import Path
 import subprocess
 import sys
