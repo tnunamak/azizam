@@ -18617,6 +18617,49 @@
             },
             "description": "Resource not found."
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "param": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Audio exceeds a configured upload, decode, duration, segment or format cap."
+          },
           "503": {
             "content": {
               "application/json": {
@@ -18658,7 +18701,16 @@
                 }
               }
             },
-            "description": "Backend unavailable."
+            "description": "Backend unavailable, or shared STT capacity is busy (resource_admission_denied).",
+            "headers": {
+              "Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {
+                  "example": 5,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Audio Transcriptions"
@@ -18922,6 +18974,49 @@
             },
             "description": "Resource not found."
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "param": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Audio exceeds a configured upload, decode, duration, segment or format cap."
+          },
           "503": {
             "content": {
               "application/json": {
@@ -18963,7 +19058,16 @@
                 }
               }
             },
-            "description": "Backend unavailable."
+            "description": "Backend unavailable, or shared STT capacity is busy (resource_admission_denied).",
+            "headers": {
+              "Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {
+                  "example": 5,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Audio Translations"
@@ -25338,6 +25442,49 @@
             },
             "description": "Resource not found."
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "param": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Audio exceeds a configured upload, decode, duration, segment or format cap."
+          },
           "503": {
             "content": {
               "application/json": {
@@ -25379,7 +25526,16 @@
                 }
               }
             },
-            "description": "Backend unavailable."
+            "description": "Backend unavailable, or shared STT capacity is busy (resource_admission_denied).",
+            "headers": {
+              "Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {
+                  "example": 5,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Audio Transcriptions"
@@ -25643,6 +25799,49 @@
             },
             "description": "Resource not found."
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "param": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Audio exceeds a configured upload, decode, duration, segment or format cap."
+          },
           "503": {
             "content": {
               "application/json": {
@@ -25684,7 +25883,16 @@
                 }
               }
             },
-            "description": "Backend unavailable."
+            "description": "Backend unavailable, or shared STT capacity is busy (resource_admission_denied).",
+            "headers": {
+              "Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {
+                  "example": 5,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Audio Translations"

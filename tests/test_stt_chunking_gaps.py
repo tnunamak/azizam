@@ -67,9 +67,9 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                                     ],
                                 }
                                 return Process(json.dumps(payload).encode())
-                            if "s16le" in args:
+                            if target.suffix == ".pcm":
                                 input_name = Path(args[args.index("-i") + 1]).name
-                                target.write_bytes(pcm_bytes(durations.get(input_name, 75), [20.0, 40.0]))
+                                target.write_bytes(pcm_bytes(durations.get(input_name, 75), [20.0, 40.0], sample_rate=int(args[args.index("-ar")+1]), channels=int(args[args.index("-ac")+1])))
                                 return Process()
                             extracted.append(target.name)
                             if len(extracted) - 1 == failure_index:
@@ -310,16 +310,17 @@ class SttReservationGapTests(unittest.TestCase):
                 max_input_bytes=mib, max_decoded_bytes=mib, min_free_bytes=mib,
             )
             gate = stt_chunking.SttResourceGate()
-            # Shared admission allows 2 MiB + 2 MiB in 4 MiB, but the
-            # STT-specific 1 MiB free-space floor must reject the second lease.
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=4 * mib):
+            # The first request grows from its upload bound to a 9 MiB workspace.
+            # Another 1 MiB upload must still leave the 1 MiB free-space floor.
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=10 * mib):
                 first = gate.acquire(request_id="first", config=config)
+                first.resize(9 * mib)
                 try:
                     with self.assertRaisesRegex(
                         stt_chunking.SttResourceLimitExceeded, "reserved capacity"
                     ):
                         gate.acquire(request_id="second", config=config)
-                    self.assertEqual((gate._active, gate._reserved_bytes), (1, 2 * mib))
+                    self.assertEqual((gate._active, gate._reserved_bytes), (1, 9 * mib))
                 finally:
                     first.release()
                 first.release()
@@ -327,13 +328,13 @@ class SttReservationGapTests(unittest.TestCase):
                 recovered = gate.acquire(request_id="recovered", config=config)
                 recovered.release()
 
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=3 * mib - 1):
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=2 * mib - 1):
                 with self.assertRaisesRegex(
                     stt_chunking.SttResourceLimitExceeded, "free capacity"
                 ):
                     gate.acquire(request_id="below-floor", config=config)
             self.assertEqual((gate._active, gate._reserved_bytes), (0, 0))
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=3 * mib):
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=2 * mib):
                 exact = gate.acquire(request_id="exact-floor", config=config)
                 exact.release()
             self.assertEqual((gate._active, gate._reserved_bytes), (0, 0))

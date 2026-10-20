@@ -32,12 +32,14 @@ CONSENT_MODES = ("optional", "required")
 class VoiceError(Exception):
     """A request the voice API refuses. ``code`` is stable; ``status`` is the HTTP status."""
 
-    def __init__(self, status: int, code: str, message: str, *, param: str | None = None):
+    def __init__(self, status: int, code: str, message: str, *, param: str | None = None,
+                 retry_after: int | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.param = param
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)

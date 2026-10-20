@@ -11,6 +11,7 @@ observability.
 from __future__ import annotations
 
 import asyncio
+import errno
 import functools
 import json
 import math
@@ -23,7 +24,7 @@ from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from itertools import accumulate
 from operator import mul
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar
@@ -130,6 +131,14 @@ class SttResourceLimitExceeded(SttExecutionError):
     def __init__(self, message: str, *, decision: AdmissionDecision | None = None) -> None:
         super().__init__(message)
         self.decision = decision
+
+
+class SttStorageUnavailable(SttResourceLimitExceeded):
+    """Request spool capacity is temporarily unavailable."""
+
+
+class SttConcurrencyUnavailable(SttResourceLimitExceeded):
+    """The shared STT concurrency gate is temporarily full."""
 
 
 class SttChunkResponseError(SttExecutionError):
@@ -364,10 +373,10 @@ class SttExecutionConfig:
             backend_config=_freeze_mapping(raw),
         )
 
-    def request_claim(self) -> ResourceClaim:
+    def request_claim(self, reservation: int | None = None) -> ResourceClaim:
         """Represent the bounded disk reservation with the shared claim type."""
         return ResourceClaim(
-            disk_mb=math.ceil((self.max_input_bytes + self.max_decoded_bytes) / (1024 * 1024)),
+            disk_mb=math.ceil((self.max_input_bytes if reservation is None else reservation) / (1024 * 1024)),
             queue_class=QueueClass.INTERACTIVE,
             reasons=("bounded STT upload and decoded media workspace",),
         )
@@ -421,10 +430,6 @@ class ProbedAudio:
     sample_rate: int
     channels: int
 
-    @property
-    def decoded_bytes(self) -> int:
-        return math.ceil(self.duration_seconds * self.sample_rate * self.channels * 2)
-
 
 @dataclass(frozen=True)
 class UpstreamResponse:
@@ -442,6 +447,8 @@ class ChunkingOutcome:
     fallback_reason: str | None = None
     merged_payload: Mapping[str, Any] | None = None
     upstream_response: UpstreamResponse | None = None
+    # Upper bound from decoded PCM, including one planning sample when resampled.
+    verified_duration_seconds: float | None = None
 
 
 @dataclass
@@ -535,7 +542,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
                 delete=False,
             )
         except OSError as error:
-            raise MultiPartException("Unable to allocate configured STT spool storage.") from error
+            raise SttStorageUnavailable("Unable to allocate configured STT spool storage.") from error
         path = Path(handle.name)
         self._spool_paths.add(path)
         self._files_to_close_on_error.append(handle)
@@ -579,7 +586,7 @@ async def parse_bounded_multipart(
     try:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
     owns_workspace = workspace is None
     active_workspace = workspace or create_request_workspace(config)
     parser = DiskBoundedMultiPartParser(
@@ -604,11 +611,13 @@ async def parse_bounded_multipart(
         if owns_workspace:
             _remove_workspace_after_parse_failure(active_workspace)
         raise
-    except Exception:
+    except Exception as error:
         if cleanup is None:
             _remove_spool_files_after_parse_failure(parser)
         if owns_workspace:
             _remove_workspace_after_parse_failure(active_workspace)
+        if isinstance(error, OSError) and error.errno in (errno.ENOSPC, errno.EDQUOT):
+            raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
         raise
     return ParsedMultipart(form=form, parser=parser, workspace=active_workspace)
 
@@ -636,7 +645,7 @@ def create_request_workspace(config: SttExecutionConfig) -> Path:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
         return Path(tempfile.mkdtemp(prefix="request-", dir=config.spool_dir))
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def remove_request_workspace(workspace: Path) -> None:
@@ -659,11 +668,50 @@ def _remove_workspace_after_parse_failure(workspace: Path) -> None:
 
 
 class SttResourceLease:
-    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision) -> None:
+    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision,
+                 request_id: str, config: SttExecutionConfig) -> None:
         self.decision = decision
         self._gate = gate
         self._reserved_bytes = reserved_bytes
         self._released = False
+        self.request_id = request_id
+        self.config = config
+        self.device = _device_of(config.spool_dir)
+        self.workspace: Path | None = None
+
+    @property
+    def written_bytes(self) -> int:
+        if self.workspace is None:
+            return 0
+        total = 0
+        for path in self.workspace.iterdir():
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                continue
+        return total
+
+    def resize(self, reservation: int) -> None:
+        """Replace the disk claim atomically; leave the old claim intact on refusal."""
+        self._gate._reserved_bytes -= self._reserved_bytes
+        try:
+            decision = self._gate._admit(self.request_id, self.config,
+                self.config.request_claim(reservation), reservation, limit_concurrency=False,
+                written_bytes=self.written_bytes)
+        finally:
+            self._gate._reserved_bytes += self._reserved_bytes
+        self._gate._reserved_bytes += reservation - self._reserved_bytes
+        self._reserved_bytes = reservation
+        # Resizing rechecks disk, not admission to the request's queue slot.
+        facts = tuple(fact for fact in self.decision.details.facts if fact.resource_class != "disk")
+        disk_facts = tuple(fact for fact in decision.details.facts if fact.resource_class == "disk")
+        self.decision = replace(self.decision,
+            details=replace(self.decision.details, facts=(*facts, *disk_facts)))
+
+    def ensure(self, reservation: int) -> None:
+        if reservation > self._reserved_bytes:
+            self.resize(reservation)
 
     def release(self) -> None:
         if self._released:
@@ -671,6 +719,7 @@ class SttResourceLease:
         self._released = True
         self._gate._active -= 1
         self._gate._reserved_bytes -= self._reserved_bytes
+        self._gate._leases.discard(self)
 
 
 class SttReplayReservation:
@@ -717,14 +766,15 @@ class SttResourceGate:
     queue before the ASGI body reader owns ``receive()``.  A queued request
     could otherwise be disconnected while the gateway has no safe way to
     observe its receive channel.  The small synchronous critical section is
-    atomic with respect to one asyncio event loop and reserves the full
-    upload-plus-decode workspace before multipart parsing begins.
+    atomic with respect to one asyncio event loop. Admission reserves the upload
+    bound; media preparation tops up the same lease after probing.
     """
 
     def __init__(self) -> None:
         self._active = 0
         self._reserved_bytes = 0
         self._replays: set[SttReplayReservation] = set()
+        self._leases: set[SttResourceLease] = set()
 
     @property
     def active_count(self) -> int:
@@ -736,12 +786,15 @@ class SttResourceGate:
         *,
         request_id: str,
         config: SttExecutionConfig,
+        upload_bytes: int | None = None,
     ) -> SttResourceLease:
-        reservation = config.max_input_bytes + config.max_decoded_bytes
-        decision = self._admit(request_id, config, config.request_claim(), reservation, limit_concurrency=True)
+        reservation = config.max_input_bytes if upload_bytes is None else min(upload_bytes, config.max_input_bytes)
+        decision = self._admit(request_id, config, config.request_claim(reservation), reservation, limit_concurrency=True)
         self._active += 1
         self._reserved_bytes += reservation
-        return SttResourceLease(self, reservation, decision)
+        lease = SttResourceLease(self, reservation, decision, request_id, config)
+        self._leases.add(lease)
+        return lease
 
     def reserve_replay(self, *, request_id: str, config: SttExecutionConfig) -> SttReplayReservation:
         """Reserve disk for the replay copy without taking a concurrency slot."""
@@ -760,22 +813,29 @@ class SttResourceGate:
         reservation: int,
         *,
         limit_concurrency: bool,
+        written_bytes: int = 0,
     ) -> AdmissionDecision:
         try:
             config.spool_dir.mkdir(parents=True, exist_ok=True)
         except OSError as error:
-            raise SttResourceLimitExceeded(
+            raise SttStorageUnavailable(
                 "Configured STT spool storage is unavailable"
             ) from error
         live_free_bytes = _disk_free_bytes(config.spool_dir)
-        if live_free_bytes < reservation + config.min_free_bytes:
-            raise SttResourceLimitExceeded(
-                "Configured STT spool storage has insufficient free capacity"
+        if live_free_bytes < max(0, reservation - written_bytes) + config.min_free_bytes:
+            shortage_claim = replace(claim, disk_mb=math.ceil(
+                (max(0, reservation - written_bytes) + config.min_free_bytes) / (1024 * 1024)))
+            raise SttStorageUnavailable(
+                "Configured STT spool storage has insufficient free capacity",
+                decision=evaluate_admission(
+                    AdmissionRequest(request_id, shortage_claim),
+                    CapacitySnapshot(observed_at=time.time(), total_disk_mb=live_free_bytes // (1024 * 1024), used_disk_mb=0),
+                ),
             )
-        # Live free space already excludes replay bytes written to this filesystem, yet their
-        # reservations are still held in full: add those bytes back so each is counted once.
+        # Live free space excludes materialized workspace and replay files. Their
+        # reservations still include them, so credit those bytes once on this device.
         device = _device_of(config.spool_dir)
-        free_bytes = live_free_bytes + sum(r.written_bytes for r in self._replays if r.device == device)
+        free_bytes = live_free_bytes + sum(r.written_bytes for r in (*self._replays, *self._leases) if r.device == device)
         decision = evaluate_admission(
             AdmissionRequest(request_id=request_id, claim=claim),
             CapacitySnapshot(
@@ -788,10 +848,19 @@ class SttResourceGate:
             ),
         )
         if not decision.accepted:
-            raise SttResourceLimitExceeded("STT concurrency limit is currently exhausted", decision=decision)
+            if any(reason.resource_class == "disk" for reason in decision.details.reasons):
+                raise SttStorageUnavailable("Configured STT spool storage has insufficient reserved capacity", decision=decision)
+            raise SttConcurrencyUnavailable("STT concurrency limit is currently exhausted", decision=decision)
         if free_bytes - self._reserved_bytes < reservation + config.min_free_bytes:
-            raise SttResourceLimitExceeded(
-                "Configured STT spool storage has insufficient reserved capacity"
+            shortage_claim = replace(claim, disk_mb=math.ceil(
+                (reservation + config.min_free_bytes) / (1024 * 1024)))
+            raise SttStorageUnavailable(
+                "Configured STT spool storage has insufficient reserved capacity",
+                decision=evaluate_admission(
+                    AdmissionRequest(request_id, shortage_claim),
+                    CapacitySnapshot(observed_at=time.time(), total_disk_mb=free_bytes // (1024 * 1024),
+                                     used_disk_mb=math.ceil(self._reserved_bytes / (1024 * 1024))),
+                ),
             )
         return decision
 
@@ -936,6 +1005,7 @@ async def probe_audio(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    enforce_format_limits: bool = True,
 ) -> ProbedAudio:
     stdout, _ = await run_media_command(
         [
@@ -970,7 +1040,7 @@ async def probe_audio(
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata") from error
     if sample_rate <= 0 or channels <= 0:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
-    if sample_rate > config.max_sample_rate or channels > config.max_channels:
+    if enforce_format_limits and (sample_rate > config.max_sample_rate or channels > config.max_channels):
         raise SttResourceLimitExceeded("Audio format exceeds the configured STT limit")
     # Container and packet durations can be absent or false. Only bounded PCM
     # decoding enforces duration/decoded-byte budgets; this duration is advisory.
@@ -998,6 +1068,8 @@ async def decode_planning_pcm(
     sample_rate: int = _PLANNING_SAMPLE_RATE,
     channels: int = 1,
     stop_after_seconds: float | None = None,
+    resource_lease: SttResourceLease | None = None,
+    expected_duration_seconds: float | None = None,
 ) -> None:
     """Decode bounded PCM; planning defaults to mono 16 kHz, strict duration checks retain the source format."""
     _validate_media_paths(source_path, config, destination_path)
@@ -1008,24 +1080,37 @@ async def decode_planning_pcm(
     output_limit = max_pcm_bytes + frame_bytes
     if stop_after_seconds is not None:
         output_limit = min(output_limit, (math.floor(stop_after_seconds * sample_rate) + 1) * frame_bytes)
-    await run_media_command(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-i", os.fspath(source_path),
-            "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
-            "-t", str(output_limit / bytes_per_second), "-fs", str(output_limit),
-            os.fspath(destination_path),
-        ],
-        timeout_seconds=config.timeout_seconds,
-        cancellation_waiters=cancellation_waiters,
-        deadline_at=deadline_at,
-        on_cancel=on_cancel,
-        max_output_bytes=config.max_media_output_bytes,
-    )
-    try:
-        size = destination_path.stat().st_size
-    except OSError as error:
-        raise SttSetupFailure("STT planning decode did not create audio") from error
+    trial_limit = output_limit
+    if resource_lease is not None and expected_duration_seconds and expected_duration_seconds > 0:
+        trial_limit = min(output_limit, (math.ceil(expected_duration_seconds * sample_rate) + 1) * frame_bytes)
+    while True:
+        if resource_lease is not None:
+            existing = resource_lease.written_bytes
+            if destination_path.exists():
+                existing -= destination_path.stat().st_size
+            resource_lease.ensure(existing + trial_limit)
+        await run_media_command(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", os.fspath(source_path),
+                "-map", "0:a:0",
+                "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
+                "-t", str(trial_limit / bytes_per_second), "-fs", str(trial_limit),
+                os.fspath(destination_path),
+            ],
+            timeout_seconds=config.timeout_seconds,
+            cancellation_waiters=cancellation_waiters,
+            deadline_at=deadline_at,
+            on_cancel=on_cancel,
+            max_output_bytes=config.max_media_output_bytes,
+        )
+        try:
+            size = destination_path.stat().st_size
+        except OSError as error:
+            raise SttSetupFailure("STT planning decode did not create audio") from error
+        if size < trial_limit or trial_limit == output_limit:
+            break
+        trial_limit = min(output_limit, trial_limit * 2)
     if size <= 0:
         raise SttMediaCommandFailed("STT planning decode holds no audio")
     if size > max_pcm_bytes:
@@ -1117,7 +1202,7 @@ def plan_quietest_frame_segments(
     end_limit = min(max_segment_seconds, target_seconds * (1.0 + _TAIL_FRACTION_OF_TARGET))
     cuts: list[float] = []
     previous = 0.0
-    while duration_seconds - previous > end_limit:
+    while _segment_sample_count(previous, duration_seconds, sample_rate) > math.floor(end_limit * sample_rate):
         if len(cuts) + 2 > max_segments:
             raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
         target = target_seconds * (len(cuts) + 1)
@@ -1140,6 +1225,11 @@ def plan_quietest_frame_segments(
     return list(zip(boundaries[:-1], boundaries[1:]))
 
 
+def _segment_sample_count(start: float, end: float, sample_rate: int) -> int:
+    """Measure endpoints on the source sample grid, avoiding float subtraction ties."""
+    return round(end * sample_rate) - round(start * sample_rate)
+
+
 async def extract_segment(
     source_path: Path,
     destination_path: Path,
@@ -1150,9 +1240,21 @@ async def extract_segment(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    source_format: tuple[int, int],
+    source_is_pcm: bool = False,
 ) -> None:
     _validate_media_paths(source_path, config, destination_path)
     expected = end_seconds - start_seconds
+    rate, channels = source_format
+    # Only raw PCM supports exact input seeking. Compressed sources must decode
+    # from the beginning and trim on the same integer sample grid.
+    start_sample = round(start_seconds * rate)
+    seek_sample = (start_sample // rate) * rate if source_is_pcm else 0
+    input_options = (["-f", "s16le", "-ar", str(rate), "-ac", str(channels),
+                      "-ss", str(seek_sample / rate)] if source_is_pcm else [])
+    trim = f"atrim=start_sample={start_sample-seek_sample}:end_sample={round(end_seconds*rate)-seek_sample}"
+    if not source_is_pcm:
+        trim = f"aresample={rate}," + trim
     await run_media_command(
         [
             "ffmpeg",
@@ -1160,12 +1262,13 @@ async def extract_segment(
             "-loglevel",
             "error",
             "-y",
+            *input_options,
             "-i",
             os.fspath(source_path),
-            "-ss",
-            f"{start_seconds}",
-            "-t",
-            f"{expected}",
+            "-map", "0:a:0",
+            "-af", trim + ",asetpts=PTS-STARTPTS",
+            "-t", str(_segment_sample_count(start_seconds, end_seconds, rate) / rate),
+            "-fs", str(config.max_decoded_bytes),
             "-vn",
             "-acodec",
             "pcm_s16le",
@@ -1186,6 +1289,9 @@ async def extract_segment(
     if size <= 44 or size > config.max_decoded_bytes:
         raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured limit")
     pcm_path = destination_path.with_suffix(".verify.pcm")
+    verification_cleanup = SttCleanupOwner()
+    verification_cleanup.add("verification_pcm", lambda: _unlink_chunk_path(pcm_path))
+    verified = False
     try:
         # The extractor promises PCM16 WAV. Retain its sample rate/channels:
         # resampling can round a one-source-sample overrun down to the maximum.
@@ -1206,8 +1312,11 @@ async def extract_segment(
             raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
         if abs(actual_duration - expected) > 0.1:
             raise SttSetupFailure("STT segment extraction has an unexpected duration")
+        verified = True
     finally:
-        _unlink_chunk_path(pcm_path)
+        await verification_cleanup.aclose()
+        if verified and verification_cleanup.failed:
+            raise SttCleanupFailure("STT verification cleanup failed")
 
 
 def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
@@ -1230,21 +1339,26 @@ def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: 
     )
 
 
+def uncut_upload_needs_decode(config: SttExecutionConfig, *, streaming: bool = False) -> bool:
+    native = config.native_long_audio_streaming if streaming else config.native_long_audio_offline
+    return config.max_segment_declared and not native
+
+
 async def guard_uncut_uploads(
     paths: Sequence[Path], *, config: SttExecutionConfig,
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
     on_cancel: Callable[[], None] | None, streaming: bool = False,
+    resource_lease: SttResourceLease | None = None,
 ) -> None:
     """Refuse a whole file over a known maximum before sending it.
 
     D47 amendment 2: native long audio for this mode deliberately bypasses the
     chunk maximum. An undeclared/derived maximum cannot justify a refusal.
     """
-    native = config.native_long_audio_streaming if streaming else config.native_long_audio_offline
-    if native or not config.max_segment_declared:
+    if not uncut_upload_needs_decode(config, streaming=streaming):
         return
     for index, path in enumerate(paths):
-        pcm_path = path.parent / f"uncut-{index}-16k.pcm"
+        pcm_path = path.parent / f"uncut-{index}-source.pcm"
         _validate_media_paths(path, config, pcm_path)
         try:
             probed = await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
@@ -1252,7 +1366,8 @@ async def guard_uncut_uploads(
             await decode_planning_pcm(path, pcm_path, config=config, cancellation_waiters=cancellation_waiters,
                                       deadline_at=deadline_at, on_cancel=on_cancel,
                                       sample_rate=probed.sample_rate, channels=probed.channels,
-                                      stop_after_seconds=config.max_segment_seconds)
+                                      stop_after_seconds=config.max_segment_seconds, resource_lease=resource_lease,
+                                      expected_duration_seconds=probed.duration_seconds)
             duration = pcm_path.stat().st_size / (probed.sample_rate * probed.channels * 2)
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
@@ -1275,10 +1390,11 @@ def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None, *, d
 
 def _unplanned_outcome(
     config: SttExecutionConfig, probed: ProbedAudio | None, error: SttSetupFailure, *, duration_verified: bool = False,
+    verified_duration_seconds: float | None = None,
 ) -> ChunkingOutcome:
     """The cut could not be planned: send the file whole only when the engine can take it, else refuse it."""
     if _may_send_whole(config, probed, duration_verified=duration_verified):
-        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration_seconds)
     if config.setup_failure_policy != "passthrough" or config.native_long_audio_offline:
         raise error
     if probed is None:
@@ -1289,6 +1405,31 @@ def _unplanned_outcome(
 
 
 async def execute_chunking(
+    *, source_path: Path, source_stem: str, fields: Sequence[tuple[str, str]], config: SttExecutionConfig,
+    post_file: Callable[[Path, str], Awaitable[UpstreamResponse]],
+    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
+    on_cancel: Callable[[], None] | None, on_attempt_started: Callable[[int], None] | None = None,
+    cleanup: "SttCleanupOwner | None" = None,
+    resource_lease: SttResourceLease | None = None,
+) -> ChunkingOutcome:
+    """Release shared media as soon as chunk processing ends, even with an outer owner."""
+    owner = cleanup if cleanup is not None else SttCleanupOwner()
+    completed = False
+    try:
+        outcome = await _execute_chunking(source_path=source_path, source_stem=source_stem, fields=fields, config=config,
+            post_file=post_file, cancellation_waiters=cancellation_waiters, deadline_at=deadline_at,
+            on_cancel=on_cancel, on_attempt_started=on_attempt_started, cleanup=owner, resource_lease=resource_lease)
+        completed = True
+        return outcome
+    finally:
+        await owner.release("extraction_pcm", lambda: _unlink_chunk_path(source_path.parent / "extraction-source.pcm"))
+        if cleanup is None:
+            await owner.aclose()
+            if completed and owner.failed:
+                raise SttCleanupFailure("STT request cleanup failed")
+
+
+async def _execute_chunking(
     *,
     source_path: Path,
     source_stem: str,
@@ -1299,7 +1440,8 @@ async def execute_chunking(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
     on_attempt_started: Callable[[int], None] | None = None,
-    cleanup: "SttCleanupOwner | None" = None,
+    cleanup: "SttCleanupOwner",
+    resource_lease: SttResourceLease | None = None,
 ) -> ChunkingOutcome:
     """Probe, plan, extract, and submit chunks without a whole-file replay."""
     _validate_media_paths(source_path, config, source_path.parent / "planning-16k.pcm")
@@ -1308,7 +1450,11 @@ async def execute_chunking(
 
     probed: ProbedAudio | None = None
     planning_duration: float | None = None
+    verified_duration: float | None = None
     source_sample_rate = _PLANNING_SAMPLE_RATE
+    source_channels = 1
+    extraction_source = source_path
+    source_is_pcm = False
     pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
@@ -1319,8 +1465,15 @@ async def execute_chunking(
             on_cancel=on_cancel,
         )
         source_sample_rate = probed.sample_rate
-        if cleanup is not None:
-            cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
+        source_channels = probed.channels
+        if resource_lease is not None:
+            resource_lease.workspace = source_path.parent
+            duration = min(probed.duration_seconds or config.max_duration_seconds, config.max_duration_seconds)
+            planning_bytes = min(config.max_decoded_bytes, math.ceil(duration * _PLANNING_SAMPLE_RATE) * 2) + 2
+            segment_bytes = min(config.max_decoded_bytes,
+                math.ceil(min(duration, config.max_segment_seconds) * source_sample_rate) * source_channels * 2 + 128)
+            resource_lease.resize(resource_lease.written_bytes + planning_bytes + 2 * segment_bytes)
+        cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         try:
             await decode_planning_pcm(
                 source_path,
@@ -1329,25 +1482,51 @@ async def execute_chunking(
                 cancellation_waiters=cancellation_waiters,
                 deadline_at=deadline_at,
                 on_cancel=on_cancel,
+                resource_lease=resource_lease,
+                expected_duration_seconds=probed.duration_seconds,
             )
             planning_duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+            verified_duration = planning_duration + (1 / _PLANNING_SAMPLE_RATE if source_sample_rate != _PLANNING_SAMPLE_RATE else 0)
             if planning_duration <= 0:
                 raise SttMediaCommandFailed("STT planning decode holds no audio")
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
         probed = ProbedAudio(planning_duration, _PLANNING_SAMPLE_RATE, 1)
         if planning_duration <= config.chunk_above_seconds:
-            return ChunkingOutcome("passthrough", 0, "below_threshold")
-        segments = await asyncio.to_thread(
-            plan_quietest_frame_segments,
-            duration_seconds=planning_duration,
-            quietest_frame=quietest_frame_reader(pcm_path),
-            target_seconds=config.target_seconds,
-            search_seconds=config.search_seconds,
-            max_segment_seconds=config.max_segment_seconds,
-            max_segments=config.max_segments,
-            sample_rate=source_sample_rate,
-        )
+            return ChunkingOutcome("passthrough", 0, "below_threshold", verified_duration_seconds=verified_duration)
+        plan_options = dict(quietest_frame=quietest_frame_reader(pcm_path), target_seconds=config.target_seconds,
+            search_seconds=config.search_seconds, max_segment_seconds=config.max_segment_seconds,
+            max_segments=config.max_segments, sample_rate=source_sample_rate)
+        segments = await asyncio.to_thread(plan_quietest_frame_segments, duration_seconds=planning_duration, **plan_options)
+        projected_source_bytes = math.ceil(verified_duration * source_sample_rate) * source_channels * 2
+        use_shared_pcm = len(segments) > 1 and projected_source_bytes <= config.max_decoded_bytes
+        if resource_lease is not None and len(segments) > 1:
+            segment_bytes = min(config.max_decoded_bytes,
+                max(_segment_sample_count(start, end, source_sample_rate) for start, end in segments) * source_channels * 2 + 128)
+            base_bytes = resource_lease.written_bytes + 2 * segment_bytes
+            resource_lease.resize(base_bytes)
+            if use_shared_pcm and (source_sample_rate != _PLANNING_SAMPLE_RATE or source_channels != 1):
+                try:
+                    resource_lease.resize(base_bytes + projected_source_bytes + source_channels * 2)
+                except SttResourceLimitExceeded:
+                    use_shared_pcm = False
+        if use_shared_pcm:
+            extraction_source = source_path.parent / "extraction-source.pcm"
+            source_is_pcm = True
+            cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
+            if source_sample_rate == _PLANNING_SAMPLE_RATE and source_channels == 1:
+                pcm_path.replace(extraction_source)
+            else:
+                await decode_planning_pcm(source_path, extraction_source, config=config,
+                    cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
+                    sample_rate=source_sample_rate, channels=source_channels,
+                    resource_lease=resource_lease, expected_duration_seconds=verified_duration)
+            decoded_duration = extraction_source.stat().st_size / (source_sample_rate * source_channels * 2)
+            if decoded_duration != planning_duration:
+                segments = await asyncio.to_thread(plan_quietest_frame_segments, duration_seconds=decoded_duration, **plan_options)
+            planning_duration = decoded_duration
+            verified_duration = planning_duration
+            probed = ProbedAudio(planning_duration, source_sample_rate, source_channels)
     except (
         asyncio.CancelledError,
         SttCancelled,
@@ -1358,23 +1537,21 @@ async def execute_chunking(
     ):
         raise
     except SttSetupFailure as error:
-        return _unplanned_outcome(config, probed, error, duration_verified=planning_duration is not None)
+        return _unplanned_outcome(config, probed, error, duration_verified=planning_duration is not None, verified_duration_seconds=verified_duration)
     except OSError:
         return _unplanned_outcome(config, probed, SttSetupFailure("STT planning could not read the decoded audio"),
-                                  duration_verified=planning_duration is not None)
+                                  duration_verified=planning_duration is not None, verified_duration_seconds=verified_duration)
     finally:
-        if cleanup is None:
-            _unlink_chunk_path(pcm_path)
-        else:
-            await cleanup.release("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
+        await cleanup.release("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
 
-    planned_duration = planning_duration if planning_duration is not None else probed.duration_seconds
-    if config.max_segment_declared and planned_duration > config.max_segment_seconds and (
-        not segments or len(segments) <= 1 or any(end > start + config.max_segment_seconds for start, end in segments)
+    if config.max_segment_declared and planning_duration > config.max_segment_seconds and (
+        not segments or len(segments) <= 1 or any(
+            _segment_sample_count(start, end, source_sample_rate) > math.floor(config.max_segment_seconds * source_sample_rate)
+            for start, end in segments)
     ):
         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds)
     if not segments or len(segments) <= 1:
-        return ChunkingOutcome("passthrough", 0, "single_segment_plan")
+        return ChunkingOutcome("passthrough", 0, "single_segment_plan", verified_duration_seconds=verified_duration)
     if len(segments) > config.max_segments:
         raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
 
@@ -1387,19 +1564,18 @@ async def execute_chunking(
         run_response_pipeline(response_transforms, {"text": ""})
     except (KeyError, TypeError, ValueError) as error:
         if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
-            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
         raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
         _validate_media_paths(source_path, config, chunk_path)
-        if cleanup is not None:
-            cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
+        cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
         try:
             try:
                 await extract_segment(
-                    source_path,
+                    extraction_source,
                     chunk_path,
                     start_seconds=start,
                     end_seconds=end,
@@ -1407,6 +1583,8 @@ async def execute_chunking(
                     cancellation_waiters=cancellation_waiters,
                     deadline_at=deadline_at,
                     on_cancel=on_cancel,
+                    source_format=(source_sample_rate, source_channels),
+                    source_is_pcm=source_is_pcm,
                 )
             except SttSetupFailure as error:
                 # Extraction failure before the first backend attempt may use
@@ -1414,7 +1592,7 @@ async def execute_chunking(
                 # never silently replay the original audio.
                 if attempts_started == 0:
                     if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
-                        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+                        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
                     if config.setup_failure_policy == "passthrough":
                         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds) from error
                 raise SttChunkAttemptError("STT segment extraction failed after chunk progress") from error
@@ -1442,10 +1620,7 @@ async def execute_chunking(
                 )
             payloads.append(_parse_mergeable_chunk_payload(response.body, response_transforms))
         finally:
-            if cleanup is None:
-                _unlink_chunk_path(chunk_path)
-            else:
-                await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
+            await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
 
     return ChunkingOutcome(
         "chunked",
@@ -1736,14 +1911,14 @@ def _disk_free_bytes(path: Path) -> int:
     try:
         return shutil.disk_usage(path).free
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def _device_of(path: Path) -> int:
     try:
         return os.stat(path).st_dev
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def _as_bool(value: Any) -> bool:

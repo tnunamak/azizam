@@ -117,13 +117,13 @@ class SttServiceSelectionTests(SttCase):
 
         async def command(argv, **_kwargs):
             destination = Path(argv[-1])
-            if destination.name == "planning-16k.pcm":
+            if destination.name in {"planning-16k.pcm", "extraction-source.pcm"}:
                 write_pcm(destination, 60)
             elif destination.suffix == ".pcm":
                 with wave.open(argv[argv.index("-i") + 1], "rb") as audio:
                     destination.write_bytes(audio.readframes(audio.getnframes()))
             else:
-                duration = float(argv[argv.index("-t") + 1]) if "-t" in argv else 60
+                duration = 60 if destination.name == "normalized-16k.wav" else float(argv[argv.index("-t") + 1])
                 destination.write_bytes(_wav_bytes(16000, 1, duration))
             return b"", b""
 
@@ -419,6 +419,50 @@ class SttRuntimeFallbackTests(SttCase):
         seen = self.use_upstream(lambda r: gpu_response(r) if r.url.port == 8017 else (cpu_response or (lambda _r: httpx.Response(200, json={"text": "cpu"})))(r))
         return seen
 
+    def _assert_shared_gate_refusal_does_not_fall_back(self, shortage):
+        gate = stt_chunking.SttResourceGate()
+        execution = proxy._stt_execution_snapshot("transcriptions", "stt-parakeet-gpu")
+        seen = self._engines(lambda _r: httpx.Response(200, json={"text": "unexpected"}))
+        reserve_replay = gate.reserve_replay
+        with patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", gate), \
+             patch.object(stt_chunking, "_disk_free_bytes", return_value=4096 * 1024**2) as free:
+            held = [gate.acquire(request_id="held", config=execution)]
+            if shortage == "queue":
+                held.append(gate.acquire(request_id="held2", config=execution))
+
+            def reserve_then_constrain(**kwargs):
+                replay = reserve_replay(**kwargs)
+                if shortage == "disk":
+                    free.return_value = 900 * 1024**2
+                return replay
+
+            try:
+                with patch.object(gate, "reserve_replay", side_effect=reserve_then_constrain), \
+                     patch.object(proxy, "proxy_stt_request", wraps=proxy.proxy_stt_request) as dispatch:
+                    resp = self._post([("model", "whisper-1")])
+                self.assertEqual((resp.status_code, resp.json()["error"]["code"]),
+                                 (503, "resource_admission_denied"))
+                self.assertEqual(resp.headers.get("Retry-After"), "5")
+                self.assertEqual(dispatch.call_count, 1)
+                self.assertEqual(dispatch.call_args.kwargs["execution_snapshot"].service_id, "stt-parakeet-gpu")
+                self.assertEqual(seen, [])
+                self.assertNotIn("x-azizam-fallback", resp.headers)
+                proxy.receipt_store.finalize.assert_called_once()
+                receipt = proxy.receipt_store.finalize.call_args.args[0]
+                self.assertEqual(receipt.fallback_reasons, [])
+                reasons = receipt.resource_decision["reasons"]
+                self.assertTrue(any(reason["resource_class"] == shortage for reason in reasons))
+            finally:
+                for lease in held:
+                    lease.release()
+        self.assertEqual((gate.active_count, gate._reserved_bytes, len(gate._replays)), (0, 0, 0))
+
+    def test_shared_disk_refusal_does_not_try_the_next_engine(self):
+        self._assert_shared_gate_refusal_does_not_fall_back("disk")
+
+    def test_shared_concurrency_refusal_does_not_try_the_next_engine(self):
+        self._assert_shared_gate_refusal_does_not_fall_back("queue")
+
     def test_gpu_allocation_failure_falls_back_to_the_cpu_engine(self) -> None:
         msg = {"error": {"message": "Failed to allocate Parakeet TDT encoder graph tensors", "type": "server_error"}}
         seen = self._engines(lambda r: httpx.Response(500, json=msg))
@@ -496,7 +540,7 @@ class SttRuntimeFallbackTests(SttCase):
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(len(attempts), 2)  # the final CPU attempt holds the replay copy as well
             for reserved, active in attempts:
-                self.assertGreaterEqual(reserved, service.max_input_bytes + service.max_decoded_bytes + len(body))
+                self.assertGreaterEqual(reserved, service.replay_limit_bytes + len(body))
                 self.assertEqual(active, 1)
             self.assertTrue(all(count >= len(body) for count in written), written)
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
@@ -504,10 +548,14 @@ class SttRuntimeFallbackTests(SttCase):
 
         with self.subTest("a disk that only fits the attempt refuses the replay copy"):
             seen = self._engines(busy)
-            fits_attempt_only = service.max_input_bytes + service.max_decoded_bytes + service.min_free_bytes + 1024 * 1024
+            fits_attempt_only = service.max_input_bytes + service.min_free_bytes + 1024 * 1024
             with patch.object(stt_chunking, "_disk_free_bytes", return_value=fits_attempt_only):
                 resp = self._post([("model", "whisper-1")])
-            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "resource_admission_denied"))
+            self.assertEqual(resp.headers.get("Retry-After"), "5")
+            reasons = proxy.receipt_store.finalize.call_args.args[0].resource_decision["reasons"]
+            self.assertTrue(any(reason["code"] == "capacity_insufficient" and reason["resource_class"] == "disk"
+                                for reason in reasons))
             self.assertEqual(seen, [])
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
 
@@ -518,7 +566,11 @@ class SttRuntimeFallbackTests(SttCase):
             proxy.receipt_store.finalize.reset_mock()
             with patch.object(stt_chunking, "_disk_free_bytes", return_value=1):
                 resp = self._post([("model", "whisper-1")])
-            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "resource_admission_denied"))
+            self.assertEqual(resp.headers.get("Retry-After"), "5")
+            reasons = proxy.receipt_store.finalize.call_args.args[0].resource_decision["reasons"]
+            self.assertTrue(any(reason["code"] == "capacity_insufficient" and reason["resource_class"] == "disk"
+                                for reason in reasons))
             self.assertEqual(seen, [])
             self.assertEqual((proxy.receipt_store.begin.call_count, proxy.receipt_store.finalize.call_count), (1, 1))
             self.assertEqual(proxy.receipt_store.finalize.call_args.args[0].status, "failed")
@@ -539,7 +591,7 @@ class SttRuntimeFallbackTests(SttCase):
 
         with self.subTest("replay bytes already on disk are not subtracted twice, and nothing else is credited"):
             replay_limit = service.replay_limit_bytes
-            attempt = service.max_input_bytes + service.max_decoded_bytes
+            attempt = service.max_input_bytes
             gate_free = [replay_limit + attempt + service.min_free_bytes]  # the disk fits both worst cases exactly
             materialized = replay_limit // 2
 

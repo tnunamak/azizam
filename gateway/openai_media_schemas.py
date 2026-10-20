@@ -218,6 +218,14 @@ AUDIO_TRANSCRIPTIONS_OPENAPI: JsonObjectSchema = {
             },
         },
         **_common_error_responses(),
+        "413": _json_error_response("Audio exceeds a configured upload, decode, duration, segment or format cap."),
+        "503": {
+            **_json_error_response("Backend unavailable, or shared STT capacity is busy (resource_admission_denied)."),
+            "headers": {"Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {"type": "integer", "example": 5},
+            }},
+        },
     },
 }
 
@@ -233,6 +241,14 @@ AUDIO_TRANSLATIONS_OPENAPI: JsonObjectSchema = {
             },
         },
         **_common_error_responses(),
+        "413": _json_error_response("Audio exceeds a configured upload, decode, duration, segment or format cap."),
+        "503": {
+            **_json_error_response("Backend unavailable, or shared STT capacity is busy (resource_admission_denied)."),
+            "headers": {"Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {"type": "integer", "example": 5},
+            }},
+        },
     },
 }
 

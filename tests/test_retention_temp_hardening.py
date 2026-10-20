@@ -217,7 +217,7 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
     monkeypatch.setattr(stt, "run_media_command", command)
     sentinel = source.parent / "planning-16k.pcm"
     sentinel.write_bytes(b"keep")
-    uncut = source.parent / "uncut-0-16k.pcm"
+    uncut = source.parent / "uncut-0-source.pcm"
     uncut.write_bytes(b"keep")
 
     async def run():
@@ -226,7 +226,7 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
             if helper == "decode":
                 await stt.decode_planning_pcm(source, destination, **kwargs)
             elif helper == "extract":
-                await stt.extract_segment(source, destination, start_seconds=0, end_seconds=1, **kwargs)
+                await stt.extract_segment(source, destination, start_seconds=0, end_seconds=1, source_format=(16000, 1), **kwargs)
             elif helper == "guard":
                 from dataclasses import replace
                 await stt.guard_uncut_uploads([source], **{**kwargs, "config": replace(config, max_segment_declared=True)})

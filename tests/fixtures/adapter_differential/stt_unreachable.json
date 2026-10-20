@@ -412,7 +412,7 @@
                 "observed_at": "<time>",
                 "quality": "declared",
                 "resource_class": "disk",
-                "value": 1536
+                "value": 1
               },
               {
                 "name": "total_disk_mb",

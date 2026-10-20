@@ -4034,6 +4034,21 @@ async def _reference_transcript(
             "stt.transcribe", clip,
         )
         text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
+    except stt_chunking.SttInvalidAudio as error:
+        raise custom_voices.VoiceError(400, "invalid_value", "The voice reference is not readable audio.", param="voice") from error
+    except stt_chunking.SttDeadlineExceeded as error:
+        raise custom_voices.VoiceError(504, "stt_request_deadline", "The voice reference transcription deadline exceeded.", param="voice") from error
+    except stt_chunking.SttResourceLimitExceeded as error:
+        if receipt is not None and error.decision is not None:
+            receipt.resource_decision = error.decision.details.as_dict(error.decision.status.value)
+        if isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable)):
+            raise custom_voices.VoiceError(503, "resource_admission_denied", "Shared capacity is busy. Retry shortly.",
+                param="voice", retry_after=5) from error
+        # The client did not upload this voice reference, so a cap breach is not a client 413.
+        raise custom_voices.VoiceError(
+            503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
+            param="voice",
+        ) from error
     except stt_chunking.SttExecutionError as error:
         raise custom_voices.VoiceError(
             503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
@@ -4092,7 +4107,13 @@ async def _apply_custom_voice(
         try:
             body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
-            return openai_error_response(exc.message, status_code=exc.status, code=exc.code)
+            response = openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code,
+                error_type="api_error" if exc.status >= 500 else "invalid_request_error")
+            if exc.retry_after is not None:
+                retry_after = client_errors.retry_after(str(exc.retry_after))
+                if retry_after is not None:
+                    response.headers["Retry-After"] = retry_after
+            return response
     return None
 
 
@@ -4720,7 +4741,7 @@ def _speech_allocation_failed(status: int, text: str) -> bool:
 
 
 # 503s the gateway itself raises: another engine behind the same gateway would hit them too.
-_GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid"}
+_GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid", "resource_admission_denied"}
 
 
 def _speech_fallback_reason(response: Response) -> str | None:
@@ -5052,7 +5073,16 @@ def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse, request
 
 
 def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, receipt: RouteReceipt) -> Response:
-    response = _stt_error(str(error), status_code=413, code="stt_resource_limit")
+    busy = isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable))
+    status_code = 503 if busy else 413
+    retry_value = client_errors.retry_after("5")
+    response = _stt_error(
+        "Shared capacity is busy. Retry shortly." if busy else str(error),
+        status_code=status_code,
+        code="resource_admission_denied" if busy else "stt_resource_limit",
+    )
+    if busy:
+        response.headers["Retry-After"] = retry_value
     if error.decision is None:
         return response
     evidence = error.decision.details.as_dict(error.decision.status.value)
@@ -5061,9 +5091,11 @@ def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, r
     body = json.loads(response.body)
     projected = resource_decisions.project_decision(evidence)
     body["error"]["decision"] = projected
-    if projected["reasons"]:
+    if projected["reasons"] and not busy:
         body["error"]["message"] = projected["reasons"][0]["message"]
-    return Response(content=json.dumps(body), status_code=413, media_type="application/json")
+    return Response(content=json.dumps(body), status_code=status_code,
+                    headers={"Retry-After": retry_value} if busy else None,
+                    media_type="application/json")
 
 
 async def _stt_terminal_response(
@@ -5162,6 +5194,7 @@ async def proxy_stt_request(
             # reservation must outlive the form, files, and workspace.
             cleanup.add("capacity_lease", lambda: lease.release())
             workspace = stt_chunking.create_request_workspace(execution)
+            lease.workspace = workspace
             cleanup.add("request_workspace", lambda: stt_chunking.remove_request_workspace(workspace))
             parsed = await stt_chunking.parse_bounded_multipart(
                 request,
@@ -5241,6 +5274,7 @@ async def proxy_stt_request(
                     lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
                         request_id=receipt.request_id, config=execution,
                     )
+                    lease.workspace = workspace
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:
@@ -5281,6 +5315,7 @@ async def proxy_stt_request(
             streams = wants_stream and native_stream and len(uploads) == 1
 
             def record_outcome(outcome: stt_chunking.ChunkingOutcome) -> None:
+                receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
                 stt_measurement.observe_outcome(outcome)
                 # Receipts are core's: the adapter reports the chunking outcome before any later request.
                 receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
@@ -5300,6 +5335,7 @@ async def proxy_stt_request(
                     op="stt.translate" if operation == "translations" else "stt.transcribe",
                     headers=headers,
                     execution=execution,
+                    resource_lease=lease,
                     fields=fields,
                     multipart_fields=multipart_fields,
                     uploads=uploads,
@@ -5404,7 +5440,10 @@ async def proxy_stt_request(
             owner.report(status="timed_out", reason="idle_timeout")
             return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
         except stt_chunking.SttResourceLimitExceeded as error:
-            owner.report(status="failed", reason="failed")
+            if isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable)):
+                owner.report(status="rejected", reason="resource_admission_denied")
+            else:
+                owner.report(status="failed", reason="failed")
             return _stt_resource_limit_response(error, receipt)
         except stt_chunking.MultiPartException as error:
             owner.report(status="failed", reason="failed")

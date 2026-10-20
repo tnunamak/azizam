@@ -478,7 +478,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(stt_chunking.SttSetupFailure):
                     await stt_chunking.extract_segment(
-                        root / "source.wav", destination, start_seconds=0, end_seconds=40, config=config,
+                        root / "source.pcm", destination, start_seconds=0, end_seconds=40, source_format=(16000, 1), config=config,
                         cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
                     )
 
@@ -630,8 +630,8 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=150)
             posted = []
 
-            async def fake_decode(_source, destination, **_kwargs):
-                Path(destination).write_bytes(b"\0\0" * (75 * 16_000))
+            async def fake_decode(_source, destination, **options):
+                write_pcm(Path(destination), 75, sample_rate=options.get("sample_rate", 16000))
 
             async def extract(_source, destination, *, start_seconds, end_seconds, **_kwargs):
                 posted.append((start_seconds, end_seconds))
@@ -868,10 +868,11 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
             first_extracts = 0
             both_first_chunks_written = asyncio.Event()
             observed: list[tuple[Path, bytes]] = []
+            private_audio = {}
 
             async def extract(source: Path, destination: Path, **_kwargs: object) -> None:
                 nonlocal first_extracts
-                destination.write_bytes(source.read_bytes())
+                destination.write_bytes(private_audio[source])
                 if destination.name == "segment-000.wav":
                     first_extracts += 1
                     if first_extracts == 2:
@@ -925,8 +926,10 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
                     receive,
                 )
 
-            async def decode_for_planning(_source: Path, destination: Path, **_kwargs: object) -> None:
-                Path(destination).write_bytes(b"\0\0" * (75 * 16_000))
+            async def decode_for_planning(source: Path, destination: Path, **options: object) -> None:
+                write_pcm(Path(destination), 75, sample_rate=options.get("sample_rate", 16000))
+                if destination.name == "extraction-source.pcm":
+                    private_audio[destination] = source.read_bytes()
 
             with (
                 patch.object(proxy, "_stt_execution_snapshot", return_value=config),
@@ -1421,7 +1424,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                             f'{{"format":{{"duration":"{duration}"}},"streams":[{{"codec_type":"audio","sample_rate":"8000","channels":1}}]}}'.encode(),
                             b"",
                         )
-                    if "s16le" in command:
+                    if Path(command[-1]).suffix == ".pcm":
                         await block_or_return("plan", cancellation_waiters, deadline_at, on_cancel)
                         input_path = Path(command[command.index("-i") + 1])
                         if input_path.name.startswith("segment-"):
@@ -1429,7 +1432,8 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                                 duration = audio.getnframes() / audio.getframerate()
                         else:
                             duration = 75
-                        Path(command[-1]).write_bytes(pcm_bytes(duration, [20.0, 40.0]))
+                        Path(command[-1]).write_bytes(pcm_bytes(duration, [20.0, 40.0],
+                            sample_rate=int(command[command.index("-ar")+1]), channels=int(command[command.index("-ac")+1])))
                         return b"", b""
                     await block_or_return("extract", cancellation_waiters, deadline_at, on_cancel)
                     length = float(command[command.index("-t") + 1])
@@ -1932,13 +1936,13 @@ class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
                   patch.object(proxy.receipt_store, "begin"),
                   patch.object(proxy.receipt_store, "finalize") as finalize,
                   patch.object(stt_chunking.GLOBAL_STT_RESOURCE_GATE, "acquire",
-                               side_effect=stt_chunking.SttResourceLimitExceeded("private quantities 20 10", decision=decision))):
+                               side_effect=stt_chunking.SttStorageUnavailable("private quantities 20 10", decision=decision))):
                 response = await proxy.proxy_stt_request(request, access_context(),
                                                         execution_snapshot=_config(Path(temp)), route_receipt=receipt)
-        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.status_code, 503)
         error = json.loads(response.body)["error"]
-        self.assertEqual(error["code"], "stt_resource_limit")
-        self.assertEqual(error["type"], "invalid_request_error")
+        self.assertEqual(error["code"], "resource_admission_denied")
+        self.assertEqual(error["type"], "api_error")
         self.assertIsNone(error["param"])
         self.assertNotIn("private", json.dumps(error))
         self.assertNotIn("facts", error["decision"])
