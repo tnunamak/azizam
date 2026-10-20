@@ -109,14 +109,21 @@ def test_written_bytes_tolerates_unlink_between_is_file_and_stat(tmp_path):
 
 
 @pytest.mark.parametrize("failure,status,code,retry", [
-    (stt.SttResourceLimitExceeded("Configured STT spool storage has insufficient free capacity"),
+    ("disk",
      503, "resource_admission_denied", "5"),
+    (stt.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit"),
+     503, "backend_unavailable", None),
     (stt.SttDeadlineExceeded("deadline"), 504, "stt_request_deadline", None),
     (stt.SttBackendUnavailable("offline"), 503, "backend_unavailable", None),
     (stt.SttInvalidAudio("bad"), 400, "invalid_value", None),
 ])
 def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, retry):
     source = wav(tmp_path / "reference.wav", 0.2)
+    if failure == "disk":
+        with patch.object(stt, "_disk_free_bytes", return_value=0):
+            with pytest.raises(stt.SttResourceLimitExceeded) as denied:
+                stt.SttResourceGate().acquire(request_id="voice", config=config(tmp_path))
+        failure = denied.value
     async def run():
         with patch.dict(proxy.config["backends"], {"stt": {"host": "review.fk.test", "port": 9876}}), \
              patch.object(proxy, "_stt_adapter", return_value=type("Adapter", (), {"invoke": AsyncMock(side_effect=failure)})()), \
