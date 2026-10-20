@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store, egress
 from gateway.engine_admin import EngineRouteError
 from gateway.stt_measurement import Measurements
-from gateway import stt_chunking
+from gateway import stt_chunking, stt_samples
 from pathlib import Path
 
 
@@ -32,7 +32,7 @@ def owner_commands(service_id: str, job_id: str = "JOB_ID", revision: str = '"os
         if body is not None:
             command += ' -H "Content-Type: application/json" --data ' + "'" + json.dumps(body) + "'"
         return command
-    commands = {"options": curl("GET", path), "start": curl("POST", path, {}),
+    commands = {"options": curl("GET", path), "start": "# " + stt_samples.RIGHTS_CAVEAT + "\n" + curl("POST", path, {}),
             "progress": curl("GET", path + '/' + job_id), "cancel": curl("POST", path + '/' + job_id + '/cancel', {}),
             "apply": curl("POST", path + '/' + job_id + '/apply', {}, True)}
     if settings is not None:

@@ -289,7 +289,8 @@ class Measurements:
             job = {"id": uuid.uuid4().hex, "service_id": service_id, "status": "queued", "phase": "Queued",
                    "completed": 0, "total": 0, "created_at": int(time.time()), "fingerprint": fingerprint(record),
                    "registry_generation": generation, "sample_ids": ids, "lengths": sorted(set(lengths)),
-                   "search_widths": sorted(set(widths)), "model": model, "report": None}
+                   "search_widths": sorted(set(widths)), "model": model, "report": None,
+                   "samples": [sample for sample in options["samples"] if sample["id"] in ids]}
             if self.admit is not None:
                 job["admission"] = await self.admit(ctx, service_id)
             self._save(job)

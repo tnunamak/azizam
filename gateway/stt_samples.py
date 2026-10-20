@@ -37,6 +37,8 @@ DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "registry" / "stt_sa
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 SAMPLE_RATE = 16000
+RIGHTS_CAVEAT = ("Public hosting does not establish reuse rights. Review the selected samples' audio and transcript "
+                 "rights; not-stated means the source states no reuse permission.")
 
 Word = tuple[str, float, float]
 Progress = Callable[[int, int, str], None]
@@ -103,10 +105,13 @@ class SampleSpec:
         return sum({s.sha256: s.bytes for s in self.sources}.values())
 
     def rights_metadata(self) -> dict[str, Any]:
-        """Per-source evidence and any unstated audio rights, shared by choices and reports."""
-        caveats = [s.audio_rights.note for s in self.sources if s.audio_rights.status == "not-stated"]
-        return {"sources": [asdict(s) for s in self.sources], "audio_rights_unstated": bool(caveats),
-                "audio_rights_note": " ".join(caveats)}
+        """Per-source evidence and unstated rights, shared by choices, jobs and reports."""
+        audio = [s.audio_rights.note for s in self.sources if s.audio_rights.status == "not-stated"]
+        caveats = [rights.note for s in self.sources for rights in (s.audio_rights, s.transcript_rights)
+                   if rights.status == "not-stated"]
+        return {"sources": [asdict(s) for s in self.sources], "audio_rights_unstated": bool(audio),
+                "audio_rights_note": " ".join(audio), "rights_unstated": bool(caveats),
+                "rights_note": " ".join(dict.fromkeys(caveats))}
 
 
 @dataclass(frozen=True)
@@ -391,6 +396,9 @@ def _parse_sample(raw: Any, index: int) -> SampleSpec:
     for p in source_params:
         if params[p] not in names:
             raise SampleError(f"{where} recipe param {p} names no source of the sample.")
+    audio = next(source for source in sources if source.name == params["audio"])
+    if audio.audio_rights.status == "not-applicable":
+        raise SampleError(f"{where} audio source audio_rights cannot be not-applicable.")
     if "word_members" in params:
         members = _require(params["word_members"], list, f"{where} recipe word_members")
         if not members or not all(isinstance(m, str) for m in members):
