@@ -5179,7 +5179,8 @@ async def proxy_stt_request(
                         return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
                     if target_execution is None:
                         return _stt_error("The selected STT service is unavailable.", status_code=503, code="stt_backend_unavailable")
-                    execution = target_execution
+                    # The parsed upload keeps its original workspace after alias routing.
+                    execution = replace(target_execution, spool_dir=workspace.parent)
                 # Upload time counts against both budgets; redispatch must not
                 # grant a new deadline or bypass the target's multipart limits.
                 deadline_at = min(deadline_at, started_at + execution.deadline_seconds)
@@ -5209,10 +5210,9 @@ async def proxy_stt_request(
                     # Both gate operations are synchronous, so the transfer
                     # cannot interleave with another request's admission.
                     lease.release()
-                    # Execution still uses the original workspace. Reserve the
-                    # target budget on the disk that actually holds the files.
+                    # Reserve the target budget on the disk holding the workspace.
                     lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
-                        request_id=receipt.request_id, config=replace(execution, spool_dir=workspace.parent),
+                        request_id=receipt.request_id, config=execution,
                     )
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
