@@ -3997,16 +3997,26 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
     return resp.raw
 
 
-async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], reference: Path) -> str:
+async def _reference_transcript(
+    owner: str | None, meta: Mapping[str, Any], reference: Path, *, receipt: RouteReceipt | None = None,
+) -> str:
     """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
     if meta.get("transcript"):
         return str(meta["transcript"])
     stt = (config.get("backends") or {}).get("stt")
     if not isinstance(stt, Mapping) or not stt.get("host"):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
+    if receipt is not None:
+        receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})
+
+    def record_attempt() -> None:
+        if receipt is not None:
+            receipt.metadata["stt"]["attempts_started"] += 1
+
     try:
         clip = chunked_stt.SttUpload(
             op="stt.transcribe",
+            on_whole_file_attempt=record_attempt,
             execution=stt_chunking.SttExecutionConfig.from_service(
                 service_id="stt", service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
@@ -4051,6 +4061,8 @@ async def _apply_custom_voice(
     engine: Mapping[str, Any] | None,
     auth_context: AuthContext,
     engine_id: str | None,
+    *,
+    receipt: RouteReceipt | None = None,
 ) -> Response | None:
     """Point a speech request at a user-created voice. Returns an error response, or None when the body is ready."""
     owner = _asset_owner_key(auth_context)
@@ -4072,7 +4084,7 @@ async def _apply_custom_voice(
     body_json["voice_ref"] = str(reference)
     if engine_id == "omnivoice":
         try:
-            body_json["ref_text"] = await _reference_transcript(owner, meta, reference)
+            body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
             return openai_error_response(exc.message, status_code=exc.status, code=exc.code)
     return None
@@ -4360,6 +4372,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             custom_error = await _apply_custom_voice(
                 body_json, custom_voice, engine, auth_context,
                 model_resolution.alias.engine if model_resolution.alias else None,
+                receipt=receipt,
             )
             if custom_error is not None:
                 return custom_error

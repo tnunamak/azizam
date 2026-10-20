@@ -71,6 +71,7 @@ class SttUpload(CanonicalRequest):
 
     parts: Mapping[str, tuple[str, bytes, str]]
     execution: stt_chunking.SttExecutionConfig
+    on_whole_file_attempt: Callable[[], None] | None = None
 
 
 @dataclass(kw_only=True)
@@ -316,6 +317,8 @@ class ChunkedSttAdapter:
             await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
                 deadline_at=time.monotonic() + execution.deadline_seconds, on_cancel=None)
             async with httpx.AsyncClient(timeout=timeout) as client:
+                if request.on_whole_file_attempt is not None:
+                    request.on_whole_file_attempt()
                 resp = await client.post(url, files=request.parts, data=request.body)
         except httpx.HTTPError as error:
             raise failure(error) from error
