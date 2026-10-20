@@ -1,10 +1,10 @@
 """Regression checks for explicit scratch-directory bypasses and allocation ownership."""
 import asyncio
 import ctypes
-import fcntl
 import io
 import os
 import stat
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -146,7 +146,7 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
 
 @pytest.mark.parametrize("failure", ["native", "libc"])
 def test_memfd_unavailable_fails_closed_without_disk_fallback(tmp_path, monkeypatch, failure):
-    monkeypatch.setattr(media_metadata.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     if failure == "native":
         def unavailable(*args):
             raise OSError("memfd disabled")
