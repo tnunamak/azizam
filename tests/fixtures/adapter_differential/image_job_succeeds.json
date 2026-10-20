@@ -487,6 +487,44 @@
         "version": 3
       }
     ],
+    "retention_fact_destinations": [
+      {
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Litellm"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:2>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Litellm"
+        },
+        "source_id": "<req:2>",
+        "source_kind": "receipt"
+      }
+    ],
     "retention_fact_references": [
       {
         "destination_id": "gateway",
