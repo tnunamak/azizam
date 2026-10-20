@@ -115,6 +115,7 @@ def _validate_ancestor(path: Path, info: os.stat_result) -> None:
         reason = "world-writable without the sticky bit"
     elif info.st_mode & 0o020 and not info.st_mode & stat.S_ISVTX:
         # Debian OpenSSH user-group-modes patch (secure_permissions): allow owner-only groups.
+        # Like Debian, getpwall() may not list NSS/LDAP users whose primary group is this one (enumerate=false).
         try:
             primary = [user for user in pwd.getpwall() if user.pw_gid == info.st_gid]
             supplementary = grp.getgrgid(info.st_gid).gr_mem
