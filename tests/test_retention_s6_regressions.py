@@ -37,8 +37,8 @@ def stores(tmp_path, monkeypatch):
     }}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     monkeypatch.setattr(admin_store, "effective_admin_roles", lambda *_a, **_kw: frozenset({"owner"}))
-    monkeypatch.setattr(proxy, "ADMIN_AUTH", lambda _request: AdminContext(
-        subject="owner", roles=frozenset({"owner"}), auth_method="session"))
+    monkeypatch.setattr(proxy, "ADMIN_AUTH", lambda req: AdminContext(
+        subject=proxy._gateway_receipt_viewer(req), roles=frozenset({"owner"}), auth_method="session"))
     return receipts, facts, registry
 
 
@@ -59,18 +59,34 @@ def test_real_gateway_ledger_reuses_receipt_maker_mask(stores, viewer):
     kind = next(k for k in view["kinds"] if k["id"] == "library_prompt")
     assert kind["decision"] == "kept"
     assert ("kept_until_ms" in kind) is (viewer == "maker")
+    assert ("reason" in kind) is (viewer == "maker")
 
 
-def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch):
+@pytest.mark.parametrize("surface", ["rest", "mcp"])
+def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch, surface):
     from gateway.admin_api import AdminAuthError
     def no_browser(_request):
         raise AdminAuthError("browser session required")
     monkeypatch.setattr(proxy, "ADMIN_AUTH", no_browser)
     req, auth = request()
-    with pytest.raises(PermissionError):
-        proxy._gateway_retention_ledger(req)
-    with pytest.raises(PermissionError):
-        proxy._mcp_retention_ledger(req, auth, None)
+    if surface == "rest":
+        from gateway.api import create_gateway_router
+        from gateway.discovery import WorkflowRegistry
+        app = FastAPI()
+        @app.middleware("http")
+        async def identity(request, call_next):
+            request.scope["auth_context"] = auth
+            return await call_next(request)
+        app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=proxy._gateway_retention_ledger))
+        client = TestClient(app)
+        assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
+        assert client.get("/gateway/v1/requests/anything/ledger").status_code == 403
+    else:
+        from gateway import mcp_server
+        from types import SimpleNamespace
+        deps = SimpleNamespace(retention_visible=lambda *_: True, retention_ledger=proxy._mcp_retention_ledger)
+        result = asyncio.run(mcp_server.call_tool(deps, req, auth, "requests", {"action": "ledger"}))
+        assert result["isError"] is True
 
 
 def test_oauth_management_identity_can_read_real_mcp_ledger(stores, monkeypatch):
@@ -150,3 +166,18 @@ def test_protocol_loopback_freezes_outer_receipt_facts(stores):
     assert outer.retention_facts == child.retention_facts
     assert outer.retention_facts
     assert media_jobs.fact_revisions_for_source("receipt", outer.request_id, path=stores[1])
+
+
+def test_settings_ledger_survives_invalid_legacy_facts(stores):
+    from fastapi import APIRouter
+    from types import SimpleNamespace
+    from gateway import retention_fact_api
+    stores[2]["services"]["destination"]["config"]["retention_facts"] = [{"bad": "legacy"}]
+    app = FastAPI()
+    router = APIRouter()
+    retention_fact_api.register_routes(router, store=proxy.ADMIN_STORE,
+        guard=lambda _: SimpleNamespace(roles={"owner"}), read_json=lambda request: request.json())
+    app.include_router(router)
+    response = TestClient(app).get("/settings/retention/ledger")
+    assert response.status_code == 200
+    assert response.json()["ledger"]["fact_basis"].startswith("Today's facts")

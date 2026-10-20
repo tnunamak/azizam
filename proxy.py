@@ -10756,12 +10756,26 @@ async def proxy_graph_video_create(
     *,
     body_override: Mapping[str, Any] | None = None,
     remixed_from_video_id: str | None = None,
+    receipt: RouteReceipt | None = None,
 ) -> Response:
     """POST /v1/videos — submit a job and return {video_id, status: queued}.
 
     `body_override` and `remixed_from_video_id` let the remix routes reuse this
     pipeline with an already-parsed body.
     """
+    if receipt is None:
+        from gateway import media_ingestion
+        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.generate", protocol="openai.video")
+        try:
+            response = await proxy_graph_video_create(
+                request, auth_context, body_override=body_override,
+                remixed_from_video_id=remixed_from_video_id, receipt=receipt,
+            )
+        except BaseException as error:
+            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            raise
+        return media_ingestion.finish_response(receipt, response)
+
     admission = _dispatch_admission_response(
         'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -10823,7 +10837,9 @@ async def proxy_graph_video_create(
             status_code=400,
             media_type="application/json",
         )
-    _begin_media_delivery(auth_context)
+    _begin_media_delivery(auth_context, receipt)
+    receipt.backend = _GRAPH_BACKEND_ID
+    _capture_retention_facts(receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
@@ -13971,13 +13987,13 @@ def _gateway_retention_ledger(request: Request, request_id: str | None = None) -
     ctx = _require_admin(ADMIN_AUTH, request)
     if isinstance(ctx, Response):
         raise PermissionError("An owner or administrator management credential is required")
-    return _retention_ledger_view(request, request_id)
+    return _retention_ledger_view(request, request_id, viewer_person_id=ctx.subject)
 
 
-def _retention_ledger_view(request: Request, request_id: str | None = None) -> dict[str, Any] | None:
+def _retention_ledger_view(request: Request, request_id: str | None = None, *, viewer_person_id: str | None = None) -> dict[str, Any] | None:
     from gateway import retention, retention_facts
 
-    receipt = receipt_store.get(request_id, audience="admin", viewer_person_id=_gateway_receipt_viewer(request)) if request_id else None
+    receipt = receipt_store.get(request_id, audience="admin", viewer_person_id=viewer_person_id or _gateway_receipt_viewer(request)) if request_id else None
     if request_id and receipt is None:
         return None
     service_id = str(receipt.get("backend") or "") if receipt else None
@@ -13999,7 +14015,7 @@ def _retention_ledger_view(request: Request, request_id: str | None = None) -> d
         by_kind = {entry.get("kind"): entry for entry in receipt.get("retention", []) if isinstance(entry, Mapping)}
         for kind in view["kinds"]:
             if kind["id"] in by_kind:
-                kind.update({key: by_kind[kind["id"]][key] for key in ("decision", "kept_until_ms") if key in by_kind[kind["id"]]})
+                kind.update({key: by_kind[kind["id"]][key] for key in ("decision", "reason", "kept_until_ms") if key in by_kind[kind["id"]]})
         hashes = receipt.get("retention_facts") or []
         if hashes:
             try:
@@ -22150,7 +22166,17 @@ async def _run_audio_media_job(job_id: str) -> None:
             )
             worker_token = _ADMISSION_WORKER.set(True)
             try:
-                response = await proxy_audio_generate(request_shim, auth_context, store_full=True)
+                from gateway import media_ingestion
+                receipt = await media_ingestion.start_receipt(
+                    request_shim, auth_context, intent=str(job.get("intent") or "audio.generate"), protocol="openai.audio",
+                    request_id=str(job["request_id"]), job_id=job_id,
+                )
+                try:
+                    response = await proxy_audio_generate(request_shim, auth_context, store_full=True, receipt=receipt)
+                except BaseException as error:
+                    media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+                    raise
+                media_ingestion.finish_response(receipt, response)
             finally:
                 _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
@@ -22636,7 +22662,17 @@ async def _run_video_media_job(job_id: str) -> None:
                 )
                 worker_token = _ADMISSION_WORKER.set(True)
                 try:
-                    submit_response = await proxy_graph_video_create(request_shim, auth_context)
+                    from gateway import media_ingestion
+                    receipt = await media_ingestion.start_receipt(
+                        request_shim, auth_context, intent="video.generate", protocol="openai.video",
+                        request_id=str(job["request_id"]), job_id=job_id,
+                    )
+                    try:
+                        submit_response = await proxy_graph_video_create(request_shim, auth_context, receipt=receipt)
+                    except BaseException as error:
+                        media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+                        raise
+                    media_ingestion.finish_response(receipt, submit_response)
                 finally:
                     _ADMISSION_WORKER.reset(worker_token)
             except asyncio.CancelledError:
@@ -24165,6 +24201,16 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     ``store_full`` is for the media-job executor, which stores the bytes: they
     keep full metadata and the delivery mode is applied when the asset is served.
     """
+    if receipt is None:
+        from gateway import media_ingestion
+        receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate")
+        try:
+            response = await proxy_audio_generate(request, auth_context, store_full=store_full, receipt=receipt)
+        except BaseException as error:
+            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            raise
+        return media_ingestion.finish_response(receipt, response)
+
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -24197,6 +24243,8 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
     _begin_media_delivery(auth_context, receipt)
+    receipt.backend = _GRAPH_BACKEND_ID
+    _capture_retention_facts(receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error

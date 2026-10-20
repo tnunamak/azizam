@@ -24,6 +24,7 @@ export interface RetentionFact {
 }
 
 export interface RetentionLedger {
+  fact_basis?: string;
   kinds: Array<{
     id: string;
     purpose: string;
@@ -183,6 +184,9 @@ export function RetentionLedgerPanel({
               </div>
               <div className="space-y-4">
                 <h3 className="font-medium">Where it can go</h3>
+                {ledger.fact_basis && (
+                  <p className="text-meta text-muted-foreground">{ledger.fact_basis}</p>
+                )}
                 {ledger.destinations.length ? (
                   ledger.destinations.map((destination) => (
                     <section
@@ -193,7 +197,7 @@ export function RetentionLedgerPanel({
                       <div>
                         <h4 className="font-medium">{destination.name}</h4>
                         <p className="text-meta text-muted-foreground">
-                          {destination.kind}
+                          {destination.kind === "former_destination" ? "Former destination" : destination.kind}
                           {destination.address
                             ? ` · Azizam reaches it at ${destination.address}`
                             : ""}

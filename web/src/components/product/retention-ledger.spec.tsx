@@ -17,6 +17,7 @@ it("loads only when opened and shows dated destination facts and server disclosu
   const user = userEvent.setup();
   fetchLedger.mockResolvedValue({
     ledger: {
+      fact_basis: "The facts saved for this request are no longer kept.",
       kinds: [
         {
           id: "library_prompt",
@@ -26,6 +27,7 @@ it("loads only when opened and shows dated destination facts and server disclosu
         },
       ],
       destinations: [
+        { id: "removed", name: "Removed service", kind: "former_destination", facts: [] },
         {
           id: "local-server",
           name: "Local server",
@@ -76,6 +78,9 @@ it("loads only when opened and shows dated destination facts and server disclosu
   const destination = await screen.findByRole("region", {
     name: "Local server",
   });
+  expect(screen.getByText("Former destination")).toBeVisible();
+  expect(screen.queryByText("former_destination")).not.toBeInTheDocument();
+  expect(screen.getByText("The facts saved for this request are no longer kept.")).toBeVisible();
   expect(within(destination).getByText("submitted graphs")).toBeVisible();
   expect(
     within(destination).getByText(
