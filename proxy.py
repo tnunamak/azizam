@@ -4018,6 +4018,10 @@ async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], refe
             "stt.transcribe", clip,
         )
         text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
+    except stt_chunking.SttExecutionError as error:
+        raise custom_voices.VoiceError(
+            503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
+        ) from error
     except (TransportFailure, ValueError, OSError):
         text = ""
     if not text:
