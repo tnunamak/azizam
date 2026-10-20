@@ -51,6 +51,17 @@ retention_facts:
     evidence_url: https://ai.google.dev/gemini-api/docs/files
     checked: '2026-10-19'
     confidence: documented
+  - id: other-feature-state
+    holds: stateful interactions, grounding content or cache state
+    where: provider feature stores
+    how_long: grounding stores prompts, context and outputs for 30 days; Live resumption and implicit RAM cache last 24 hours; explicit cache follows TTL or expiry
+    default: conditional
+    condition: interactions, grounding, Live resumption or caching is used
+    reach: implicit RAM cache is project-isolated; other feature-store reader access is unknown
+    control: set store=false for Interactions and TTL or expiry for explicit cache; grounding storage has no opt-out when used
+    evidence_url: https://ai.google.dev/gemini-api/docs/zdr
+    checked: '2026-10-19'
+    confidence: documented
   - id: unpaid-improvement
     holds: unpaid-service inputs and outputs for improvement and training
     where: provider improvement and review systems after removal of account, API-key and project identifiers
