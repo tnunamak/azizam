@@ -23,7 +23,7 @@ from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from itertools import accumulate
 from operator import mul
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar
@@ -130,6 +130,10 @@ class SttResourceLimitExceeded(SttExecutionError):
     def __init__(self, message: str, *, decision: AdmissionDecision | None = None) -> None:
         super().__init__(message)
         self.decision = decision
+
+
+class SttStorageUnavailable(SttResourceLimitExceeded):
+    """Request spool capacity is temporarily unavailable."""
 
 
 class SttChunkResponseError(SttExecutionError):
@@ -672,7 +676,14 @@ class SttResourceLease:
     def written_bytes(self) -> int:
         if self.workspace is None:
             return 0
-        return sum(path.stat().st_size for path in self.workspace.iterdir() if path.is_file())
+        total = 0
+        for path in self.workspace.iterdir():
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                continue
+        return total
 
     def resize(self, reservation: int) -> None:
         """Replace the disk claim atomically; leave the old claim intact on refusal."""
@@ -685,7 +696,11 @@ class SttResourceLease:
             self._gate._reserved_bytes += self._reserved_bytes
         self._gate._reserved_bytes += reservation - self._reserved_bytes
         self._reserved_bytes = reservation
-        self.decision = decision
+        # Resizing rechecks disk, not admission to the request's queue slot.
+        facts = tuple(fact for fact in self.decision.details.facts if fact.resource_class != "disk")
+        disk_facts = tuple(fact for fact in decision.details.facts if fact.resource_class == "disk")
+        self.decision = replace(self.decision,
+            details=replace(self.decision.details, facts=(*facts, *disk_facts)))
 
     def ensure(self, reservation: int) -> None:
         if reservation > self._reserved_bytes:
@@ -796,12 +811,12 @@ class SttResourceGate:
         try:
             config.spool_dir.mkdir(parents=True, exist_ok=True)
         except OSError as error:
-            raise SttResourceLimitExceeded(
+            raise SttStorageUnavailable(
                 "Configured STT spool storage is unavailable"
             ) from error
         live_free_bytes = _disk_free_bytes(config.spool_dir)
         if live_free_bytes < max(0, reservation - written_bytes) + config.min_free_bytes:
-            raise SttResourceLimitExceeded(
+            raise SttStorageUnavailable(
                 "Configured STT spool storage has insufficient free capacity"
             )
         # Live free space excludes materialized workspace and replay files. Their
@@ -822,7 +837,7 @@ class SttResourceGate:
         if not decision.accepted:
             raise SttResourceLimitExceeded("STT concurrency limit is currently exhausted", decision=decision)
         if free_bytes - self._reserved_bytes < reservation + config.min_free_bytes:
-            raise SttResourceLimitExceeded(
+            raise SttStorageUnavailable(
                 "Configured STT spool storage has insufficient reserved capacity"
             )
         return decision
@@ -1056,6 +1071,7 @@ async def decode_planning_pcm(
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-i", os.fspath(source_path),
+                "-map", "0:a:0",
                 "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
                 "-t", str(trial_limit / bytes_per_second), "-fs", str(trial_limit),
                 os.fspath(destination_path),
@@ -1215,6 +1231,8 @@ async def extract_segment(
     input_options = (["-f", "s16le", "-ar", str(rate), "-ac", str(channels),
                       "-ss", str(seek_sample / rate)] if source_is_pcm else [])
     trim = f"atrim=start_sample={start_sample-seek_sample}:end_sample={round(end_seconds*rate)-seek_sample}"
+    if not source_is_pcm:
+        trim = f"aresample={rate}," + trim
     await run_media_command(
         [
             "ffmpeg",
@@ -1225,6 +1243,7 @@ async def extract_segment(
             *input_options,
             "-i",
             os.fspath(source_path),
+            "-map", "0:a:0",
             "-af", trim + ",asetpts=PTS-STARTPTS",
             "-t", str(_segment_sample_count(start_seconds, end_seconds, rate) / rate),
             "-fs", str(config.max_decoded_bytes),
