@@ -13,6 +13,7 @@ import ipaddress
 import json
 import re
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
@@ -33,8 +34,8 @@ _READER_DESCRIPTIONS = {
 }
 
 
-def validate_facts(facts: Any) -> list[dict[str, Any]]:
-    """Return JSON-safe facts or raise ValueError with the offending position."""
+def validate_facts(facts: Any, *, for_write: bool = False, now: date | None = None) -> list[dict[str, Any]]:
+    """Return JSON-safe facts; reject future evidence dates only on new writes."""
     if not isinstance(facts, list):
         raise ValueError("retention_facts must be a list")
     if len(facts) > 100:
@@ -50,9 +51,11 @@ def validate_facts(facts: Any) -> list[dict[str, Any]]:
             error = sorted(errors, key=lambda item: str(item.path))[0]
             raise ValueError(f"retention_facts[{index}]: {error.message}")
         try:
-            date.fromisoformat(row["checked"])
+            checked = date.fromisoformat(row["checked"])
         except ValueError:
             raise ValueError(f"retention_facts[{index}].checked must be a real date") from None
+        if for_write and checked > (now or date.today()):
+            raise ValueError(f"retention_facts[{index}].checked cannot be in the future")
         if row["id"] in seen:
             raise ValueError(f"retention_facts[{index}].id is duplicated")
         seen.add(row["id"])
@@ -67,7 +70,10 @@ def revision(fact: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+@lru_cache(maxsize=None)
 def _file_data(path: Path) -> Mapping[str, Any]:
+    # Bundled data is read-only here; all public fact/kind rows are copied.
+    # File changes take effect after restart, matching the retention contract.
     if path.suffix == ".json":
         return json.loads(path.read_text(encoding="utf-8"))
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -154,10 +160,10 @@ def ledger(
     for system_id, bundled in contract.get("system_facts", {}).items():
         owner_facts = _owner_facts(overrides, "system", system_id)
         facts = _with_status(
-            validate_facts(owner_facts if owner_facts is not None else bundled),
+            validate_facts(owner_facts if owner_facts is not None else bundled["facts"]),
             now=today, stale_after_days=stale_days, owner=owner_facts is not None,
         )
-        destinations.append({"id": system_id, "name": system_id.replace("_", " ").title(), "kind": "system", "facts": facts})
+        destinations.append({"id": system_id, "name": bundled["name"], "kind": "system", "facts": facts})
 
     catalog = _file_data(_ROOT / "registry/engine_definitions.json")
     definitions = {row["definition"]: row for row in catalog["definitions"]}
@@ -185,8 +191,8 @@ def ledger(
             definition = definitions.get(definition_id, {})
             if "retention_facts" in definition:
                 bundled = definition["retention_facts"]
-            if "retention_facts" in config:
-                bundled = config["retention_facts"]
+        if "retention_facts" in config:
+            bundled = config["retention_facts"]
         facts = validate_facts(owner_facts if owner_facts is not None else bundled)
         row: dict[str, Any] = {
             "id": target_id, "name": str(service.get("name") or item_id), "kind": target_type,
@@ -224,4 +230,4 @@ def assemble_never_save(view: Mapping[str, Any]) -> str:
                 f"({fact['how_long']}; default {fact['default']}). {fact['reach']}. "
                 f"To change this: {fact['control']}. Checked {fact['checked']}." + condition
             )
-    return "\n".join(lines)
+    return "\n\n".join(lines)

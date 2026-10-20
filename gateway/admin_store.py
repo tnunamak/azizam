@@ -3801,7 +3801,7 @@ def put_retention_fact_override(
         raise ValueError("Choose a retention fact destination")
     from gateway.retention_facts import validate_facts
 
-    checked = validate_facts(facts)
+    checked = validate_facts(facts, for_write=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

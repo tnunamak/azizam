@@ -9,7 +9,7 @@
   "properties": {
     "format_version": {"const": 1},
     "stale_after_days": {"type": "integer", "minimum": 1, "maximum": 3650},
-    "system_facts": {"type": "object", "additionalProperties": {"type": "array", "maxItems": 100, "items": {"type": "object"}}},
+    "system_facts": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["name", "facts"], "properties": {"name": {"type": "string", "minLength": 1}, "facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}}}}},
     "provider_fact_catalog": {"type": "object", "additionalProperties": {"type": "array", "maxItems": 100, "items": {"type": "object"}}},
     "retention_choices": {
       "type": "object",

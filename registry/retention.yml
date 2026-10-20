@@ -22,84 +22,88 @@ stale_after_days: 180
 # when that writer is off. The operator must check the effective deployment.
 system_facts:
   gateway:
-    - id: gateway-temporary-copies
-      holds: request bodies while a request runs
-      where: process memory and temporary workspaces
-      how_long: during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine
-      default: conditional
-      condition: host swap, hibernation, and crash capture settings
-      reach: the machine owner and anyone with access to its files or memory image
-      control: review swap, hibernation, and crash-dump settings on the host
-      evidence_url: https://man7.org/linux/man-pages/man2/mlock.2.html
-      checked: '2026-10-19'
-      confidence: documented
-    - id: gateway-crash-dumps
-      holds: a process-memory image that may contain request content
-      where: systemd crash dump file and journal entry
-      how_long: according to the host's separate dump and journal cleanup settings
-      default: conditional
-      condition: a permitted crash dump handled by systemd-coredump
-      reach: people who can read the host's crash dumps or journal
-      control: review Storage and ProcessSizeMax in systemd-coredump and host core limits
-      evidence_url: https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html
-      checked: '2026-10-19'
-      confidence: documented
+    name: Azizam
+    facts:
+      - id: gateway-temporary-copies
+        holds: request bodies while a request runs
+        where: process memory and temporary workspaces
+        how_long: during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine
+        default: conditional
+        condition: host swap, hibernation, and crash capture settings
+        reach: the machine owner and anyone with access to its files or memory image
+        control: review swap, hibernation, and crash-dump settings on the host
+        evidence_url: https://man7.org/linux/man-pages/man2/mlock.2.html
+        checked: '2026-10-19'
+        confidence: documented
+      - id: gateway-crash-dumps
+        holds: a process-memory image that may contain request content
+        where: systemd crash dump file and journal entry
+        how_long: according to the host's separate dump and journal cleanup settings
+        default: conditional
+        condition: a permitted crash dump handled by systemd-coredump
+        reach: people who can read the host's crash dumps or journal
+        control: review Storage and ProcessSizeMax in systemd-coredump and host core limits
+        evidence_url: https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html
+        checked: '2026-10-19'
+        confidence: documented
   litellm:
-    - id: litellm-spend-content
-      holds: request and response content if spend-content storage is enabled
-      where: LiteLLM spend rows
-      how_long: unknown; cleanup requires a separately configured retention period
-      default: 'off'
-      condition: store_prompts_in_spend_logs or its environment override is enabled
-      reach: LiteLLM administrators and anyone with access to its spend database
-      control: inspect effective UI, environment and file settings; disable content storage and delete old rows separately
-      evidence_url: https://docs.litellm.ai/docs/proxy/ui_logs
-      checked: '2026-10-19'
-      confidence: documented
-    - id: litellm-error-rows
-      holds: errors and metadata that may include request content
-      where: LiteLLM error rows and downstream logs
-      how_long: unknown
-      default: conditional
-      condition: error logging is enabled; whether a given error echoes content depends on the failure
-      reach: LiteLLM administrators and downstream log readers
-      control: inspect disable_error_logs and effective diagnostic logging; check downstream collectors
-      evidence_url: https://docs.litellm.ai/docs/proxy/config_settings
-      checked: '2026-10-19'
-      confidence: documented
-    - id: litellm-callbacks
-      holds: inputs and outputs sent to configured callbacks
-      where: callback destinations outside LiteLLM
-      how_long: unknown; each destination has its own retention
-      default: 'off'
-      condition: success, failure, general or service callbacks are configured
-      reach: people authorized at each configured callback destination
-      control: inspect effective callback settings and message omission at each destination
-      evidence_url: https://docs.litellm.ai/docs/proxy/logging
-      checked: '2026-10-19'
-      confidence: documented
-    - id: litellm-cache
-      holds: requests and responses used for response reuse
-      where: LiteLLM exact or semantic cache backend
-      how_long: unknown; depends on the selected cache backend and its TTL
-      default: 'off'
-      condition: a LiteLLM or router cache is enabled
-      reach: people authorized to read the selected cache backend
-      control: inspect both LiteLLM and router cache settings and remove existing cache entries separately
-      evidence_url: https://docs.litellm.ai/docs/proxy/caching
-      checked: '2026-10-19'
-      confidence: documented
-    - id: litellm-lens
-      holds: trace inputs, outputs and attributes
-      where: LiteLLM Lens traces
-      how_long: unknown
-      default: conditional
-      condition: Lens ingestion or tracing integration is enabled
-      reach: administrators and viewers of all traces; other permitted users may read their own or team traces
-      control: inspect Lens ingestion and access settings independently from spend logging
-      evidence_url: https://docs.litellm.ai/docs/proxy/lens/api
-      checked: '2026-10-19'
-      confidence: documented
+    name: LiteLLM
+    facts:
+      - id: litellm-spend-content
+        holds: request and response content if spend-content storage is enabled
+        where: LiteLLM spend rows
+        how_long: unknown; cleanup requires a separately configured retention period
+        default: 'off'
+        condition: store_prompts_in_spend_logs or its environment override is enabled
+        reach: LiteLLM administrators and anyone with access to its spend database
+        control: inspect effective UI, environment and file settings; disable content storage and delete old rows separately
+        evidence_url: https://docs.litellm.ai/docs/proxy/ui_logs
+        checked: '2026-10-19'
+        confidence: documented
+      - id: litellm-error-rows
+        holds: errors and metadata that may include request content
+        where: LiteLLM error rows and downstream logs
+        how_long: unknown
+        default: conditional
+        condition: error logging is enabled; whether a given error echoes content depends on the failure
+        reach: LiteLLM administrators and downstream log readers
+        control: inspect disable_error_logs and effective diagnostic logging; check downstream collectors
+        evidence_url: https://docs.litellm.ai/docs/proxy/config_settings
+        checked: '2026-10-19'
+        confidence: documented
+      - id: litellm-callbacks
+        holds: inputs and outputs sent to configured callbacks
+        where: callback destinations outside LiteLLM
+        how_long: unknown; each destination has its own retention
+        default: 'off'
+        condition: success, failure, general or service callbacks are configured
+        reach: people authorized at each configured callback destination
+        control: inspect effective callback settings and message omission at each destination
+        evidence_url: https://docs.litellm.ai/docs/proxy/logging
+        checked: '2026-10-19'
+        confidence: documented
+      - id: litellm-cache
+        holds: requests and responses used for response reuse
+        where: LiteLLM exact or semantic cache backend
+        how_long: unknown; depends on the selected cache backend and its TTL
+        default: 'off'
+        condition: a LiteLLM or router cache is enabled
+        reach: people authorized to read the selected cache backend
+        control: inspect both LiteLLM and router cache settings and remove existing cache entries separately
+        evidence_url: https://docs.litellm.ai/docs/proxy/caching
+        checked: '2026-10-19'
+        confidence: documented
+      - id: litellm-lens
+        holds: trace inputs, outputs and attributes
+        where: LiteLLM Lens traces
+        how_long: unknown
+        default: conditional
+        condition: Lens ingestion or tracing integration is enabled
+        reach: administrators and viewers of all traces; other permitted users may read their own or team traces
+        control: inspect Lens ingestion and access settings independently from spend logging
+        evidence_url: https://docs.litellm.ai/docs/proxy/lens/api
+        checked: '2026-10-19'
+        confidence: documented
 
 # Evidence profiles for destinations that are not executable provider presets.
 # An owner can assign a provider_id to a service and override these facts in DB.

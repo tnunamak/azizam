@@ -39,7 +39,7 @@ def test_bundled_facts_are_valid_at_every_level() -> None:
     assert contract["stale_after_days"] == 180
     for group in (contract["system_facts"], contract["provider_fact_catalog"]):
         for facts in group.values():
-            validate_facts(facts)
+            validate_facts(facts["facts"] if group is contract["system_facts"] else facts)
     for preset in load_provider_catalog().values():
         validate_facts(list(preset.retention_facts))
     for definition in load_engine_catalog().data["definitions"]:
@@ -195,3 +195,10 @@ def test_provider_evidence_covers_files_unpaid_review_and_zdr_conflict() -> None
     conflict = router["retention-routing-contradiction"]
     assert conflict["evidence_url"] == "https://openrouter.ai/docs/guides/privacy/provider-logging"
     assert "conflict" in conflict["control"].lower()
+
+
+def test_provider_record_facts_override_the_bundled_seed() -> None:
+    registry = {"services": {"p": {"config": {
+        "remote_provider": True, "preset_id": "openai", "retention_facts": [],
+    }}}}
+    assert ledger(registry)["destinations"][-1]["facts"] == []

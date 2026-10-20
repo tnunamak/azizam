@@ -41,13 +41,24 @@ retention_facts:
     checked: '2026-10-19'
     confidence: documented
   - id: feature-state
-    holds: stateful interactions, cache content or uploaded files
-    where: provider feature stores
-    how_long: depends on feature; files expire after 48 hours and implicit cache after 24 hours
+    holds: user-uploaded files reusable by reference
+    where: provider Files API store
+    how_long: files are automatically deleted after 48 hours
     default: conditional
-    condition: a stateful feature, grounding, cache or upload is used
-    reach: project users and provider staff under the feature policy
-    control: set store=false where supported and remove files or caches through their own controls
-    evidence_url: https://ai.google.dev/gemini-api/docs/zdr
+    condition: a file is uploaded through the Files API
+    reach: metadata can be read through the API; user-uploaded files cannot be downloaded through it
+    control: delete uploaded files early through the Files API
+    evidence_url: https://ai.google.dev/gemini-api/docs/files
+    checked: '2026-10-19'
+    confidence: documented
+  - id: unpaid-improvement
+    holds: unpaid-service inputs and outputs for improvement and training
+    where: provider improvement and review systems after removal of account, API-key and project identifiers
+    how_long: unknown
+    default: conditional
+    condition: unpaid service outside the EEA, Switzerland and UK; active-billing paid projects and those regions receive paid data treatment
+    reach: human reviewers may read, annotate and process API input and output
+    control: use active-billing paid-project treatment to exclude improvement use; this does not disable abuse monitoring
+    evidence_url: https://ai.google.dev/gemini-api/terms
     checked: '2026-10-19'
     confidence: documented

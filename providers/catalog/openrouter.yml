@@ -51,10 +51,21 @@ retention_facts:
     default: conditional
     condition: every routed request reaches a selected provider; zero data retention filters eligible routes only
     reach: the selected provider under its own policy
-    control: inspect the selected route and provider policy; enable eligible zero data retention routing where needed
+    control: inspect the selected route and provider policy; ZDR guidance describes a routing control but conflicts with the provider-logging page
     evidence_url: https://openrouter.ai/docs/guides/features/zdr
     checked: '2026-10-19'
     confidence: documented
+  - id: retention-routing-contradiction
+    holds: request content sent onward to a selected provider
+    where: selected model provider
+    how_long: unknown; the documentation conflicts on retention-based routing
+    default: conditional
+    condition: provider-logging guidance says routing rules do not change with provider retention policies, contrary to the dedicated ZDR guidance
+    reach: the selected provider under its own policy
+    control: resolve the documentation conflict for the effective route; training opt-out does not establish retention or deletion
+    evidence_url: https://openrouter.ai/docs/guides/privacy/provider-logging
+    checked: '2026-10-19'
+    confidence: unknown
 recommendations:
   - id: provider_key_credit_limit
     message: Set an OpenRouter key credit limit equal to the gateway cap when supported.

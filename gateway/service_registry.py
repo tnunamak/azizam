@@ -1985,6 +1985,14 @@ def upsert_service_in_registry(
                 effective_source = existing_source
         record = service_from_backend_config(sid, raw, source=effective_source)
 
+    if "retention_facts" in record["config"]:
+        from gateway.retention_facts import validate_facts
+        try:
+            record["config"]["retention_facts"] = validate_facts(
+                record["config"]["retention_facts"], for_write=True,
+            )
+        except ValueError as exc:
+            raise ValueError(f"service {sid!r} config.retention_facts: {exc}") from None
     out["services"][sid] = record
     out["updated_at"] = int(time.time())
     out = normalize_service_registry(out)

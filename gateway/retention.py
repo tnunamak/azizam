@@ -200,7 +200,7 @@ def parse_contract(data: Any, *, schema: Mapping[str, Any], source: str = "<memo
     for group_name in ("system_facts", "provider_fact_catalog"):
         for target_id, facts in data.get(group_name, {}).items():
             try:
-                validate_facts(facts)
+                validate_facts(facts["facts"] if group_name == "system_facts" else facts)
             except ValueError as exc:
                 errors.append(f"{group_name}/{target_id}: {exc}")
     if errors:
