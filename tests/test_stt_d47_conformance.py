@@ -42,7 +42,7 @@ def misleading_audio(tmp_path):
         path = tmp_path / f"duration-{duration}.mka"
         if duration is None:
             path.write_bytes(subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(source),
-                "-c:a", "pcm_s16le", "-f", "matroska", "pipe:1"]))
+                "-c:a", "libopus", "-f", "webm", "pipe:1"]))
             return path
         element = b"\x44\x89\x88" + struct.pack(">d", duration * 1000)
         path.write_bytes(data[:offset] + element + data[offset + 11:])
@@ -179,10 +179,18 @@ def test_receipts_count_each_started_attempt_once(tmp_path, fake_upstreams, chun
             if result == "cancel":
                 await asyncio.wait_for(started.wait(), 10)
                 task.cancel()
-            response = await asyncio.wait_for(task, 10)
+            if result == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 10)
+                response = None
+            else:
+                response = await asyncio.wait_for(task, 10)
         assert len(finalized) == 1
-        assert calls == (2 if chunked and result == "success" else 1)
+        assert calls == (3 if chunked and result == "success" else 1)
         assert finalized[0].metadata["stt"]["attempts_started"] == calls
-        assert response.status_code == {"success": 200, "refusal": 400, "timeout": 504, "cancel": 499}[result]
+        if result == "cancel":
+            assert finalized[0].status == "cancelled"
+        else:
+            assert response.status_code == {"success": 200, "refusal": 400, "timeout": 504}[result]
 
     asyncio.run(run())
