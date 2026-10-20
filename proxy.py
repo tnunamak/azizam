@@ -11747,7 +11747,7 @@ def _seconds_text(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.3f}".rstrip("0").rstrip(".")
 
 
-async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
     """POST /v1/videos/extensions -- Sora's extend shape: `{"video": {"id"}, "prompt", "seconds"}`.
 
     The result is a new video: the source followed by `seconds` of new footage.
@@ -11755,6 +11755,16 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) 
     (overlap window, default 1), `model`, `seed`, `size`, `negative_prompt`, and
     `extensions.com.azizam.workflow.{state_ledger,context_strength}`.
     """
+    if receipt is None:
+        from gateway import media_ingestion
+        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.extend", protocol="openai.video")
+        try:
+            response = await proxy_graph_video_extend(request, auth_context, receipt=receipt)
+        except BaseException as error:
+            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            raise
+        return media_ingestion.finish_response(receipt, response)
+
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.extend', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -11776,7 +11786,9 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) 
         body = await _read_video_request_body(request, id_reference_fields=("video",))
     except _VideoFormParseError as exc:
         return _json_error(400, str(exc))
-    _begin_media_delivery(auth_context)
+    _begin_media_delivery(auth_context, receipt)
+    receipt.backend = _GRAPH_BACKEND_ID
+    _capture_retention_facts(receipt)
     memory_error = _note_media_metadata_body(body)
     if memory_error is not None:
         return memory_error
@@ -23713,8 +23725,18 @@ def _signed_asset_content_response(
     )
 
 
-async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext) -> Response:
+async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
     """Run an upload-driven video-edit manifest and return its rendered asset."""
+    if receipt is None:
+        from gateway import media_ingestion
+        receipt = await media_ingestion.start_receipt(request, auth_context, intent="video.edit", protocol="openai.video")
+        try:
+            response = await _execute_video_manifest_workflow(request, workflow_id, auth_context, receipt=receipt)
+        except BaseException as error:
+            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            raise
+        return media_ingestion.finish_response(receipt, response)
+
     record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
     if record is None or record.intent != "video.edit":
         record = next(
@@ -23745,7 +23767,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
     try:
         form = await request.form()
         input_specs = record.manifest.get("inputs") or {}
-        _begin_media_delivery(auth_context)
+        _begin_media_delivery(auth_context, receipt)
+        receipt.backend = _GRAPH_BACKEND_ID
+        _capture_retention_facts(receipt)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
         form_fields = set(form.keys())
         prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
@@ -24593,8 +24617,8 @@ async def audio_generate(request: Request):
     receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate")
     try:
         response = await proxy_audio_generate(request, auth_context, receipt=receipt)
-    except BaseException:
-        media_ingestion.finish_receipt(receipt, status_code=500)
+    except BaseException as error:
+        media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
         raise
     return media_ingestion.finish_response(receipt, response)
 
