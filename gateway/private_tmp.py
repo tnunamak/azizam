@@ -15,8 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The two names are read as literals below: gateway/ code that reads an environment variable by a non-literal name
-# is checked by tests/test_secret_registration.py as a possible secret reader.
+# Environment reads use literals: tests/test_secret_registration.py checks non-literal readers as possible secrets.
 ENV_DIR = "AZIZAM_PRIVATE_TMPDIR"
 # Exported by the exec launcher with the lifetime lock.
 ENV_PREPARED = "AZIZAM_PRIVATE_TMPDIR_PREPARED"
