@@ -402,7 +402,7 @@ def test_receipts_count_each_started_attempt_once(tmp_path, fake_upstreams, chun
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("seconds,threshold,reason", [(0.2, 0.3, "below_threshold"), (0.28, 0.25, "single_segment_plan")])
+@pytest.mark.parametrize("seconds,threshold,reason", [(0.2, 0.3, "below_threshold"), (0.28, 0.26, "single_segment_plan")])
 def test_passthrough_reuses_verified_decode(tmp_path, fake_upstreams, seconds, threshold, reason):
     async def run():
         source = wav(tmp_path / "short.wav", seconds)

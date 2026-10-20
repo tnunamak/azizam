@@ -496,7 +496,7 @@ class SttRuntimeFallbackTests(SttCase):
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(len(attempts), 2)  # the final CPU attempt holds the replay copy as well
             for reserved, active in attempts:
-                self.assertGreaterEqual(reserved, service.max_input_bytes + service.max_decoded_bytes + len(body))
+                self.assertGreaterEqual(reserved, service.workspace_limit_bytes + len(body))
                 self.assertEqual(active, 1)
             self.assertTrue(all(count >= len(body) for count in written), written)
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
@@ -504,7 +504,7 @@ class SttRuntimeFallbackTests(SttCase):
 
         with self.subTest("a disk that only fits the attempt refuses the replay copy"):
             seen = self._engines(busy)
-            fits_attempt_only = service.max_input_bytes + service.max_decoded_bytes + service.min_free_bytes + 1024 * 1024
+            fits_attempt_only = service.workspace_limit_bytes + service.min_free_bytes + 1024 * 1024
             with patch.object(stt_chunking, "_disk_free_bytes", return_value=fits_attempt_only):
                 resp = self._post([("model", "whisper-1")])
             self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
@@ -539,7 +539,7 @@ class SttRuntimeFallbackTests(SttCase):
 
         with self.subTest("replay bytes already on disk are not subtracted twice, and nothing else is credited"):
             replay_limit = service.replay_limit_bytes
-            attempt = service.max_input_bytes + service.max_decoded_bytes
+            attempt = service.workspace_limit_bytes
             gate_free = [replay_limit + attempt + service.min_free_bytes]  # the disk fits both worst cases exactly
             materialized = replay_limit // 2
 

@@ -310,16 +310,16 @@ class SttReservationGapTests(unittest.TestCase):
                 max_input_bytes=mib, max_decoded_bytes=mib, min_free_bytes=mib,
             )
             gate = stt_chunking.SttResourceGate()
-            # Shared admission allows 2 MiB + 2 MiB in 4 MiB, but the
+            # Shared admission allows 4 MiB + 4 MiB in 8 MiB, but the
             # STT-specific 1 MiB free-space floor must reject the second lease.
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=4 * mib):
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=8 * mib):
                 first = gate.acquire(request_id="first", config=config)
                 try:
                     with self.assertRaisesRegex(
                         stt_chunking.SttResourceLimitExceeded, "reserved capacity"
                     ):
                         gate.acquire(request_id="second", config=config)
-                    self.assertEqual((gate._active, gate._reserved_bytes), (1, 2 * mib))
+                    self.assertEqual((gate._active, gate._reserved_bytes), (1, 4 * mib))
                 finally:
                     first.release()
                 first.release()
@@ -327,13 +327,13 @@ class SttReservationGapTests(unittest.TestCase):
                 recovered = gate.acquire(request_id="recovered", config=config)
                 recovered.release()
 
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=3 * mib - 1):
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=5 * mib - 1):
                 with self.assertRaisesRegex(
                     stt_chunking.SttResourceLimitExceeded, "free capacity"
                 ):
                     gate.acquire(request_id="below-floor", config=config)
             self.assertEqual((gate._active, gate._reserved_bytes), (0, 0))
-            with patch.object(stt_chunking, "_disk_free_bytes", return_value=3 * mib):
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=5 * mib):
                 exact = gate.acquire(request_id="exact-floor", config=config)
                 exact.release()
             self.assertEqual((gate._active, gate._reserved_bytes), (0, 0))

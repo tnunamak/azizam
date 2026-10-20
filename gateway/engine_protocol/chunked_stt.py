@@ -40,6 +40,7 @@ from __future__ import annotations
 import contextlib
 import os
 import time
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, Mapping, Sequence
@@ -249,7 +250,6 @@ class _RunWire:
             raise stt_chunking.SttInvalidAudio("STT input holds no decodable audio")
         if size > run.execution.max_decoded_bytes:
             raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
-        import wave
         with wave.open(os.fspath(destination)) as audio:
             if audio.getnframes() * 2 > pcm_limit:
                 raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
