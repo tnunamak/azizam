@@ -334,7 +334,7 @@ def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path, monkeyp
 def test_saved_setting_retries_after_deletion_failure(history, monkeypatch):
     client, admin_path, path, _ = history
     original = receipt_store.save_retention
-    def fail_after_save(days, preview, save_setting, *, path):
+    def fail_after_save(days, preview, save_setting, *, path, fact_store_path, on_cleanup_failure):
         save_setting()
         raise sqlite3.OperationalError("receipt database busy")
     monkeypatch.setattr(receipt_store, "save_retention", fail_after_save)
