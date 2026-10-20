@@ -268,3 +268,23 @@ def test_empty_snapshot_stays_empty_after_all_facts_are_removed(stores):
     view = proxy._gateway_retention_ledger(request()[0], row.request_id)
     assert view["fact_basis"] == "Facts saved for this request."
     assert next(d for d in view["destinations"] if d["id"] == "destination")["facts"] == []
+
+
+def test_unsaved_receipt_preserves_invalid_legacy_fact_caveat(stores, monkeypatch):
+    with sqlite3.connect(proxy.ADMIN_STORE.path) as conn:
+        conn.execute("INSERT INTO retention_fact_overrides(target_type,target_id,facts_json,updated_at) VALUES(?,?,?,?)",
+                     ("engine", "destination", '[{"invalid": true}]', 1))
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    proxy._capture_retention_facts(row)
+
+    def fail_save(*_a, **_kw):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(media_jobs, "save_fact_snapshot", fail_save)
+    proxy._record_retention_receipt(row, path=stores[0])
+    assert not row.retention_facts
+    assert media_jobs.fact_destinations_for_source("receipt", row.request_id, path=stores[1]) == {}
+    view = proxy._gateway_retention_ledger(request()[0], row.request_id)
+    assert "Today's facts." in view["fact_basis"]
+    assert "This receipt has no saved fact revisions." in view["fact_basis"]
+    assert "Some destination facts are unavailable." in view["fact_basis"]

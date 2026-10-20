@@ -377,3 +377,20 @@ def _wait_for_log(path: Path, needle: str) -> None:
         time.sleep(0.05)
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     raise AssertionError(f"timed out waiting for {needle!r}; log was {content!r}")
+
+
+def test_wait_for_log_accepts_reload_event_after_ten_seconds(tmp_path, monkeypatch):
+    import time
+
+    log = tmp_path / "reload.log"
+    clock = [0.0]
+
+    def advance(seconds):
+        clock[0] += seconds
+        if clock[0] >= 15:
+            log.write_text("litellm started rotated-secret-hash\n", encoding="utf-8")
+
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "sleep", advance)
+    _wait_for_log(log, "rotated-secret-hash")
+    assert 15 <= clock[0] < 16, "return as soon as the observable event arrives"
