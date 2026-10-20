@@ -53,7 +53,8 @@ def test_request_facts_survive_concurrent_large_cleanup(tmp_path, monkeypatch):
     path = tmp_path / "facts.db"
     media_jobs.init_db(path)
     monkeypatch.setattr(media_jobs, "DB_PATH", path)
-    prepared = media_jobs.prepare_fact_snapshot([{"id": "destination", "name": "Destination", "facts": []}])
+    fact = next(f for d in retention_facts.ledger({}, kinds={})["destinations"] for f in d["facts"])
+    prepared = media_jobs.prepare_fact_snapshot([{"id": "destination", "name": "Destination", "facts": [fact]}])
     # A single transaction seeds many sources without thousands of fsync calls.
     with sqlite3.connect(path) as conn:
         conn.executemany("INSERT INTO retention_fact_destinations VALUES('receipt', ?, 'destination', '{}', 0)",
@@ -81,6 +82,7 @@ def test_request_facts_survive_concurrent_large_cleanup(tmp_path, monkeypatch):
             cleanup_errors.append(error)
     worker = threading.Thread(target=cleanup, name="test-cleanup")
     worker.start()
+    timer = None
     try:
         assert locked.wait(5)
         timer = threading.Timer(0.04, release.set)
@@ -92,10 +94,16 @@ def test_request_facts_survive_concurrent_large_cleanup(tmp_path, monkeypatch):
     finally:
         release.set()
         worker.join(5)
-        timer.join(5)
+        if timer is not None:
+            timer.join(5)
     assert not worker.is_alive() and not cleanup_errors
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT count(*) FROM retention_fact_destinations WHERE source_id LIKE 'new-%'").fetchone()[0] == 40
+        assert conn.execute("SELECT count(*) FROM retention_fact_references WHERE source_id LIKE 'new-%'").fetchone()[0] == 40
+    for i in range(40):
+        saved = media_jobs.fact_revisions_for_source("receipt", f"new-{i}", path=path)
+        assert saved["destination"][0]["holds"] == fact["holds"]
+    with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT count(*) FROM retention_fact_destinations WHERE source_id LIKE 'expired-%'").fetchone()[0] == 0
 
 
