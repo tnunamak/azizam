@@ -552,23 +552,24 @@ def test_normalized_wav_decode_is_bounded_and_path_checked(tmp_path):
 
 
 @pytest.mark.parametrize("extension,codec", [("wav", "pcm_s16le"), ("flac", "flac"), ("mp3", "libmp3lame"), ("webm", "libopus")])
-def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
+@pytest.mark.parametrize("channels", [1, 2])
+def test_input_seek_preserves_planning_samples(tmp_path, extension, codec, channels):
     import random
     from array import array
     async def run():
         rate = 48000
         rng = random.Random(47)
-        samples = array("h", (rng.randrange(-12000, 12000) for _ in range(rate * 12)))
+        samples = array("h", (rng.randrange(-12000, 12000) for _ in range(rate * 12 * channels)))
         original = tmp_path / "original.wav"
         with wave.open(str(original), "wb") as audio:
-            audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            audio.setparams((channels, 2, rate, 0, "NONE", "not compressed"))
             audio.writeframes(samples.tobytes())
         source = tmp_path / f"source.{extension}"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(original), "-c:a", codec, str(source)],
                        check=True, capture_output=True)
         execution = config(tmp_path)
         planning = tmp_path / "source.pcm"
-        await stt.decode_planning_pcm(source, planning, config=execution, sample_rate=rate,
+        await stt.decode_planning_pcm(source, planning, config=execution, sample_rate=rate, channels=channels,
             cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
         full = planning.read_bytes()
         # Run the real executor: every codec is decoded once for shared extraction PCM.
@@ -579,8 +580,9 @@ def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
             index = len(sent)
             with wave.open(str(path)) as audio:
                 assert audio.getframerate() == rate
+                assert audio.getnchannels() == channels
                 actual = audio.readframes(audio.getnframes())
-            assert actual == full[cuts[index]*2:cuts[index+1]*2], (extension, index)
+            assert actual == full[cuts[index]*2*channels:cuts[index+1]*2*channels], (extension, index)
             sent.append(path)
             return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
         with patch.object(stt, "plan_quietest_frame_segments", return_value=segments), \
@@ -606,7 +608,7 @@ def test_resampled_passthrough_still_checks_one_source_sample_over_cap(tmp_path,
     async def run():
         source = wav(tmp_path / "boundary.wav", 0.3 + 1/rate, rate)
         cleanup = stt.SttCleanupOwner()
-        execution = config(tmp_path, target_seconds=0.25, threshold_seconds=0.3, max_segment_seconds=0.3)
+        execution = config(tmp_path, target_seconds=0.25, threshold_seconds=0.3, max_segment_seconds=0.3, max_sample_rate=rate)
         with source.open("rb") as handle:
             request = SttRun(op="stt.transcribe", execution=execution, fields=[], multipart_fields={},
                 uploads=[("file", SimpleNamespace(file=handle, filename="boundary.wav", content_type="audio/wav"))],
