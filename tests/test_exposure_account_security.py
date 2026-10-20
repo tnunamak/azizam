@@ -83,7 +83,17 @@ def test_compose_setup_allowance_matches_defined_gateway():
     gateway = compose["networks"]["default"]["ipam"]["config"][0]["gateway"]
     assert compose["services"]["gateway"]["environment"]["AZIZAM_SETUP_ALLOWED_CIDRS"] == gateway + "/32"
     assert compose["services"]["gateway"]["ports"][0].startswith("127.0.0.1:")
-    assert "--no-proxy-headers" in compose["services"]["gateway"]["command"]
+    command = " ".join(compose["services"]["gateway"]["command"])
+    assert "exec python3 -m uvicorn proxy:app" in command
+    assert "--no-proxy-headers" in command.split("exec python3 -m uvicorn proxy:app", 1)[1].split()
+
+
+def test_compose_prepares_the_private_temp_directory_before_the_app():
+    import yaml
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
+    command = compose["services"]["gateway"]["command"]
+    assert command[:5] == ["python3", "-m", "gateway.private_tmp", "exec", "python3"]
+    assert command[5:8] == ["-m", "uvicorn", "proxy:app"]
 
 
 def test_compose_keeps_data_and_creations_in_named_volumes():

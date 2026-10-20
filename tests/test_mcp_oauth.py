@@ -602,3 +602,15 @@ def test_refusing_a_client_never_asks_to_confirm(world):
     _ask_to_confirm(world)
 
     assert world.consent(resp, decision="deny").status_code == 200
+
+
+@pytest.mark.parametrize("endpoint", ["/oauth/token", "/oauth/revoke"])
+@pytest.mark.parametrize("content_type", ["multipart/form-data; boundary=canary", "application/json", ""])
+def test_token_and_revoke_reject_non_urlencoded_bodies(world, monkeypatch, endpoint, content_type):
+    async def refuse_parse(request, *args, **kwargs):
+        raise AssertionError("non-urlencoded body must be rejected before parsing")
+
+    monkeypatch.setattr(Request, "form", refuse_parse)
+    response = world.client.post(endpoint, content=b"unparsed body", headers={"content-type": content_type})
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"

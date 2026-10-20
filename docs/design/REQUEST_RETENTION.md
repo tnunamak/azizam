@@ -522,8 +522,8 @@ the place gets a copy.
 | 1 | `asset_prompts`, `responses`, `kept_requests` | per decision | yes | no write ([research] R4) |
 | 2 | Receipts | always | yes | structural only; the guard extends to values (section 13.3) |
 | 3 | Execution spool `data/image_media_jobs/` | async media jobs | yes | memory only, as today; the job cannot resume after a restart |
-| 4 | STT workspace `data/stt-spool/` | long audio | yes | **today it writes to disk even under forget.** Slice 4 moves it to the gateway's private temp directory (row 5) and the copy names it. A memory-only STT path is a later choice: long audio would cost too much memory (UNGROUNDED size limit). |
-| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 4 sets the temp directory to a gateway-private directory (`TMPDIR`, mode 0700, emptied at start) and the unit sets `PrivateTmp=yes`. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
+| 4 | STT workspace | long audio | yes | Slice 4 puts relative `spool_dir` values inside the private temp directory (row 5) and refuses relative paths that escape it. An absolute path is the operator's explicit choice and is outside the private-root sweep. **One-time deploy step:** with the old gateway stopped, the operator removes leftover `data/stt-spool/` uploads by hand before starting this version. No migration or compatibility shim is provided. |
+| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 4 uses a gateway-private directory (`TMPDIR`, mode 0700, on disk), swept under an exclusive lifetime lock before requests start. Multipart spill closes on success, parse failure, disconnect and cancellation without waiting for garbage collection. The unit deliberately has no `PrivateTmp=yes`. Retained-media thumbnails stage beside their retained asset so `os.replace` stays atomic on the same filesystem; this is the exception to the private scratch root. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
 | 6 | Gateway logs (journal) | always | yes | D43/D44: no request or upstream text in logs. The canary test checks the journal capture. |
 | 7 | Engine output files `data/processes/<id>.log` | engines the gateway starts | the file, yes; what the engine prints, no | the disclosure names it for every engine whose output file Azizam keeps (section 5.3). `log_max_bytes` is existing record data. |
 | 8 | LiteLLM process, its stdout and its database | chat-shaped requests | yes, through the generated config and environment | section 5.2. **Today it is not clean**: error rows and the ERROR log line can hold echoed prompts. |
@@ -1659,7 +1659,7 @@ live 5000 or 15000 services.
 | 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
 | 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
 | 3 | **LiteLLM keeps nothing.** See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
-| 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
+| 4 | **Temporary files.** A gateway-private `TMPDIR` with a lifetime lock; relative STT and video scratch inside it, cancellation-safe conversion workers and deterministic multipart cleanup. Retained-media thumbnails stage beside the retained asset for atomic replacement. | Moves request scratch; operator removes old `data/stt-spool/` uploads by hand with the old gateway stopped, once at deploy | the 16.2 multipart, STT, video and conversion canaries; retained traceback on disconnect/cancellation; cross-process lock and exec checks; directory-swap and path-escape regressions; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
 | 6 | **Facts and ledger — implemented and corrected after review.** Dated schema and data seeds; cached catalogs; pre-dispatch snapshots for all receipt paths; atomic revision snapshots and independent receipt expiry; admin REST and OAuth MCP ledger; maker-only reason/deadline; assembled paragraph disclosure and human destination names. Fact edit audit/CAS and the UI editor remain for a later slice. | Adds views; no inference failure when facts are unavailable | 16.1.14; real gateway audience/App-key regressions; real local/paid router and audio/video worker snapshots; receipt expiry with corrupt fact stores and batched orphan recovery; adapter traces including chat; schema/date validation; removed/empty facts; no-network reads; retention-ledger Vitest and desktop/mobile Playwright specs. Live check 5 remains for a scratch deployment. |
 | 7 | **Debug window.** The windows table; decision step 4; the `sent` part at the internal hop and the egress builder; error-part withholding by role; the engine-page button; the `debug_window` MCP tool and the CLI operations. | New kind | 16.1.4 (Debug reads); 16.1.12; 16.1.11 (window controls); 16.2 with a window open; the administrator on an owner-stored-key withholding case; live check 2 |
@@ -1726,6 +1726,62 @@ the build chose a form that the text above leaves open:
 - `retention.write` takes the kind, the request's time and a `commit` function.
   It runs `commit` under the same lock that `retention_guard` held, for Library
   prompts (`prompt_memory.put`) and for the two Responses writes.
+
+**Slice 4 as built.** Request scratch uses the private directory. Thumbnail
+staging is an exception: its source is already retained media, and staging next
+to that asset keeps `os.replace` atomic on the same filesystem. Operator-chosen
+absolute STT spool paths are also outside the private-root guarantee.
+
+- The directory is `AZIZAM_PRIVATE_TMPDIR`, else `private-tmp` beside the admin
+  database (`data/private-tmp` on a normal install). `gateway/private_tmp.py`
+  opens it with `O_DIRECTORY|O_NOFOLLOW`, checks ownership and mode through the
+  descriptor, refuses tmpfs/ramfs and checks that every ancestor is owned by the
+  service user or root and is not group/world writable unless sticky. The sweep
+  uses directory-relative operations, so swapping the pathname for a symlink
+  cannot delete files outside it. A pathname identity check refuses the swap.
+  Checking the full ancestry also prevents another user from replacing a trusted
+  parent through a writable grandparent after activation.
+  A sweep failure stops startup.
+- Before sweeping, startup takes an exclusive `flock` on `.owner.lock` inside
+  the directory. `start.sh` and Compose use `python3 -m gateway.private_tmp exec`
+  to pass this descriptor through exec; the serving process holds it for its
+  whole life. `proxy.py`'s direct launcher also takes the lock in `activate`.
+  A second prepare or gateway fails before deleting any scratch. The lock file
+  stays in place; the kernel releases ownership when the process exits. The
+  exec helper sets `TMPDIR`, `TMP` and `TEMP` before importing the gateway, and
+  `activate` sets Python's `tempfile.tempdir` without a second sweep. The app
+  lifespan does not change an embedding process's temporary-directory settings.
+- Starlette spills an upload part over 1 MiB to an anonymous file in
+  `tempfile`'s directory. `gateway/request_forms.py` owns the multipart parser
+  before parsing starts and closes its created file handles on every failure,
+  including disconnect and cancellation, even while a traceback retains the
+  parser. Successful forms close on the request's exit stack. Both video form
+  readers use the same helper and also close in their existing `finally` blocks.
+  A test refuses new direct multipart `request.form()` calls.
+- Video probe workspaces live under `<private>/video_inputs`. Video probing,
+  speech conversion, peak normalization and voice sample processing all use one
+  cancellation-safe worker helper. Cancellation waits for the thread's cleanup
+  before it propagates, including repeated cancellation and worker failure.
+- A relative STT `spool_dir` is a name inside the private directory (default
+  `stt`; `data/stt-spool` lands at `<private>/data/stt-spool`). Relative paths
+  that resolve outside the root are refused. Absolute paths remain the operator's
+  choice, outside the startup sweep; the unused `spool_is_private` property is
+  removed. Chunking behaviour is unchanged. **One-time deploy step:** stop the
+  old gateway and remove its leftover `data/stt-spool/` uploads by hand before
+  starting this version. Azizam is unreleased; there is no migration shim.
+- The cells of 16.2 for temporary files do not depend on the retention
+  decision: a temporary file is never kept, so the "after" cell is the same
+  under forget and under kept. `tests/test_retention_temp_canaries.py` checks it
+  for a multipart part and for STT audio through success, failure, a cancelled
+  request and an upload cut off mid-body. It scans the private directory, the
+  process's default temporary directory, the old STT spool and the open and
+  deleted files the process still holds.
+- The shipped unit has no `PrivateTmp=yes`. A user unit needs unprivileged user
+  namespaces for it. Where the host restricts them (Ubuntu with
+  `kernel.apparmor_restrict_unprivileged_userns=1`) systemd accepts the line,
+  `/tmp` stays shared (checked on systemd 259) and `sudo` stops working in the
+  unit, so the line would be a control that does nothing. The private `TMPDIR`
+  is the protection. Row 5 claims the private directory, not a private `/tmp`.
 
 **Live checks for slice 3** run on a scratch instance with a scratch
 LiteLLM database:

@@ -33,17 +33,10 @@
 # suite collected 14936; Playwright lists 471 + 3 + 18 across gate configs.
 # Round 3: one shared-App route, one structural read-site scan, eight
 # store method/audience cases, and one Library usage case (+11).
-# Slice 6 review repairs: +56 pytest cases for authority/maker masking,
-# exact lifecycle/router/media snapshots, validation, cleanup retry and the
-# current-loaded chat trace. Hermetic --collect-only measured 14992.
-# Vitest list --json remeasured 3050; the existing ledger case now also
-# verifies the former-destination label and historical-evidence status.
-# Slice 6 round 2: 31 direct regression cases (damaged-store expiry,
-# headless auth, configured capture, fact integrity and source-age migration)
-# plus three generated management-route probes. Hermetic collection measured
-# 15026; Vitest list --json remeasured 3050 with no UI cases added.
-pytest = 15026
-vitest = 3050  # No new cases in the ledger display corrections.
+# Merged retention slices 4 and 6: full hermetic collection measured 15091.
+# Vitest list and all three Playwright gate configs remeasured on the merged tree.
+pytest = 15091
+vitest = 3050
 playwright = 492
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

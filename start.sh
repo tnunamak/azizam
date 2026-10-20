@@ -2,7 +2,8 @@
 # Azizam service starter
 # Unified local AI API for local LLM/TTS/STT/ComfyUI backends
 
-cd "$(dirname "${BASH_SOURCE[0]}")"
+SCRIPT_PATH="$(realpath -- "${BASH_SOURCE[0]}")"
+cd "$(dirname "$SCRIPT_PATH")"
 
 # Operator-local machine paths (gitignored; absent on a fresh install, where
 # the affected integrations are simply off). See CONFIG.md for the AZIZAM_* vars.
@@ -32,6 +33,13 @@ if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
         uv pip install --python ./venv/bin/python -r "$REQ_FILE"
     fi
     echo "$REQ_HASH" > "$REQ_STAMP"
+fi
+
+# Sweep under the lifetime lock before any child starts. The descriptor survives exec into this shell
+# and the proxy; a second launch cannot delete a running gateway's scratch files.
+# The exec helper also exports TMPDIR, TMP and TEMP.
+if [ -z "${AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-}" ]; then
+    exec python3 -m gateway.private_tmp exec /bin/bash "$SCRIPT_PATH" "$@"
 fi
 
 # Config via environment (override proxy_config.yml defaults)
@@ -145,7 +153,8 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
         done
     }
 
-    watch_litellm_config &
+    # The watcher and LiteLLM use no scratch files of ours; a LiteLLM that outlived us must not hold the lock.
+    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &
     LITELLM_WATCHER_PID=$!
 
     cleanup() {
