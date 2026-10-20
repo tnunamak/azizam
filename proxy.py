@@ -13962,18 +13962,15 @@ def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext
     """Freeze the dated ledger before dispatch without writing an orphan reference."""
     if not receipt.backend:
         return
-    from gateway import retention, retention_facts
     captured = getattr(receipt, "_retention_fact_snapshot", None)
     if captured is not None and captured[0] == receipt.backend:
         return
     try:
-        registry = ADMIN_STORE.get_service_registry()
-        if receipt.backend in (registry.get("services") or {}):
-            receipt._retention_fact_snapshot = (receipt.backend, retention_facts.ledger(
-                registry, kinds=retention.bundled().data["kinds"],
-                overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
-                service_id=receipt.backend,
-            ))
+        receipt.capture_retention_facts(
+            registry=ADMIN_STORE.get_service_registry(),
+            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+        )
+        if getattr(receipt, "_retention_fact_snapshot", None) is not None:
             # A protocol loopback carries its outer receipt in the existing
             # authenticated handoff, so both owners freeze the dispatched facts.
             outer = auth_context.retention_receipt if auth_context is not None else None
@@ -18829,6 +18826,7 @@ def start_image_route_receipt(
         visibility=access.receipt_detail,
     )
     _apply_image_route_policy(receipt, auth_context)
+    _capture_retention_facts(receipt, auth_context=auth_context)
     _begin_media_delivery(auth_context, receipt)
     return receipt
 

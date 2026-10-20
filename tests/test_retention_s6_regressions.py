@@ -181,3 +181,17 @@ def test_settings_ledger_survives_invalid_legacy_facts(stores):
     response = TestClient(app).get("/settings/retention/ledger")
     assert response.status_code == 200
     assert response.json()["ledger"]["fact_basis"].startswith("Today's facts")
+
+
+def test_default_lifecycle_captures_facts_without_route_callback(stores, monkeypatch):
+    from gateway import service_registry
+    monkeypatch.setattr(service_registry, "load_service_registry", lambda **_: stores[2])
+    monkeypatch.setattr(admin_store, "DB_PATH", proxy.ADMIN_STORE.path)
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    async def run():
+        async with ReceiptLifecycleOwner(row) as owner:
+            stores[2]["services"]["destination"]["config"]["retention_facts"] = []
+            owner.report(status="succeeded", reason="completed")
+    asyncio.run(run())
+    assert row.retention_facts
+    assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1])["destination"]

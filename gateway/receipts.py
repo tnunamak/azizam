@@ -511,6 +511,24 @@ class RouteReceipt:
         updated = [item for item in self.retention if item["kind"] != kind]
         self.retention = validate_retention([*updated, entry])
 
+    def capture_retention_facts(self, *, registry: Mapping[str, Any] | None = None,
+                                overrides: Mapping[Any, Any] | None = None) -> None:
+        """Freeze dated evidence before the lifecycle dispatches to a destination."""
+        captured = getattr(self, "_retention_fact_snapshot", None)
+        if not self.backend or (captured is not None and captured[0] == self.backend):
+            return
+        from gateway import admin_store, retention, retention_facts, service_registry
+
+        if registry is None:
+            registry = service_registry.load_service_registry(path=admin_store.DB_PATH) or {}
+        if self.backend not in (registry.get("services") or {}):
+            return
+        if overrides is None:
+            overrides = admin_store.retention_fact_overrides(path=admin_store.DB_PATH)
+        self._retention_fact_snapshot = (self.backend, retention_facts.ledger(
+            registry, kinds=retention.bundled().data["kinds"], overrides=overrides, service_id=self.backend,
+        ))
+
     def persist_retention_facts(self) -> None:
         """Persist the evidence captured before dispatch, once per receipt."""
         captured = getattr(self, "_retention_fact_snapshot", None)
@@ -722,6 +740,11 @@ class ReceiptLifecycleOwner:
         self._outcome: tuple[str, str] | None = None
         self._closed = False
         self._stream_transferred = False
+        if default_persistence:
+            try:
+                self.receipt.capture_retention_facts()
+            except Exception as error:
+                self._log(f"receipt retention fact capture unavailable: {type(error).__name__}")
         # Admission is deliberately synchronous: SQLite receipt writes are
         # synchronous, and no caller can accidentally put an await boundary
         # between construction and persistence.
