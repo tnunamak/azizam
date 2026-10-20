@@ -8036,6 +8036,78 @@
         ]
       }
     },
+    "/admin/api/me/retention/ledger": {
+      "get": {
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_me_retention_ledger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Current Retention Ledger",
+        "tags": [
+          "retention facts"
+        ]
+      }
+    },
     "/admin/api/operator/host-commands": {
       "get": {
         "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
@@ -15546,25 +15618,6 @@
         "summary": "Put the people from reference photos into a new scene, with likeness scores",
         "tags": [
           "identity"
-        ]
-      }
-    },
-    "/gateway/v1/me/retention/ledger": {
-      "get": {
-        "operationId": "current_retention_ledger_gateway_v1_me_retention_ledger_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Current Retention Ledger",
-        "tags": [
-          "gateway-discovery"
         ]
       }
     },
