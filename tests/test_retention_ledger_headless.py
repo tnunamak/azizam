@@ -73,3 +73,24 @@ def test_request_ledger_real_auth_and_viewer_mask(ledger_credentials, viewer):
 def test_request_ledger_old_route_is_removed():
     assert not any(getattr(route, "path", None) == "/gateway/v1/requests/{request_id}/ledger"
                    for route in proxy.app.routes)
+
+
+@pytest.mark.parametrize("viewer", ["admin_bearer", "owner_browser", "owner_app", "anonymous"])
+def test_current_ledger_real_management_auth(ledger_credentials, viewer):
+    _, _, admin_key, app_key, cookie = ledger_credentials
+    client = TestClient(proxy.app, base_url="https://testserver", client=("127.0.0.1", 50000))
+    headers = {}
+    if viewer == "admin_bearer":
+        headers["Authorization"] = f"Bearer {admin_key}"
+    elif viewer == "owner_app":
+        headers["Authorization"] = f"Bearer {app_key}"
+    elif viewer == "owner_browser":
+        client.cookies.set(*cookie)
+    response = client.get("/admin/api/me/retention/ledger", headers=headers)
+    assert response.status_code == (200 if viewer in {"admin_bearer", "owner_browser"} else 403)
+    if response.status_code == 200:
+        assert response.headers["cache-control"] == "no-store"
+        assert "destinations" in response.json()["ledger"]
+    # The runtime path must be gone for every credential, with no shim.
+    assert not any(getattr(route, "path", None) == "/gateway/v1/me/retention/ledger" for route in proxy.app.routes)
+    client.close()
