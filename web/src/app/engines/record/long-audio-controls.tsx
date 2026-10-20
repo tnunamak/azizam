@@ -320,7 +320,7 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
                     {sample.timing} timing
                     {sample.audio_rights_unstated && (
                       <span className="block font-medium">
-                        Audio rights not stated. {sample.audio_rights_note}
+                        Audio licence not stated. {sample.audio_rights_note}
                       </span>
                     )}
                   </span>
@@ -378,6 +378,14 @@ function LongAudioControlsForService({ serviceId, locked }: { serviceId: string;
             limit {Math.round(options.policy.max_download_bytes / 1048576)} MB.
             Settings stay unchanged until you apply a recommendation.
           </p>
+          {options.samples
+            .filter((sample) => sample.audio_rights_unstated
+              && (samples ?? options.policy.sample_ids).includes(sample.id))
+            .map((sample) => (
+              <p key={sample.id} role="note" className="text-meta font-medium">
+                Audio rights not stated for {sample.title}. {sample.audio_rights_note}
+              </p>
+            ))}
           <div className="flex flex-wrap gap-2">
             {noHardLimit && (
               <p id="stt-no-hard-limit" className="text-meta text-muted-foreground w-full">

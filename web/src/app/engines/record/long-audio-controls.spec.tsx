@@ -97,6 +97,12 @@ describe("Long-audio operator controls", () => {
     expect(warning).toHaveTextContent(options.samples[0].audio_rights_note);
     expect(warning).toBeVisible();
     expect(warning.closest("details:not([open])")).toBeNull();
+    await user.click(screen.getByText("Measurement samples and trials"));
+    await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
+    expect(screen.queryByText(/Audio rights not stated/)).toBeNull();
+    await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
+    await user.click(screen.getByText("Measurement samples and trials"));
+    expect(screen.getByText(/Audio rights not stated/)).toBeVisible();
     await user.click(
       await screen.findByRole("button", {
         name: "Measure long-audio settings",

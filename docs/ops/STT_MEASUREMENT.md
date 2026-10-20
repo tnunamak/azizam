@@ -98,7 +98,8 @@ It also requires nonempty `provenance` and `human_transcribed_evidence` strings.
 These fields record source claims and their evidence, not independent verification
 of rights or authorship. Options and reports include these fields under `sources`,
 plus `audio_rights_unstated` and `audio_rights_note`. The sample selector shows
-unstated audio rights before a trial starts. A sample-level `licence` label does
+unstated audio rights before a trial starts. Selected-sample notices stay visible
+beside Measure when the sample settings are collapsed. A sample-level `licence` label does
 not establish rights for every source.
 
 Earnings-21 remains available with a stated CC BY-SA licence for transcripts and
