@@ -174,10 +174,10 @@ class SttChunkMergeTests(unittest.TestCase):
         # A window with no quiet place and equal frames: the frame nearest `near`.
         self.assertAlmostEqual(quietest(20, 25, 22.0), 22.0, delta=0.006)
         self.assertAlmostEqual(quietest(20, 25, 20.0), 20.0, delta=0.006)
-        # The result always lies inside the window, also past the end of the data.
+        # Only complete decoded frames are candidates; a wholly empty window fails.
         self.assertTrue(55 <= quietest(55, 70, 69.0) <= 70)
-            with self.assertRaises(stt_chunking.SttSetupFailure):
-                quietest(100, 110, 105.0)
+        with self.assertRaises(stt_chunking.SttSetupFailure):
+            quietest(100, 110, 105.0)
 
     def test_the_quietest_frame_of_a_lower_floor_beats_a_nearer_quiet_one(self) -> None:
         directory = tempfile.TemporaryDirectory()
