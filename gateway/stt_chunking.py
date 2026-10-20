@@ -1316,7 +1316,6 @@ async def execute_chunking(
     cleanup: "SttCleanupOwner | None" = None,
 ) -> ChunkingOutcome:
     """Probe, plan, extract, and submit chunks without a whole-file replay."""
-    _validate_media_paths(source_path, config)
     _validate_media_paths(source_path, config, source_path.parent / "planning-16k.pcm")
     if not config.chunking_enabled or not request_supports_chunking(fields, file_count=1):
         return ChunkingOutcome("passthrough", 0, "ineligible_envelope")

@@ -523,7 +523,7 @@ the place gets a copy.
 | 2 | Receipts | always | yes | structural only; the guard extends to values (section 13.3) |
 | 3 | Execution spool `data/image_media_jobs/` | async media jobs | yes | memory only, as today; the job cannot resume after a restart |
 | 4 | STT workspace | long audio | yes | Slice 4 puts relative `spool_dir` values inside the private temp directory (row 5) and refuses relative paths that escape it. An absolute path is the operator's explicit choice and is outside the private-root sweep. **One-time deploy step:** with the old gateway stopped, the operator removes leftover `data/stt-spool/` uploads by hand before starting this version. No migration or compatibility shim is provided. |
-| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 4 uses a gateway-private directory (`TMPDIR`, mode 0700, on disk), swept under an exclusive lifetime lock before requests start. Multipart spill closes on success, parse failure, disconnect and cancellation without waiting for garbage collection. The unit deliberately has no `PrivateTmp=yes`. Retained-media thumbnails stage beside their retained asset so `os.replace` stays atomic on the same filesystem; this is the exception to the private scratch root. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
+| 5 | Multipart spill over 1 MiB | uploads | yes, through the temp directory | slice 4 uses a gateway-private directory (`TMPDIR`, mode 0700, on disk), swept under an exclusive lifetime lock before requests start. Multipart spill closes on success, parse failure, disconnect and cancellation without waiting for garbage collection. The unit deliberately has no `PrivateTmp=yes`. The exceptions and anonymous-buffer class are listed below. A deleted temp file can stay in free disk blocks; the copy says "a temporary file, deleted when the request ends". |
 | 6 | Gateway logs (journal) | always | yes | D43/D44: no request or upstream text in logs. The canary test checks the journal capture. |
 | 7 | Engine output files `data/processes/<id>.log` | engines the gateway starts | the file, yes; what the engine prints, no | the disclosure names it for every engine whose output file Azizam keeps (section 5.3). `log_max_bytes` is existing record data. |
 | 8 | LiteLLM process, its stdout and its database | chat-shaped requests | yes, through the generated config and environment | section 5.2. **Today it is not clean**: error rows and the ERROR log line can hold echoed prompts. |
@@ -532,6 +532,40 @@ the place gets a copy.
 | 11 | Swap, hibernation image | any memory | no (host) | the disclosure names it ([research] OS1) |
 | 12 | Crash dumps | a crash | partly: the shipped unit | `LimitCORE=0` in the shipped `azizam.service`, for the gateway and its LiteLLM child. It is Azizam's own process, not a change to the owner's system. systemd-coredump host settings remain the owner's ([research] OS2). |
 | 13 | Backups, WAL, file-system snapshots | host | no | as today: no forensic erasure promise (`PROMPT_MEMORY.md` "Database deletion uses SQLite secure_delete ...") |
+
+All named temporary files holding request content use the private directory,
+including video probing and STT measurement sample preparation. Helpers reject
+caller paths that escape their private root or configured STT workspace, including
+symlink escapes. Derived STT media stays in the source request's directory.
+Measurement reports remain in their durable database; job scratch is private and
+removed under the existing worker lease. Cleanup also removes pre-upgrade scratch
+beside that database while holding the lease.
+
+Approved exceptions to the private pathname root are:
+
+- Retained-media thumbnails stage beside the retained asset for same-filesystem
+  atomic replacement.
+- Retained-media metadata migration stages already-stripped bytes as
+  `.metadata-clean-*` beside the asset for the same atomic-replacement reason.
+  Staging permissions are `0600`, regardless of the old asset mode; the replacement
+  keeps that private mode. Each migration scan removes orphan staging names under
+  its scan lock, including bounded or selected-asset scans. A failed unlink is
+  reported as pending. Normal completion and errors unlink the staging file.
+- An absolute STT `spool_dir` from validated operator configuration is the
+  operator's explicit storage choice (row 4). A caller-supplied helper path does
+  not grant this exception: parser workspaces must remain inside that spool root,
+  and derived media inside the source request's directory.
+
+Anonymous `memfd` media buffers are also approved: they have no filesystem
+pathname and write no disk file. They live in RAM and close on scope exit or
+process death. `media_metadata` fails closed if memfd allocation is unavailable,
+through either its Python or libc path; it has no disk fallback. Host swap and crash policies
+still apply to RAM (rows 11-12).
+
+Extension installation clones and lifecycle drop-ins are durable operator-selected
+package/configuration artifacts, rather than request-media scratch. Their install
+locations and same-directory atomic configuration writes are outside this scratch
+contract. Temporary extension review clones use the private process temp directory.
 
 ### 5.2 LiteLLM keeps no content
 

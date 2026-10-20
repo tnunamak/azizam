@@ -47,7 +47,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                         root = Path(temp_dir)
                         source = root / "source.wav"
                         source.write_bytes(b"original-audio")
-                        config = _config(root, setup_failure_policy=policy, max_segment_seconds=100)
+                        config = _config(root, spool_dir=str(root), setup_failure_policy=policy, max_segment_seconds=100)
                         extracted = []
                         durations = {}
                         posted = []

@@ -406,7 +406,7 @@ def test_cancel_during_http_transcription_unwinds_request_and_persists_terminal_
         assert sm.TRIAL.get() is None
     asyncio.run(scenario())
     assert cleaned == [True]
-    assert not list((runner.path.parent / "stt-measurement-work").iterdir())
+    assert not list(runner._scratch_directory().iterdir())
 
 
 def test_job_deadline_also_cancels_preparation(setup, monkeypatch):

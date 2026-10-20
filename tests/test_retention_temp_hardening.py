@@ -5,6 +5,7 @@ import io
 import os
 import stat
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -38,6 +39,28 @@ def test_video_probe_rejects_symlink_escape(tmp_path, monkeypatch):
     monkeypatch.setattr(video_inputs.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
     with pytest.raises(private_tmp.PrivateTmpError):
         video_inputs.probe_video(b"request-video", workdir=root / "escape")
+    assert list(outside.iterdir()) == []
+
+
+def test_video_probe_default_ignores_process_tempdir(tmp_path, monkeypatch):
+    root, outside = tmp_path / "private", tmp_path / "os-tmp"
+    root.mkdir()
+    outside.mkdir()
+    monkeypatch.setattr(private_tmp, "_active", root)
+    monkeypatch.setattr(tempfile, "tempdir", str(outside))
+    monkeypatch.setattr(video_inputs.shutil, "which", lambda _: "ffprobe")
+    seen = []
+
+    def probe(command, **kwargs):
+        path = Path(command[-1])
+        assert path.is_relative_to(root)
+        assert path.read_bytes() == b"request-video"
+        seen.append(path)
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(video_inputs.subprocess, "run", probe)
+    assert video_inputs.probe_video(b"request-video") is None
+    assert seen and not seen[0].exists()
     assert list(outside.iterdir()) == []
 
 
@@ -82,6 +105,64 @@ def test_metadata_orphan_sweep_never_follows_symlinks(tmp_path):
     assert target.read_bytes() == b"durable"
 
 
+def test_metadata_orphan_unlink_failure_stays_pending(tmp_path, monkeypatch):
+    orphan = tmp_path / ".metadata-clean-orphan"
+    orphan.write_bytes(b"retained media")
+    unlink = Path.unlink
+
+    def refuse(path, *args, **kwargs):
+        if path == orphan:
+            raise PermissionError("cannot unlink")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    result = migration.strip_cached_assets(tmp_path, tmp_path / "state.db")
+    assert not result.complete
+    assert result.errors == {orphan.name: "PermissionError"}
+
+
+def test_metadata_sweep_waits_for_an_active_migration(tmp_path, monkeypatch):
+    path = tmp_path / ("b" * 64 + ".png")
+    out = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(out, "PNG")
+    path.write_bytes(media_metadata.embed_image_metadata(out.getvalue(), ".png", {"prompt": "private"}))
+    staged, release, second_started = threading.Event(), threading.Event(), threading.Event()
+    replace = os.replace
+    errors = []
+
+    def pause(source, target):
+        staged.set()
+        assert release.wait(10)
+        assert Path(source).is_file(), "another scan must not sweep active staging"
+        replace(source, target)
+
+    monkeypatch.setattr(migration.os, "replace", pause)
+
+    def scan(second=False):
+        try:
+            if second:
+                second_started.set()
+            assert migration.strip_cached_assets(tmp_path, tmp_path / "state.db").complete
+        except BaseException as error:
+            errors.append(error)
+
+    first = threading.Thread(target=scan)
+    second = threading.Thread(target=scan, args=(True,))
+    first.start()
+    try:
+        assert staged.wait(10)
+        second.start()
+        assert second_started.wait(10)
+        assert not migration._SCAN_LOCK.acquire(blocking=False), "active staging must hold the scan lock"
+    finally:
+        release.set()
+        first.join(10)
+        if second.ident is not None:
+            second.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+
+
 def execution(root):
     return stt.SttExecutionConfig.from_service(service_id="test", config_directory=root,
         service_config={"chunking": {"spool_dir": str(root / "operator-spool")}})
@@ -99,6 +180,13 @@ def test_stt_parser_refuses_unconfigured_workspace(tmp_path, escape):
     with pytest.raises(stt.SttConfigurationError):
         stt.DiskBoundedMultiPartParser(Headers(), None, config=config, workspace=workspace)
     assert list(outside.iterdir()) == []
+
+
+def test_stt_parser_accepts_validated_absolute_operator_spool(tmp_path):
+    config = execution(tmp_path)
+    workspace = stt.create_request_workspace(config)
+    parser = stt.DiskBoundedMultiPartParser(Headers(), None, config=config, workspace=workspace)
+    assert parser._workspace == workspace
 
 
 @pytest.mark.parametrize("helper,escape", [
@@ -124,6 +212,8 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
     monkeypatch.setattr(stt, "run_media_command", command)
     sentinel = source.parent / "planning-16k.pcm"
     sentinel.write_bytes(b"keep")
+    uncut = source.parent / "uncut-0-16k.pcm"
+    uncut.write_bytes(b"keep")
 
     async def run():
         kwargs = dict(config=config, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 5, on_cancel=None)
@@ -141,6 +231,7 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
     asyncio.run(run())
     command.assert_not_awaited()
     assert sentinel.read_bytes() == b"keep"
+    assert uncut.read_bytes() == b"keep"
 
 
 @pytest.mark.parametrize("failure", ["native", "libc"])
@@ -212,3 +303,14 @@ def test_first_frame_keeps_allocation_ownership_on_unexpected_failure(tmp_path, 
     with pytest.raises(failure):
         thumbnails._first_frame(tmp_path / "source.mp4")
     assert list(tmp_path.glob("*.png")) == []
+
+
+def test_first_frame_transfers_successful_allocation_to_caller(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    def succeed(command, **kwargs):
+        Path(command[-1]).write_bytes(b"frame")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(thumbnails.subprocess, "run", succeed)
+    frame = thumbnails._first_frame(tmp_path / "source.mp4")
+    assert frame.read_bytes() == b"frame"
+    frame.unlink()

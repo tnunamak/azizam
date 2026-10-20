@@ -10,7 +10,7 @@ from gateway import stt_chunking as stt, stt_chunking_upgrade as upgrade
 def config(root, **changes):
     return stt.SttExecutionConfig.from_service(
         service_id="test", config_directory=root,
-        service_config={"chunking": {"spool_dir": str(root / "spool"), "target_seconds": 30,
+        service_config={"chunking": {"spool_dir": str(root), "target_seconds": 30,
             "threshold_seconds": 40, "max_segment_seconds": 40, **changes}},
     )
 
