@@ -32,6 +32,29 @@ key_url: https://openrouter.ai/settings/keys
 billing_dimensions:
   - prompt_tokens
   - completion_tokens
+retention_facts:
+  - id: private-io-logs
+    holds: prompts and outputs in private logs
+    where: provider private I/O log store
+    how_long: at least three months when enabled; deletion requires support
+    default: 'off'
+    condition: account private I/O logging is enabled
+    reach: account admins and members permitted by attribution or key creation
+    control: disable private logs and request deletion of existing logs through support
+    evidence_url: https://openrouter.ai/docs/guides/features/input-output-logging
+    checked: '2026-10-19'
+    confidence: documented
+  - id: provider-routing
+    holds: request content sent onward to a selected provider
+    where: selected model provider
+    how_long: depends on that provider's policy; unknown for a given route until selected
+    default: conditional
+    condition: every routed request reaches a selected provider; zero data retention filters eligible routes only
+    reach: the selected provider under its own policy
+    control: inspect the selected route and provider policy; enable eligible zero data retention routing where needed
+    evidence_url: https://openrouter.ai/docs/guides/features/zdr
+    checked: '2026-10-19'
+    confidence: documented
 recommendations:
   - id: provider_key_credit_limit
     message: Set an OpenRouter key credit limit equal to the gateway cap when supported.

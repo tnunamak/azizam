@@ -49,7 +49,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -239,6 +239,16 @@ CREATE INDEX IF NOT EXISTS operator_settings_updated_at
 CREATE TABLE IF NOT EXISTS operator_settings_generations (
   setting_key TEXT PRIMARY KEY,
   operator_settings_generation INTEGER NOT NULL
+);
+
+-- An explicit empty list is an owner decision. Keep it across catalog upgrades.
+CREATE TABLE IF NOT EXISTS retention_fact_overrides (
+  target_type TEXT NOT NULL CHECK(target_type IN ('engine', 'provider', 'system')),
+  target_id TEXT NOT NULL,
+  facts_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  PRIMARY KEY(target_type, target_id)
 );
 
 CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
@@ -3774,6 +3784,39 @@ def _operator_setting_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def retention_fact_overrides(path: Path = DB_PATH) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Return owner-authored lists, including empty lists that suppress bundled facts."""
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT target_type, target_id, facts_json FROM retention_fact_overrides"
+        ).fetchall()
+    return {(row["target_type"], row["target_id"]): json.loads(row["facts_json"]) for row in rows}
+
+
+def put_retention_fact_override(
+    target_type: str, target_id: str, facts: list[dict[str, Any]], *,
+    updated_by: str | None = None, path: Path = DB_PATH,
+) -> None:
+    if target_type not in {"engine", "provider", "system"} or not target_id or len(target_id) > 128:
+        raise ValueError("Choose a retention fact destination")
+    from gateway.retention_facts import validate_facts
+
+    checked = validate_facts(facts)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO retention_fact_overrides(target_type,target_id,facts_json,updated_at,updated_by) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(target_type,target_id) DO UPDATE SET "
+                "facts_json=excluded.facts_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+                (target_type, target_id, json.dumps(checked, sort_keys=True, ensure_ascii=False), _now(), updated_by),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
 __all__ = [
     "DB_PATH",
     "SCHEMA_VERSION",
@@ -3845,6 +3888,8 @@ __all__ = [
     "write_service_registry_in_transaction",
     "OperatorSettingsGenerationConflict",
     "get_operator_setting",
+    "retention_fact_overrides",
+    "put_retention_fact_override",
     "list_operator_settings",
     "get_prompt_memory_preference",
     "ensure_prompt_memory_preference",

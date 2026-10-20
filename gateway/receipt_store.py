@@ -35,6 +35,7 @@ from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -220,6 +221,11 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     assert_safe_top_level("receipt", data)
     if "retention" in data:
         validate_retention(data["retention"])
+    if "retention_facts" in data:
+        hashes = data["retention_facts"]
+        if (not isinstance(hashes, list) or len(hashes) > 100 or len(set(map(str, hashes))) != len(hashes)
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes)):
+            raise ValueError("receipt retention_facts must be distinct SHA-256 revisions")
     metadata = data.get("metadata")
     if metadata is None:
         return
@@ -692,15 +698,18 @@ def retention_days(admin_path: Path) -> int | None:
     return days
 
 
-def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH) -> int:
+def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
+          *, fact_store_path: Path | None = None) -> int:
     """Delete expired history only when a finite window is explicitly supplied."""
     if retain_s is None:
         return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
+        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
         deleted = _delete_before(conn, cutoff)
         conn.commit()
-        return deleted
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    return deleted
 
 
 def history_floor(path: Path = DB_PATH) -> int:
@@ -718,6 +727,21 @@ def _delete_before(conn: sqlite3.Connection, cutoff: int | None) -> int:
     return deleted
 
 
+def _expired_ids(conn: sqlite3.Connection, cutoff: int | None) -> list[str]:
+    if cutoff is None:
+        return []
+    return [row[0] for row in conn.execute("SELECT request_id FROM receipts WHERE created_at < ?", (cutoff,))]
+
+
+def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> None:
+    if fact_store_path is None or not ids:
+        return
+    from gateway import media_jobs
+
+    for request_id in ids:
+        media_jobs.release_fact_references("receipt", request_id, path=fact_store_path)
+
+
 def retention_preview(days: int | None, *, path: Path = DB_PATH) -> dict[str, Any]:
     cutoff = int(time.time()) - days * 86400 if days is not None else None
     with _conn(path) as conn:
@@ -732,6 +756,7 @@ class RetentionPreviewChanged(ValueError):
 def save_retention(
     days: int | None, preview: Mapping[str, Any] | None,
     save_setting: Callable[[], Any], *, path: Path = DB_PATH,
+    fact_store_path: Path | None = None,
 ) -> int:
     """Validate the preview under a write lock, save the choice, then delete.
 
@@ -756,21 +781,26 @@ def save_retention(
             if count != preview["delete_count"]:
                 raise RetentionPreviewChanged("Receipt count changed. Review the new deletion count.")
         save_setting()
+        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
         deleted = _delete_before(conn, cutoff)
         conn.commit()
-        return deleted
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    return deleted
 
 
-def maintain(admin_path: Path, *, path: Path = DB_PATH) -> int:
+def maintain(admin_path: Path, *, path: Path = DB_PATH,
+             fact_store_path: Path | None = None) -> int:
     """Apply saved expiry and reclaim at most 256 free pages off request paths."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         days = retention_days(admin_path)
         cutoff = int(time.time()) - days * 86400 if days is not None else None
+        expired_ids = _expired_ids(conn, cutoff) if fact_store_path is not None else []
         deleted = _delete_before(conn, cutoff)
         conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
-        return deleted
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    return deleted
 
 
 def compact(path: Path) -> dict[str, int | bool]:

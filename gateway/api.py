@@ -68,6 +68,7 @@ MediaJobEventAppender = Callable[..., int | Mapping[str, Any]]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
 RecordAuthorizer = Callable[[Request, str, Mapping[str, Any]], bool]
+LedgerProvider = Callable[[Request, str | None], dict[str, Any] | None]
 
 DEFAULT_AUDIENCE = "client"
 
@@ -335,6 +336,7 @@ def create_gateway_router(
     media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
     record_authorizer: RecordAuthorizer | None = None,
+    ledger_provider: LedgerProvider | None = None,
     record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
@@ -610,6 +612,30 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
+
+    @router.get("/me/retention/ledger")
+    def current_retention_ledger(request: Request) -> JSONResponse:
+        if ledger_provider is None:
+            return JSONResponse(status_code=404, content=_error_payload("ledger_unavailable", "Ledger unavailable"))
+        try:
+            view = ledger_provider(request, None)
+        except PermissionError:
+            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
+        if view is None:
+            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
+        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
+
+    @router.get("/requests/{request_id}/ledger")
+    def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:
+        if ledger_provider is None:
+            return JSONResponse(status_code=404, content=_error_payload("ledger_unavailable", "Ledger unavailable"))
+        try:
+            view = ledger_provider(request, request_id)
+        except PermissionError:
+            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
+        if view is None:
+            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
+        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
 
     @router.get("/resources")
     async def list_resources(request: Request) -> JSONResponse:

@@ -17,3 +17,37 @@ key_url: https://aistudio.google.com/apikey
 billing_dimensions:
   - prompt_tokens
   - completion_tokens
+retention_facts:
+  - id: abuse-monitoring
+    holds: text prompts, context and outputs in abuse records
+    where: provider abuse-monitoring systems
+    how_long: 55 days
+    default: 'on'
+    condition: null
+    reach: controlled authorized provider employees on review
+    control: review the provider policy; this abuse retention is separate from developer logs
+    evidence_url: https://ai.google.dev/gemini-api/docs/usage-policies
+    checked: '2026-10-19'
+    confidence: documented
+  - id: developer-logs
+    holds: supported request and response content in project logs
+    where: developer-owned project logs or promoted datasets
+    how_long: configured 7, 14, 28 or 55 days; promoted datasets have no set retention period
+    default: 'off'
+    condition: logging is enabled for a billing-enabled project
+    reach: people authorized to access the Cloud project or dataset
+    control: disable project logging and delete promoted datasets separately
+    evidence_url: https://ai.google.dev/gemini-api/docs/logs-policy
+    checked: '2026-10-19'
+    confidence: documented
+  - id: feature-state
+    holds: stateful interactions, cache content or uploaded files
+    where: provider feature stores
+    how_long: depends on feature; files expire after 48 hours and implicit cache after 24 hours
+    default: conditional
+    condition: a stateful feature, grounding, cache or upload is used
+    reach: project users and provider staff under the feature policy
+    control: set store=false where supported and remove files or caches through their own controls
+    evidence_url: https://ai.google.dev/gemini-api/docs/zdr
+    checked: '2026-10-19'
+    confidence: documented

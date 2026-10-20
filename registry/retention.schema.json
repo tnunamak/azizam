@@ -5,9 +5,12 @@
   "description": "The bundled defaults of the retention contract (docs/design/REQUEST_RETENTION.md section 3.2). Closed: an unknown field is an error. gateway/retention.py adds the cross-row rules that a schema cannot say.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format_version", "retention_choices", "household", "groups", "kinds", "widening"],
+  "required": ["format_version", "retention_choices", "household", "groups", "kinds", "widening", "stale_after_days"],
   "properties": {
     "format_version": {"const": 1},
+    "stale_after_days": {"type": "integer", "minimum": 1, "maximum": 3650},
+    "system_facts": {"type": "object", "additionalProperties": {"type": "array", "maxItems": 100, "items": {"type": "object"}}},
+    "provider_fact_catalog": {"type": "object", "additionalProperties": {"type": "array", "maxItems": 100, "items": {"type": "object"}}},
     "retention_choices": {
       "type": "object",
       "minProperties": 1,

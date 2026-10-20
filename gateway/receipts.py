@@ -57,6 +57,7 @@ CLIENT_VISIBLE_FIELDS = {
     "updated_at_ms",
     "refusal",
     "retention",
+    "retention_facts",
     *PHASE_FIELDS,
     "attempt_number",
 }
@@ -399,6 +400,7 @@ class RouteReceipt:
     refusal: dict[str, Any] | None = None
     # None means a submit receipt defers the content outcome to its work receipt.
     retention: list[dict[str, Any]] | None = field(default_factory=list)
+    retention_facts: list[str] = field(default_factory=list)
     resource_decision: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
@@ -616,6 +618,8 @@ class RouteReceipt:
             data["maker_person_id"] = self.maker_person_id
         if self.retention is not None:
             data["retention"] = validate_retention(self.retention)
+        if self.retention_facts:
+            data["retention_facts"] = list(self.retention_facts)
         if self.resource_decision is not None:
             data["resource_decision"] = self.resource_decision
         if isinstance(self.refusal, Mapping):

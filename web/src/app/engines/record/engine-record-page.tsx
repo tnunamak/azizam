@@ -59,6 +59,7 @@ import {
 } from "./contract-sections";
 import { LongAudioControls } from "./long-audio-controls";
 import { LongAudioSection, RemoveSection, StoredRecordSection, errorText } from "./record-sections";
+import { RetentionLedgerPanel } from "@/components/product/retention-ledger";
 import { cardProblem, cardsFromTransforms, transformsFromCards, type AdjustmentCard } from "./adjustments";
 import {
   FieldGroups,
@@ -803,6 +804,7 @@ function RecordForm({
         <a className={NAV_LINK} href="#engine-runs">How it runs</a>
         <a className={NAV_LINK} href="#engine-checks">What Azizam can check</a>
         <a className={NAV_LINK} href="#engine-resources">Resources</a>
+        <a className={NAV_LINK} href="#engine-retention">Who could see a request</a>
         <a className={NAV_LINK} href="#engine-stored">Stored record</a>
       </nav>
 
@@ -1126,6 +1128,8 @@ function RecordForm({
       </section>
 
       {!owner && <LongAudioSection chunking={view.stt_chunking} />}
+
+      <RetentionLedgerPanel id="engine-retention" endpoint={`/admin/api/engines/${encodeURIComponent(view.service_id)}/retention/ledger`} />
 
       <StoredRecordSection view={view} />
 

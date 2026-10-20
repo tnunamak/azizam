@@ -172,6 +172,7 @@ class ProtocolDescription:
     serves: tuple[str, ...] = ()
     label: str = ""
     binding: str = ""
+    retention_facts: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def adapter_id(self) -> str | None:
@@ -272,6 +273,12 @@ def parse_description(doc: Any, *, source: str, budgets: Budgets = DEFAULT_BUDGE
     problems: list[str] = []
     if not isinstance(doc, dict):
         raise DescriptionError(source, ["the file must hold one mapping at the top level"])
+    if "retention_facts" in doc:
+        from gateway.retention_facts import validate_facts
+        try:
+            validate_facts(doc["retention_facts"])
+        except ValueError as exc:
+            problems.append(str(exc))
     flagged: list[tuple] = []
     # `operations` keys are names: scan inside each operation, not its name.
     shadow = copy.deepcopy(doc)
@@ -321,6 +328,7 @@ class _Compiler:
             operations={k: v for k, v in operations.items() if v is not None}, auth=auth, errors=advice, budgets=self.budgets,
             serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
             binding=str(doc.get("binding") or ""),
+            retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
         )
 
     def _advice(self, rows: list) -> tuple[Advice, ...]:

@@ -195,6 +195,14 @@ def parse_contract(data: Any, *, schema: Mapping[str, Any], source: str = "<memo
         more = f" (and {len(problems) - 10} more)" if len(problems) > 10 else ""
         raise RetentionDataError(f"{source}: the retention file does not match its schema{more}:\n  " + "\n  ".join(lines))
     errors = _semantic_errors(data)
+    from gateway.retention_facts import validate_facts
+
+    for group_name in ("system_facts", "provider_fact_catalog"):
+        for target_id, facts in data.get(group_name, {}).items():
+            try:
+                validate_facts(facts)
+            except ValueError as exc:
+                errors.append(f"{group_name}/{target_id}: {exc}")
     if errors:
         raise RetentionDataError(f"{source}: the retention file breaks the contract:\n  " + "\n  ".join(errors))
     return Contract(data=copy.deepcopy(data), source=source)

@@ -135,6 +135,8 @@ class McpDeps:
     # (request, auth, tool name, arguments) -> the result, or a ``CallError`` the model can act on. The gateway
     # decides who may rename what; ``None`` means this host offers no renaming.
     rename: Callable[[Request, Any, str, Mapping[str, Any]], dict[str, Any]] | None = None
+    retention_ledger: Callable[[Request, Any, str | None], dict[str, Any] | None] | None = None
+    retention_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -282,6 +284,16 @@ TOOLS.append({
             "native_long_audio_streaming": {"type": "boolean"}}, "additionalProperties": False},
     }, "required": ["service_id", "action"], "additionalProperties": False},
     "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+})
+
+TOOLS.append({
+    "name": "requests", "title": "Read the retention ledger",
+    "description": "Owner and administrators can see dated facts about where request content may remain. Action: ledger.",
+    "inputSchema": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["ledger"]},
+        "request_id": {"type": "string", "description": "Optional saved request id; omit for today's facts."},
+    }, "required": ["action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
 })
 
 # ------------------------------------------------------------------ result I/O
@@ -638,6 +650,22 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
+    if name == "requests":
+        if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
+                or args.get("action") != "ledger" or set(args) - {"action", "request_id"}):
+            return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
+                               is_error=True, version=version)
+        request_id = args.get("request_id")
+        if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
+            return tool_result({"status": "error", "error": "request_id must be a saved request id."},
+                               is_error=True, version=version)
+        try:
+            view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
+        except PermissionError:
+            view = None
+        return tool_result({"ledger": view} if view is not None else
+                           {"status": "error", "error": "Ledger not found."},
+                           is_error=view is None, version=version)
     if name == "stt_measurement":
         if deps.stt_measurement is None:
             return tool_result({"status": "error", "error": "Long-audio operator commands are unavailable."}, is_error=True, version=version)
@@ -734,9 +762,12 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
     elif method == "tools/list":
         owner_can_measure = (deps.stt_measurement is not None
                              and deps.owner_visible(request, auth))
-        result = {"tools": [tool for tool in TOOLS if tool["name"] != "stt_measurement" or owner_can_measure]}
+        can_read_ledger = deps.retention_ledger is not None and deps.retention_visible(request, auth)
+        result = {"tools": [tool for tool in TOOLS if
+                             (tool["name"] != "stt_measurement" or owner_can_measure)
+                             and (tool["name"] != "requests" or can_read_ledger)]}
         if modern:
-            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure else "public")
+            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure or can_read_ledger else "public")
     elif method == "tools/call":
         name = params.get("name")
         if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:

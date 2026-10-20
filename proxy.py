@@ -12878,7 +12878,8 @@ async def lifespan(app: FastAPI):
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = None
     try:
-        pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
+        pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path,
+                                         fact_store_path=media_jobs.DB_PATH)
         receipts_maintenance_task = asyncio.create_task(
             _receipts_maintenance_loop(receipts_maintenance_stop)
         )
@@ -13907,6 +13908,122 @@ def _gateway_receipt_viewer(request: Request) -> str | None:
     return _auth_person_id(_auth_context_from_scope(request))
 
 
+def _retention_ledger_allowed(auth_context: AuthContext) -> bool:
+    person_id = _auth_person_id(auth_context)
+    return bool(person_id and {"owner", "admin", "superadmin"} & set(
+        admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path)
+    ))
+
+
+_RETENTION_FACT_FIELDS = (
+    "id", "holds", "where", "how_long", "default", "condition", "reach",
+    "control", "evidence_url", "checked", "confidence",
+)
+
+
+def _snapshot_retention_facts(receipt: Any) -> None:
+    """Attach evidence captured before egress, when available, to the receipt."""
+    if not isinstance(receipt, RouteReceipt) or not receipt.backend or receipt.retention_facts:
+        return
+    from gateway import retention, retention_facts
+
+    captured = getattr(receipt, "_retention_fact_snapshot", None)
+    if captured is not None and captured[0] == receipt.backend:
+        view = captured[1]
+    else:
+        registry = ADMIN_STORE.get_service_registry()
+        if receipt.backend not in (registry.get("services") or {}):
+            return
+        view = retention_facts.ledger(
+            registry, kinds=retention.bundled().data["kinds"],
+            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+            service_id=receipt.backend,
+        )
+    revisions: list[str] = []
+    for destination in view["destinations"]:
+        facts = [
+            {key: row[key] for key in _RETENTION_FACT_FIELDS if key in row}
+            for row in destination["facts"]
+        ]
+        if facts:
+            revisions.extend(media_jobs.save_fact_revisions(
+                facts, source_kind="receipt", source_id=receipt.request_id,
+                destination_id=destination["id"], path=media_jobs.DB_PATH,
+            ))
+    receipt.retention_facts = list(dict.fromkeys(revisions))
+
+
+def _capture_retention_facts(receipt: RouteReceipt) -> None:
+    """Freeze the dated ledger before dispatch without writing an orphan reference."""
+    if not receipt.backend:
+        return
+    from gateway import retention, retention_facts
+    registry = ADMIN_STORE.get_service_registry()
+    if receipt.backend in (registry.get("services") or {}):
+        receipt._retention_fact_snapshot = (receipt.backend, retention_facts.ledger(
+            registry, kinds=retention.bundled().data["kinds"],
+            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+            service_id=receipt.backend,
+        ))
+
+
+def _record_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
+    _snapshot_retention_facts(receipt)
+    return receipt_store.record(receipt, **kwargs)
+
+
+def _finalize_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
+    _snapshot_retention_facts(receipt)
+    return receipt_store.finalize(receipt, **kwargs)
+
+
+def _gateway_retention_ledger(request: Request, request_id: str | None = None) -> dict[str, Any] | None:
+    """Read local retention evidence only; never contact a provider or engine."""
+    if not _retention_ledger_allowed(_auth_context_from_scope(request)):
+        raise PermissionError("An owner or administrator is required")
+    from gateway import retention, retention_facts
+
+    receipt = receipt_store.get(request_id, audience="internal") if request_id else None
+    if request_id and receipt is None:
+        return None
+    service_id = str(receipt.get("backend") or "") if receipt else None
+    registry = ADMIN_STORE.get_service_registry()
+    view = retention_facts.ledger(
+        registry if not service_id or service_id in (registry.get("services") or {}) else {"services": {}},
+        kinds=retention.bundled().data["kinds"],
+        overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+        service_id=service_id if service_id in (registry.get("services") or {}) else None,
+    )
+    if receipt:
+        view["request_id"] = request_id
+        view["observed"] = {key: receipt[key] for key in ("backend", "resolved_model", "requested_model", "accepted_at_ms", "sent_at_ms") if receipt.get(key) is not None}
+        by_kind = {entry.get("kind"): entry for entry in receipt.get("retention", []) if isinstance(entry, Mapping)}
+        for kind in view["kinds"]:
+            if kind["id"] in by_kind:
+                kind.update({key: by_kind[kind["id"]][key] for key in ("decision", "kept_until_ms") if key in by_kind[kind["id"]]})
+        hashes = receipt.get("retention_facts") or []
+        if hashes:
+            grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+            if set(hashes) != {fact["revision"] for facts in grouped.values() for fact in facts}:
+                raise KeyError("receipt fact revisions are incomplete")
+            for destination in view["destinations"]:
+                destination["facts"] = grouped.pop(destination["id"], [])
+            for destination_id, facts in grouped.items():
+                view["destinations"].append({"id": destination_id, "name": destination_id,
+                                             "kind": "former_destination", "facts": facts})
+            from datetime import date
+            today = date.today()
+            for destination in view["destinations"]:
+                for fact in destination["facts"]:
+                    fact["stale"] = (today - date.fromisoformat(fact["checked"])).days > view["stale_after_days"]
+                    fact["stale_label"] = f"This was last checked on {fact['checked']}." if fact["stale"] else None
+            view["fact_basis"] = "Facts saved for this request."
+        else:
+            view["fact_basis"] = "Today's facts. This receipt has no saved fact revisions."
+        view["never_save_text"] = retention_facts.assemble_never_save(view)
+    return view
+
+
 def _gateway_record_scope(request: Request) -> dict[str, Any]:
     auth_context = _auth_context_from_scope(request)
     identity = auth_context.identity
@@ -14105,6 +14222,7 @@ app.include_router(
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
         record_authorizer=_gateway_record_authorizer,
+        ledger_provider=_gateway_retention_ledger,
         record_scope_provider=_gateway_record_scope,
     )
 )
@@ -14548,6 +14666,13 @@ async def _mcp_stt_measurement(request, auth, args):
         raise CallError("The registry changed; refresh and try again.", code="generation_mismatch") from None
 
 
+def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -> dict[str, Any] | None:
+    if not isinstance(auth, AuthContext) or not _retention_ledger_allowed(auth):
+        raise PermissionError("An owner or administrator is required")
+    request.scope["auth_context"] = auth
+    return _gateway_retention_ledger(request, request_id)
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
@@ -14570,6 +14695,8 @@ def _mount_mcp(app: FastAPI) -> None:
                 [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
             scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
             rename=_mcp_rename,
+            retention_ledger=_mcp_retention_ledger,
+            retention_visible=lambda _request, auth: isinstance(auth, AuthContext) and _retention_ledger_allowed(auth),
         ),
         path=MCP_PATH,
     )
@@ -14739,7 +14866,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
         "question_count": result.question_count, "engine": result.engine,
         "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,
     }
-    receipt_store.record(receipt)
+    _record_retention_receipt(receipt)
 
 
 FRONTEND_TRANSLATORS.register_owned("typesafe", lambda app: decisions_api.register_decision_routes(
@@ -20105,7 +20232,7 @@ def finish_image_route_receipt(
         receipt.metadata["comfyui_models_freed_for_vram"] = True
     receipt.finish(status or _image_receipt_status(status_code))
     try:
-        receipt_store.record(receipt)
+        _record_retention_receipt(receipt)
     except Exception as e:
         try:
             print(f"[proxy] receipt_store.record failed: {e}", flush=True)
@@ -21848,7 +21975,7 @@ def _media_job_admission_response(
                                resource_decision=evidence)
         refused.finish("rejected")
         try:
-            receipt_store.record(refused)
+            _record_retention_receipt(refused)
         except Exception as exc:  # Receipts are observational.
             print(f"[proxy] admission receipt failed: {type(exc).__name__}", flush=True)
     advised = resource_admission_http.admission_http_response(decision, wait_deadline=evidence["wait_deadline"])
@@ -25573,7 +25700,8 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
         except asyncio.TimeoutError:
             try:
-                await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
+                await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path,
+                                        fact_store_path=media_jobs.DB_PATH)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
 
@@ -28063,7 +28191,7 @@ def _record_internal_hop_receipt(
         else "failed"
     )
     try:
-        receipt_store.record(receipt)
+        _record_retention_receipt(receipt)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Could not record internal-hop receipt: {e}", flush=True)
 
@@ -29178,6 +29306,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             api_key_name=caller.name if caller else None, visibility=_access_for_auth_context(auth_context).receipt_detail)
     receipt.backend = target.engine_id
     receipt.resolved_model = target.upstream
+    _capture_retention_facts(receipt)
     backend_body = {**body, "model": target.upstream}
 
     def _finish_chat_receipt(reason: str, status: str) -> None:
@@ -29185,7 +29314,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         receipt.metadata["terminal_reason"] = reason
         record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": reason})
         receipt.finish(status)
-        receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+        _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
     closes_chat = op == "chat" and owns_receipt
     if op == "chat":
         receipt.metadata["request_shape"] = request_shape_fields(body)
@@ -29260,7 +29389,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                             record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": "failed"})
                             receipt.metadata["terminal_reason"] = "failed"
                         receipt.finish("failed")
-                        receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+                        _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
                         yield b"data: " + _protocol_failure(error).body + b"\n\n"
                     finally:
                         await reply.aclose()
@@ -29302,7 +29431,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     except asyncio.CancelledError:
         if owns_receipt:
             receipt.finish("cancelled")
-            receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+            _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
         raise
     finally:
         if lease is not None and not lease.handed_off:
@@ -30033,7 +30162,7 @@ def _attach_caller(receipt: RouteReceipt, auth_context: AuthContext) -> None:
 
 def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
     try:
-        receipt_store.record(receipt)
+        _record_retention_receipt(receipt)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Could not record provider-native receipt: {e}", flush=True)
 

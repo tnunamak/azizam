@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -365,6 +365,22 @@ CREATE TABLE IF NOT EXISTS media_hidden_assets (
   PRIMARY KEY (person_id, asset_id, job_id)
 );
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
+
+-- Facts are immutable metadata. References can outlive receipts when a kept record survives.
+CREATE TABLE IF NOT EXISTS retention_fact_revisions (
+  revision TEXT PRIMARY KEY,
+  fact_json TEXT NOT NULL,
+  first_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retention_fact_references (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  revision TEXT NOT NULL REFERENCES retention_fact_revisions(revision),
+  PRIMARY KEY(source_kind, source_id, destination_id, revision)
+);
+CREATE INDEX IF NOT EXISTS retention_fact_references_revision
+  ON retention_fact_references(revision);
 """
 
 
@@ -385,7 +401,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, SCHEMA_VERSION):
+    elif int(row[0]) not in (1, 2, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -1385,6 +1401,94 @@ def count(path: Path = DB_PATH) -> int:
         return int(row[0]) if row else 0
 
 
+def save_fact_revisions(
+    facts: list[dict[str, Any]], *, source_kind: str, source_id: str, destination_id: str,
+    path: Path = DB_PATH, now: int | None = None,
+) -> list[str]:
+    """Append exact fact versions and link them to a receipt or kept record."""
+    if (source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128
+            or not destination_id or len(destination_id) > 128):
+        raise ValueError("invalid fact revision reference")
+    from gateway.retention_facts import revision, validate_facts
+
+    checked = [validate_facts([fact])[0] for fact in facts]
+    hashes = [revision(fact) for fact in checked]
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for digest, fact in zip(hashes, checked):
+                encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                conn.execute(
+                    "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
+                    (digest, encoded, int(time.time()) if now is None else now),
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO retention_fact_references(source_kind,source_id,destination_id,revision) VALUES(?,?,?,?)",
+                    (source_kind, source_id, destination_id, digest),
+                )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return hashes
+
+
+def fact_revisions(hashes: list[str], *, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Read stored versions in receipt order; an unknown hash is an error, not today's fact."""
+    if not hashes:
+        return []
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT revision,fact_json FROM retention_fact_revisions WHERE revision IN (" +
+            ",".join("?" for _ in hashes) + ")", tuple(hashes),
+        ).fetchall()
+    found = {row[0]: json.loads(row[1]) for row in rows}
+    if any(digest not in found for digest in hashes):
+        raise KeyError("a stored retention fact revision is missing")
+    return [{**found[digest], "revision": digest} for digest in hashes]
+
+
+def fact_revisions_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """Restore each saved fact to the destination it described at write time."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT r.destination_id, r.revision, f.fact_json FROM retention_fact_references r "
+            "JOIN retention_fact_revisions f ON f.revision=r.revision "
+            "WHERE r.source_kind=? AND r.source_id=? ORDER BY r.destination_id, r.rowid",
+            (source_kind, source_id),
+        ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for destination_id, digest, encoded in rows:
+        result.setdefault(destination_id, []).append({**json.loads(encoded), "revision": digest})
+    return result
+
+
+def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB_PATH) -> int:
+    """Release one source and prune only versions with no remaining references."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "DELETE FROM retention_fact_references WHERE source_kind=? AND source_id=?",
+                (source_kind, source_id),
+            )
+            removed = conn.execute(
+                "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
+                "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
+            ).rowcount
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return removed
+
+
 def schema_version(path: Path = DB_PATH) -> int | None:
     with _conn(path) as conn:
         row = conn.execute(
@@ -1438,5 +1542,9 @@ __all__ = [
     "validate_client_event",
     "events",
     "count",
+    "save_fact_revisions",
+    "fact_revisions",
+    "fact_revisions_for_source",
+    "release_fact_references",
     "schema_version",
 ]

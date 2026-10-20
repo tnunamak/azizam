@@ -15,6 +15,18 @@ label: ComfyUI
 executor: adapter:node-graph
 serves: [images, videos, audio.generate]
 binding: comfyui
+retention_facts:
+  - id: graph-history
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: until restart or clear; an oldest entry is dropped after the pre-insert count exceeds 10,000
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/server.py#L1134-L1151
+    checked: '2026-10-19'
+    confidence: documented
 notes: >-
   Operations: submit a prompt, read its history, read the queue, read an output
   file, upload an input image, cancel, delete a history entry, read system

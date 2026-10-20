@@ -445,6 +445,14 @@ Selected successful workflows are exercised separately.
 | `POST /setup/first-app` | session-only | denied | `proxy.setup_create_first_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /setup/local-login` | browser/public | no owner authority | `proxy.setup_local_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /setup/local-owner` | browser/public | no owner authority | `proxy.setup_create_local_owner`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `GET /admin/api/settings/retention/ledger` | owner-bearer | denied | `gateway.retention_fact_api.retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_system_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_system_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/{service_id}/retention/ledger` | owner-bearer | denied | `gateway.retention_fact_api.engine_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engines/{service_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_engine_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/engines/{service_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_engine_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/providers/{provider_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_provider_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/{provider_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_provider_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /status/raw` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `GET /status/raw/` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 

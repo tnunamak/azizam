@@ -23,3 +23,26 @@ billing_dimensions:
   - output_tokens
   - cache_read_input_tokens
   - cache_creation_input_tokens
+retention_facts:
+  - id: standard-api-retention
+    holds: API inputs and outputs
+    where: provider systems
+    how_long: normally deleted within 30 days; safety, feedback, feature, contract and legal exceptions apply
+    default: 'on'
+    condition: null
+    reach: authorized provider personnel under applicable review controls
+    control: check organization zero data retention terms and model and feature eligibility
+    evidence_url: https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data
+    checked: '2026-10-19'
+    confidence: documented
+  - id: feature-state
+    holds: files, batch inputs, container state or cached schemas when used
+    where: separate provider feature stores
+    how_long: varies by feature; files last until deletion or expiry, batches 29 days and containers up to 30 days
+    default: conditional
+    condition: a stateful feature is used, including features outside a zero data retention arrangement
+    reach: authorized workspace users and provider personnel under applicable controls
+    control: inspect feature eligibility and delete or expire each object separately
+    evidence_url: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+    checked: '2026-10-19'
+    confidence: documented

@@ -43,6 +43,7 @@ describe("i: the engine record page", () => {
       "How it runs",
       "What Azizam can check",
       "Resources",
+      "Who could see a request",
       "Stored record",
     ]);
     expect(screen.getByText("On")).toBeVisible();
