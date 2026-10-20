@@ -171,7 +171,7 @@ def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, re
 
 
 @pytest.mark.parametrize("operation", ["transcriptions", "translations"])
-@pytest.mark.parametrize("shortage", ["cap", "disk900", "disk1024", "queue"])
+@pytest.mark.parametrize("shortage", ["cap", "media_cap", "disk900", "disk1024", "queue"])
 def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operation, shortage):
     from starlette.requests import Request
     from tests.support.access import access_context
@@ -182,6 +182,12 @@ def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operat
         execution = config(tmp_path, max_input_bytes=8 if shortage == "cap" else 512 * mib)
         gate = stt.SttResourceGate()
         leases = []
+        cap = shortage in {"cap", "media_cap"}
+        parser = stt.parse_bounded_multipart
+        async def parse(*args, **kwargs):
+            if shortage == "media_cap":
+                raise stt.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
+            return await parser(*args, **kwargs)
         body, content_type = _multipart_body(content=b"over cap!")
         delivered = False
         async def receive():
@@ -195,11 +201,12 @@ def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operat
         receipt = RouteReceipt(protocol="openai.audio", intent="audio.transcribe")
         with patch.object(stt, "_disk_free_bytes", return_value=4096 * mib) as free, \
              patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), \
+             patch.object(stt, "parse_bounded_multipart", side_effect=parse), \
              patch.object(proxy, "_service_availability_response", return_value=None), \
              patch.object(proxy.receipt_store, "begin"), \
              patch.object(proxy.receipt_store, "finalize") as finalize:
             try:
-                if shortage != "cap":
+                if not cap:
                     leases.append(gate.acquire(request_id="held", config=execution))
                 if shortage == "queue":
                     leases.append(gate.acquire(request_id="held2", config=execution))
@@ -208,12 +215,13 @@ def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operat
                 response = await proxy.proxy_stt_request(request, access_context(), operation=operation,
                     execution_snapshot=execution, route_receipt=receipt)
                 error = json.loads(response.body)["error"]
-                assert response.status_code == (413 if shortage == "cap" else 503)
-                assert error["code"] == ("stt_upload_limit" if shortage == "cap" else "resource_admission_denied")
-                assert error["type"] == ("invalid_request_error" if shortage == "cap" else "api_error")
-                assert response.headers.get("Retry-After") == (None if shortage == "cap" else "5")
+                assert response.status_code == (413 if cap else 503)
+                assert error["code"] == ({"cap": "stt_upload_limit", "media_cap": "stt_resource_limit"}.get(
+                    shortage, "resource_admission_denied"))
+                assert error["type"] == ("invalid_request_error" if cap else "api_error")
+                assert response.headers.get("Retry-After") == (None if cap else "5")
                 finalize.assert_called_once()
-                if shortage != "cap":
+                if not cap:
                     assert "busy" in error["message"]
                     reasons = receipt.to_dict()["resource_decision"]["reasons"]
                     assert any(r["code"] == ("queue_full" if shortage == "queue" else "capacity_insufficient")
