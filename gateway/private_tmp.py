@@ -124,7 +124,8 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
             parent_fd = next_fd
         parent_info = os.fstat(parent_fd)
         if parent_info.st_uid not in {0, os.geteuid()} or (parent_info.st_mode & 0o022 and not parent_info.st_mode & stat.S_ISVTX):
-            raise PrivateTmpError(f"The private temporary directory parent {target.parent} is not trusted.")
+            raise PrivateTmpError(f"The private temporary directory parent {target.parent} is not trusted "
+                                  f"(uid {parent_info.st_uid}, mode {stat.S_IMODE(parent_info.st_mode):04o}, service uid {os.geteuid()}).")
         try:
             os.mkdir(target.name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
