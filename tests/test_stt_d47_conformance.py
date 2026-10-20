@@ -14,7 +14,7 @@ import pytest
 from starlette.requests import Request
 
 import proxy
-from gateway import stt_chunking as stt
+from gateway import custom_voices, stt_chunking as stt
 from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter, SttRun
 from tests.support.access import access_context
 from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401
@@ -158,7 +158,7 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
                             "spool_dir": str(tmp_path / "spool")}}
     with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
          patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
-        with pytest.raises(stt.SttAudioNotSplittable):
+        with pytest.raises(custom_voices.VoiceError, match="STT service limits"):
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
     assert seen == [], "a known-over-limit reference must never be posted whole"
     assert list((tmp_path / "spool").iterdir()) == []
