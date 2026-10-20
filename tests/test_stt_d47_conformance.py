@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 import proxy
 from gateway import stt_chunking as stt
+from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
 from tests.support.access import access_context
 from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401
 from tests.test_stt_chunking import _multipart_body
@@ -40,10 +41,10 @@ def misleading_audio(tmp_path):
     def make(duration):
         path = tmp_path / f"duration-{duration}.mka"
         if duration is None:
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-c:a", "pcm_s16le",
-                            "-live", "1", str(path)], check=True, capture_output=True)
+            path.write_bytes(subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(source),
+                "-c:a", "pcm_s16le", "-f", "matroska", "pipe:1"]))
             return path
-        element = b"\xec\x89" + bytes(9) if duration is None else b"\x44\x89\x88" + struct.pack(">d", duration * 1000)
+        element = b"\x44\x89\x88" + struct.pack(">d", duration * 1000)
         path.write_bytes(data[:offset] + element + data[offset + 11:])
         return path
 
@@ -126,8 +127,9 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
     service = {"host": "reference.fk.test", "port": 9876, "default_model": "test",
                "chunking": {"target_seconds": 0.25, "max_segment_seconds": 0.3,
                             "spool_dir": str(tmp_path / "spool")}}
-    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"):
-        with pytest.raises(Exception):
+    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+         patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
+        with pytest.raises(stt.SttAudioNotSplittable):
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
     assert seen == [], "a known-over-limit reference must never be posted whole"
 
@@ -169,6 +171,7 @@ def test_receipts_count_each_started_attempt_once(tmp_path, fake_upstreams, chun
                            "headers": [(b"content-type", content_type.encode())]}, receive)
         finalized = []
         with patch.dict(proxy.config["backends"]), patch.object(proxy, "_stt_execution_snapshot", return_value=execution), \
+             patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()), \
              patch.object(proxy.receipt_store, "begin"), patch.object(proxy.receipt_store, "finalize",
                 side_effect=lambda receipt: finalized.append(receipt) or True):
             proxy.config["backends"].pop("stt-parakeet-gpu", None)
