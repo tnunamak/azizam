@@ -14061,7 +14061,7 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
             if any(destination.get("facts_unavailable") for destination in view["destinations"]):
                 view["fact_basis"] += " Some destination facts are unavailable."
         else:
-            view["fact_basis"] += " This receipt has no saved fact revisions."
+            view["fact_basis"] = view.get("fact_basis", "Today's facts.") + " This receipt has no saved fact revisions."
         view["never_save_text"] = retention_facts.assemble_never_save(view)
     return view
 
