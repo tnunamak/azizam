@@ -478,7 +478,7 @@ def test_reference_decode_holds_and_releases_resource_lease(tmp_path, fake_upstr
                 with pytest.raises(custom_voices.VoiceError) as caught:
                     await proxy._reference_transcript(None, {"id": "test"}, source)
                 error = caught.value
-                assert error.status_code == (400 if result == "invalid" else 504)
+                assert error.status == (400 if result == "invalid" else 504)
                 assert error.code == ("invalid_audio" if result == "invalid" else "stt_deadline_exceeded")
                 assert ("readable audio" if result == "invalid" else "deadline") in str(error)
         assert observed == [1]
@@ -489,7 +489,7 @@ def test_reference_decode_holds_and_releases_resource_lease(tmp_path, fake_upstr
 
 def test_disk_lease_covers_segment_and_verification_pcm(tmp_path):
     mib = 1024 * 1024
-    execution = config(tmp_path, max_input_bytes=mib, max_decoded_bytes=mib, min_free_bytes=0)
+    execution = config(tmp_path, max_input_bytes=mib, max_decoded_bytes=mib, min_free_bytes=1)
     gate = stt.SttResourceGate()
     with patch.object(stt, "_disk_free_bytes", return_value=10**12):
         lease = gate.acquire(request_id="verify-peak", config=execution)
