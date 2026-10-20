@@ -174,6 +174,27 @@ def test_extraction_checks_decoded_piece_even_when_probe_understates_it(tmp_path
     asyncio.run(run())
 
 
+def test_on_grid_hard_maximum_is_not_refused_by_float_subtraction(tmp_path):
+    async def run():
+        source = wav(tmp_path / "input.wav", 30)
+        sent = []
+
+        async def post(path, _filename):
+            with wave.open(str(path)) as audio:
+                sent.append(audio.getnframes() / audio.getframerate())
+            return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
+
+        outcome = await stt.execute_chunking(source_path=source, source_stem="audio", fields=[],
+            config=config(tmp_path, target_seconds=7.06, threshold_seconds=8,
+                          max_segment_seconds=7.06, search_seconds=0), post_file=post,
+            cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
+        assert outcome.mode == "chunked"
+        assert outcome.attempts_started == len(sent) == 5
+        assert max(sent) <= 7.06
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("budget", ["max_duration_seconds", "max_decoded_bytes"])
 def test_understated_metadata_cannot_bypass_bounded_decode(tmp_path, misleading_audio, budget):
     async def run():
