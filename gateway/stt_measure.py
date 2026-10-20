@@ -21,8 +21,9 @@ from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-_WORD = re.compile(r"\w+(?:'\w+)*")
 _TAG = re.compile(r"[<\[{].*?[>\]}]")
+# Bump when tokenization, reference membership or recommendation scoring changes.
+SCORER_VERSION = 2
 # Which statuses count as an error for a reference word.
 OK, SUBSTITUTED, DELETED = 0, 1, 2
 
@@ -33,8 +34,21 @@ def normalize(text: str, drop: frozenset[str] = frozenset()) -> list[str]:
     Punctuation splits words; annotation tags, standalone underscores and ``drop`` words are removed.
     Timed reference readers attach the source interval to each resulting token.
     """
-    text = _TAG.sub(" ", unicodedata.normalize("NFC", text.lower().replace("’", "'")))
-    words = (word.replace("'", "") for word in _WORD.findall(text))
+    text = _TAG.sub(" ", unicodedata.normalize("NFC", text.casefold()))
+    text = text.translate(str.maketrans({"‘": "'", "’": "'", "`": "'"}))
+    # A comma groups digits only in complete groups of three, not lists like 1,2.
+    text = re.sub(r"(?<![\w,])\d{1,3}(?:,\d{3})+(?![\w,])", lambda m: m[0].replace(",", ""), text)
+    words, token = [], []
+    for i, char in enumerate(text):
+        if char.isalnum() or char == "_" or (token and unicodedata.category(char).startswith("M")):
+            token.append(char)
+        elif char == "'" and token and i + 1 < len(text) and (text[i + 1].isalnum() or text[i + 1] == "_"):
+            continue  # Internal apostrophes join the two word parts.
+        elif token:
+            words.append("".join(token))
+            token = []
+    if token:
+        words.append("".join(token))
     return [word for word in words if word != "_" and word not in drop]
 
 

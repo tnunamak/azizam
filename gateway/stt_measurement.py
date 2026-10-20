@@ -318,6 +318,8 @@ class Measurements:
         job = self.get(service_id, job_id)
         if not job or job["status"] != "succeeded" or not job["report"].get("recommendation"):
             raise EngineRouteError(409, "no_recommendation", "Complete a measurement with enough evidence before applying settings.")
+        if job["report"].get("scorer_version") != measure.SCORER_VERSION:
+            raise EngineRouteError(409, "measurement_stale", "The scorer changed; re-run the measurement before applying settings.")
         record, _ = self.record(service_id)
         if fingerprint(record) != job["fingerprint"]:
             raise EngineRouteError(409, "measurement_stale", "The engine changed since this measurement. Run it again.")
@@ -484,7 +486,8 @@ class Measurements:
                         scored = measure.score_run(words, run)
                         length_pieces[length] += measure.piece_counts(scored)
                         indexes = [i for i, w in enumerate(reference) if start <= w.mid < end]
-                        deletions[length].update({indexes[i]: deleted for i, deleted in measure.interior_deletions(scored).items()})
+                        deletions[length].update({indexes[scored.reference_indexes[i]]: deleted
+                                                  for i, deleted in measure.interior_deletions(scored).items()})
         rows = [{"length": length, "failed": length in failed_lengths,
                  **measure.rate_interval(pieces, resamples=policy["resamples"])} for length, pieces in length_pieces.items()]
         recommendation_policy = policy["recommendation"]
@@ -542,7 +545,8 @@ class Measurements:
         recommendation_note = ("Gross-harm screen only; this does not prove no harm. " +
             ("Paired length and seam-minus-noise upper CIs meet the owner margins; review before applying." if rec else
              "No supported recommendation. Inspect per-length and per-width states, reasons, counts and paired intervals."))
-        return {"deletions_by_length": rows, "seam_excess": searches, "recommendation": rec,
+        return {"scorer_version": measure.SCORER_VERSION,
+                "deletions_by_length": rows, "seam_excess": searches, "recommendation": rec,
                 "recommendation_state": state, "recommendation_note": recommendation_note,
                 "recommendation_policy": dict(recommendation_policy), "samples": metadata,
                 "note": "Human transcripts; paired length differences use common interior reference words against the shortest successful length, bootstrapped in recording-local time blocks. Seam-minus-noise uses a difference bootstrap. Search widths are tested as requested; among supported widths, recommendations use the lowest paired upper confidence bound, retaining the current width only on a tie. Word timing may be interpolated. No settings were applied."}

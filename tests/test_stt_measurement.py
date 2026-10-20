@@ -430,7 +430,7 @@ def test_durable_progress_interrupted_restart_and_explicit_stale_apply(setup):
     runner._save(job)
     restarted = sm.Measurements(gw.proxy.ADMIN_STORE, None)
     assert restarted.get("speech-test", job["id"])["status"] == "interrupted"
-    job.update(status="succeeded", report={"recommendation": {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio_offline": False, "native_long_audio_streaming": False}})
+    job.update(status="succeeded", report={"scorer_version": sm.measure.SCORER_VERSION, "recommendation": {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio_offline": False, "native_long_audio_streaming": False}})
     runner._save(job)
     before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
     assert before["services"]["speech-test"]["config"]["chunking"]["target_seconds"] == 36
@@ -580,6 +580,7 @@ def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(se
         policy["recommendation"].update(min_length_words=20, min_length_blocks=2, min_seam_pairs=2,
                                          min_seam_words=10, min_noise_pairs=2, min_noise_words=10)
         result = await runner._measure(ctx, job, {**policy, "audio_seconds_per_sample": 120, "resamples": 40}, tmp_path)
+        assert result["scorer_version"] == sm.measure.SCORER_VERSION
         record_property("measurement_report", json.dumps(result, sort_keys=True))
         choices = {sample["id"]: sample for sample in runner.options()["samples"]}
         for sample in result["samples"]:
