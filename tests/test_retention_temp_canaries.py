@@ -470,11 +470,17 @@ def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World
     async def scenario():
         task = asyncio.create_task(proxy._resolve_video_workflow_assets(
             {"extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"source": "a video"}}},
-            {"inputs": {"source": {"type": "video"}}}, {"source_video_input": "source"}, None))
-        while not started.is_set():
+            {"inputs": {"source": {"type": "asset"}},
+             "bindings": {proxy._GRAPH_BINDING: {"map": {"source": "1.file"}}}},
+            {"source_video_input": "source"}, None))
+        for _ in range(1000):
+            if started.is_set():
+                break
             if task.done():
                 await task
+                raise AssertionError("request did not probe the video")
             await asyncio.sleep(0.001)
+        assert started.is_set(), "video probe did not start"
         try:
             assert paths[0].is_file()
             task.cancel()
