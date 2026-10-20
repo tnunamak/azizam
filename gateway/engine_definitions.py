@@ -122,6 +122,12 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         if definition["definition"] in seen:
             errors.append(f"{where}: the id is used twice")
         seen.add(definition["definition"])
+        if "retention_facts" in definition:
+            from gateway.retention_facts import validate_facts
+            try:
+                validate_facts(definition["retention_facts"])
+            except ValueError as exc:
+                errors.append(f"{where}.{exc}")
         keys = [field["key"] for field in definition["fields"]]
         if len(set(keys)) != len(keys):
             errors.append(f"{where}.fields: two fields share a key")

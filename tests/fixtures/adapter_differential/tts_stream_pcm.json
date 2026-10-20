@@ -62,7 +62,206 @@
   "media_jobs": {
     "media_jobs_schema_version": [
       {
-        "version": 2
+        "version": 4
+      }
+    ],
+    "retention_fact_destinations": [
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "tts-supertonic",
+        "metadata_json": {
+          "address": "127.0.0.1:8010",
+          "kind": "engine",
+          "name": "supertonic-tts",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_revisions": [
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "host swap, hibernation, and crash capture settings",
+          "confidence": "documented",
+          "control": "review swap, hibernation, and crash-dump settings on the host",
+          "default": "conditional",
+          "evidence_url": "https://man7.org/linux/man-pages/man2/mlock.2.html",
+          "holds": "request bodies while a request runs",
+          "how_long": "during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine",
+          "id": "gateway-temporary-copies",
+          "reach": "the machine owner and anyone with access to its files or memory image",
+          "where": "process memory and temporary workspaces"
+        },
+        "first_seen": "<time>",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a permitted crash dump handled by systemd-coredump",
+          "confidence": "documented",
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
+        },
+        "first_seen": "<time>",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "store_prompts_in_spend_logs or its environment override is enabled",
+          "confidence": "documented",
+          "control": "inspect effective UI, environment and file settings; disable content storage and delete old rows separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/ui_logs",
+          "holds": "request and response content if spend-content storage is enabled",
+          "how_long": "unknown; cleanup requires a separately configured retention period",
+          "id": "litellm-spend-content",
+          "reach": "LiteLLM administrators and anyone with access to its spend database",
+          "where": "LiteLLM spend rows"
+        },
+        "first_seen": "<time>",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
+          "confidence": "documented",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
+        },
+        "first_seen": "<time>",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
       }
     ]
   },
@@ -133,6 +332,15 @@
               "kind": "library_prompt",
               "reason": "no_person"
             }
+          ],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+            "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
           ],
           "source_kind": "app",
           "source_label": "test-app",

@@ -17,7 +17,7 @@ from fastapi import Request
 from starlette.responses import Response
 
 from gateway import media_delivery, media_jobs, provenance, receipt_store
-from gateway.receipts import RouteReceipt
+from gateway.receipts import RouteReceipt, new_request_id, record_retention_fact_failure, run_receipt_write
 from gateway.ownership import owner_key
 from gateway.runtime_auth import plan_ref
 
@@ -97,15 +97,20 @@ def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_prof
     )
 
 
-async def start_receipt(request: Request, auth_context: Any, *, intent: str) -> RouteReceipt:
+async def start_receipt(
+    request: Request, auth_context: Any, *, intent: str, protocol: str = "openai.audio",
+    request_id: str | None = None, job_id: str | None = None, route_path: str | None = None,
+) -> RouteReceipt:
     """Begin a route receipt for synchronous audio/media routes."""
     identity = getattr(auth_context, "identity", None)
     profile_id = plan_ref(identity)
     body = await _safe_request_json(request)
     receipt = RouteReceipt(
-        protocol="openai.audio",
+        protocol=protocol,
         intent=intent,
-        path=str(request.url.path),
+        request_id=request_id or new_request_id(),
+        job_id=job_id,
+        path=route_path if route_path is not None else str(request.url.path),
         app_profile=profile_id,
         app_id=getattr(identity, "app_id", None) if identity is not None else None,
         owner_key_hash=owner_key(auth_context),
@@ -126,10 +131,14 @@ def finish_receipt(receipt: RouteReceipt, *, status_code: int) -> RouteReceipt:
     """Finalize a begun receipt using the HTTP result."""
     if receipt.status in {"succeeded", "failed", "cancelled"}:
         return receipt
-    status = "succeeded" if 200 <= int(status_code) < 400 else "failed"
+    status = "cancelled" if int(status_code) == 499 else "succeeded" if 200 <= int(status_code) < 400 else "failed"
     receipt.metadata["status_code"] = int(status_code)
-    receipt.metadata["terminal_reason"] = f"http_{int(status_code)}"
+    receipt.metadata["terminal_reason"] = "cancelled" if status == "cancelled" else f"http_{int(status_code)}"
     receipt.finish(status)
+    try:
+        receipt.persist_retention_facts()
+    except Exception as error:
+        record_retention_fact_failure("persist", receipt.request_id, error)
     receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
     return receipt
 
@@ -154,15 +163,14 @@ async def _finish_streaming_iterator(source: Any, receipt: RouteReceipt, status_
     except asyncio.CancelledError:
         receipt.metadata["terminal_reason"] = "cancelled"
         if receipt.status not in {"succeeded", "failed", "cancelled"}:
-            receipt.finish("cancelled")
-            receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+            await run_receipt_write(finish_receipt, receipt, status_code=499)
         raise
     except BaseException:
         if receipt.status not in {"succeeded", "failed", "cancelled"}:
-            finish_receipt(receipt, status_code=500)
+            await run_receipt_write(finish_receipt, receipt, status_code=500)
         raise
     else:
-        finish_receipt(receipt, status_code=status_code)
+        await run_receipt_write(finish_receipt, receipt, status_code=status_code)
 
 
 def index_receipt_assets(receipt: RouteReceipt, assets: Iterable[Mapping[str, Any]]) -> media_jobs.MediaJob | None:

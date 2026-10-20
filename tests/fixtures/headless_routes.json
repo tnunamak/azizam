@@ -353,6 +353,30 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.retention_fact_api.get_engine_facts",
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}/retention/facts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.retention_fact_api.put_engine_facts",
+    "method": "PUT",
+    "path": "/admin/api/engines/{service_id}/retention/facts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.retention_fact_api.engine_ledger",
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}/retention/ledger",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner role required",
     "handler": "gateway.stt_measurement_api.options",
     "method": "GET",
@@ -461,6 +485,14 @@
     "handler": "gateway.accounts_api.copy_invite",
     "method": "GET",
     "path": "/admin/api/invites/{link_id}/link",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.api.current_retention_ledger",
+    "method": "GET",
+    "path": "/admin/api/me/retention/ledger",
     "schema": true
   },
   {
@@ -786,9 +818,33 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.retention_fact_api.get_provider_facts",
+    "method": "GET",
+    "path": "/admin/api/providers/{provider_id}/retention/facts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.retention_fact_api.put_provider_facts",
+    "method": "PUT",
+    "path": "/admin/api/providers/{provider_id}/retention/facts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.provider_admin.test_provider",
     "method": "POST",
     "path": "/admin/api/providers/{provider_id}/test",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.api.request_retention_ledger",
+    "method": "GET",
+    "path": "/admin/api/requests/{request_id}/retention/ledger",
     "schema": true
   },
   {
@@ -885,6 +941,30 @@
     "handler": "gateway.settings_api.preview_receipts",
     "method": "GET",
     "path": "/admin/api/settings/receipts/preview",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.retention_fact_api.retention_ledger",
+    "method": "GET",
+    "path": "/admin/api/settings/retention/ledger",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.retention_fact_api.get_system_facts",
+    "method": "GET",
+    "path": "/admin/api/settings/retention/systems/{system_id}/facts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.retention_fact_api.put_system_facts",
+    "method": "PUT",
+    "path": "/admin/api/settings/retention/systems/{system_id}/facts",
     "schema": true
   },
   {

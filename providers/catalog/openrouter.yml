@@ -32,6 +32,40 @@ key_url: https://openrouter.ai/settings/keys
 billing_dimensions:
   - prompt_tokens
   - completion_tokens
+retention_facts:
+  - id: private-io-logs
+    holds: prompts and outputs in private logs
+    where: provider private I/O log store
+    how_long: at least three months when enabled; deletion requires support
+    default: 'off'
+    condition: account private I/O logging is enabled
+    reach: account admins and members permitted by attribution or key creation
+    control: disable private logs and request deletion of existing logs through support
+    evidence_url: https://openrouter.ai/docs/guides/features/input-output-logging
+    checked: '2026-10-19'
+    confidence: documented
+  - id: provider-routing
+    holds: request content sent onward to a selected provider
+    where: selected model provider
+    how_long: depends on that provider's policy; unknown for a given route until selected
+    default: conditional
+    condition: 'ZDR guidance says “ZDR enforcement only applies to provider routing for inference requests.”'
+    reach: the selected provider under its own policy
+    control: inspect the selected route and provider policy; ZDR guidance describes a routing control but conflicts with the provider-logging page
+    evidence_url: https://openrouter.ai/docs/guides/features/zdr
+    checked: '2026-10-19'
+    confidence: documented
+  - id: retention-routing-contradiction
+    holds: request content sent onward to a selected provider
+    where: selected model provider
+    how_long: unknown; the documentation conflicts on retention-based routing
+    default: conditional
+    condition: 'Provider-logging says “OpenRouter does not have routing rules that change based on data retention policies of providers”, contrary to the dedicated ZDR guidance'
+    reach: the selected provider under its own policy
+    control: resolve the conflict by comparing https://openrouter.ai/docs/guides/features/zdr with https://openrouter.ai/docs/guides/privacy/provider-logging for the effective route; training opt-out does not establish retention or deletion
+    evidence_url: https://openrouter.ai/docs/guides/privacy/provider-logging
+    checked: '2026-10-19'
+    confidence: unknown
 recommendations:
   - id: provider_key_credit_limit
     message: Set an OpenRouter key credit limit equal to the gateway cap when supported.

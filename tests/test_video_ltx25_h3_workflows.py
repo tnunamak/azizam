@@ -13,6 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -94,6 +96,7 @@ class _JsonRequest:
         return self._body
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
     async def _create(self, body: dict) -> tuple[int, dict, dict | None]:
         submitted: list[dict] = []

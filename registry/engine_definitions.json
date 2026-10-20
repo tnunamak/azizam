@@ -711,6 +711,21 @@
     },
     {
       "definition": "own-model-list",
+      "retention_facts": [
+        {
+          "id": "request-recorder",
+          "holds": "request bodies and replay commands when request recording is enabled",
+          "where": "engine temporary files with mode 0600",
+          "how_long": "unknown; depends on temporary-directory and host cleanup",
+          "default": "off",
+          "condition": "for Ollama at the cited revision, OLLAMA_DEBUG_LOG_REQUESTS is enabled; other engines need owner-verified facts",
+          "reach": "the host owner and anyone permitted to read those temporary files",
+          "control": "inspect the engine's startup settings and temporary directory; remove old files separately",
+          "evidence_url": "https://github.com/ollama/ollama/blob/53fed26112817f7c55f664efb9e3f65f06cab7db/server/inference_request_log.go#L33-L124",
+          "checked": "2026-10-19",
+          "confidence": "documented"
+        }
+      ],
       "timeouts": {"probe_s": 5, "real_test_s": 120},
       "definition_version": 1,
       "title": "Server with its own model list",

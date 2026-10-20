@@ -60,7 +60,7 @@ _NEUTRAL_HTTP_DATE = re.compile(
 # other names were found by diffing raw dumps of two runs and reading the code that
 # writes them. Everything else is compared exactly (see the normaliser tests).
 VOLATILE_TIME_SUFFIXES = ("_at", "_at_ms", "_at_s", "_deadline")
-VOLATILE_TIME_KEYS = frozenset({"created", "expires", "mtime", "ctime", "timestamp"})
+VOLATILE_TIME_KEYS = frozenset({"created", "expires", "mtime", "ctime", "timestamp", "first_seen"})
 # Keys that are a duration measured on the real clock (milliseconds or seconds).
 VOLATILE_DURATION_KEYS = frozenset({
     "duration_ms", "latency_ms", "elapsed_ms", "total_ms", "ttfb_ms", "queue_ms", "upstream_ms",

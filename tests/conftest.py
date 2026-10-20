@@ -141,6 +141,17 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_info, "lookup", lambda _host, _class_type: None)
 
 
+@pytest.fixture
+def isolated_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Supply the store normally initialized by lifespan to direct route tests."""
+    from gateway import receipt_store
+
+    path = tmp_path / "receipts.db"
+    receipt_store.init_db(path)
+    monkeypatch.setattr(receipt_store, "DB_PATH", path)
+    return path
+
+
 @pytest.fixture(autouse=True)
 def _no_host_gpu_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default to absent GPU data; a GPU-specific test can replace these probes."""

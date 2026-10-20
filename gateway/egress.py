@@ -193,6 +193,9 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     "provider_reconciliation": frozenset({"reconciliations", "reconciliation"}),
     "provider_probe": frozenset({"ok", "reachable", "checked_at", "models", "partial", "message"}),
     "acknowledgement": frozenset({"ok", "count", "deleted", "note", "revision"}),
+    # Dated operator-authored evidence and derived destination metadata; no raw service record.
+    "retention_ledger": frozenset({"ledger"}),
+    "retention_facts": frozenset({"retention_facts", "overridden"}),
 }
 
 

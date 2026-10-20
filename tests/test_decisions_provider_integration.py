@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 import proxy
 from tests.support.access import plan_for, access  # noqa: E402
-from gateway import admin_store, decision_provider_execution, providers, receipt_store
+from gateway import admin_store, decision_provider_execution, media_jobs, providers, receipt_store
 from gateway.runtime_auth import RuntimeIdentity
 
 RAW_KEY = "opk_decisions_provider_integration"
@@ -93,10 +93,13 @@ def _authenticated(profile: "AccessPlan"):
 
 def _install_registry(mp: pytest.MonkeyPatch, tmp_path, registry: dict | None = None) -> None:
     admin_path = tmp_path / "admin.db"
+    facts_path = tmp_path / "media_jobs.db"
     admin_store.init_db(admin_path)
+    media_jobs.init_db(facts_path)
     mp.setenv("TYPESAFE_TEST_KEY", "ts_secret_test_key")
     mp.setenv("OPENAI_TEST_KEY", "oa_secret_test_key")
     mp.setattr(proxy, "ADMIN_DB_PATH", admin_path)
+    mp.setattr(proxy.media_jobs, "DB_PATH", facts_path)
     if hasattr(proxy, "ADMIN_STORE"):
         mp.setattr(proxy.ADMIN_STORE, "path", admin_path, raising=False)
         mp.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry or _provider_registry())

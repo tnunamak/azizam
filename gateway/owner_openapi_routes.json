@@ -514,5 +514,45 @@
   "PATCH /admin/api/engines/{service_id}/stt-settings": {
     "tag": "long-audio settings",
     "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/settings/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/engines/{service_id}/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/engines/{service_id}/retention/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "PUT /admin/api/engines/{service_id}/retention/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/providers/{provider_id}/retention/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "PUT /admin/api/providers/{provider_id}/retention/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/settings/retention/systems/{system_id}/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "PUT /admin/api/settings/retention/systems/{system_id}/facts": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/requests/{request_id}/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/me/retention/ledger": {
+    "tag": "retention facts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
 }

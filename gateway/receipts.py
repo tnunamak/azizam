@@ -11,7 +11,12 @@ from decimal import Decimal, InvalidOperation
 from time import perf_counter, time
 import asyncio
 import logging
+import json
+from datetime import date
+from functools import lru_cache
 import threading
+import sqlite3
+from time import sleep
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Mapping
@@ -72,6 +77,7 @@ ADMIN_VISIBLE_FIELDS = frozenset(
         "parent_request_id", "visibility",
         "policy_decision", "policy_sources", "policy_reasons",
         "resource_decision",
+        "retention_facts",
     }
 )
 
@@ -343,6 +349,46 @@ def _caller_of(request_id: str) -> tuple[Any, ...] | None:
         return _CALLERS.get(request_id)
 
 
+# The gateway injects its configured admin store. Standalone receipt users can
+# still supply registry/overrides explicitly without importing the proxy.
+_RETENTION_FACT_LOADER: Callable[[], tuple[Mapping[str, Any], Mapping[Any, Any]]] | None = None
+_RETENTION_FACT_FAILURES: dict[str, int] = {}
+_RETENTION_FACT_FAILURE_LOCK = threading.Lock()
+
+
+def configure_retention_fact_capture(
+    loader: Callable[[], tuple[Mapping[str, Any], Mapping[Any, Any]]],
+) -> None:
+    global _RETENTION_FACT_LOADER
+    _RETENTION_FACT_LOADER = loader
+
+
+def record_retention_fact_failure(stage: str, request_id: str, error: Exception) -> None:
+    """Count optional-evidence failures without logging database contents."""
+    with _RETENTION_FACT_FAILURE_LOCK:
+        count = _RETENTION_FACT_FAILURES.get(stage, 0) + 1
+        _RETENTION_FACT_FAILURES[stage] = count
+    logging.getLogger(__name__).warning(
+        "retention fact %s unavailable request_id=%s count=%d error=%s",
+        stage, request_id, count, type(error).__name__,
+    )
+
+
+@lru_cache(maxsize=64)
+def _captured_retention_generation(
+    service_id: str, registry_generation: str, overrides_generation: str, today: str,
+) -> tuple[dict[str, Any], Any]:
+    from gateway import media_jobs, retention, retention_facts
+
+    overrides = {tuple(key) if isinstance(key, list) else key: value
+                 for key, value in json.loads(overrides_generation)}
+    ledger = retention_facts.ledger(
+        json.loads(registry_generation), kinds=retention.bundled().data["kinds"],
+        overrides=overrides, service_id=service_id, now=date.fromisoformat(today),
+    )
+    return ledger, media_jobs.prepare_fact_snapshot(ledger["destinations"])
+
+
 @dataclass
 class RouteReceipt:
     protocol: str
@@ -399,6 +445,7 @@ class RouteReceipt:
     refusal: dict[str, Any] | None = None
     # None means a submit receipt defers the content outcome to its work receipt.
     retention: list[dict[str, Any]] | None = field(default_factory=list)
+    retention_facts: list[str] = field(default_factory=list)
     resource_decision: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
@@ -509,6 +556,65 @@ class RouteReceipt:
         updated = [item for item in self.retention if item["kind"] != kind]
         self.retention = validate_retention([*updated, entry])
 
+    def capture_retention_facts(self, *, registry: Mapping[str, Any] | None = None,
+                                overrides: Mapping[Any, Any] | None = None,
+                                service_id: str | None = None,
+                                outer: "RouteReceipt | None" = None) -> None:
+        """Freeze dated evidence before the lifecycle dispatches to a destination."""
+        captured = getattr(self, "_retention_fact_snapshot", None)
+        if not self.backend:
+            return
+        if captured is not None and captured[0] == self.backend:
+            if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
+                outer.backend = self.backend
+                outer._retention_fact_snapshot = captured
+            return
+        if registry is None or overrides is None:
+            if _RETENTION_FACT_LOADER is None:
+                return
+            loaded_registry, loaded_overrides = _RETENTION_FACT_LOADER()
+            registry = loaded_registry if registry is None else registry
+            overrides = loaded_overrides if overrides is None else overrides
+        destination_id = service_id or self.backend
+        if destination_id not in (registry.get("services") or {}):
+            return
+        # Content generations also cover out-of-process edits and DB restores;
+        # they never depend on a writer notifying this process about a change.
+        registry_generation = json.dumps(registry, sort_keys=True, separators=(",", ":"))
+        overrides_generation = json.dumps(sorted(
+            ((key, value) for key, value in overrides.items()), key=lambda item: repr(item[0]),
+        ), sort_keys=True, separators=(",", ":"))
+        ledger, prepared = _captured_retention_generation(
+            destination_id, registry_generation, overrides_generation, date.today().isoformat(),
+        )
+        self._retention_fact_snapshot = (self.backend, ledger, prepared)
+        if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
+            outer.backend = self.backend
+            outer._retention_fact_snapshot = self._retention_fact_snapshot
+
+    def persist_retention_facts(self) -> None:
+        """Persist the evidence captured before dispatch, once per receipt."""
+        captured = getattr(self, "_retention_fact_snapshot", None)
+        if self.retention_facts or getattr(self, "_retention_facts_persisted", False) or captured is None or captured[0] != self.backend:
+            return
+        from gateway import media_jobs
+
+        for attempt in range(3):
+            try:
+                self.retention_facts = media_jobs.save_fact_snapshot(
+                    captured[2], source_kind="receipt", source_id=self.request_id,
+                    path=media_jobs.DB_PATH, timeout=0.2,
+                )
+                break
+            except sqlite3.OperationalError as error:
+                code = getattr(error, "sqlite_errorcode", 0) & 0xff
+                if code not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or attempt == 2:
+                    raise
+                # Runs in the ordered receipt worker: at most 620 ms of lock
+                # waits/backoff, without delaying the event loop or finalizing early.
+                sleep(0.01)
+        self._retention_facts_persisted = True
+
     def attach_manifest(
         self,
         *,
@@ -616,6 +722,8 @@ class RouteReceipt:
             data["maker_person_id"] = self.maker_person_id
         if self.retention is not None:
             data["retention"] = validate_retention(self.retention)
+        if self.retention_facts:
+            data["retention_facts"] = list(self.retention_facts)
         if self.resource_decision is not None:
             data["resource_decision"] = self.resource_decision
         if isinstance(self.refusal, Mapping):
@@ -668,6 +776,29 @@ def serialize_receipt_for_audience(
     return client_data
 
 
+async def run_receipt_write(write: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Complete an ordered receipt write off-loop, even if its caller is cancelled."""
+    worker = asyncio.create_task(asyncio.to_thread(write, *args, **kwargs))
+    cancellation = None
+    while True:
+        try:
+            result = await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError as error:
+            # Do not detach a fact commit from its following finalize, or let
+            # cancellation return while the receipt is still being mutated.
+            if worker.cancelled():
+                raise
+            cancellation = error
+        except Exception as error:
+            if cancellation is not None:
+                raise cancellation from error
+            raise
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
 class ReceiptLifecycleOwner:
     """Own the terminal lifecycle of one admitted outer receipt.
 
@@ -706,6 +837,11 @@ class ReceiptLifecycleOwner:
         self._outcome: tuple[str, str] | None = None
         self._closed = False
         self._stream_transferred = False
+        if default_persistence:
+            try:
+                self.receipt.capture_retention_facts()
+            except Exception as error:
+                record_retention_fact_failure("capture", self.receipt.request_id, error)
         # Admission is deliberately synchronous: SQLite receipt writes are
         # synchronous, and no caller can accidentally put an await boundary
         # between construction and persistence.
@@ -743,6 +879,10 @@ class ReceiptLifecycleOwner:
                 self._log(f"receipt terminal annotation failed: {error}")
         self.receipt.finish(status)
         try:
+            self.receipt.persist_retention_facts()
+        except Exception as error:
+            record_retention_fact_failure("persist", self.receipt.request_id, error)
+        try:
             self._finalize(self.receipt)
         except Exception as error:
             self._log(f"receipt finalize failed: {error}")
@@ -754,11 +894,11 @@ class ReceiptLifecycleOwner:
         if self._stream_transferred:
             return False
         if isinstance(exc, asyncio.CancelledError):
-            self._close("cancelled", "cancelled")
+            await run_receipt_write(self._close, "cancelled", "cancelled")
         elif exc is not None:
-            self._close("failed", "internal_error")
+            await run_receipt_write(self._close, "failed", "internal_error")
         else:
-            self._close(*(self._outcome or ("failed", "internal_error")))
+            await run_receipt_write(self._close, *(self._outcome or ("failed", "internal_error")))
         return False
 
     def handoff_stream(self, source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:

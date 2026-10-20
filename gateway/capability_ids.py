@@ -40,6 +40,7 @@ INTENT_CAPABILITIES = {
     "image.variation": "image",
     "video.remix": "video",
     "video.edit": "video",
+    "video.extend": "video",
     "image.analyze": "image",
     # Route spellings protocol frontends use for the same work.
     "embedding": "embed",

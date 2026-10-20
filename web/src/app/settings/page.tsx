@@ -16,6 +16,7 @@ import {
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { ReceiptsSection } from "./receipts";
+import { RetentionLedgerPanel } from "@/components/product/retention-ledger";
 import { SessionsSection } from "./sessions";
 import { HouseholdPromptsSection } from "./household-prompts";
 import { SignInSection } from "./sign-in/sign-in-section";
@@ -1204,6 +1205,7 @@ export default function SettingsPage() {
         <SessionsSection />
         <DefaultsSection />
         <HouseholdPromptsSection />
+        <RetentionLedgerPanel id="retention-ledger" endpoint="/admin/api/settings/retention/ledger" />
         <ReceiptsSection />
         <MediaSection />
         <HostCommandsSection />

@@ -179,7 +179,7 @@ def test_receipt_maintenance_retries_after_failure_then_stops(monkeypatch, tmp_p
 
     asyncio.run(scenario())
     assert maintain.call_count == 2
-    assert calls == [(maintain, (proxy.ADMIN_STORE.path,), {})] * 2
+    assert calls == [(maintain, (proxy.ADMIN_STORE.path,), {"fact_store_path": proxy.media_jobs.DB_PATH})] * 2
 
 
 def test_receipt_maintenance_does_not_swallow_task_cancellation(monkeypatch, tmp_path):

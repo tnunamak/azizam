@@ -660,3 +660,65 @@ def test_image_client_disconnect_during_poll(tmp_path, record_testsuite_property
 
     play("image_client_disconnect_during_poll", tmp_path, record_testsuite_property, setup, drive,
          description="http.disconnect is delivered to the app after two /history polls; the trace records the route's reaction")
+
+
+def test_chat_current_loaded(tmp_path, record_testsuite_property):
+    """Keep chat's real dispatch, terminal receipt and dated evidence in the differential corpus."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from gateway import admin_store, media_jobs, receipt_store
+    from tests.support.access import access_context
+    from tests.test_provider_routing import _request
+
+    fact = {
+        "id": "chat-test-copy", "holds": "test chat inputs and outputs",
+        "where": "the test engine history", "how_long": "until the test engine history is cleared",
+        "default": "conditional", "condition": "test history is enabled",
+        "reach": "the test operator", "control": "clear the test engine history",
+        "evidence_url": "https://example.test/chat-retention", "checked": "2026-10-19",
+        "confidence": "documented",
+    }
+
+    def setup(rig):
+        fake = rig.engine("chat", scenario("openai-compatible", "chat-current-loaded", [
+            exchange("complete", "POST", "/v1/chat/completions", {"json": {
+                "id": "chatcmpl-fixture", "object": "chat.completion", "created": 1792454400,
+                "model": "loaded-test-model", "choices": [{"index": 0,
+                    "message": {"role": "assistant", "content": "A deterministic chat reply."}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+            }})]), host="chat.fk.test")
+        registry = {"services": {"local-chat": {"name": "Test chat engine", "config": {
+            "base_url": fake.base_url + "/v1", "retention_facts": [fact],
+        }}}}
+        rig.set(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+        rig.set(admin_store, "retention_fact_overrides", lambda **_: {})
+        logical = SimpleNamespace(logical_service_id="current", base_model_id="current")
+        target = proxy.CurrentLoadedLlmTarget("local-chat", fake.base_url, "loaded-test-model")
+        rig.set(proxy, "_resolve_request_target", lambda *_a, **_k: logical)
+        rig.set(proxy, "_model_policy_schema_error", lambda *_: None)
+        rig.set(proxy, "_current_loaded_llm_target", AsyncMock(return_value=(target, None)))
+        rig.set(proxy, "_swap_drain_settings", lambda: SimpleNamespace(enabled=False))
+        rig.set(proxy, "_prepare_resolved_openai_request", lambda body, **_: (None, body, None))
+        rig.set(proxy, "prepare_downstream_headers", lambda *_: {})
+        rig.set(proxy, "_dispatch_admission_response", lambda *_a, **_k: None)
+
+    async def drive(rig):
+        body = {"model": "current", "messages": [{"role": "user", "content": "Say hello."}]}
+        rig.recorder.step = 0
+        response = await proxy._forward_current_loaded_openai_request(
+            _request(body), request_path="/v1/chat/completions", auth_context=access_context(), body_json=body)
+        assert response.status_code == 200, response.body
+        rig.note("response", rig.norm.value({"status": response.status_code, "body": json.loads(response.body),
+                                             "headers": dict(response.headers)}))
+        stored = receipt_store.get(response.headers["x-azizam-request-id"], audience="internal", path=rig.receipts_db)
+        assert stored["status"] == "succeeded"
+        assert stored["retention_facts"]
+        assert all(len(digest) == 64 and set(digest) <= set("0123456789abcdef") for digest in stored["retention_facts"])
+        saved = media_jobs.fact_revisions_for_source("receipt", stored["request_id"], path=rig.media_jobs_db)
+        assert saved["local-chat"][0]["holds"] == fact["holds"]
+        assert saved["local-chat"][0]["revision"] in stored["retention_facts"]
+        assert {row["revision"] for rows in saved.values() for row in rows} == set(stored["retention_facts"])
+        rig.note("saved_fact_hashes", stored["retention_facts"])
+
+    play("chat_current_loaded", tmp_path, record_testsuite_property, setup, drive,
+         description="real current-loaded chat dispatch, response and default lifecycle SQLite receipt with retained fact revision hashes")

@@ -17,7 +17,7 @@ from gateway.admin_runtime import person_for_app_credential
 
 
 @pytest.fixture
-def household(tmp_path, monkeypatch):
+def household(tmp_path, monkeypatch, isolated_receipts):
     admin, jobs, responses = (tmp_path / name for name in ('admin.db', 'jobs.db', 'responses.db'))
     admin_store.init_db(admin)
     accounts.initialize(admin)

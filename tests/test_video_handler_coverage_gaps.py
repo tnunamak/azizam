@@ -212,7 +212,7 @@ def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypat
 
 
 @pytest.mark.parametrize("prompt", [123, True, ["unexpected"], {"text": "unexpected"}])
-def test_direct_create_rejects_non_string_prompt_before_provider(video_state, monkeypatch, fake_upstreams, prompt):
+def test_direct_create_rejects_non_string_prompt_before_provider(video_state, isolated_receipts, monkeypatch, fake_upstreams, prompt):
     # An optional exchange: the fake records any call and latches it as a violation.
     fake = fake_upstreams.asgi(scenario_from_data({
         "protocol": "comfyui",

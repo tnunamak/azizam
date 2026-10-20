@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -365,6 +365,30 @@ CREATE TABLE IF NOT EXISTS media_hidden_assets (
   PRIMARY KEY (person_id, asset_id, job_id)
 );
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
+
+-- Facts are immutable metadata. References can outlive receipts when a kept record survives.
+CREATE TABLE IF NOT EXISTS retention_fact_revisions (
+  revision TEXT PRIMARY KEY,
+  fact_json TEXT NOT NULL,
+  first_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retention_fact_references (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  revision TEXT NOT NULL REFERENCES retention_fact_revisions(revision),
+  PRIMARY KEY(source_kind, source_id, destination_id, revision)
+);
+CREATE INDEX IF NOT EXISTS retention_fact_references_revision
+  ON retention_fact_references(revision);
+CREATE TABLE IF NOT EXISTS retention_fact_destinations (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(source_kind, source_id, destination_id)
+);
 """
 
 
@@ -385,7 +409,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, SCHEMA_VERSION):
+    elif int(row[0]) not in (1, 2, 3, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -400,6 +424,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
     if "attempt_number" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
+    destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
+    if "created_at" not in destination_columns:
+        conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
     _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     # Baseline writers omit sequence. SQLite serializes this with their insert,
@@ -444,20 +471,22 @@ def init_db(path: Path = DB_PATH) -> None:
 
 
 @contextmanager
-def _conn(path: Path = DB_PATH):
+def _conn(path: Path = DB_PATH, *, timeout: float = 5.0):
     def open_connection() -> sqlite3.Connection:
         scoped = request_connections.active()
-        conn = connect(path, timeout=5.0, check_same_thread=not scoped)
+        conn = connect(path, timeout=timeout, check_same_thread=not scoped)
         if scoped:
             conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
         try:
             _apply_pragmas(conn)
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(timeout * 1000))}")
         except BaseException:
             conn.close()
             raise
         return conn
 
-    with request_connections.scoped("media_jobs", path, open_connection) as conn:
+    namespace = "media_jobs" if timeout == 5.0 else "media_jobs_nowait"
+    with request_connections.scoped(namespace, path, open_connection) as conn:
         yield conn
 
 
@@ -1385,6 +1414,185 @@ def count(path: Path = DB_PATH) -> int:
         return int(row[0]) if row else 0
 
 
+def save_fact_revisions(
+    facts: list[dict[str, Any]], *, source_kind: str, source_id: str, destination_id: str,
+    path: Path = DB_PATH, now: int | None = None,
+    destination: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Append exact fact versions and link them to a receipt or kept record."""
+    from gateway.retention_facts import validate_facts
+
+    checked = [validate_facts([fact])[0] for fact in facts]
+    return save_fact_snapshot(
+        [{**(destination or {}), "id": destination_id, "facts": checked}],
+        source_kind=source_kind, source_id=source_id, path=path, now=now,
+    )
+
+
+@dataclass(frozen=True)
+class PreparedFactSnapshot:
+    """Validated, hashed, serialized evidence reusable for one captured generation."""
+
+    entries: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]
+    hashes: tuple[str, ...]
+
+
+def prepare_fact_snapshot(destinations: list[Mapping[str, Any]]) -> PreparedFactSnapshot:
+    from gateway.retention_facts import revision, validate_facts
+
+    entries = []
+    hashes = []
+    for destination in destinations:
+        destination_id = destination.get("id")
+        if not isinstance(destination_id, str) or not destination_id or len(destination_id) > 128:
+            raise ValueError("invalid fact revision reference")
+        facts = destination.get("facts", [])
+        if not isinstance(facts, list) or any(not isinstance(fact, Mapping) for fact in facts):
+            raise ValueError("retention facts must be a list of mappings")
+        checked = validate_facts([
+            {key: value for key, value in fact.items()
+             if key not in {"revision", "stale", "stale_label", "source"}}
+            for fact in facts
+        ])
+        revisions = [revision(fact) for fact in checked]
+        metadata = {key: destination[key] for key in ("name", "kind", "address", "reach")
+                    if key in destination}
+        if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
+            raise ValueError("invalid retention destination metadata")
+        if "facts_unavailable" in destination:
+            if type(destination["facts_unavailable"]) is not bool:
+                raise ValueError("invalid retention destination availability")
+            metadata["facts_unavailable"] = destination["facts_unavailable"]
+        entries.append((destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True), tuple(
+            (digest, json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            for digest, fact in zip(revisions, checked)
+        )))
+        hashes.extend(revisions)
+    return PreparedFactSnapshot(tuple(entries), tuple(dict.fromkeys(hashes)))
+
+
+def save_fact_snapshot(
+    destinations: list[Mapping[str, Any]] | PreparedFactSnapshot, *, source_kind: str, source_id: str,
+    path: Path = DB_PATH, now: int | None = None, timeout: float = 5.0,
+) -> list[str]:
+    """Save exact captured evidence atomically; request writers can decline a busy store."""
+    if source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128:
+        raise ValueError("invalid fact revision reference")
+    prepared = destinations if isinstance(destinations, PreparedFactSnapshot) else prepare_fact_snapshot(destinations)
+    timestamp = int(time.time()) if now is None else now
+    with _conn(path, timeout=timeout) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for destination_id, metadata_json, facts in prepared.entries:
+                conn.execute(
+                    "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (source_kind, source_id, destination_id, metadata_json, timestamp),
+                )
+                for digest, encoded in facts:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
+                        (digest, encoded, timestamp),
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_references(source_kind,source_id,destination_id,revision) VALUES(?,?,?,?)",
+                        (source_kind, source_id, destination_id, digest),
+                    )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return list(prepared.hashes)
+
+
+def fact_revisions(hashes: list[str], *, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Read stored versions in receipt order; an unknown hash is an error, not today's fact."""
+    if not hashes:
+        return []
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT revision,fact_json FROM retention_fact_revisions WHERE revision IN (" +
+            ",".join("?" for _ in hashes) + ")", tuple(hashes),
+        ).fetchall()
+    found = {row[0]: json.loads(row[1]) for row in rows}
+    if any(digest not in found for digest in hashes):
+        raise KeyError("a stored retention fact revision is missing")
+    return [{**found[digest], "revision": digest} for digest in hashes]
+
+
+def fact_revisions_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """Restore each saved fact to the destination it described at write time."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT r.destination_id, r.revision, f.fact_json FROM retention_fact_references r "
+            "JOIN retention_fact_revisions f ON f.revision=r.revision "
+            "WHERE r.source_kind=? AND r.source_id=? ORDER BY r.destination_id, r.rowid",
+            (source_kind, source_id),
+        ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for destination_id, digest, encoded in rows:
+        result.setdefault(destination_id, []).append({**json.loads(encoded), "revision": digest})
+    return result
+
+
+def fact_destinations_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return the public destination labels and reach captured with a request."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT destination_id,metadata_json FROM retention_fact_destinations "
+            "WHERE source_kind=? AND source_id=?",
+            (source_kind, source_id),
+        ).fetchall()
+    return {destination_id: json.loads(metadata) for destination_id, metadata in rows}
+
+
+def receipt_fact_source_ids(*, after: str = "", limit: int = 500,
+                            older_than: int | None = None, path: Path = DB_PATH) -> list[str]:
+    """Page receipt sources, allowing a grace period for a pending receipt write."""
+    with _conn(path) as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT source_id FROM ("
+            "SELECT source_id FROM retention_fact_references WHERE source_kind='receipt' "
+            "UNION SELECT source_id FROM retention_fact_destinations WHERE source_kind='receipt') AS sources "
+            "WHERE source_id > ? AND (? IS NULL OR NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_destinations d WHERE d.source_kind='receipt' "
+            "AND d.source_id=sources.source_id AND d.created_at > ?)) "
+            "ORDER BY source_id LIMIT ?", (after, older_than, older_than, limit),
+        )]
+
+
+def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB_PATH) -> int:
+    """Release one source and prune only versions with no remaining references."""
+    return release_fact_reference_batch(source_kind, [source_id], path=path)
+
+
+def release_fact_reference_batch(source_kind: str, source_ids: list[str], *, path: Path = DB_PATH) -> int:
+    """Release a bounded batch in one transaction, retaining shared versions."""
+    if source_kind not in {"receipt", "kept_record"} or len(source_ids) > 500:
+        raise ValueError("invalid fact revision reference batch")
+    if not source_ids:
+        return 0
+    placeholders = ",".join("?" for _ in source_ids)
+    with _conn(path) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for table in ("retention_fact_references", "retention_fact_destinations"):
+            conn.execute(f"DELETE FROM {table} WHERE source_kind=? AND source_id IN ({placeholders})",
+                         (source_kind, *source_ids))
+        removed = conn.execute(
+            "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
+        ).rowcount
+    return removed
+
+
 def schema_version(path: Path = DB_PATH) -> int | None:
     with _conn(path) as conn:
         row = conn.execute(
@@ -1438,5 +1646,11 @@ __all__ = [
     "validate_client_event",
     "events",
     "count",
+    "save_fact_revisions",
+    "save_fact_snapshot",
+    "fact_revisions",
+    "fact_revisions_for_source",
+    "fact_destinations_for_source",
+    "release_fact_references",
     "schema_version",
 ]

@@ -55,6 +55,9 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         admin_store.init_db(self.admin)
         media_jobs.init_db(self.jobs)
         accounts.initialize(self.admin)
+        # Lifespan initializes the receipts store; workers begin receipts there before calling a backend.
+        self.receipts_db = root / "receipts.db"
+        proxy.receipt_store.init_db(self.receipts_db)
         self.person = admin_store.upsert_oidc_user(
             "https://idp.test", "ann", email="ann@example.test", path=self.admin)
         self.images = store_plan("Flux only", path=self.admin, caps=("image",), workflows=[FLUX])
@@ -72,6 +75,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         for target, name, value in (
             (proxy.ADMIN_STORE, "path", self.admin),
             (media_jobs, "DB_PATH", self.jobs),
+            (proxy.receipt_store, "DB_PATH", self.receipts_db),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
             (proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 1),
             (proxy, "COMFY_ENABLED", True),

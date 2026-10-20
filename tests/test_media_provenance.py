@@ -24,6 +24,8 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -856,6 +858,7 @@ class MediaJobUrlTests(unittest.TestCase):
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
+@pytest.mark.usefixtures("isolated_receipts")
 class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
     """POST /gateway/v1/workflows/{id}/run returns the rendered video."""
 

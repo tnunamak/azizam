@@ -28,19 +28,25 @@
 # Retention Slice 1b + Slice 2: 13 new pytest cases, then 6 first-review
 # and 6 second-review regression cases (14858 -> 14883), and
 # 2 new Vitest cases (3047 -> 3049), remeasured on this branch.
+# Retention Slice 6: 17 direct Python cases plus 25 generated route-probe
+# cases, one Vitest case, and two browser viewport cases. The full hermetic
+# suite collected 14936; Playwright lists 471 + 3 + 18 across gate configs.
 # Round 3: one shared-App route, one structural read-site scan, eight
 # store method/audience cases, and one Library usage case (+11).
-# Retention slice 4 (private temporary directory): 17 private-directory cases, 11 canary cases and 1 start.sh case (+29),
-# remeasured with --collect-only (14894 -> 14923).
-# Slice 4 review fixes: +21 cases for interrupted multipart parsing, worker cancellation,
-# lifetime ownership/exec, directory swaps, parent/ancestor permissions and relative STT escape.
-# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14945.
-# Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
-# legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
-# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
-pytest = 14959
-vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
-playwright = 490
+# Merged retention slices 4 and 6: full hermetic collection measured 15091.
+# Vitest list and all three Playwright gate configs remeasured on the merged tree.
+# Round-3 followups: +10 deterministic write/cleanup/honesty/logging cases,
+# +4 real-auth current-ledger cases and +4 generated management probes.
+# Full hermetic collection on the merged repaired tree measured 15109.
+# Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
+# Admin sweep receipt isolation: +1 pre-existing-store teardown regression.
+# Full hermetic collection remeasured at 15110 after this repair.
+# Round-4 followups: invalid unsaved facts, three writer cancellation/error
+# cases, and a virtual-clock reload event case (+5). Full hermetic collection
+# remeasured at 15115.
+pytest = 15115
+vitest = 3050
+playwright = 492
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

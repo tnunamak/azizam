@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +37,7 @@ NS = "com.azizam.workflow"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class RemixReplaceBase(unittest.TestCase):
     probe = PROBE_24
 
