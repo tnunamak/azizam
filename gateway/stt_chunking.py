@@ -136,6 +136,10 @@ class SttStorageUnavailable(SttResourceLimitExceeded):
     """Request spool capacity is temporarily unavailable."""
 
 
+class SttConcurrencyUnavailable(SttResourceLimitExceeded):
+    """The shared STT concurrency gate is temporarily full."""
+
+
 class SttChunkResponseError(SttExecutionError):
     """A started chunk did not return the safely mergeable response shape."""
 
@@ -537,7 +541,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
                 delete=False,
             )
         except OSError as error:
-            raise MultiPartException("Unable to allocate configured STT spool storage.") from error
+            raise SttStorageUnavailable("Unable to allocate configured STT spool storage.") from error
         path = Path(handle.name)
         self._spool_paths.add(path)
         self._files_to_close_on_error.append(handle)
@@ -581,7 +585,7 @@ async def parse_bounded_multipart(
     try:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
     owns_workspace = workspace is None
     active_workspace = workspace or create_request_workspace(config)
     parser = DiskBoundedMultiPartParser(
@@ -638,7 +642,7 @@ def create_request_workspace(config: SttExecutionConfig) -> Path:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
         return Path(tempfile.mkdtemp(prefix="request-", dir=config.spool_dir))
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def remove_request_workspace(workspace: Path) -> None:
@@ -816,8 +820,14 @@ class SttResourceGate:
             ) from error
         live_free_bytes = _disk_free_bytes(config.spool_dir)
         if live_free_bytes < max(0, reservation - written_bytes) + config.min_free_bytes:
+            shortage_claim = replace(claim, disk_mb=math.ceil(
+                (max(0, reservation - written_bytes) + config.min_free_bytes) / (1024 * 1024)))
             raise SttStorageUnavailable(
-                "Configured STT spool storage has insufficient free capacity"
+                "Configured STT spool storage has insufficient free capacity",
+                decision=evaluate_admission(
+                    AdmissionRequest(request_id, shortage_claim),
+                    CapacitySnapshot(observed_at=time.time(), total_disk_mb=live_free_bytes // (1024 * 1024), used_disk_mb=0),
+                ),
             )
         # Live free space excludes materialized workspace and replay files. Their
         # reservations still include them, so credit those bytes once on this device.
@@ -835,10 +845,19 @@ class SttResourceGate:
             ),
         )
         if not decision.accepted:
-            raise SttResourceLimitExceeded("STT concurrency limit is currently exhausted", decision=decision)
+            if any(reason.resource_class == "disk" for reason in decision.details.reasons):
+                raise SttStorageUnavailable("Configured STT spool storage has insufficient reserved capacity", decision=decision)
+            raise SttConcurrencyUnavailable("STT concurrency limit is currently exhausted", decision=decision)
         if free_bytes - self._reserved_bytes < reservation + config.min_free_bytes:
+            shortage_claim = replace(claim, disk_mb=math.ceil(
+                (reservation + config.min_free_bytes) / (1024 * 1024)))
             raise SttStorageUnavailable(
-                "Configured STT spool storage has insufficient reserved capacity"
+                "Configured STT spool storage has insufficient reserved capacity",
+                decision=evaluate_admission(
+                    AdmissionRequest(request_id, shortage_claim),
+                    CapacitySnapshot(observed_at=time.time(), total_disk_mb=free_bytes // (1024 * 1024),
+                                     used_disk_mb=math.ceil(self._reserved_bytes / (1024 * 1024))),
+                ),
             )
         return decision
 
@@ -1889,14 +1908,14 @@ def _disk_free_bytes(path: Path) -> int:
     try:
         return shutil.disk_usage(path).free
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def _device_of(path: Path) -> int:
     try:
         return os.stat(path).st_dev
     except OSError as error:
-        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+        raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
 
 
 def _as_bool(value: Any) -> bool:

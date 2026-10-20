@@ -40,3 +40,18 @@ The first regression commit was run before implementation and failed all 11 coll
 The requested suite included `tests/test_stt*.py`, `test_custom_voice_speech.py`, `test_proxy_audio_handler_gaps.py`, `test_engine_protocol_adapter.py`, every `*receipt*.py`, `test_retention_temp_hardening.py`, `test_private_tmp.py`, and `test_engine_knowledge_boundary.py`. The client-error checks were `test_no_upstream_text_in_client_errors.py`, `test_secret_review_r8_client.py`, `test_secret_review_r9_client_egress.py`, `test_secret_review_r10_composed_messages.py` and `test_secret_review_r12_independent.py`. All ran through `scripts/run-hermetic-pytest.sh` from committed trees.
 
 An independent dot review found no introduced blocker in the supplied disk-accounting code. Its review did not execute tests; the results above are the local deterministic checks. Confidence is high for these covered preparation, admission and cleanup paths. Recognition quality was not measured.
+
+## Transcription admission statuses
+
+Both `/v1/audio/transcriptions` and `/v1/audio/translations` return `413` when
+an upload exceeds a configured upload, decoded-size, duration, segment-count,
+sample-rate or channel cap. Upload parsing uses `stt_upload_limit`; media caps
+use `stt_resource_limit`.
+
+Temporary disk shortages and a full shared concurrency gate return
+`503 resource_admission_denied`, busy wording and `Retry-After: 5`. The gate
+raises storage or concurrency exceptions for every caller, including voice
+reference transcription. Receipts retain `capacity_insufficient` with resource
+class `disk`, or `queue_full` with resource class `queue`. Disk headroom checks
+also retain their denial evidence. OpenAPI describes these statuses and the
+retry header for both audio routes.

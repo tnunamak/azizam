@@ -4039,9 +4039,9 @@ async def _reference_transcript(
     except stt_chunking.SttDeadlineExceeded as error:
         raise custom_voices.VoiceError(504, "stt_request_deadline", "The voice reference transcription deadline exceeded.", param="voice") from error
     except stt_chunking.SttResourceLimitExceeded as error:
-        if isinstance(error, stt_chunking.SttStorageUnavailable) or (error.decision is not None and any(
-            reason.code == "queue_full" or reason.resource_class == "disk" for reason in error.decision.details.reasons
-        )):
+        if receipt is not None and error.decision is not None:
+            receipt.resource_decision = error.decision.details.as_dict(error.decision.status.value)
+        if isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable)):
             raise custom_voices.VoiceError(503, "resource_admission_denied", "Shared capacity is busy. Retry shortly.",
                 param="voice", retry_after=5) from error
         raise custom_voices.VoiceError(
@@ -5072,7 +5072,14 @@ def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse, request
 
 
 def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, receipt: RouteReceipt) -> Response:
-    response = _stt_error(str(error), status_code=413, code="stt_resource_limit")
+    busy = isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable))
+    response = _stt_error(
+        "Shared capacity is busy. Retry shortly." if busy else str(error),
+        status_code=503 if busy else 413,
+        code="resource_admission_denied" if busy else "stt_resource_limit",
+    )
+    if busy:
+        response.headers["Retry-After"] = client_errors.retry_after("5")
     if error.decision is None:
         return response
     evidence = error.decision.details.as_dict(error.decision.status.value)
@@ -5081,9 +5088,11 @@ def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, r
     body = json.loads(response.body)
     projected = resource_decisions.project_decision(evidence)
     body["error"]["decision"] = projected
-    if projected["reasons"]:
+    if projected["reasons"] and not busy:
         body["error"]["message"] = projected["reasons"][0]["message"]
-    return Response(content=json.dumps(body), status_code=413, media_type="application/json")
+    return Response(content=json.dumps(body), status_code=response.status_code,
+                    headers={"Retry-After": response.headers["Retry-After"]} if busy else None,
+                    media_type="application/json")
 
 
 async def _stt_terminal_response(

@@ -111,8 +111,10 @@ def test_written_bytes_tolerates_unlink_between_is_file_and_stat(tmp_path):
 
 
 @pytest.mark.parametrize("failure,status,code,retry", [
-    ("disk",
-     503, "resource_admission_denied", "5"),
+    ("disk", 503, "resource_admission_denied", "5"),
+    ("disk900", 503, "resource_admission_denied", "5"),
+    ("disk1024", 503, "resource_admission_denied", "5"),
+    ("queue", 503, "resource_admission_denied", "5"),
     (stt.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit"),
      503, "backend_unavailable", None),
     (stt.SttDeadlineExceeded("deadline"), 504, "stt_request_deadline", None),
@@ -126,7 +128,24 @@ def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, re
             with pytest.raises(stt.SttResourceLimitExceeded) as denied:
                 stt.SttResourceGate().acquire(request_id="voice", config=config(tmp_path))
         failure = denied.value
+    if failure in ("disk900", "disk1024", "queue"):
+        gate = stt.SttResourceGate()
+        leases = []
+        with patch.object(stt, "_disk_free_bytes", return_value=4096 * 1024**2) as free:
+            try:
+                leases.append(gate.acquire(request_id="held", config=config(tmp_path)))
+                if failure == "queue":
+                    leases.append(gate.acquire(request_id="held2", config=config(tmp_path)))
+                else:
+                    free.return_value = int(failure[4:]) * 1024**2
+                with pytest.raises(stt.SttResourceLimitExceeded) as denied:
+                    gate.acquire(request_id="voice", config=config(tmp_path))
+                failure = denied.value
+            finally:
+                for lease in leases:
+                    lease.release()
     async def run():
+        receipt = RouteReceipt(protocol="openai.audio", intent="audio.speak")
         with patch.dict(proxy.config["backends"], {"stt": {"host": "review.fk.test", "port": 9876}}), \
              patch.object(proxy, "_stt_adapter", return_value=type("Adapter", (), {"invoke": AsyncMock(side_effect=failure)})()), \
              patch.object(proxy, "_voice_store") as store, \
@@ -134,7 +153,10 @@ def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, re
              patch.object(client_errors, "retry_after", wraps=client_errors.retry_after) as retry_after:
             store.return_value.get_voice.return_value = {"id": "test"}
             store.return_value.reference_path.return_value = source
-            response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True}, None, "omnivoice")
+            response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True}, None, "omnivoice", receipt=receipt)
+        if getattr(failure, "decision", None) is not None:
+            reasons = receipt.to_dict()["resource_decision"]["reasons"]
+            assert reasons == failure.decision.details.as_dict(failure.decision.status.value)["reasons"]
         assert response.status_code == status
         error = json.loads(response.body)["error"]
         assert error["code"] == code

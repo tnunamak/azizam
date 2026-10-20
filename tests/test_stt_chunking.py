@@ -1936,13 +1936,13 @@ class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
                   patch.object(proxy.receipt_store, "begin"),
                   patch.object(proxy.receipt_store, "finalize") as finalize,
                   patch.object(stt_chunking.GLOBAL_STT_RESOURCE_GATE, "acquire",
-                               side_effect=stt_chunking.SttResourceLimitExceeded("private quantities 20 10", decision=decision))):
+                               side_effect=stt_chunking.SttStorageUnavailable("private quantities 20 10", decision=decision))):
                 response = await proxy.proxy_stt_request(request, access_context(),
                                                         execution_snapshot=_config(Path(temp)), route_receipt=receipt)
-        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.status_code, 503)
         error = json.loads(response.body)["error"]
-        self.assertEqual(error["code"], "stt_resource_limit")
-        self.assertEqual(error["type"], "invalid_request_error")
+        self.assertEqual(error["code"], "resource_admission_denied")
+        self.assertEqual(error["type"], "api_error")
         self.assertIsNone(error["param"])
         self.assertNotIn("private", json.dumps(error))
         self.assertNotIn("facts", error["decision"])
