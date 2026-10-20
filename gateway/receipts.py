@@ -764,6 +764,25 @@ def serialize_receipt_for_audience(
     return client_data
 
 
+async def run_receipt_write(write: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Complete an ordered receipt write off-loop, even if its caller is cancelled."""
+    worker = asyncio.create_task(asyncio.to_thread(write, *args, **kwargs))
+    cancellation = None
+    while True:
+        try:
+            result = await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError as error:
+            # Do not detach a fact commit from its following finalize, or let
+            # cancellation return while the receipt is still being mutated.
+            if worker.cancelled():
+                raise
+            cancellation = error
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
 class ReceiptLifecycleOwner:
     """Own the terminal lifecycle of one admitted outer receipt.
 
@@ -859,11 +878,11 @@ class ReceiptLifecycleOwner:
         if self._stream_transferred:
             return False
         if isinstance(exc, asyncio.CancelledError):
-            self._close("cancelled", "cancelled")
+            await run_receipt_write(self._close, "cancelled", "cancelled")
         elif exc is not None:
-            self._close("failed", "internal_error")
+            await run_receipt_write(self._close, "failed", "internal_error")
         else:
-            self._close(*(self._outcome or ("failed", "internal_error")))
+            await run_receipt_write(self._close, *(self._outcome or ("failed", "internal_error")))
         return False
 
     def handoff_stream(self, source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:

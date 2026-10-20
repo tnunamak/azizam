@@ -385,7 +385,7 @@ from gateway.policy import (
     DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
 )
 from gateway.receipts import (ReceiptLifecycleOwner, RouteReceipt, new_request_id,
-                              configure_retention_fact_capture, record_retention_fact_failure)
+                              configure_retention_fact_capture, record_retention_fact_failure, run_receipt_write)
 from gateway.runtime_auth import (
     RuntimeIdentity,
     discovery_allows,
@@ -10780,9 +10780,9 @@ async def proxy_graph_video_create(
                 remixed_from_video_id=remixed_from_video_id, receipt=receipt,
             )
         except BaseException as error:
-            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
             raise
-        return media_ingestion.finish_response(receipt, response)
+        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     admission = _dispatch_admission_response(
         'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -11781,9 +11781,9 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
         try:
             response = await proxy_graph_video_extend(request, auth_context, receipt=receipt)
         except BaseException as error:
-            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
             raise
-        return media_ingestion.finish_response(receipt, response)
+        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
@@ -14414,7 +14414,7 @@ class _SessionMakeRuntime:
         if decision.denied:
             response = _policy_denied_response(decision)
         elif refusal is not None:
-            finish_image_route_receipt(receipt, refusal)
+            await run_receipt_write(finish_image_route_receipt, receipt, refusal)
             message, error_info = _media_job_failure(refusal)
             raise me_make.MakeBackendError(message, http_status=int(refusal.status_code), error_info=error_info)
         else:
@@ -14430,7 +14430,7 @@ class _SessionMakeRuntime:
             finally:
                 _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         if not 200 <= int(response.status_code) < 300:
             message, error_info = _media_job_failure(response)
             raise me_make.MakeBackendError(message, http_status=int(response.status_code), error_info=error_info)
@@ -14917,7 +14917,7 @@ FRONTEND_TRANSLATORS.register_owned("typesafe", lambda app: decisions_api.regist
         profile_for=_access_for_auth_context,
         models_for=_decision_models_for,
         dispatch=_dispatch_decision,
-        record_receipt=_record_decision_receipt,
+        record_receipt=lambda auth, result: run_receipt_write(_record_decision_receipt, auth, result),
         openai_decisions=_openai_decisions,
     ),
 ))
@@ -18563,9 +18563,9 @@ async def audio_speech(request: Request):
         if response is None:
             response = await proxy_tts_request(request, auth_context, receipt=receipt)
     except BaseException:
-        media_ingestion.finish_receipt(receipt, status_code=500)
+        await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=500)
         raise
-    return media_ingestion.finish_response(receipt, response)
+    return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
 
 async def audio_transcriptions(request: Request):
@@ -21533,16 +21533,16 @@ async def _run_image_media_job(job_id: str) -> None:
                         _ADMISSION_WORKER.reset(worker_token)
                 finally:
                     _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
-                finish_image_route_receipt(receipt, response)
+                await run_receipt_write(finish_image_route_receipt, receipt, response)
             except asyncio.CancelledError:
                 # An interrupted attempt keeps its terminal receipt.
-                finish_image_route_receipt(receipt, None, status="cancelled")
+                await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
                 raise
             except media_jobs.CancellationPending:
-                finish_image_route_receipt(receipt, None, status="cancelled")
+                await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
                 raise
             except Exception as exc:  # noqa: BLE001
-                finish_image_route_receipt(
+                await run_receipt_write(finish_image_route_receipt, 
                     receipt,
                     Response(
                         content=json.dumps({
@@ -22185,9 +22185,9 @@ async def _run_audio_media_job(job_id: str) -> None:
                 try:
                     response = await proxy_audio_generate(request_shim, auth_context, store_full=True, receipt=receipt)
                 except BaseException as error:
-                    media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+                    await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
-                media_ingestion.finish_response(receipt, response)
+                await run_receipt_write(media_ingestion.finish_response, receipt, response)
             finally:
                 _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
@@ -22681,9 +22681,9 @@ async def _run_video_media_job(job_id: str) -> None:
                     try:
                         submit_response = await proxy_graph_video_create(request_shim, auth_context, receipt=receipt)
                     except BaseException as error:
-                        media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+                        await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                         raise
-                    media_ingestion.finish_response(receipt, submit_response)
+                    await run_receipt_write(media_ingestion.finish_response, receipt, submit_response)
                 finally:
                     _ADMISSION_WORKER.reset(worker_token)
             except asyncio.CancelledError:
@@ -23146,7 +23146,7 @@ async def gateway_image_generations_media_job(request: Request):
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     try:
@@ -23158,7 +23158,7 @@ async def gateway_image_generations_media_job(request: Request):
             status_code=400,
             media_type="application/json",
         )
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     if not isinstance(body, Mapping):
         _record_image_input(receipt, "body", rejected_reason="not_object")
@@ -23167,13 +23167,13 @@ async def gateway_image_generations_media_job(request: Request):
             status_code=400,
             media_type="application/json",
         )
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     idempotency_key = request.headers.get("idempotency-key")
     invalid_controls = _note_media_metadata_body(body)
     if invalid_controls is not None:
-        finish_image_route_receipt(receipt, invalid_controls)
+        await run_receipt_write(finish_image_route_receipt, receipt, invalid_controls)
         return invalid_controls
     # A full workflow id names the same workflow as its short name; the job
     # runs it by the short name the image route takes.
@@ -23199,7 +23199,7 @@ async def gateway_image_generations_media_job(request: Request):
             if job_id and _has_image_media_job_payload(job_id):
                 _schedule_image_media_job(job_id)
         response = _image_media_job_response(existing, request)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     from gateway.engine_protocol import dispatch as protocol_dispatch
@@ -23207,7 +23207,7 @@ async def gateway_image_generations_media_job(request: Request):
         protocol_target = protocol_dispatch.resolve(ADMIN_STORE.get_service_registry(), body.get("model"), "images")
     except ProtocolError as error:
         response = _protocol_failure(error)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
@@ -23234,11 +23234,11 @@ async def gateway_image_generations_media_job(request: Request):
     )
     if decision.denied:
         response = _policy_denied_response(decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     admission_response = _media_job_admission_response("image.generate", receipt=receipt)
     if admission_response is not None:
-        finish_image_route_receipt(receipt, admission_response)
+        await run_receipt_write(finish_image_route_receipt, receipt, admission_response)
         return admission_response
     target_decision = _workflow_target_policy_decision(
         auth_context,
@@ -23253,7 +23253,7 @@ async def gateway_image_generations_media_job(request: Request):
     )
     if target_decision is not None and target_decision.denied:
         response = _policy_denied_response(target_decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     job = media_jobs.MediaJob(
@@ -23284,7 +23284,7 @@ async def gateway_image_generations_media_job(request: Request):
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     except Exception as exc:  # noqa: BLE001
         _delete_image_media_job_payload(job.job_id)
@@ -23298,14 +23298,14 @@ async def gateway_image_generations_media_job(request: Request):
             status_code=500,
             media_type="application/json",
         )
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     if created.job_id != job.job_id:
         _delete_image_media_job_payload(job.job_id)
         created_dict = created.to_dict("internal")
         response = _image_media_job_response(created_dict, request)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
     try:
@@ -23324,7 +23324,7 @@ async def gateway_image_generations_media_job(request: Request):
     _schedule_image_media_job(job.job_id)
     created_dict = created.to_dict("internal")
     response = _image_media_job_response(created_dict, request, status_code=202)
-    finish_image_route_receipt(receipt, response)
+    await run_receipt_write(finish_image_route_receipt, receipt, response)
     return response
 
 
@@ -23439,14 +23439,14 @@ async def images_generations(request: Request):
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     try:
         response = await proxy_image_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
-        finish_image_route_receipt(receipt, None, status="cancelled")
+        await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
         raise
-    finish_image_route_receipt(receipt, response)
+    await run_receipt_write(finish_image_route_receipt, receipt, response)
     return response
 
 
@@ -23464,14 +23464,14 @@ async def images_variations(request: Request):
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     try:
         response = await proxy_graph_image_variations_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
-        finish_image_route_receipt(receipt, None, status="cancelled")
+        await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
         raise
-    finish_image_route_receipt(receipt, response)
+    await run_receipt_write(finish_image_route_receipt, receipt, response)
     return response
 
 
@@ -23484,14 +23484,14 @@ async def images_edits(request: Request):
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
-        finish_image_route_receipt(receipt, response)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     try:
         response = await proxy_graph_image_edit_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
-        finish_image_route_receipt(receipt, None, status="cancelled")
+        await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
         raise
-    finish_image_route_receipt(receipt, response)
+    await run_receipt_write(finish_image_route_receipt, receipt, response)
     return response
 
 
@@ -23735,9 +23735,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         try:
             response = await _execute_video_manifest_workflow(request, workflow_id, auth_context, receipt=receipt)
         except BaseException as error:
-            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+            await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
             raise
-        return media_ingestion.finish_response(receipt, response)
+        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
     if record is None or record.intent != "video.edit":
@@ -24613,9 +24613,9 @@ async def audio_generate(request: Request):
     try:
         response = await proxy_audio_generate(request, auth_context, receipt=receipt)
     except BaseException as error:
-        media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
+        await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
         raise
-    return media_ingestion.finish_response(receipt, response)
+    return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
 
 def _audio_models_visible_to(auth_context: AuthContext) -> list[dict[str, Any]]:
@@ -29433,12 +29433,12 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         backend=target.engine_id), receipt)
     if decision.denied:
         response = _policy_denied_response(decision)
-        return media_ingestion.finish_response(receipt, response) if owns_receipt else response
+        return await run_receipt_write(media_ingestion.finish_response, receipt, response) if owns_receipt else response
     admission = _dispatch_admission_response(intent, auth_context=auth_context, service_id=target.engine_id,
         service_available=True, resource_class={"images":"image", "speech":"audio"}.get(op, op), receipt=receipt,
         queue_key=_MEDIA_JOB_QUEUE_KEY if op == "images" else None)
     if admission is not None:
-        return media_ingestion.finish_response(receipt, admission) if owns_receipt else admission
+        return await run_receipt_write(media_ingestion.finish_response, receipt, admission) if owns_receipt else admission
     _begin_media_delivery(auth_context, receipt)
     store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
     lease = None
@@ -29483,14 +29483,14 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                             yield b"data: " + data.replace(b"\n", b"\ndata: ") + b"\n\n"
                         yield b"data: [DONE]\n\n"
                         if closes_chat:
-                            _finish_chat_receipt("completed", "succeeded")
+                            await run_receipt_write(_finish_chat_receipt, "completed", "succeeded")
                     except ProtocolError as error:
                         receipt.metadata["stream_error_code"] = error.code
                         if op == "chat":
                             record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": "failed"})
                             receipt.metadata["terminal_reason"] = "failed"
                         receipt.finish("failed")
-                        _record_terminal_retention_receipt(receipt, path=receipt_store.DB_PATH)
+                        await run_receipt_write(_record_terminal_retention_receipt, receipt, path=receipt_store.DB_PATH)
                         yield b"data: " + _protocol_failure(error).body + b"\n\n"
                     finally:
                         await reply.aclose()
@@ -29510,11 +29510,11 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                 if op == "embeddings" and dimensions is not None:
                     error_response = _apply_embedding_dimensions(reply.body, dimensions)
                     if error_response is not None:
-                        return media_ingestion.finish_response(receipt, error_response) if owns_receipt else error_response
+                        return await run_receipt_write(media_ingestion.finish_response, receipt, error_response) if owns_receipt else error_response
                 response = Response(content=json.dumps(reply.body, separators=(",",":"), ensure_ascii=False),
                                     status_code=reply.status, media_type="application/json")
                 if closes_chat:
-                    _finish_chat_receipt("completed", "succeeded")
+                    await run_receipt_write(_finish_chat_receipt, "completed", "succeeded")
     except ProtocolError as error:
         response = _protocol_failure(error)
     except media_jobs.CancellationPending:
@@ -29532,7 +29532,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     except asyncio.CancelledError:
         if owns_receipt:
             receipt.finish("cancelled")
-            _record_terminal_retention_receipt(receipt, path=receipt_store.DB_PATH)
+            await run_receipt_write(_record_terminal_retention_receipt, receipt, path=receipt_store.DB_PATH)
         raise
     finally:
         if lease is not None and not lease.handed_off:
@@ -29540,7 +29540,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     response.headers.setdefault("x-request-id", receipt.request_id)
     if owns_receipt:
         from gateway import media_ingestion
-        return media_ingestion.finish_response(receipt, response)
+        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
     return response
 
 
@@ -30558,7 +30558,7 @@ async def _frontend_refusal(request: Request, row: frontend_mount.RouteRow, repo
     receipt.metadata["loss"] = report.as_dict()
     receipt.metadata["refusal"] = frontend_mount.refusal_code(report)
     receipt.finish("denied")
-    _record_native_passthrough_receipt(receipt)
+    await run_receipt_write(_record_native_passthrough_receipt, receipt)
     return openai_error_response(
         frontend_mount.refusal_message(row, report),
         code=frontend_mount.refusal_code(report),
@@ -30720,7 +30720,7 @@ async def _forward_provider_native(
     )
     if decision.denied:
         receipt.finish("denied")
-        _record_native_passthrough_receipt(receipt)
+        await run_receipt_write(_record_native_passthrough_receipt, receipt)
         return _policy_denied_response(decision)
     if native_policy is None:
         # The access plan answers first on this route, so its refusals keep the plan's codes.

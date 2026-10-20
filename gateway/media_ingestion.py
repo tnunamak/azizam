@@ -17,7 +17,7 @@ from fastapi import Request
 from starlette.responses import Response
 
 from gateway import media_delivery, media_jobs, provenance, receipt_store
-from gateway.receipts import RouteReceipt, new_request_id
+from gateway.receipts import run_receipt_write, RouteReceipt, new_request_id
 from gateway.ownership import owner_key
 from gateway.runtime_auth import plan_ref
 
@@ -163,14 +163,14 @@ async def _finish_streaming_iterator(source: Any, receipt: RouteReceipt, status_
     except asyncio.CancelledError:
         receipt.metadata["terminal_reason"] = "cancelled"
         if receipt.status not in {"succeeded", "failed", "cancelled"}:
-            finish_receipt(receipt, status_code=499)
+            await run_receipt_write(finish_receipt, receipt, status_code=499)
         raise
     except BaseException:
         if receipt.status not in {"succeeded", "failed", "cancelled"}:
-            finish_receipt(receipt, status_code=500)
+            await run_receipt_write(finish_receipt, receipt, status_code=500)
         raise
     else:
-        finish_receipt(receipt, status_code=status_code)
+        await run_receipt_write(finish_receipt, receipt, status_code=status_code)
 
 
 def index_receipt_assets(receipt: RouteReceipt, assets: Iterable[Mapping[str, Any]]) -> media_jobs.MediaJob | None:
