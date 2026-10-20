@@ -5,7 +5,6 @@ import json
 import struct
 import subprocess
 import wave
-from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -33,6 +32,10 @@ def misleading_audio(tmp_path):
 
     def make(duration):
         path = tmp_path / f"duration-{duration}.mka"
+        if duration is None:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-c:a", "pcm_s16le",
+                            "-live", "1", str(path)], check=True, capture_output=True)
+            return path
         element = b"\xec\x89" + bytes(9) if duration is None else b"\x44\x89\x88" + struct.pack(">d", duration * 1000)
         path.write_bytes(data[:offset] + element + data[offset + 11:])
         return path
