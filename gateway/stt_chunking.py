@@ -1387,16 +1387,10 @@ async def _execute_chunking(
         probed = ProbedAudio(planning_duration, _PLANNING_SAMPLE_RATE, 1)
         if planning_duration <= config.chunk_above_seconds:
             return ChunkingOutcome("passthrough", 0, "below_threshold", verified_duration_seconds=verified_duration)
-        segments = await asyncio.to_thread(
-            plan_quietest_frame_segments,
-            duration_seconds=planning_duration,
-            quietest_frame=quietest_frame_reader(pcm_path),
-            target_seconds=config.target_seconds,
-            search_seconds=config.search_seconds,
-            max_segment_seconds=config.max_segment_seconds,
-            max_segments=config.max_segments,
-            sample_rate=source_sample_rate,
-        )
+        plan_options = dict(quietest_frame=quietest_frame_reader(pcm_path), target_seconds=config.target_seconds,
+            search_seconds=config.search_seconds, max_segment_seconds=config.max_segment_seconds,
+            max_segments=config.max_segments, sample_rate=source_sample_rate)
+        segments = await asyncio.to_thread(plan_quietest_frame_segments, duration_seconds=planning_duration, **plan_options)
         if len(segments) > 1:
             cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
             if source_sample_rate == _PLANNING_SAMPLE_RATE and source_channels == 1:
@@ -1405,10 +1399,12 @@ async def _execute_chunking(
                 await decode_planning_pcm(source_path, extraction_source, config=config,
                     cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
                     sample_rate=source_sample_rate, channels=source_channels)
-            planning_duration = extraction_source.stat().st_size / (source_sample_rate * source_channels * 2)
+            decoded_duration = extraction_source.stat().st_size / (source_sample_rate * source_channels * 2)
+            if decoded_duration != planning_duration:
+                segments = await asyncio.to_thread(plan_quietest_frame_segments, duration_seconds=decoded_duration, **plan_options)
+            planning_duration = decoded_duration
             verified_duration = planning_duration
             probed = ProbedAudio(planning_duration, source_sample_rate, source_channels)
-            segments[-1] = (segments[-1][0], planning_duration)
     except (
         asyncio.CancelledError,
         SttCancelled,
