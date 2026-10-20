@@ -143,9 +143,20 @@ class Scored:
     alignment: Alignment
     mids: list[float]
     reference_indexes: list[int]
+    _time_indexes: list[int] = field(init=False, repr=False)
+    _sorted_mids: list[float] = field(init=False, repr=False)
 
-    def window(self, centre: float, half: float) -> range:
-        return range(bisect_left(self.mids, centre - half), bisect_left(self.mids, centre + half))
+    def __post_init__(self) -> None:
+        # Overlapping words can reverse midpoint order. Alignment and identity stay in transcript order.
+        self._time_indexes = sorted(range(len(self.mids)), key=self.mids.__getitem__)
+        self._sorted_mids = [self.mids[i] for i in self._time_indexes]
+
+    def between(self, lo: float, hi: float) -> list[int]:
+        """Local alignment indexes whose reference midpoints fall in [lo, hi)."""
+        return self._time_indexes[bisect_left(self._sorted_mids, lo):bisect_left(self._sorted_mids, hi)]
+
+    def window(self, centre: float, half: float) -> list[int]:
+        return self.between(centre - half, centre + half)
 
 
 def score_run(reference: Sequence[RefWord], run: Run) -> Scored:
@@ -249,17 +260,20 @@ def piece_counts(scored: Scored, *, trim: float = 2.0) -> list[tuple[int, int, f
         lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
         if hi <= lo:
             continue
-        indexes = range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi))
+        indexes = scored.between(lo, hi)
         out.append((len(indexes), sum(1 for i in indexes if scored.alignment.status[i] == DELETED), end - start))
     return out
 
 
 def interior_deletions(scored: Scored, *, trim: float = 2.0) -> dict[int, int]:
-    """Reference word index -> 1 if the run dropped it, for words at least ``trim`` s inside a piece."""
+    """Local alignment index -> 1 if dropped, for words at least ``trim`` s inside a piece.
+
+    Use ``scored.reference_indexes`` to map these indexes to the supplied reference.
+    """
     out: dict[int, int] = {}
     for start, end in scored.run.segments:
         lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
-        for i in range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi)) if hi > lo else ():
+        for i in scored.between(lo, hi) if hi > lo else ():
             out[i] = 1 if scored.alignment.status[i] == DELETED else 0
     return out
 
@@ -331,7 +345,7 @@ def deletion_by_length(
             hi = end + scored.run.offset - trim
             if hi <= lo:
                 continue
-            indexes = range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi))
+            indexes = scored.between(lo, hi)
             slot = bisect_left(list(edges), length)
             bucket = buckets[slot]
             bucket["pieces"] += 1
