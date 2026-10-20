@@ -195,3 +195,54 @@ def test_default_lifecycle_captures_facts_without_route_callback(stores, monkeyp
     asyncio.run(run())
     assert row.retention_facts
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1])["destination"]
+
+
+def test_full_service_fact_limit_does_not_break_media_finalization(stores):
+    from gateway import media_ingestion
+    fact = retention_facts.ledger(stores[2])["destinations"][-1]["facts"][0]
+    fact = {k: v for k, v in fact.items() if k not in {"revision", "stale", "stale_label", "source"}}
+    stores[2]["services"]["destination"]["config"]["retention_facts"] = [
+        {**fact, "id": f"fact-{index}"} for index in range(100)]
+    row = RouteReceipt(protocol="openai.audio", intent="audio.generate", backend="destination")
+    receipt_store.begin(row)
+    proxy._capture_retention_facts(row)
+    media_ingestion.finish_receipt(row, status_code=200)
+    stored = receipt_store.get(row.request_id)
+    assert stored["status"] == "succeeded"
+    assert len(stored["retention_facts"]) > 100
+
+
+def test_former_destination_with_no_facts_is_preserved(stores):
+    stores[2]["services"]["destination"]["config"]["retention_facts"] = []
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    proxy._capture_retention_facts(row)
+    proxy._record_retention_receipt(row, path=stores[0])
+    del stores[2]["services"]["destination"]
+    view = proxy._gateway_retention_ledger(request()[0], row.request_id)
+    saved = next(d for d in view["destinations"] if d["id"] == "destination")
+    assert saved["name"] == "Test service"
+    assert saved["facts"] == []
+
+
+@pytest.mark.parametrize("operation", ["prune", "save", "maintain"])
+def test_busy_fact_cleanup_preserves_receipts_for_retry(stores, monkeypatch, operation):
+    import time
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    proxy._capture_retention_facts(row)
+    proxy._record_retention_receipt(row, path=stores[0], created_at=int(time.time()) - 400 * 86400)
+    admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY, {"retention_days": 30}, path=proxy.ADMIN_STORE.path)
+    def run():
+        if operation == "prune":
+            return receipt_store.prune(1, path=stores[0])
+        if operation == "save":
+            preview = receipt_store.retention_preview(30, path=stores[0])
+            return receipt_store.save_retention(30, preview, lambda: None, path=stores[0])
+        return receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0])
+    real_release = media_jobs.release_fact_references
+    monkeypatch.setattr(media_jobs, "release_fact_references", lambda *_a, **_kw: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    with pytest.raises(sqlite3.OperationalError):
+        run()
+    assert receipt_store.get(row.request_id) is not None
+    monkeypatch.setattr(media_jobs, "release_fact_references", real_release)
+    assert run() == 1
+    assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1]) == {}

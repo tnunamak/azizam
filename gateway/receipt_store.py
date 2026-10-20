@@ -223,7 +223,7 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
         validate_retention(data["retention"])
     if "retention_facts" in data:
         hashes = data["retention_facts"]
-        if (not isinstance(hashes, list) or len(hashes) > 100 or len(set(map(str, hashes))) != len(hashes)
+        if (not isinstance(hashes, list) or len(set(map(str, hashes))) != len(hashes)
                 or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes)):
             raise ValueError("receipt retention_facts must be distinct SHA-256 revisions")
     metadata = data.get("metadata")
@@ -707,8 +707,8 @@ def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
     with _conn(path) as conn:
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
+        _release_expired_fact_refs(expired_ids, fact_store_path)
         conn.commit()
-    _release_expired_fact_refs(expired_ids, fact_store_path)
     return deleted
 
 
@@ -787,8 +787,10 @@ def save_retention(
         save_setting()
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
+        # If fact cleanup is busy, roll back receipt deletion so maintenance
+        # can rediscover these IDs and retry. The stores commit separately.
+        _release_expired_fact_refs(expired_ids, fact_store_path)
         conn.commit()
-    _release_expired_fact_refs(expired_ids, fact_store_path)
     return deleted
 
 
@@ -801,9 +803,9 @@ def maintain(admin_path: Path, *, path: Path = DB_PATH,
         cutoff = int(time.time()) - days * 86400 if days is not None else None
         expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
+        _release_expired_fact_refs(expired_ids, fact_store_path)
         conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
-    _release_expired_fact_refs(expired_ids, fact_store_path)
     return deleted
 
 

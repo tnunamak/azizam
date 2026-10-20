@@ -512,22 +512,33 @@ class RouteReceipt:
         self.retention = validate_retention([*updated, entry])
 
     def capture_retention_facts(self, *, registry: Mapping[str, Any] | None = None,
-                                overrides: Mapping[Any, Any] | None = None) -> None:
+                                overrides: Mapping[Any, Any] | None = None,
+                                service_id: str | None = None,
+                                outer: "RouteReceipt | None" = None) -> None:
         """Freeze dated evidence before the lifecycle dispatches to a destination."""
         captured = getattr(self, "_retention_fact_snapshot", None)
-        if not self.backend or (captured is not None and captured[0] == self.backend):
+        if not self.backend:
+            return
+        if captured is not None and captured[0] == self.backend:
+            if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
+                outer.backend = self.backend
+                outer._retention_fact_snapshot = captured
             return
         from gateway import admin_store, retention, retention_facts, service_registry
 
         if registry is None:
             registry = service_registry.load_service_registry(path=admin_store.DB_PATH) or {}
-        if self.backend not in (registry.get("services") or {}):
+        destination_id = service_id or self.backend
+        if destination_id not in (registry.get("services") or {}):
             return
         if overrides is None:
             overrides = admin_store.retention_fact_overrides(path=admin_store.DB_PATH)
         self._retention_fact_snapshot = (self.backend, retention_facts.ledger(
-            registry, kinds=retention.bundled().data["kinds"], overrides=overrides, service_id=self.backend,
+            registry, kinds=retention.bundled().data["kinds"], overrides=overrides, service_id=destination_id,
         ))
+        if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
+            outer.backend = self.backend
+            outer._retention_fact_snapshot = self._retention_fact_snapshot
 
     def persist_retention_facts(self) -> None:
         """Persist the evidence captured before dispatch, once per receipt."""

@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from fastapi import Request
@@ -504,6 +504,7 @@ async def execute_paid_litellm(
     admin_db_path: Path | None = None,
     paid_fallback: bool = False,
     requested_model: str | None = None,
+    capture_retention_facts: Callable[[RouteReceipt], None] | None = None,
 ) -> Response:
     """``identity`` carries the request's two plans, its App and the App's
     accountable person; each of them is needed to admit and charge the call."""
@@ -522,6 +523,8 @@ async def execute_paid_litellm(
     providers.attach_cost_to_receipt(receipt, providers.Cost(None, "unknown", provider.id))
     if paid_fallback:
         receipt.add_fallback_reason("explicit alias selected a paid fallback")
+    if capture_retention_facts is not None:
+        capture_retention_facts(receipt)
     async with ReceiptLifecycleOwner(receipt) as owner:
         try:
             if not _model_declared(provider, model):

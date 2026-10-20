@@ -13976,9 +13976,6 @@ def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext
     """Freeze the dated ledger before dispatch without writing an orphan reference."""
     if not receipt.backend:
         return
-    captured = getattr(receipt, "_retention_fact_snapshot", None)
-    if captured is not None and captured[0] == receipt.backend:
-        return
     try:
         receipt.capture_retention_facts(
             registry=ADMIN_STORE.get_service_registry(),
