@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.secret_store import delete_provider_secret, put_provider_secret
@@ -93,6 +94,31 @@ WATCHER_HARNESS = textwrap.dedent(
 
 
 class StartScriptGracefulStopTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # start.sh empties the gateway's private temporary directory, which must be on disk; the hermetic temp dir is RAM.
+        self.private = Path(tempfile.mkdtemp(prefix="start-private-", dir=os.environ["HERMETIC_HOST_DISK_DIR"]))
+        patcher = patch.dict(os.environ, {"AZIZAM_PRIVATE_TMPDIR": str(self.private)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.private, ignore_errors=True)
+
+    def test_the_private_temporary_directory_is_emptied_before_the_proxy_starts_and_handed_to_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            _prepare_start_fixture(work)
+            (self.private / "left-by-a-crash").write_text("old audio")
+            (work / "proxy.py").write_text(
+                "import os\n"
+                "names = ('TMPDIR', 'TMP', 'TEMP', 'AZIZAM_PRIVATE_TMPDIR', 'AZIZAM_PRIVATE_TMPDIR_PREPARED')\n"
+                "print([os.environ[name] for name in names], os.listdir(os.environ['TMPDIR']))\n"
+            )
+            _write_python_wrapper(work / "bin" / "python3")
+            _write_awk_wrapper(work / "bin" / "awk")
+            env = {**os.environ, "AZIZAM_MANAGE_LITELLM": "false", "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+            result = subprocess.run(["/bin/bash", "start.sh"], cwd=work, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 5) + " []")
+
     def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)

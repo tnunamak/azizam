@@ -45,6 +45,7 @@ from starlette.formparsers import (
 )
 from starlette.requests import ClientDisconnect
 
+from gateway import private_tmp
 from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
@@ -240,6 +241,7 @@ class SttExecutionConfig:
         service_config: Mapping[str, Any],
         config_directory: Path,
     ) -> "SttExecutionConfig":
+        # ``config_directory`` is kept for callers: a relative spool_dir no longer resolves against it.
         raw = dict(service_config)
         chunking = raw.get("chunking") or {}
         if not isinstance(chunking, Mapping):
@@ -303,12 +305,15 @@ class SttExecutionConfig:
         if policy not in {"passthrough", "error"}:
             raise SttConfigurationError("STT setup_failure_policy must be passthrough or error")
 
-        spool_raw = str(chunking.get("spool_dir", "data/stt-spool")).strip()
+        spool_raw = str(chunking.get("spool_dir", "stt")).strip()
         if not spool_raw:
             raise SttConfigurationError("STT spool_dir must be configured")
         spool_dir = Path(spool_raw)
+        # A relative name lives in the gateway's private temporary directory, which is emptied at start and holds
+        # every other temporary file of the process (docs/design/REQUEST_RETENTION.md 5.1). An absolute path is the
+        # operator's explicit choice and sits outside that guarantee; ``spool_is_private`` says which one applies.
         if not spool_dir.is_absolute():
-            spool_dir = config_directory / spool_dir
+            spool_dir = private_tmp.current() / spool_dir
         spool_dir = spool_dir.resolve()
         # This protects the known RAM-backed temporary root.  It does not try
         # to infer every platform's filesystem topology; operators explicitly
@@ -356,6 +361,11 @@ class SttExecutionConfig:
             default_model=str(raw.get("default_model") or "").strip(),
             backend_config=_freeze_mapping(raw),
         )
+
+    @property
+    def spool_is_private(self) -> bool:
+        """True when this service's workspaces sit in the gateway's private temporary directory."""
+        return private_tmp.inside(self.spool_dir)
 
     def request_claim(self) -> ResourceClaim:
         """Represent the bounded disk reservation with the shared claim type."""

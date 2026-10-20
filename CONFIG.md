@@ -98,6 +98,7 @@ twice.
 | `AZIZAM_GPU_BUDGET_PATH` | Path to a shell script that exports GPU VRAM budget variables (e.g. `GPU0_TOTAL`, `GPU0_DESKTOP`). When unset, budget data is omitted from `/v1/status`. | unset (feature off) |
 | `AZIZAM_VRAM_ESTIMATES_PATH` | Path to the persistent VRAM-per-(workflow,size) JSON cache. | `<repo>/cache/vram_estimates.json` |
 | `AZIZAM_DRIFT_REPORT_PATH` | Path to the workflow drift status JSON written by `scripts/check_workflow_drift.py`. | `<repo>/cache/drift_status.json` |
+| `AZIZAM_PRIVATE_TMPDIR` | The gateway's private temporary directory: multipart spill over 1 MiB, the STT workspace (a relative `chunking.spool_dir`), ffmpeg and ffprobe scratch files, and what LiteLLM and engines write through `TMPDIR`. Mode 0700, owned by the service user, emptied by `start.sh` at every start. Must be on disk: the gateway refuses to start when it is on tmpfs or ramfs. Run one gateway per directory. | `data/private-tmp` beside the admin database |
 | `AZIZAM_IMAGE_CACHE_DIR` | Redirects only the image-storage figure in monitoring. Generated images use `images.cache_dir`. | `<repo>/cache/images` |
 
 ## Media URL inputs

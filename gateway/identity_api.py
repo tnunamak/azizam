@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from gateway import identity_scene as ids
-from gateway import likeness
+from gateway import likeness, request_forms
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
 from gateway.likeness import LikenessError
 from gateway.extensions import ExtensionError, multipart_extensions
@@ -384,7 +384,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
     async def form_of(request: Request) -> Any:
         if "multipart/form-data" not in request.headers.get("content-type", ""):
             raise IdentityError("this request must be multipart/form-data")
-        return await request.form(max_part_size=MAX_PART_BYTES)
+        return await request_forms.read_form(request, max_part_size=MAX_PART_BYTES)
 
     def note_form(auth: Any, form: Any) -> Response | None:
         body = dict(form.multi_items())

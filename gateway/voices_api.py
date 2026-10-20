@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
+from gateway import request_forms
 from gateway.custom_voices import (
     VOICE_ID_RE,
     VoiceError,
@@ -150,7 +151,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             raise VoiceError(413, "sample_too_large", f"The upload is larger than {max_bytes // (1024 * 1024)} MiB.")
         if "multipart/form-data" not in request.headers.get("content-type", ""):
             raise VoiceError(400, "multipart_required", "This request must be multipart/form-data.")
-        return await request.form(max_part_size=1024 * 1024)
+        return await request_forms.read_form(request, max_part_size=1024 * 1024)
 
     # ---- consents ----------------------------------------------------------
     async def create_consent(request: Request):

@@ -34,6 +34,13 @@ if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
     echo "$REQ_HASH" > "$REQ_STAMP"
 fi
 
+# One private temporary directory for the gateway, LiteLLM, ffmpeg and every other child (mode 0700, on disk).
+# It is emptied here, once, before anything runs, so a crash leaves no request content behind.
+# See docs/design/REQUEST_RETENTION.md section 5.1 and gateway/private_tmp.py.
+AZIZAM_PRIVATE_TMPDIR="$(python3 -m gateway.private_tmp prepare)" || exit 1
+export AZIZAM_PRIVATE_TMPDIR TMPDIR="$AZIZAM_PRIVATE_TMPDIR" TMP="$AZIZAM_PRIVATE_TMPDIR" TEMP="$AZIZAM_PRIVATE_TMPDIR"
+export AZIZAM_PRIVATE_TMPDIR_PREPARED="$AZIZAM_PRIVATE_TMPDIR"
+
 # Config via environment (override proxy_config.yml defaults)
 export AZIZAM_PORT="${AZIZAM_PORT:-5000}"
 export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:4011}"

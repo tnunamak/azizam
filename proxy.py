@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, log_egress, log_scrub
+from gateway import client_errors, log_egress, log_scrub, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -8492,7 +8492,7 @@ async def proxy_graph_image_edit_request(
 
     form_dict: dict[str, Any] = {}
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
@@ -9096,7 +9096,7 @@ async def proxy_graph_image_variations_request(
         return service_response
 
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
@@ -23563,7 +23563,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         )
     workflow_path = Path(__file__).parent / artifact
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
         input_specs = record.manifest.get("inputs") or {}
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
@@ -30899,6 +30899,9 @@ if __name__ == "__main__":
 
     if handle_cli_command():
         sys.exit(0)
+
+    # Every temporary file of this process and its children goes to one private directory (REQUEST_RETENTION.md 5.1).
+    private_tmp.activate()
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

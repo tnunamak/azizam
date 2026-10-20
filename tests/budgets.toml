@@ -30,7 +30,9 @@
 # 2 new Vitest cases (3047 -> 3049), remeasured on this branch.
 # Round 3: one shared-App route, one structural read-site scan, eight
 # store method/audience cases, and one Library usage case (+11).
-pytest = 14894
+# Retention slice 4 (private temporary directory): 17 private-directory cases, 11 canary cases and 1 start.sh case (+29),
+# remeasured with --collect-only (14894 -> 14923).
+pytest = 14923
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 

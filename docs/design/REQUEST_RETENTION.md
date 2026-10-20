@@ -1687,6 +1687,47 @@ the build chose a form that the text above leaves open:
   It runs `commit` under the same lock that `retention_guard` held, for Library
   prompts (`prompt_memory.put`) and for the two Responses writes.
 
+**Slice 4 as built.** Every temporary file the gateway or a child writes goes
+to one directory. These points are where the build chose a form the text above
+leaves open:
+
+- The directory is `AZIZAM_PRIVATE_TMPDIR`, else `private-tmp` beside the admin
+  database (`data/private-tmp` on a normal install). `gateway/private_tmp.py`
+  creates it with mode 0700, refuses a link, a directory owned by another user
+  and a tmpfs or ramfs mount (long audio would fill memory), and empties it.
+  `start.sh` runs `python3 -m gateway.private_tmp prepare` before LiteLLM and
+  the gateway start, then exports `TMPDIR`, `TMP` and `TEMP`. So the sweep runs
+  once, before any child writes, and LiteLLM, ffmpeg, ffprobe and every engine
+  the gateway starts inherit the directory. `proxy.py` then calls `activate`,
+  which sets Python's `tempfile.tempdir` and skips a second sweep. A sweep
+  failure on one stale entry is logged by name and does not stop the start; an
+  unsafe directory does.
+- Starlette spills an upload part over 1 MiB to an anonymous file in
+  `tempfile`'s directory, so the process-wide setting covers it. Nothing closed
+  that file when a route called `request.form()` itself. `gateway/request_forms.py`
+  (`read_form`) registers the close on the request's exit stack, so it runs
+  after the response, on failure and on a client hang-up, and does not wait for
+  garbage collection. A test fails when a new direct `request.form()` call
+  appears.
+- A relative STT `spool_dir` is now a name inside the private directory (default
+  `stt`; the shipped `data/stt-spool` value is kept and lands at
+  `<private>/data/stt-spool`). An absolute `spool_dir` is the operator's choice
+  and sits outside the guarantee; `SttExecutionConfig.spool_is_private` says
+  which applies, for the "never save" copy. Chunking behaviour is unchanged.
+- The cells of 16.2 for temporary files do not depend on the retention
+  decision: a temporary file is never kept, so the "after" cell is the same
+  under forget and under kept. `tests/test_retention_temp_canaries.py` checks it
+  for a multipart part and for STT audio through success, failure, a cancelled
+  request and an upload cut off mid-body. It scans the private directory, the
+  process's default temporary directory, the old STT spool and the open and
+  deleted files the process still holds.
+- `PrivateTmp=yes` is in the shipped unit. A user unit needs unprivileged user
+  namespaces for it. Where the host restricts them (Ubuntu with
+  `kernel.apparmor_restrict_unprivileged_userns=1`) systemd accepts the line and
+  `/tmp` stays shared (checked on systemd 259), so the private `TMPDIR` is the
+  protection. Row 5 therefore claims the private directory, not a private
+  `/tmp`.
+
 **Live checks for slice 3** run on a scratch instance with a scratch
 LiteLLM database:
 
