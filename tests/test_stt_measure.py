@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import itertools
+import json
 import random
+from dataclasses import asdict
 from pathlib import Path
 import pytest
 import yaml
@@ -41,9 +43,16 @@ def test_alignment_labels_a_dropped_a_changed_and_an_added_word() -> None:
     assert added.status == [m.OK] * 4 and added.inserted == [0, 1, 0, 0]
 
 
-def test_normalize_drops_punctuation_and_listed_fillers() -> None:
+def test_normalize_drops_punctuation_and_listed_fillers(record_property) -> None:
     assert m.normalize("Well, it's -- uh -- fine!", frozenset({"uh"})) == ["well", "its", "fine"]
     assert m.normalize("That’s what you’re") == m.normalize("thats what youre")
+    scored = m.score_run([m.RefWord("one", 0, 1), m.RefWord("two", 1, 2)],
+                         m.Run(m.normalize("one 東京 two"), [(0, 3)]))
+    record_property("unicode_insertion_wer", m.word_error_rate(scored))
+    assert m.word_error_rate(scored) == 50  # Dropping a non-ASCII insertion would understate WER.
+    assert m.normalize("Café") == m.normalize("Cafe\u0301")
+    tokens = m.normalize("Don’t Café under_score well-known _ <inaudible>")
+    assert m.normalize(" ".join(tokens)) == tokens
 
 
 @pytest.mark.parametrize("operation", ["window", "pairs", "pieces", "interior", "buckets"])
@@ -94,22 +103,24 @@ def _run(reference, *, offset, target=30.0, damage=0, long_loss=0.0, lengths=Non
     return m.Run(words, segments, offset)
 
 
-def test_a_cost_at_the_cuts_shows_as_excess_and_the_noise_floor_is_flat() -> None:
+def test_a_cost_at_the_cuts_shows_as_excess_and_the_noise_floor_is_flat(record_property) -> None:
     reference = _recording()
     first = m.score_run(reference, _run(reference, offset=0.0, damage=1))
     second = m.score_run(reference, _run(reference, offset=15.0, damage=1, seed=2))
     excess, placebo = m.seam_excess(first, second, half=2.0, placebo_offset=7.5, resamples=500)
+    record_property("scoring_report", json.dumps({"seam": excess.as_dict(), "noise": placebo.as_dict()}))
     assert excess.points > 40 and excess.value_pp > 5.0 and not excess.includes_zero()
     assert abs(placebo.value_pp) < 0.5 and placebo.includes_zero()
 
 
-def test_no_cost_at_the_cuts_gives_an_interval_around_zero() -> None:
+def test_no_cost_at_the_cuts_gives_an_interval_around_zero(record_property) -> None:
     reference = _recording()
     first = m.score_run(reference, _run(reference, offset=0.0))
     # 15.2 s is a word boundary in this synthetic reference. Avoid modeling a
     # partial leading word as a perfect transcript while still staggering cuts.
     second = m.score_run(reference, _run(reference, offset=15.2))
     excess, placebo = m.seam_excess(first, second, placebo_offset=7.5, resamples=500)
+    record_property("scoring_report", json.dumps({"seam": excess.as_dict(), "noise": placebo.as_dict()}))
     assert excess.value_pp == 0.0 and excess.includes_zero() and placebo.includes_zero()
 
 
@@ -244,7 +255,7 @@ def test_broad_raw_intervals_do_not_reject_supported_paired_evidence():
     assert m.recommend(rows, [search], policy=POLICY) is not None
 
 
-def test_default_operator_grid_supports_noisy_shared_deletions_within_caps():
+def test_default_operator_grid_supports_noisy_shared_deletions_within_caps(record_property):
     from gateway import stt_samples, stt_chunking
     data = yaml.safe_load((Path(__file__).resolve().parents[1] / "registry/stt_measurement.yml").read_text())
     specs = {s.id: s for s in stt_samples.load_manifest()}
@@ -301,6 +312,8 @@ def test_default_operator_grid_supports_noisy_shared_deletions_within_caps():
                          "noise": m.paired_excess(noise, resamples=200).as_dict(),
                          "difference": m.difference(pairs, noise, resamples=200).as_dict()})
     advice = m.recommend(rows, searches, policy=POLICY, current_search=2)
+    record_property("scoring_report", json.dumps({"recommendation": asdict(advice) if advice else None,
+                                                  "deletions_by_length": rows, "seam_excess": searches}))
     assert advice is not None
     chosen = next(row for row in searches if row["search"] == advice.search_seconds)
     assert m.seam_evidence(chosen, POLICY)["state"] == "recommended"
