@@ -1406,6 +1406,7 @@ async def execute_chunking(
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
+        _validate_media_paths(source_path, config, chunk_path)
         if cleanup is not None:
             cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
         try:
