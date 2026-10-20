@@ -4044,6 +4044,7 @@ async def _reference_transcript(
         if isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable)):
             raise custom_voices.VoiceError(503, "resource_admission_denied", "Shared capacity is busy. Retry shortly.",
                 param="voice", retry_after=5) from error
+        # The client did not upload this voice reference, so a cap breach is not a client 413.
         raise custom_voices.VoiceError(
             503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
             param="voice",
@@ -4740,7 +4741,7 @@ def _speech_allocation_failed(status: int, text: str) -> bool:
 
 
 # 503s the gateway itself raises: another engine behind the same gateway would hit them too.
-_GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid"}
+_GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid", "resource_admission_denied"}
 
 
 def _speech_fallback_reason(response: Response) -> str | None:
@@ -5439,7 +5440,10 @@ async def proxy_stt_request(
             owner.report(status="timed_out", reason="idle_timeout")
             return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
         except stt_chunking.SttResourceLimitExceeded as error:
-            owner.report(status="failed", reason="failed")
+            if isinstance(error, (stt_chunking.SttStorageUnavailable, stt_chunking.SttConcurrencyUnavailable)):
+                owner.report(status="rejected", reason="resource_admission_denied")
+            else:
+                owner.report(status="failed", reason="failed")
             return _stt_resource_limit_response(error, receipt)
         except stt_chunking.MultiPartException as error:
             owner.report(status="failed", reason="failed")

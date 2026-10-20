@@ -11,6 +11,7 @@ observability.
 from __future__ import annotations
 
 import asyncio
+import errno
 import functools
 import json
 import math
@@ -610,11 +611,13 @@ async def parse_bounded_multipart(
         if owns_workspace:
             _remove_workspace_after_parse_failure(active_workspace)
         raise
-    except Exception:
+    except Exception as error:
         if cleanup is None:
             _remove_spool_files_after_parse_failure(parser)
         if owns_workspace:
             _remove_workspace_after_parse_failure(active_workspace)
+        if isinstance(error, OSError) and error.errno in (errno.ENOSPC, errno.EDQUOT):
+            raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
         raise
     return ParsedMultipart(form=form, parser=parser, workspace=active_workspace)
 
