@@ -42,7 +42,9 @@
 # metadata staging/orphans, anonymous memfd failures and allocation ownership,
 # including rejected segment aliases with local and route-owned cleanup.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14991.
-pytest = 14991
+# Review followups: one late-alias cross-spool chunking case and two measurement
+# scratch-symlink cases (+3). Full hermetic collection remeasured: 14994.
+pytest = 14994
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 

@@ -403,6 +403,7 @@ def _stt_run(tmp_path, uploads, *, stream=False, op="stt.transcribe", **chunking
     from gateway import stt_chunking
     from gateway.engine_protocol.chunked_stt import SttRun
     seen = {"outcomes": [], "attempts": [], "cancelled": 0}
+    chunking = {"spool_dir": str(tmp_path.parent), **chunking}
     run_call = SttRun(
         op=op, headers={"authorization": "Bearer t", "x-request-id": "r1"}, execution=_stt_execution(**chunking),
         fields=[("model", "m-1"), ("stream", "true")] if stream else [("model", "m-1")],
