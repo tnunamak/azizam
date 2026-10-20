@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,7 +24,7 @@ def clean_process(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(private_tmp, "_active", None)
     monkeypatch.setattr(private_tmp, "_lock_fd", None)
     monkeypatch.setattr(private_tmp, "_lock_pid", None)
-    for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR, private_tmp.ENV_PREPARED, private_tmp.ENV_LOCK_FD):
+    for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR, private_tmp.ENV_LOCK_FD):
         previous = os.environ.get(name)
         monkeypatch.setenv(name, previous if previous is not None else "")  # records how to undo the change
         if previous is None:
@@ -159,7 +160,6 @@ def test_activate_does_not_sweep_after_the_launcher_did(host_disk_dir: Path, cle
     target = host_disk_dir / "private-tmp"
     private_tmp.activate(target)
     (target / "litellm-live").write_text("written after start.sh swept")
-    monkeypatch.setenv(private_tmp.ENV_PREPARED, str(target))
     private_tmp.activate(target)
     assert (target / "litellm-live").read_text() == "written after start.sh swept"
 
@@ -184,7 +184,7 @@ def test_the_launcher_command_prints_the_swept_directory(host_disk_dir: Path) ->
 
 def test_start_script_prepares_before_anything_runs() -> None:
     script = (ROOT / "start.sh").read_text()
-    call = 'exec python3 -m gateway.private_tmp exec /bin/bash "$0" "$@"'
+    call = 'exec python3 -m gateway.private_tmp exec /bin/bash "$SCRIPT_PATH" "$@"'
     prepare = script.index(call)
     assert 'AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-' in script[:prepare]
     for later in ("start_litellm()", "python3 proxy.py", "gateway.provider_sidecar run"):
@@ -211,7 +211,7 @@ def test_relative_stt_workspace_is_inside_the_private_directory(host_disk_dir: P
 @pytest.mark.parametrize("command", ["prepare", "gateway"])
 def test_a_second_owner_cannot_sweep_live_files(host_disk_dir: Path, command: str) -> None:
     target = host_disk_dir / "private-tmp"
-    env = {**os.environ, private_tmp.ENV_DIR: str(target), private_tmp.ENV_PREPARED: str(target)}
+    env = {**os.environ, private_tmp.ENV_DIR: str(target)}
     owner_code = "from gateway import private_tmp; import sys; p=private_tmp.activate(); (p/'live').write_text('upload'); print('ready', flush=True); sys.stdin.read()"
     owner = subprocess.Popen([sys.executable, "-c", owner_code], cwd=ROOT, env=env,
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -282,7 +282,7 @@ def test_exec_holds_the_lock_in_the_serving_process(host_disk_dir: Path) -> None
     assert not (target / "live").exists(), "dead owners release the lock and permit startup sweep"
 
 
-@pytest.mark.parametrize("mode,allowed", [(0o777, False), (0o770, False), (0o1777, True)])
+@pytest.mark.parametrize("mode,allowed", [(0o777, False), (0o1777, True)])
 def test_prepare_checks_writable_ancestors_not_only_the_parent(host_disk_dir: Path, mode: int, allowed: bool) -> None:
     shared = host_disk_dir / "shared"
     shared.mkdir()
@@ -295,3 +295,67 @@ def test_prepare_checks_writable_ancestors_not_only_the_parent(host_disk_dir: Pa
     else:
         with pytest.raises(private_tmp.PrivateTmpError, match="parent"):
             private_tmp.prepare(target)
+
+
+@pytest.mark.parametrize("primary_ids,supplementary,allowed,reason", [
+    ([0], [], True, ""),
+    ([], ["owner"], True, ""),
+    ([0], ["owner"], True, ""),
+    ([0, 1], [], False, "someone other than the owner"),
+    ([0], ["other"], False, "someone other than the owner"),
+    ([0], ["owner", "other"], False, "someone other than the owner"),
+    ([], [], False, "zero members"),
+    ([0], None, False, "cannot resolve"),
+])
+def test_group_writable_ancestor_membership(host_disk_dir, monkeypatch, primary_ids, supplementary, allowed, reason):
+    shared = host_disk_dir / "shared"
+    shared.mkdir()
+    shared.chmod(0o775)
+    info = shared.stat()
+    monkeypatch.setattr(private_tmp.pwd, "getpwall", lambda: [
+        SimpleNamespace(pw_uid=info.st_uid + offset, pw_gid=info.st_gid) for offset in primary_ids
+    ])
+    monkeypatch.setattr(private_tmp.pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="owner"))
+
+    def group(gid):
+        if supplementary is None:
+            raise KeyError(gid)
+        return SimpleNamespace(gr_mem=supplementary)
+
+    monkeypatch.setattr(private_tmp.grp, "getgrgid", group)
+    if allowed:
+        assert private_tmp.prepare(shared / "private-tmp").is_dir()
+    else:
+        with pytest.raises(private_tmp.PrivateTmpError, match=reason) as error:
+            private_tmp.prepare(shared / "private-tmp")
+        assert str(shared) in str(error.value) and "0775" in str(error.value)
+
+
+@pytest.mark.skipif(os.environ.get("AZIZAM_CHECK_REAL_ANCESTORS") != "1", reason="opt-in read-only host ancestry check")
+def test_real_checkout_ancestors():
+    directory = Path(os.environ.get("AZIZAM_REAL_ANCESTOR_PATH", str(ROOT / "data")))
+    private_tmp.validate_ancestors(directory)
+    print(f"Read-only ancestor validation passed: {directory}")
+
+
+def test_read_only_ancestor_validation_never_creates_directories(host_disk_dir):
+    missing = host_disk_dir / "missing"
+    with pytest.raises(FileNotFoundError):
+        private_tmp.validate_ancestors(missing)
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize("nonempty", [False, True])
+def test_activation_warns_once_about_legacy_spool(host_disk_dir, clean_process, monkeypatch, caplog, nonempty):
+    monkeypatch.setattr(admin_store, "DB_PATH", host_disk_dir / "data" / "admin.db")
+    spool = admin_store.DB_PATH.parent / "stt-spool"
+    spool.mkdir(parents=True)
+    if nonempty:
+        (spool / "old-upload").write_text("leftover")
+    private_tmp.activate(host_disk_dir / "private-tmp")
+    private_tmp.activate(host_disk_dir / "private-tmp")
+    warnings = [record.message for record in caplog.records if "Legacy STT spool" in record.message]
+    assert len(warnings) == int(nonempty)
+    if nonempty:
+        assert "docs/design/REQUEST_RETENTION.md" in warnings[0]
+        assert (spool / "old-upload").read_text() == "leftover"

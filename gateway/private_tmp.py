@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import grp
+import logging
 import os
+import pwd
 import shutil
 import stat
 import sys
@@ -17,8 +20,6 @@ from pathlib import Path
 
 # Environment reads use literals: tests/test_secret_registration.py checks non-literal readers as possible secrets.
 ENV_DIR = "AZIZAM_PRIVATE_TMPDIR"
-# Exported by the exec launcher with the lifetime lock.
-ENV_PREPARED = "AZIZAM_PRIVATE_TMPDIR_PREPARED"
 ENV_LOCK_FD = "AZIZAM_PRIVATE_TMPDIR_LOCK_FD"
 _LOCK_NAME = ".owner.lock"
 _RAM_FILESYSTEMS = frozenset({"tmpfs", "ramfs"})
@@ -107,6 +108,62 @@ def sweep(directory_fd: int) -> list[str]:
     return failed
 
 
+def _validate_ancestor(path: Path, info: os.stat_result) -> None:
+    reason = None
+    if info.st_uid not in {0, os.geteuid()}:
+        reason = "owner is neither root nor the service user"
+    elif info.st_mode & 0o002 and not info.st_mode & stat.S_ISVTX:
+        reason = "world-writable without the sticky bit"
+    elif info.st_mode & 0o020 and not info.st_mode & stat.S_ISVTX:
+        # Debian OpenSSH user-group-modes patch (secure_permissions): allow owner-only groups.
+        try:
+            primary = [user for user in pwd.getpwall() if user.pw_gid == info.st_gid]
+            supplementary = grp.getgrgid(info.st_gid).gr_mem
+            owner_name = pwd.getpwuid(info.st_uid).pw_name
+            if (any(user.pw_uid != info.st_uid for user in primary)
+                    or len(supplementary) > 1
+                    or any(name != owner_name for name in supplementary)):
+                reason = "writable group includes someone other than the owner"
+            elif not primary and not supplementary:
+                reason = "writable group has zero members"
+        except (KeyError, OSError) as error:
+            reason = f"cannot resolve writable group membership: {error}"
+    if reason:
+        raise PrivateTmpError(
+            f"The private temporary directory parent chain is not trusted "
+            f"(ancestor {path}, uid {info.st_uid}, mode {stat.S_IMODE(info.st_mode):04o}, "
+            f"service uid {os.geteuid()}): {reason}."
+        )
+
+
+def _open_ancestor_chain(directory: Path, *, create: bool = False) -> int:
+    """Open and validate a chain without following links; caller owns the returned FD."""
+    fd = os.open("/", os.O_DIRECTORY | os.O_NOFOLLOW)
+    ancestor = Path("/")
+    try:
+        for component in (".", *directory.parts[1:]):
+            ancestor = ancestor / component
+            try:
+                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(component, 0o700, dir_fd=fd)
+                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            _validate_ancestor(ancestor, os.fstat(fd))
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def validate_ancestors(directory: Path) -> None:
+    """Read-only validation of an existing directory and all its ancestors; never mkdir or sweep."""
+    os.close(_open_ancestor_chain(Path(os.path.abspath(directory))))
+
+
 def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = False) -> Path:
     """Validate via directory FDs, acquire an exclusive lock, then sweep. ``hold`` keeps lifetime ownership."""
     global _lock_fd, _lock_pid
@@ -116,20 +173,7 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
     try:
         # Validate the whole parent chain: a writable grandparent can replace even a 0700 parent
         # after activation, redirecting later TMPDIR allocations away from the locked inode.
-        parent_fd = os.open("/", os.O_DIRECTORY | os.O_NOFOLLOW)
-        for component in (".", *target.parent.parts[1:]):
-            try:
-                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
-            except FileNotFoundError:
-                os.mkdir(component, 0o700, dir_fd=parent_fd)
-                next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
-            os.close(parent_fd)
-            parent_fd = next_fd
-            parent_info = os.fstat(parent_fd)
-            if parent_info.st_uid not in {0, os.geteuid()} or (parent_info.st_mode & 0o022 and not parent_info.st_mode & stat.S_ISVTX):
-                raise PrivateTmpError(f"The private temporary directory parent chain for {target.parent} is not trusted "
-                                      f"(ancestor {component}, uid {parent_info.st_uid}, mode {stat.S_IMODE(parent_info.st_mode):04o}, "
-                                      f"service uid {os.geteuid()}).")
+        parent_fd = _open_ancestor_chain(target.parent, create=True)
         try:
             os.mkdir(target.name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
@@ -197,8 +241,16 @@ def activate(directory: Path | None = None) -> Path:
     tempfile.tempdir = str(target)
     for name in ("TMPDIR", "TMP", "TEMP", ENV_DIR):
         os.environ[name] = str(target)
-    os.environ[ENV_PREPARED] = str(target)
     os.environ[ENV_LOCK_FD] = str(_lock_fd)
+    if _active is None:
+        from gateway import admin_store
+
+        legacy_spool = admin_store.DB_PATH.parent / "stt-spool"
+        if legacy_spool.is_dir() and next(legacy_spool.iterdir(), None) is not None:
+            logging.getLogger(__name__).warning(
+                "Legacy STT spool %s is non-empty; follow the one-time removal in "
+                "docs/design/REQUEST_RETENTION.md section 5.1 row 4.", legacy_spool,
+            )
     _active = target
     return target
 
