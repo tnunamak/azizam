@@ -176,9 +176,9 @@ def test_start_script_prepares_before_anything_runs() -> None:
         assert script.index(later) > prepare
 
 
-def test_the_unit_asks_for_a_private_tmp() -> None:
+def test_the_unit_does_not_claim_a_private_tmp_it_cannot_get() -> None:
     lines = [line.strip() for line in (ROOT / "azizam.service").read_text().splitlines()]
-    assert "PrivateTmp=yes" in lines
+    assert "PrivateTmp=yes" not in lines
 
 
 def test_relative_stt_workspace_is_inside_the_private_directory(host_disk_dir: Path, clean_process: None) -> None:

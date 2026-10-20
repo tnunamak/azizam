@@ -1619,7 +1619,7 @@ live 5000 or 15000 services.
 | 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
 | 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
 | 3 | **LiteLLM keeps nothing.** See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
-| 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
+| 4 | **Temporary files.** A gateway-private `TMPDIR`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
 | 6 | **Facts and ledger.** The `retention_fact` schema and revisions; provider catalog seeds; protocol, definition and record levels; the ledger view and its routes and MCP action; the assembled "never save" text. | Adds views | 16.1.14; schema tests; a removed fact stays removed; the stale label; no network on read; live check 5 |
 | 7 | **Debug window.** The windows table; decision step 4; the `sent` part at the internal hop and the egress builder; error-part withholding by role; the engine-page button; the `debug_window` MCP tool and the CLI operations. | New kind | 16.1.4 (Debug reads); 16.1.12; 16.1.11 (window controls); 16.2 with a window open; the administrator on an owner-stored-key withholding case; live check 2 |
@@ -1721,12 +1721,12 @@ leaves open:
   request and an upload cut off mid-body. It scans the private directory, the
   process's default temporary directory, the old STT spool and the open and
   deleted files the process still holds.
-- `PrivateTmp=yes` is in the shipped unit. A user unit needs unprivileged user
+- The shipped unit has no `PrivateTmp=yes`. A user unit needs unprivileged user
   namespaces for it. Where the host restricts them (Ubuntu with
-  `kernel.apparmor_restrict_unprivileged_userns=1`) systemd accepts the line and
-  `/tmp` stays shared (checked on systemd 259), so the private `TMPDIR` is the
-  protection. Row 5 therefore claims the private directory, not a private
-  `/tmp`.
+  `kernel.apparmor_restrict_unprivileged_userns=1`) systemd accepts the line,
+  `/tmp` stays shared (checked on systemd 259) and `sudo` stops working in the
+  unit, so the line would be a control that does nothing. The private `TMPDIR`
+  is the protection. Row 5 claims the private directory, not a private `/tmp`.
 
 **Live checks for slice 3** run on a scratch instance with a scratch
 LiteLLM database:
