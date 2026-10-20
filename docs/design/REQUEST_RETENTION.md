@@ -553,7 +553,7 @@ Approved exceptions to the private pathname root are:
   reported as pending. Normal completion and errors unlink the staging file.
 - An absolute STT `spool_dir` from validated operator configuration is the
   operator's explicit storage choice (row 4). A caller-supplied helper path does
-  not grant this exception: parser workspaces must remain inside that spool root,
+  not grant this exception: parser workspaces must be strict descendants of that spool root,
   and derived media inside the source request's directory.
 
 Anonymous `memfd` media buffers are also approved: they have no filesystem
