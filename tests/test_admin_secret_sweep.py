@@ -149,6 +149,21 @@ def _get_routes(app) -> list[str]:
     return sorted({found.path for found in discover(app) if "GET" in found.methods})
 
 
+def test_sweep_receipt_seed_preserves_a_preexisting_store(tmp_path, monkeypatch, request):
+    existing = tmp_path / "preexisting-receipts.db"
+    receipt_store.init_db(existing)
+    receipt_store.record(RouteReceipt(request_id="preexisting", protocol="test", intent="test"), path=existing)
+    before = receipt_store.recent(audience="internal", path=existing)
+    monkeypatch.setattr(receipt_store, "DB_PATH", existing)
+
+    def unchanged_after_sweep_teardown():
+        assert receipt_store.recent(audience="internal", path=existing) == before
+
+    request.addfinalizer(unchanged_after_sweep_teardown)
+    request.getfixturevalue("host_isolated")
+    assert receipt_store.get(PARAMETERS["request_id"], audience="internal", path=receipt_store.DB_PATH) is not None
+
+
 def test_the_route_list_is_found_from_the_app_with_its_mounts_and_websockets(gateway) -> None:
     found = discover(gateway.proxy.app)
     paths = {item.path for item in found}
