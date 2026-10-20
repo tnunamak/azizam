@@ -46,6 +46,29 @@ def test_normalize_drops_punctuation_and_listed_fillers() -> None:
     assert m.normalize("That’s what you’re") == m.normalize("thats what youre")
 
 
+@pytest.mark.parametrize("operation", ["window", "pairs", "pieces", "interior", "buckets"])
+def test_overlapping_words_use_midpoint_membership_without_reordering_alignment(operation):
+    reference = [m.RefWord("before", -2, -1), m.RefWord("long", 0, 2),
+                 m.RefWord("short", .5, .7), m.RefWord("edge", 1, 1)]
+    scored = m.score_run(reference, m.Run(["short", "edge"], [(0, 1.5)]))
+    assert scored.reference_indexes == [1, 2, 3]
+    assert scored.alignment.status == [m.DELETED, m.OK, m.OK]
+    # [.5, 1): includes the short overlapping word, excludes both words at exactly 1.
+    if operation == "window":
+        assert list(scored.window(.75, .25)) == [1]
+    elif operation == "pairs":
+        other = m.score_run(reference, m.Run(["long", "short", "edge"], [(0, 3)]))
+        assert m._pairs(scored, other, [.75], .25, 0) == [(0, 0, 1)]
+    elif operation == "pieces":
+        assert m.piece_counts(scored, trim=.5) == [(1, 0, 1.5)]
+    elif operation == "interior":
+        # These are local alignment indexes, used by the length runner to map to the recording.
+        assert m.interior_deletions(scored, trim=.5) == {1: 0}
+    else:
+        row = m.deletion_by_length([(reference, scored)], [2], trim=.5)[0]
+        assert (row["words"], row["deletion_pct"]) == (1, 0)
+
+
 def _recording(seconds=900.0, step=0.4):
     return [m.RefWord(f"w{i}", i * step, i * step + 0.3) for i in range(int(seconds / step))]
 

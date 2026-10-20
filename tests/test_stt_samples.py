@@ -410,3 +410,70 @@ def test_fetch_sample_cuts_the_audio_to_cut_seconds(tmp_path):
     prepared = stt_samples.fetch_sample(spec, tmp_path / "cache", client_factory=_Server(bodies).client)
     assert prepared.duration_seconds == 0.6
     assert [w[0] for w in prepared.words] == ["thats"]
+
+
+@pytest.mark.parametrize("kind", sorted(stt_samples.RECIPES))
+def test_each_recipe_perfect_transcription_scores_zero(tmp_path, kind, record_property):
+    from gateway import stt_measure as m
+
+    bodies, params, _ = _recipe_case(kind)
+    spec = _recipe_spec(tmp_path, kind, bodies, params)
+    files = {}
+    for name, body in bodies.items():
+        files[name] = tmp_path / name
+        files[name].write_bytes(body)
+    words = stt_samples.build_reference(spec, files)
+    reference = [m.RefWord(*word) for word in words]
+    hypothesis = m.normalize(" ".join(word for word, _, _ in words))
+    scored = m.score_run(reference, m.Run(hypothesis, [(0, 2)]))
+    record_property("perfect_wer", m.word_error_rate(scored))
+    assert m.word_error_rate(scored) == 0
+
+
+def test_reference_normalization_preserves_unicode_underscores_and_split_word_times(tmp_path):
+    from gateway import stt_measure as m
+
+    text = "Don't Café 東京 under_score well-known _ &lt;inaudible&gt;"
+    xml = f'<root><w starttime="0" endtime="2">{text}</w></root>'
+    bodies = {"audio": b"a", "annotations": _zip_bytes({"words.xml": xml})}
+    params = {"audio": "audio", "annotations": "annotations", "word_members": ["words.xml"]}
+    spec = _recipe_spec(tmp_path, "ami-words", bodies, params)
+    files = {}
+    for name, body in bodies.items():
+        files[name] = tmp_path / name
+        files[name].write_bytes(body)
+    words = stt_samples.build_reference(spec, files)
+    expected = ["dont", "café", "東京", "under_score", "well", "known"]
+    assert words == [(word, 0, 2) for word in expected]
+    scored = m.score_run([m.RefWord(*w) for w in words],
+                         m.Run(m.normalize("Don’t Café 東京 under_score well-known _ <inaudible>"), [(0, 3)]))
+    assert m.word_error_rate(scored) == 0
+
+
+def test_short_successful_download_is_rejected_and_cleans_up(tmp_path):
+    spec = _download_spec(tmp_path, b"complete")
+    with pytest.raises(SampleError, match="gave 3 bytes, but the manifest declares 8"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=_server(b"cut").client)
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_midstream_disconnect_closes_stream_and_client_and_cleans_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(stt_samples, "CHUNK_BYTES", 2)
+    spec = _download_spec(tmp_path, b"complete")
+    seen, closed = [], []
+
+    class BrokenStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"co"
+            raise httpx.RemoteProtocolError("connection lost mid-body")
+
+        def close(self):
+            closed.append(True)
+
+    client = httpx.Client(transport=HandlerTransport(lambda request: httpx.Response(200, stream=BrokenStream())))
+    with pytest.raises(SampleError, match="connection broke before the file was complete"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=lambda: client,
+                                  progress=lambda done, total, label: seen.append(done))
+    assert seen == [2]
+    assert closed and client.is_closed
+    assert list((tmp_path / "cache").iterdir()) == []

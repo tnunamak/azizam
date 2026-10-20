@@ -427,7 +427,7 @@ def test_job_deadline_also_cancels_preparation(setup, monkeypatch):
 
 
 @pytest.mark.parametrize("width", [2, 15])
-def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(setup, monkeypatch, tmp_path, width):
+def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(setup, monkeypatch, tmp_path, width, record_property):
     _, _, _, runner, ctx = setup
     references = [sm.measure.RefWord(f"word{i}", i + .1, i + .4) for i in range(120)]
     async def prepare(job, spec, folder, policy):
@@ -466,6 +466,7 @@ def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(se
         policy["recommendation"].update(min_length_words=20, min_length_blocks=2, min_seam_pairs=2,
                                          min_seam_words=10, min_noise_pairs=2, min_noise_words=10)
         result = await runner._measure(ctx, job, {**policy, "audio_seconds_per_sample": 120, "resamples": 40}, tmp_path)
+        record_property("measurement_report", json.dumps(result, sort_keys=True))
         assert [row["search"] for row in result["seam_excess"]] == [0, width]
         assert all(row["deletion_pct"] == 0 for row in result["deletions_by_length"])
         assert all(row["points"] > 0 and row["excess_pp"] == 0 and row["noise"]["excess_pp"] == 0 for row in result["seam_excess"])
@@ -872,7 +873,7 @@ def test_proxy_gpu_credit_uses_only_the_selected_service_attribution(setup, monk
 
 
 @pytest.mark.parametrize("sparse", [False, True])
-def test_default_measurement_pairs_shared_deletions_and_reports_abstention(setup, monkeypatch, tmp_path, sparse):
+def test_default_measurement_pairs_shared_deletions_and_reports_abstention(setup, monkeypatch, tmp_path, sparse, record_property):
     import random
     _, _, _, runner, ctx = setup
     seconds = 300
@@ -910,6 +911,7 @@ def test_default_measurement_pairs_shared_deletions_and_reports_abstention(setup
         job = _job(runner)
         job.update(sample_ids=policy["sample_ids"], lengths=policy["lengths"], search_widths=policy["search_widths"])
         report = await runner._measure(ctx, job, policy, tmp_path)
+        record_property("measurement_report", json.dumps(report, sort_keys=True))
         assert job["completed"] <= policy["max_gateway_requests"]
         assert all(row["baseline_length"] == 20 for row in report["deletions_by_length"])
         assert "Gross-harm" in report["recommendation_note"]
