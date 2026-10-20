@@ -949,20 +949,6 @@ async def probe_audio(
         )
     except (IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata") from error
-    if duration is None:
-        # Some containers (notably a Chrome MediaRecorder webm whose recording
-        # session ended without a clean stop) carry audio/video sample data but
-        # never get a trailing Cues/duration element written. ffprobe's cheap
-        # format-level read then reports no duration at all even though the
-        # stream decodes fine. Packet timestamps provide an advisory length;
-        # even if these are absent, bounded decoding determines the true length.
-        duration = await _probe_duration_from_packets(
-            source_path,
-            config=config,
-            cancellation_waiters=cancellation_waiters,
-            deadline_at=deadline_at,
-            on_cancel=on_cancel,
-        )
     if sample_rate <= 0 or channels <= 0:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
     if sample_rate > config.max_sample_rate or channels > config.max_channels:
@@ -982,59 +968,6 @@ def _finite_positive_or_none(value: Any) -> float | None:
     return parsed
 
 
-async def _probe_duration_from_packets(
-    source_path: Path,
-    *,
-    config: SttExecutionConfig,
-    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
-    deadline_at: float,
-    on_cancel: Callable[[], None] | None,
-) -> float | None:
-    """Recover duration from the last audio packet's timestamp plus its length.
-
-    Cheaper than a full decode (``-count_frames``): ffprobe only needs to
-    demux packet headers, not decode every frame. Malformed trailing packets
-    (a truncated final Opus frame from an interrupted recording) print a
-    decoder warning on stderr but do not stop packet enumeration, so this
-    still recovers a usable duration for files with minor trailing damage.
-    """
-    try:
-        stdout, _ = await run_media_command(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a:0",
-                "-show_entries",
-                "packet=pts_time,duration_time",
-                "-of",
-                "csv=p=0",
-                os.fspath(source_path),
-            ],
-            timeout_seconds=min(60.0, config.timeout_seconds),
-            cancellation_waiters=cancellation_waiters,
-            deadline_at=deadline_at,
-            on_cancel=on_cancel,
-            max_output_bytes=config.max_media_output_bytes,
-        )
-    except SttSetupFailure:
-        return None
-    last_end: float | None = None
-    for line in stdout.decode("utf-8", errors="replace").splitlines():
-        parts = line.strip().split(",")
-        if len(parts) != 2:
-            continue
-        pts = _finite_positive_or_none(parts[0])
-        packet_duration = _finite_positive_or_none(parts[1])
-        if pts is None:
-            continue
-        end = pts + packet_duration if packet_duration is not None else pts
-        if last_end is None or end > last_end:
-            last_end = end
-    return last_end
-
-
 async def decode_planning_pcm(
     source_path: Path,
     destination_path: Path,
@@ -1045,17 +978,22 @@ async def decode_planning_pcm(
     on_cancel: Callable[[], None] | None,
     sample_rate: int = _PLANNING_SAMPLE_RATE,
     channels: int = 1,
+    stop_after_seconds: float | None = None,
 ) -> None:
     """Decode bounded PCM; planning defaults to mono 16 kHz, strict duration checks retain the source format."""
     bytes_per_second = sample_rate * channels * 2
-    max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * bytes_per_second))
-    # Ask for one extra sample to detect an over-limit stream without decoding an unbounded input.
+    frame_bytes = channels * 2
+    max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * sample_rate) * frame_bytes)
+    # One complete interleaved frame detects overflow, including stereo input.
+    output_limit = max_pcm_bytes + frame_bytes
+    if stop_after_seconds is not None:
+        output_limit = min(output_limit, (math.floor(stop_after_seconds * sample_rate) + 1) * frame_bytes)
     await run_media_command(
         [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-i", os.fspath(source_path),
             "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
-            "-t", str((max_pcm_bytes + 2) / bytes_per_second), "-fs", str(max_pcm_bytes + 2),
+            "-t", str(output_limit / bytes_per_second), "-fs", str(output_limit),
             os.fspath(destination_path),
         ],
         timeout_seconds=config.timeout_seconds,
@@ -1139,6 +1077,7 @@ def plan_quietest_frame_segments(
     search_seconds: float,
     max_segment_seconds: float,
     max_segments: int,
+    sample_rate: int = _PLANNING_SAMPLE_RATE,
 ) -> list[tuple[float, float]]:
     """Cut at the quietest frame near each multiple of the target; no overlap, no segment above the hard maximum.
 
@@ -1150,6 +1089,9 @@ def plan_quietest_frame_segments(
     """
     if max_segment_seconds < target_seconds:
         raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
+    # ffmpeg rounds extraction times to source samples. A fractional-sample
+    # maximum must be rounded down before planning, never after a chunk is sent.
+    max_segment_seconds = math.floor(max_segment_seconds * sample_rate) / sample_rate
     width = min(search_seconds, target_seconds / 2)
     min_segment_seconds = min(_MIN_SEGMENT_SECONDS, target_seconds / 2)
     end_limit = min(max_segment_seconds, target_seconds * (1.0 + _TAIL_FRACTION_OF_TARGET))
@@ -1287,7 +1229,8 @@ async def guard_uncut_uploads(
                                        deadline_at=deadline_at, on_cancel=on_cancel)
             await decode_planning_pcm(path, pcm_path, config=config, cancellation_waiters=cancellation_waiters,
                                       deadline_at=deadline_at, on_cancel=on_cancel,
-                                      sample_rate=probed.sample_rate, channels=probed.channels)
+                                      sample_rate=probed.sample_rate, channels=probed.channels,
+                                      stop_after_seconds=config.max_segment_seconds)
             duration = pcm_path.stat().st_size / (probed.sample_rate * probed.channels * 2)
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
@@ -1342,6 +1285,7 @@ async def execute_chunking(
 
     probed: ProbedAudio | None = None
     planning_duration: float | None = None
+    source_sample_rate = _PLANNING_SAMPLE_RATE
     pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
@@ -1351,6 +1295,7 @@ async def execute_chunking(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
+        source_sample_rate = probed.sample_rate
         if cleanup is not None:
             cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         try:
@@ -1378,6 +1323,7 @@ async def execute_chunking(
             search_seconds=config.search_seconds,
             max_segment_seconds=config.max_segment_seconds,
             max_segments=config.max_segments,
+            sample_rate=source_sample_rate,
         )
     except (
         asyncio.CancelledError,
