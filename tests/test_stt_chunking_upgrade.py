@@ -37,6 +37,17 @@ def test_a_record_with_other_values_or_its_own_new_keys_is_left_alone() -> None:
     assert stt_chunking_upgrade.upgraded_chunking("stt-parakeet-gpu", {**OLD_SEEDED, "enabled": False}, rules) is None
 
 
+def test_cpu_seeded_silence_fields_are_removed_individually_without_erasing_owner_values() -> None:
+    rules = stt_chunking_upgrade.load_upgrades()
+    seeded = {"silence_search_seconds": 120, "silence_noise_db": "-30dB", "silence_min_seconds": 0.5,
+              "threshold_seconds": 180}
+    assert stt_chunking_upgrade.upgraded_chunking("stt", seeded, rules) == {"threshold_seconds": 180}
+    customized = {**seeded, "silence_noise_db": "-20dB", "silence_min_seconds": 0.8}
+    assert stt_chunking_upgrade.upgraded_chunking("stt", customized, rules) == {
+        "silence_noise_db": "-20dB", "silence_min_seconds": 0.8, "threshold_seconds": 180,
+    }
+
+
 def test_the_admin_migration_upgrades_only_the_matching_record_and_runs_once(tmp_path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)

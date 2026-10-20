@@ -555,7 +555,6 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         long_file = stt_chunking.ProbedAudio(1320, 16000, 1)
         for name, kwargs, reason in (
             ("probe cannot determine a duration", {"probed": None, "probe_error": stt_chunking.SttMediaCommandFailed("x")}, "unknown_duration"),
-            ("decoder rejects the file", {"probed": long_file, "decode_error": stt_chunking.SttMediaCommandFailed("x")}, "unreadable_media"),
             ("a local tool is missing", {"probed": long_file, "decode_error": stt_chunking.SttSetupFailure("x")}, "split_failed"),
             ("the decoded audio cannot be read", {"probed": long_file, "decode_error": OSError("disk")}, "split_failed"),
         ):
@@ -563,6 +562,31 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 result, posts = await self._run_unplannable(**kwargs)
                 self.assertIsInstance(result, stt_chunking.SttAudioNotSplittable)
                 self.assertEqual((result.reason, result.limit_seconds, posts), (reason, 40.0, []))
+
+    async def test_probeable_short_file_with_undecodable_codec_is_invalid_audio_in_both_paths(self) -> None:
+        # ffprobe reads the WAV duration; ffmpeg cannot decode its unknown codec tag.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "unknown-codec.wav"
+            samples = b"\0" * 80_000
+            fmt = struct.pack("<HHIIHH", 0x7777, 1, 8000, 8000, 1, 8)
+            body = b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(samples)) + samples
+            source.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
+            deadline = asyncio.get_running_loop().time() + 30
+            probed = await stt_chunking.probe_audio(source, config=config, cancellation_waiters=(), deadline_at=deadline, on_cancel=None)
+            self.assertAlmostEqual(probed.duration_seconds, 10, delta=0.01)
+            post = AsyncMock()
+            with self.assertRaises(stt_chunking.SttInvalidAudio):
+                await stt_chunking.execute_chunking(
+                    source_path=source, source_stem="unknown-codec", fields=(("response_format", "json"),),
+                    config=config, post_file=post, cancellation_waiters=(), deadline_at=deadline, on_cancel=None,
+                )
+            with self.assertRaises(stt_chunking.SttInvalidAudio):
+                await stt_chunking.guard_uncut_uploads(
+                    [source], config=config, cancellation_waiters=(), deadline_at=deadline, on_cancel=None,
+                )
+            post.assert_not_awaited()
 
     async def test_unknown_duration_refusal_does_not_claim_the_file_is_long(self) -> None:
         result, posts = await self._run_unplannable(
