@@ -266,7 +266,7 @@
             }
           }
         ],
-        "created": 1792454400,
+        "created": "<time>",
         "id": "chatcmpl-fixture",
         "model": "loaded-test-model",
         "object": "chat.completion",

@@ -708,8 +708,8 @@ def test_chat_current_loaded(tmp_path, record_testsuite_property):
         response = await proxy._forward_current_loaded_openai_request(
             _request(body), request_path="/v1/chat/completions", auth_context=access_context(), body_json=body)
         assert response.status_code == 200, response.body
-        rig.note("response", {"status": response.status_code, "body": json.loads(response.body),
-                              "headers": rig.norm.value(dict(response.headers))})
+        rig.note("response", rig.norm.value({"status": response.status_code, "body": json.loads(response.body),
+                                             "headers": dict(response.headers)}))
         stored = receipt_store.get(response.headers["x-azizam-request-id"], audience="internal", path=rig.receipts_db)
         assert stored["status"] == "succeeded"
         assert stored["retention_facts"]
