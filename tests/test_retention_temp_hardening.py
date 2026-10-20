@@ -217,7 +217,7 @@ def test_stt_media_helpers_refuse_escape_before_command_or_unlink(tmp_path, monk
     monkeypatch.setattr(stt, "run_media_command", command)
     sentinel = source.parent / "planning-16k.pcm"
     sentinel.write_bytes(b"keep")
-    uncut = source.parent / "uncut-0-16k.pcm"
+    uncut = source.parent / "uncut-0-source.pcm"
     uncut.write_bytes(b"keep")
 
     async def run():

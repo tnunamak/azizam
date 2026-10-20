@@ -494,8 +494,8 @@ def test_disk_lease_covers_segment_and_verification_pcm(tmp_path):
     with patch.object(stt, "_disk_free_bytes", return_value=10**12):
         lease = gate.acquire(request_id="verify-peak", config=execution)
     try:
-        assert gate._reserved_bytes == 3 * mib
-        assert execution.request_claim().disk_mb == 3
+        assert gate._reserved_bytes == 4 * mib
+        assert execution.request_claim().disk_mb == 4
     finally:
         lease.release()
 

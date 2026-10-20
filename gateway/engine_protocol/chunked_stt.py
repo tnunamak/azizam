@@ -223,13 +223,16 @@ class _RunWire:
         """Decode the upload to 16 kHz mono WAV, the only input audio.cpp engines accept."""
         run = self._run
         destination = run.workspace / "normalized-16k.wav"
+        stt_chunking._validate_media_paths(stt_chunking.source_path(upload), run.execution, destination)
         run.cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
+        pcm_limit = min(run.execution.max_decoded_bytes, int(run.execution.max_duration_seconds * 16000) * 2)
         try:
             await stt_chunking.run_media_command(
                 [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-i", os.fspath(stt_chunking.source_path(upload)),
                     "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
+                    "-t", str((pcm_limit + 2) / 32000), "-fs", str(pcm_limit + 80),
                     os.fspath(destination),
                 ],
                 timeout_seconds=run.execution.timeout_seconds,
@@ -246,6 +249,10 @@ class _RunWire:
             raise stt_chunking.SttInvalidAudio("STT input holds no decodable audio")
         if size > run.execution.max_decoded_bytes:
             raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
+        import wave
+        with wave.open(os.fspath(destination)) as audio:
+            if audio.getnframes() * 2 > pcm_limit:
+                raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
         return destination
 
     async def open_stream(self, path: Path, filename: str) -> TranscriptReply | StreamReply:
@@ -303,27 +310,37 @@ class ChunkedSttAdapter:
     @staticmethod
     async def _post_once(url: str, timeout: httpx.Timeout, request: SttUpload) -> Reply:
         execution = request.execution
-        workspace = stt_chunking.create_request_workspace(execution)
+        workspace = None
+        lease = None
+        deadline_at = time.monotonic() + execution.deadline_seconds
         try:
-            paths = []
-            total_bytes = 0
-            for index, (_filename, content, _media_type) in enumerate(request.parts.values()):
-                total_bytes += len(content)
-                if total_bytes > execution.max_input_bytes:
-                    raise stt_chunking.SttResourceLimitExceeded("Uploaded audio exceeds the configured STT limit")
-                path = workspace / f"upload-{index}.part"
-                path.write_bytes(content)
-                paths.append(path)
-            await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
-                deadline_at=time.monotonic() + execution.deadline_seconds, on_cancel=None)
+            if sum(len(content) for _filename, content, _media_type in request.parts.values()) > execution.max_input_bytes:
+                raise stt_chunking.SttResourceLimitExceeded("Uploaded audio exceeds the configured STT limit")
+            if stt_chunking.uncut_upload_needs_decode(execution):
+                lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id="voice-reference", config=execution)
+                workspace = stt_chunking.create_request_workspace(execution)
+                paths = []
+                for index, (_filename, content, _media_type) in enumerate(request.parts.values()):
+                    path = workspace / f"upload-{index}.part"
+                    path.write_bytes(content)
+                    paths.append(path)
+                await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
+                    deadline_at=deadline_at, on_cancel=None)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if request.on_whole_file_attempt is not None:
                     request.on_whole_file_attempt()
-                resp = await client.post(url, files=request.parts, data=request.body)
+                resp = await stt_chunking.await_with_cancellation(
+                    client.post(url, files=request.parts, data=request.body), cancellation_waiters=(),
+                    deadline_at=deadline_at, on_cancel=None)
         except httpx.HTTPError as error:
             raise failure(error) from error
         finally:
-            stt_chunking.remove_request_workspace(workspace)
+            try:
+                if workspace is not None:
+                    stt_chunking.remove_request_workspace(workspace)
+            finally:
+                if lease is not None:
+                    lease.release()
         return reply_from(resp)
 
     async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun) -> TranscriptReply | StreamReply:
@@ -359,11 +376,12 @@ class ChunkedSttAdapter:
         # All whole-file fallbacks share the same final limit check, including
         # setup failures and short/single-segment plans. Native-per-mode policy
         # is resolved by the guard, never by the envelope's fallback label.
-        await stt_chunking.guard_uncut_uploads(
-            [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
-            config=execution, cancellation_waiters=run.cancellation_waiters,
-            deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
-        )
+        if outcome.verified_duration_seconds is None or outcome.verified_duration_seconds > execution.max_segment_seconds:
+            await stt_chunking.guard_uncut_uploads(
+                [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
+                config=execution, cancellation_waiters=run.cancellation_waiters,
+                deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
+            )
         if run.on_whole_file_attempt is not None:
             run.on_whole_file_attempt()
         if run.stream and len(uploads) == 1:

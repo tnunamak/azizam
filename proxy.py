@@ -4034,6 +4034,10 @@ async def _reference_transcript(
             "stt.transcribe", clip,
         )
         text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
+    except stt_chunking.SttInvalidAudio as error:
+        raise custom_voices.VoiceError(400, "invalid_audio", "The voice reference is not readable audio.", param="file") from error
+    except stt_chunking.SttDeadlineExceeded as error:
+        raise custom_voices.VoiceError(504, "stt_deadline_exceeded", "The voice reference transcription deadline exceeded.") from error
     except stt_chunking.SttExecutionError as error:
         raise custom_voices.VoiceError(
             503, "backend_unavailable", "The voice reference cannot be transcribed within the STT service limits.",
