@@ -38,7 +38,10 @@
 # Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
 # legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
-pytest = 14959
+# Private-temp hardening: 28 regression cases for explicit workspace escapes,
+# metadata staging/orphans, anonymous memfd failures and allocation ownership.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14987.
+pytest = 14987
 vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
 playwright = 490
 

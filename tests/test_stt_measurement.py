@@ -30,6 +30,7 @@ def setup(gateway, monkeypatch):
     registry["services"]["speech-test"] = record
     _put_registry(gateway, registry)
     runner = gateway.proxy.STT_MEASUREMENTS
+    monkeypatch.setattr(sm.private_tmp, "current", lambda: gateway.path.parent / "private-tmp")
     monkeypatch.setattr(runner, "path", gateway.path.with_name("stt_measurements.db"))
     monkeypatch.setattr(runner, "initialized", False)
     monkeypatch.setattr(runner, "tasks", {})
@@ -272,7 +273,7 @@ def test_owner_role_removal_invalidates_measurement_access(setup, monkeypatch):
     assert not gw.proxy._operator_stt_owner_active(ctx)
 
 
-def test_startup_cleanup_removes_orphaned_workspaces(setup, tmp_path):
+def test_startup_cleanup_removes_legacy_db_adjacent_workspaces(setup, tmp_path):
     _, _, _, runner, _ = setup
     orphan = tmp_path / "stt-measurement-work" / "job-orphan"
     orphan.mkdir(parents=True)
@@ -760,7 +761,7 @@ def test_resident_vram_is_credited_only_to_the_measured_service():
 def test_startup_cleans_orphan_scratch_but_respects_live_worker_lease(setup):
     gw, _, _, runner, _ = setup
     import fcntl
-    scratch = runner.path.parent / "stt-measurement-work" / "job-abandoned"
+    scratch = runner._scratch_directory() / "job-abandoned"
     scratch.mkdir(parents=True)
     (scratch / "partial-download").write_bytes(b"synthetic partial source")
     with (runner.path.parent / "stt-measurement-work.lock").open("a+b") as lease:
