@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 import wave
 from unittest.mock import AsyncMock
