@@ -32,6 +32,7 @@ import {
   isShorter,
   keepsForever,
   memberRetentionLabel,
+  memberUnofferedNote,
   promptMemoryKey,
   purgeStatus,
   retentionChoices,
@@ -152,10 +153,10 @@ function PromptsSection() {
   const retention = isKnownRetention(memory.effective_retention)
     ? memory.effective_retention
     : defaultRetention();
-  const legacyNote = unofferedRetentionNote(
+  const legacyNote = memberUnofferedNote(
     data.unoffered?.retention,
     retention,
-    memberRetentionLabel,
+    cap,
   );
   const capLegacyNote = unofferedRetentionNote(
     data.unoffered?.retention_cap,

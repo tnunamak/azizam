@@ -56,6 +56,8 @@ export interface MemberPromptMemory {
 export interface PromptPurge {
   pending?: boolean;
   database_pending?: boolean;
+  /** Startup could not shorten saved prompt deadlines yet (owner status only). */
+  deadline_repair_pending?: boolean;
   retry_scheduled?: boolean;
   retry_required?: boolean;
   metadata_stripping?: {
@@ -182,6 +184,28 @@ export function unofferedRetentionNote(
     : `Previous choice ${previous} (no longer offered). Using ${label(effective).toLowerCase()}.`;
 }
 
+/**
+ * Explain a member's saved period that cannot be newly selected. A period
+ * that still exists keeps its meaning, so a shorter effective one is the
+ * gateway limit's doing; a deleted ID gives way to the fallback.
+ */
+export function memberUnofferedNote(
+  stored: Retention | undefined,
+  effective: Retention,
+  cap: Retention,
+): string | null {
+  if (!stored) return null;
+  const previous = memberRetentionLabel(stored).toLowerCase();
+  const using = memberRetentionLabel(effective).toLowerCase();
+  if (!knownChoice(stored))
+    return `Your previous choice, ${previous}, was removed. Using ${using}.`;
+  if (stored === effective)
+    return `Your choice, ${previous}, is no longer offered but still applies.`;
+  return cap === effective
+    ? `Your choice, ${previous}, is no longer offered. The gateway limit of ${capLabel(cap).toLowerCase()} applies instead.`
+    : `Your choice, ${previous}, is no longer offered. Using ${using}.`;
+}
+
 /** True when `next` keeps prompts for less time than `current`. */
 export function isShorter(next: Retention, previous: Retention): boolean {
   return length(next) < length(previous);
@@ -298,6 +322,8 @@ export function purgeStatus(
   if (!purge?.pending) return null;
   if (purge.database_pending)
     return "Prompt deletion hasn't finished. Azizam keeps retrying.";
+  if (purge.deadline_repair_pending)
+    return "Saved prompts haven't been shortened to the current limits yet. Azizam keeps retrying.";
   const stripping = purge.metadata_stripping;
   const left = stripping?.files_pending;
   const count =

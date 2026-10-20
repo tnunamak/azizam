@@ -119,12 +119,6 @@ class Contract:
     def parts(self, kind: str) -> tuple[str, ...]:
         return tuple(self.data["kinds"][kind]["parts"]["default"])
 
-    def no_expiry(self, kind: str) -> str:
-        """The choice that keeps content with no deadline; the group's default period when it has none."""
-        seconds = self.data["retention_choices"]
-        group = self.group(kind)
-        return next((name for name in group["choices"] if seconds[name] is None), group["default_retention"])
-
     def public(self, kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
         """What the settings screens need to draw one group: its choices (listing order) and every default."""
         seconds = self.data["retention_choices"]
@@ -169,8 +163,6 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for choice in group["choices"]:
             if choice not in seconds:
                 errors.append(f"groups/{name}/choices: {choice} is not in retention_choices")
-        if not any(seconds.get(choice) is not None for choice in group["choices"] if choice in seconds):
-            errors.append(f"groups/{name}/choices: slice 1 needs a finite choice for deleted stored periods")
         for field in ("default_retention", "default_cap"):
             if group[field] not in group["choices"]:
                 errors.append(f"groups/{name}/{field}: {group[field]} is not one of the group's choices")
@@ -340,12 +332,18 @@ def unoffered_household_cap(document: Mapping[str, Any] | None) -> str | None:
 
 
 def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
-    """Keep known stored IDs; a deleted ID uses the shortest finite offered period."""
+    """Keep a stored ID that is in ``retention_choices``, offered or not; a deleted ID uses the shortest
+    finite offered period. A file that offers only no-expiry choices has no such period: that is a data error
+    only when a stored ID was deleted."""
     contract = bundled()
     seconds = contract.seconds_map()
     if value in seconds:
         return value
     finite = [choice for choice in contract.choices(kind) if seconds[choice] is not None]
+    if not finite:
+        raise RetentionDataError(
+            f"{contract.source}: the stored period {value} is not in retention_choices and the group offers "
+            "no finite choice to replace it; restore the ID or offer a finite choice")
     return min(finite, key=lambda choice: seconds[choice])
 
 
@@ -355,15 +353,13 @@ def unoffered_period(value: Any, *, kind: str = LIBRARY_PROMPT) -> str | None:
 
 
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:
-    """The shorter normalized period; display, decisions and writes use this same result."""
-    contract = bundled()
-    seconds = contract.seconds_map()
+    """The shorter normalized period; display, decisions, writes, maintenance and startup repair all use it.
+    When neither period expires, the member's own ID stands: it keeps its exact meaning."""
+    seconds = bundled().seconds_map()
     periods = (normalize_period(member_period, kind=kind, owner_cap=False),
                normalize_period(cap, kind=kind, owner_cap=True))
     finite = [value for value in periods if seconds[value] is not None]
-    if not finite:
-        return contract.no_expiry(kind)
-    return min(finite, key=lambda value: seconds[value] or 0)
+    return min(finite, key=lambda value: seconds[value]) if finite else periods[0]
 
 
 def effective(member: Mapping[str, Any] | None, household_policy: Mapping[str, Any] | None,

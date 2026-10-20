@@ -148,11 +148,40 @@ describe("Your settings: prompts", () => {
       name: "Forget prompts after",
     });
     expect(select).toHaveTextContent("3 months");
-    expect(screen.getByText(/3 months \(no longer offered\)/)).toBeVisible();
+    expect(
+      screen.getByText(
+        "Your choice, 3 months, is no longer offered but still applies.",
+      ),
+    ).toBeVisible();
     await user.click(select);
     expect(screen.queryByRole("option", { name: /3 months/ })).toBeNull();
     expect(screen.getByRole("option", { name: "1 year" })).toBeVisible();
     expect(mocks.savePromptMemory).not.toHaveBeenCalled();
+  });
+
+  it("names the gateway limit when it shortens a choice that is no longer offered", async () => {
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "1_week", seconds: 604_800 },
+        ],
+        [{ id: "3_months", seconds: 7_776_000 }],
+      ),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "3_months", effective_retention: "1_week" },
+        { retention_cap: "1_week" },
+        { unoffered: { retention: "3_months" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    expect(
+      await screen.findByText(
+        "Your choice, 3 months, is no longer offered. The gateway limit of 1 week applies instead.",
+      ),
+    ).toBeVisible();
   });
 
   it("shows a deleted stored choice and its effective fallback", async () => {
@@ -172,7 +201,7 @@ describe("Your settings: prompts", () => {
     wrap(<AccountPage />);
     expect(
       await screen.findByText(
-        "Previous choice 1 year (no longer offered). Using 3 months.",
+        "Your previous choice, 1 year, was removed. Using 3 months.",
       ),
     ).toBeVisible();
     expect(

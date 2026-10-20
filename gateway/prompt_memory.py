@@ -289,6 +289,31 @@ def tighten_retention(period: str, *, person_id: str | None = None,
         conn.close()
 
 
+def require_resolvable_periods(*, admin_path: Path) -> None:
+    """Startup check: every stored period ID is in the contract, or a finite offered choice can replace it.
+
+    A file that offers only no-expiry choices is valid until a stored ID is deleted from it. Then the gateway
+    has no period to apply, so it stops with the ID named (``retention.normalize_period`` raises).
+    """
+    try:
+        conn = connect_readonly(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+        try:
+            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences")}
+            row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        logging.getLogger(__name__).warning("stored retention period check deferred")
+        return
+    try:
+        groups = json.loads(row[0]).get("groups") if row else None
+        cap = (groups or {}).get(retention.GROUP_PROMPTS, {}).get("retention_cap")
+    except (AttributeError, TypeError, ValueError):
+        cap = None  # A corrupt setting is tolerated and logged by the deadline repair.
+    for period in sorted(item for item in (*stored, cap) if isinstance(item, str)):
+        retention.normalize_period(period, kind=retention.LIBRARY_PROMPT, owner_cap=period == cap)
+
+
 def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> int:
     """On startup, apply the current contract's shorter deadlines to saved prompts.
 

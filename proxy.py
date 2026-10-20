@@ -12715,12 +12715,26 @@ def _migrate_host_command_permission() -> None:
     )
 
 
+#: Set when startup could not shorten saved prompt deadlines; the owner's prompt status shows it until a
+#: maintenance pass repairs them.
+_PROMPT_DEADLINE_REPAIR_PENDING = False
+
+
 async def _repair_prompt_deadlines_at_startup() -> None:
+    global _PROMPT_DEADLINE_REPAIR_PENDING
     try:
         await asyncio.to_thread(prompt_memory.tighten_contract_periods,
                                 admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
     except Exception as exc:
+        _PROMPT_DEADLINE_REPAIR_PENDING = True
         print(f"[proxy] prompt deadline repair pending: {type(exc).__name__}", flush=True)
+
+
+def _retry_prompt_deadline_repair() -> None:
+    global _PROMPT_DEADLINE_REPAIR_PENDING
+    if _PROMPT_DEADLINE_REPAIR_PENDING:
+        prompt_memory.tighten_contract_periods(admin_path=ADMIN_STORE.path, path=media_jobs.DB_PATH)
+        _PROMPT_DEADLINE_REPAIR_PENDING = False
 
 
 @asynccontextmanager
@@ -12731,6 +12745,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
     # Try deadline repair before serving; recurring maintenance retries failures.
     await _repair_prompt_deadlines_at_startup()
@@ -20225,10 +20240,18 @@ def _finish_prompt_purge(person_id: str, generation: int, cutoff: int, *, comple
 
 
 def _prompt_purge_status(person_id: str) -> dict[str, Any]:
-    """Report queued cached-file cleanup for one person, household cleanup included.
+    """Report queued cached-file cleanup for one person, household cleanup included, and for the owner
+    ("*") a startup deadline repair that has not finished.
 
     Rows carry error codes and counts only, never file names or prompt text.
     """
+    status = _queued_prompt_purge_status(person_id)
+    if person_id == "*" and _PROMPT_DEADLINE_REPAIR_PENDING:
+        return {**status, "pending": True, "retry_scheduled": True, "deadline_repair_pending": True}
+    return status
+
+
+def _queued_prompt_purge_status(person_id: str) -> dict[str, Any]:
     rows = []
     if _prompt_migration_state_path().exists():
         with _prompt_purge_queue() as conn:
@@ -20456,14 +20479,14 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        period = retention.normalize_period(policy["retention"], kind=retention.LIBRARY_PROMPT, owner_cap=False)
+        period = retention.effective_period(policy["retention"], policy["retention_cap"])
     prompt_memory.tighten_retention(period, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
     # Each step reads its own setting when it runs. A decision read at the
     # start of the pass can be stale by the time a slow step reaches it.
-    operations = [_maintain_household_prompt_memory]
+    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)

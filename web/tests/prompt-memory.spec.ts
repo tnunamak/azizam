@@ -125,6 +125,11 @@ describe("withForget", () => {
 });
 
 describe("purgeStatus", () => {
+  it("reports a startup deadline repair that has not finished", () => {
+    expect(purgeStatus({ pending: true, deadline_repair_pending: true })).toBe(
+      "Saved prompts haven't been shortened to the current limits yet. Azizam keeps retrying.",
+    );
+  });
   it("is silent when nothing is pending", () => {
     expect(purgeStatus(undefined)).toBeNull();
     expect(

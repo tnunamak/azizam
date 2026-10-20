@@ -1615,15 +1615,26 @@ the build chose a form that the text above leaves open:
 - A stored member period or owner cap keeps its exact meaning while its ID
   exists in `retention_choices`, even if it leaves the group's offered
   `choices`. The settings views mark it "(no longer offered)"; it cannot be
-  newly selected. If its ID leaves `retention_choices`, the shortest finite
-  offered choice applies, never `never`. One normalization feeds the settings
-  view, request decision, writer, maintenance and startup repair. On restart,
-  every finite effective period shortens saved prompt deadlines where needed,
-  including people with saved prompts but no preference row, changed defaults
-  and choice durations; earlier deadlines never lengthen. If startup repair
-  fails, the gateway logs the failure and recurring maintenance retries it.
-  The bundled file is pinned for the process lifetime so this repair precedes
-  serving requests under the new contract. Slice 1 refuses a bundled
+  newly selected; a stored `never` stays no-expiry. If its ID leaves
+  `retention_choices`, the shortest finite offered choice applies. One
+  normalization (`retention.effective_period`) feeds the settings view,
+  request decision, writer, maintenance and startup repair. A file that
+  offers only `never` is valid; it fails only when a stored ID was deleted
+  and no finite offered choice can replace it, and then the gateway stops at
+  startup and names the ID. The account note tells a removed ID (it names the
+  fallback) from an ID that still exists but is not offered (it says it still
+  applies, or that the gateway limit now applies). On restart, every finite
+  effective period shortens saved prompt deadlines where needed, including
+  people with saved prompts but no preference row, changed defaults and
+  choice durations; earlier deadlines never lengthen. If startup repair
+  fails, the gateway logs the failure, the owner's prompt status reports
+  `deadline_repair_pending`, and each recurring maintenance pass reruns the
+  repair until it succeeds.
+  A transient database lock defers the stored-ID check to that repair; it does
+  not by itself prove that an ID was deleted.
+  The bundled file is pinned for the process lifetime. Startup attempts this
+  repair before serving requests under the new contract; a failed attempt is
+  visible to the owner and retried by maintenance. Slice 1 refuses a bundled
   `household.never_keep: true`; the owner's setting can erase existing prompts.
 - Schema 14 keeps unknown legacy setting fields under `legacy_unclassified`
   in storage. The owner and member settings API projections omit them, in line
