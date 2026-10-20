@@ -207,10 +207,12 @@ def assemble_never_save(view: Mapping[str, Any]) -> str:
     """Explain remaining copies from the same dated fact rows shown by ledger."""
     lines = ["Never save stops Azizam from intentionally keeping a new request. It cannot erase copies kept by other systems."]
     for destination in view.get("destinations", []):
+        place = f" Azizam reaches it at {destination['address']}" if destination.get("address") else ""
+        port_reach = f"; {destination['reach']}" if destination.get("reach") else ""
         for fact in destination.get("facts", []):
             condition = f" When: {fact['condition']}." if fact.get("condition") else ""
             lines.append(
-                f"{destination['name']}: {fact['holds']} can remain in {fact['where']} "
+                f"{destination['name']}{place}{port_reach}: {fact['holds']} can remain in {fact['where']} "
                 f"({fact['how_long']}; default {fact['default']}). {fact['reach']}. "
                 f"To change this: {fact['control']}. Checked {fact['checked']}." + condition
             )

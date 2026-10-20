@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, retention, retention_facts, service_registry
+from gateway import admin_store, egress, retention, retention_facts, service_registry
 
 
 def _service_id(registry: Mapping[str, Any], target_type: str, target_id: str) -> str | None:
@@ -46,7 +46,8 @@ def register_routes(
         )
 
     def reply(data: dict[str, Any], code: int = 200) -> JSONResponse:
-        return JSONResponse({"ledger": data}, status_code=code, headers={"Cache-Control": "no-store"})
+        return egress.plain_json_response({"ledger": data}, response_class="retention_ledger",
+                                          status_code=code, headers={"Cache-Control": "no-store"})
 
     @router.get("/settings/retention/ledger")
     def retention_ledger(request: Request) -> JSONResponse:
@@ -63,7 +64,7 @@ def register_routes(
         registry = store.get_service_registry()
         actual = _service_id(registry, "engine", service_id)
         if actual is None:
-            return JSONResponse({"error": {"code": "engine_not_found", "message": "Engine not found"}}, status_code=404)
+            return egress.safe_error_response(404, "engine_not_found", "Engine not found")
         return reply(view(actual))
 
     def get_fact_override(target_type: str, target_id: str, request: Request) -> JSONResponse:
@@ -75,33 +76,34 @@ def register_routes(
         if kind != "system":
             actual = _service_id(store.get_service_registry(), kind, target_id)
         if actual is None:
-            return JSONResponse({"error": {"code": "not_found"}}, status_code=404)
+            return egress.safe_error_response(404, "not_found", "Destination not found")
         overrides = admin_store.retention_fact_overrides(path=store.path)
-        return JSONResponse({"retention_facts": overrides.get((kind, actual)),
-                             "overridden": (kind, actual) in overrides},
-                            headers={"Cache-Control": "no-store"})
+        return egress.plain_json_response(
+            {"retention_facts": overrides.get((kind, actual)), "overridden": (kind, actual) in overrides},
+            response_class="retention_facts", headers={"Cache-Control": "no-store"},
+        )
 
     async def put_fact_override(target_type: str, target_id: str, request: Request) -> JSONResponse:
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         if "owner" not in ctx.roles:
-            return JSONResponse({"error": {"code": "owner_required", "message": "Only the owner may edit facts"}}, status_code=403)
+            return egress.safe_error_response(403, "owner_required", "Only the owner may edit facts")
         kind = {"engines": "engine", "providers": "provider", "systems": "system"}[target_type]
         actual = (target_id if target_id in retention.bundled().data.get("system_facts", {}) else None)
         if kind != "system":
             actual = _service_id(store.get_service_registry(), kind, target_id)
         if actual is None:
-            return JSONResponse({"error": {"code": "not_found"}}, status_code=404)
+            return egress.safe_error_response(404, "not_found", "Destination not found")
         body = await read_json(request)
         if not isinstance(body, Mapping) or set(body) != {"retention_facts"}:
-            return JSONResponse({"error": {"code": "invalid_facts", "message": "Send retention_facts only"}}, status_code=400)
+            return egress.safe_error_response(400, "invalid_facts", "Send retention_facts only")
         try:
             admin_store.put_retention_fact_override(
                 kind, actual, body["retention_facts"], updated_by=ctx.audit_actor_id, path=store.path,
             )
-        except ValueError as exc:
-            return JSONResponse({"error": {"code": "invalid_facts", "message": str(exc)}}, status_code=400)
+        except ValueError:
+            return egress.safe_error_response(400, "invalid_facts", "Retention facts are invalid")
         return reply(view(None if kind == "system" else actual))
 
     @router.get("/engines/{service_id}/retention/facts")

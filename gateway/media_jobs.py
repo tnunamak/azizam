@@ -381,6 +381,13 @@ CREATE TABLE IF NOT EXISTS retention_fact_references (
 );
 CREATE INDEX IF NOT EXISTS retention_fact_references_revision
   ON retention_fact_references(revision);
+CREATE TABLE IF NOT EXISTS retention_fact_destinations (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  PRIMARY KEY(source_kind, source_id, destination_id)
+);
 """
 
 
@@ -1404,6 +1411,7 @@ def count(path: Path = DB_PATH) -> int:
 def save_fact_revisions(
     facts: list[dict[str, Any]], *, source_kind: str, source_id: str, destination_id: str,
     path: Path = DB_PATH, now: int | None = None,
+    destination: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Append exact fact versions and link them to a receipt or kept record."""
     if (source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128
@@ -1413,9 +1421,19 @@ def save_fact_revisions(
 
     checked = [validate_facts([fact])[0] for fact in facts]
     hashes = [revision(fact) for fact in checked]
+    metadata = {key: destination[key] for key in ("name", "kind", "address", "reach")
+                if destination is not None and key in destination}
+    if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
+        raise ValueError("invalid retention destination metadata")
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if destination is not None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json) "
+                    "VALUES(?,?,?,?)",
+                    (source_kind, source_id, destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True)),
+                )
             for digest, fact in zip(hashes, checked):
                 encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 conn.execute(
@@ -1467,6 +1485,21 @@ def fact_revisions_for_source(
     return result
 
 
+def fact_destinations_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, dict[str, str]]:
+    """Return the public destination labels and reach captured with a request."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT destination_id,metadata_json FROM retention_fact_destinations "
+            "WHERE source_kind=? AND source_id=?",
+            (source_kind, source_id),
+        ).fetchall()
+    return {destination_id: json.loads(metadata) for destination_id, metadata in rows}
+
+
 def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB_PATH) -> int:
     """Release one source and prune only versions with no remaining references."""
     if source_kind not in {"receipt", "kept_record"}:
@@ -1476,6 +1509,10 @@ def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB
         try:
             conn.execute(
                 "DELETE FROM retention_fact_references WHERE source_kind=? AND source_id=?",
+                (source_kind, source_id),
+            )
+            conn.execute(
+                "DELETE FROM retention_fact_destinations WHERE source_kind=? AND source_id=?",
                 (source_kind, source_id),
             )
             removed = conn.execute(
@@ -1545,6 +1582,7 @@ __all__ = [
     "save_fact_revisions",
     "fact_revisions",
     "fact_revisions_for_source",
+    "fact_destinations_for_source",
     "release_fact_references",
     "schema_version",
 ]

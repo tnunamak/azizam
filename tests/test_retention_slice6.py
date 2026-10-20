@@ -50,7 +50,12 @@ def test_owner_can_remove_seed_and_it_stays_removed_after_database_reopen(tmp_pa
     assert before.status_code == 200
     provider = next(row for row in before.json()["ledger"]["destinations"] if row["id"] == "remote")
     assert provider["facts"]
-    assert "Checked" in before.json()["ledger"]["never_save_text"]
+    disclosure = before.json()["ledger"]["never_save_text"]
+    assert "submitted graphs" in disclosure
+    assert "Azizam reaches it at http://127.0.0.1:18188" in disclosure
+    assert "Azizam reaches it on this computer" in disclosure
+    assert "provider abuse-monitoring logs" in disclosure
+    assert "Checked" in disclosure
     assert client.put("/admin/api/providers/remote/retention/facts", json={"retention_facts": []}).status_code == 200
     assert admin_store.retention_fact_overrides(path=path)[("provider", "remote")] == []
     admin_store.init_db(path)
@@ -82,12 +87,15 @@ def test_fact_revisions_survive_edit_and_receipt_prune_while_kept_record_exists(
     fact = copy.deepcopy(next(row for row in ledger(_registry(), kinds={})["destinations"] if row["id"] == "remote")["facts"][0])
     fact = {key: value for key, value in fact.items() if key not in {"revision", "stale", "stale_label", "source"}}
     digest = revision(fact)
-    media_jobs.save_fact_revisions([fact], source_kind="receipt", source_id="r1", destination_id="remote", path=path)
+    media_jobs.save_fact_revisions([fact], source_kind="receipt", source_id="r1", destination_id="remote", path=path,
+                                   destination={"name": "Old provider", "kind": "provider", "address": "https://old.example.test/v1"})
     media_jobs.save_fact_revisions([fact], source_kind="kept_record", source_id="k1", destination_id="remote", path=path)
     changed = {**fact, "how_long": "edited by owner"}
     media_jobs.save_fact_revisions([changed], source_kind="receipt", source_id="r2", destination_id="remote", path=path)
     assert media_jobs.fact_revisions_for_source("receipt", "r1", path=path)["remote"][0]["how_long"] == fact["how_long"]
+    assert media_jobs.fact_destinations_for_source("receipt", "r1", path=path)["remote"]["address"] == "https://old.example.test/v1"
     assert media_jobs.release_fact_references("receipt", "r1", path=path) == 0
+    assert media_jobs.fact_destinations_for_source("receipt", "r1", path=path) == {}
     assert media_jobs.fact_revisions([digest], path=path)[0]["how_long"] == fact["how_long"]
     assert media_jobs.release_fact_references("kept_record", "k1", path=path) == 1
     assert media_jobs.fact_revisions_for_source("receipt", "r2", path=path)["remote"][0]["how_long"] == "edited by owner"

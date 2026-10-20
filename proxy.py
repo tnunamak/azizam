@@ -13948,7 +13948,8 @@ def _snapshot_retention_facts(receipt: Any) -> None:
         if facts:
             revisions.extend(media_jobs.save_fact_revisions(
                 facts, source_kind="receipt", source_id=receipt.request_id,
-                destination_id=destination["id"], path=media_jobs.DB_PATH,
+                destination_id=destination["id"], destination=destination,
+                path=media_jobs.DB_PATH,
             ))
     receipt.retention_facts = list(dict.fromkeys(revisions))
 
@@ -14004,13 +14005,22 @@ def _gateway_retention_ledger(request: Request, request_id: str | None = None) -
         hashes = receipt.get("retention_facts") or []
         if hashes:
             grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+            saved_destinations = media_jobs.fact_destinations_for_source("receipt", request_id, path=media_jobs.DB_PATH)
             if set(hashes) != {fact["revision"] for facts in grouped.values() for fact in facts}:
                 raise KeyError("receipt fact revisions are incomplete")
             for destination in view["destinations"]:
                 destination["facts"] = grouped.pop(destination["id"], [])
+                saved = saved_destinations.pop(destination["id"], None)
+                for field in ("name", "kind", "address", "reach"):
+                    destination.pop(field, None)
+                if saved:
+                    destination.update(saved)
+                else:
+                    destination.update(name=destination["id"], kind="former_destination")
             for destination_id, facts in grouped.items():
                 view["destinations"].append({"id": destination_id, "name": destination_id,
-                                             "kind": "former_destination", "facts": facts})
+                                             "kind": "former_destination", "facts": facts,
+                                             **saved_destinations.pop(destination_id, {})})
             from datetime import date
             today = date.today()
             for destination in view["destinations"]:
