@@ -123,7 +123,7 @@ class SttServiceSelectionTests(SttCase):
                 with wave.open(argv[argv.index("-i") + 1], "rb") as audio:
                     destination.write_bytes(audio.readframes(audio.getnframes()))
             else:
-                duration = float(argv[argv.index("-t") + 1])
+                duration = float(argv[argv.index("-t") + 1]) if "-t" in argv else 60
                 destination.write_bytes(_wav_bytes(16000, 1, duration))
             return b"", b""
 
