@@ -85,9 +85,13 @@ export function LongAudioControls({
   serviceId: string;
   locked?: boolean;
 }) {
+  return <LongAudioControlsForService key={serviceId} serviceId={serviceId} locked={locked} />;
+}
+
+function LongAudioControlsForService({ serviceId, locked }: { serviceId: string; locked: boolean }) {
   const base = `/admin/api/engines/${encodeURIComponent(serviceId)}`;
   const client = useQueryClient();
-  const query = useQuery({
+  const { data: options, isPending, error: queryError, refetch } = useQuery({
     queryKey: ["sttMeasurement", serviceId],
     queryFn: () => adminFetch<Options>(`${base}/stt-measurements`),
     refetchInterval: (query) => {
@@ -105,14 +109,6 @@ export function LongAudioControls({
   const [jobCommands, setJobCommands] = useState<Record<string, string> | null>(
     null,
   );
-  useEffect(() => {
-    setDraft(null);
-    setSamples(null);
-    setLengths(null);
-    setWidths(null);
-    setSaved("");
-  }, [serviceId]);
-  const options = query.data;
   const job = options?.job;
   const measurementUnavailable = options?.measurement_ready === false;
   const noHardLimit = options?.known_limit === false
@@ -181,7 +177,7 @@ export function LongAudioControls({
       });
       setDraft(null);
       await Promise.all([
-        query.refetch(),
+        refetch(),
         client.invalidateQueries({ queryKey: ["engineView", serviceId] }),
         client.invalidateQueries({ queryKey: ["serviceRegistry"] }),
       ]);
@@ -219,8 +215,8 @@ export function LongAudioControls({
       <h3 id="long-audio-controls" className="text-heading">
         Long-audio settings
       </h3>
-      {query.isPending && <p role="status">Loading long-audio settings…</p>}
-      {query.error && <p role="alert">{query.error.message}</p>}
+      {isPending && <p role="status">Loading long-audio settings…</p>}
+      {queryError && <p role="alert">{queryError.message}</p>}
       {options && settings && (
         <>
           {options.settings_note && (

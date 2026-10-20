@@ -356,3 +356,26 @@ it("does not pin a default when an edit is returned to its original effective va
   ).toBeDisabled();
   expect(request.mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
 });
+
+it("discards draft settings when the selected engine changes", async () => {
+  request.mockResolvedValue(options);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = (serviceId: string) => (
+    <QueryClientProvider client={client}>
+      <LongAudioControls serviceId={serviceId} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view("speech"));
+  const user = userEvent.setup();
+  const input = await screen.findByLabelText("Distance between cuts (seconds)");
+  await user.clear(input);
+  await user.type(input, "25");
+  expect(screen.getByRole("button", { name: "Save long-audio settings" })).toBeEnabled();
+
+  rerender(view("another-speech"));
+  await waitFor(() => expect(request).toHaveBeenCalledWith(
+    "/admin/api/engines/another-speech/stt-measurements",
+  ));
+  expect(await screen.findByLabelText("Distance between cuts (seconds)")).toHaveValue(30);
+  expect(screen.getByRole("button", { name: "Save long-audio settings" })).toBeDisabled();
+});

@@ -72,6 +72,15 @@ NOT_A_FUNCTION_OF_STATE = {
 }
 
 
+@pytest.fixture
+def isolated_media_folder(gateway, tmp_path, monkeypatch) -> None:
+    # The hermetic runner shares cache/images across xdist workers. A concurrent
+    # worker can create it between the two readings, changing /me/api/media.
+    folder = tmp_path / "images"
+    folder.mkdir()
+    monkeypatch.setattr(gateway.proxy, "IMAGE_CACHE_DIR", folder)
+
+
 def _reading(gateway, owner) -> dict[str, str]:
     from tests.test_admin_secret_sweep import _fill, _get_routes, EXCLUDED_ROUTES
 
@@ -108,7 +117,7 @@ def _replace_every_secret(owner) -> int:
     return changed + 1
 
 
-def test_replacing_every_secret_with_different_bytes_changes_no_management_output(gateway, host_isolated, tmp_path, monkeypatch) -> None:
+def test_replacing_every_secret_with_different_bytes_changes_no_management_output(gateway, host_isolated, isolated_media_folder, tmp_path, monkeypatch) -> None:
     owner, *_ = owner_and_admin(gateway)
     _plant(gateway, owner, tmp_path, monkeypatch)
     before = _reading(gateway, owner)
@@ -128,7 +137,7 @@ def test_replacing_every_secret_with_different_bytes_changes_no_management_outpu
     assert len(before) > 100 and sum(1 for text in before.values() if text.startswith("200 ")) > 40
 
 
-def test_the_reading_does_change_when_a_public_field_changes(gateway, host_isolated, tmp_path, monkeypatch) -> None:
+def test_the_reading_does_change_when_a_public_field_changes(gateway, host_isolated, isolated_media_folder, tmp_path, monkeypatch) -> None:
     """A control for the comparison itself: it must be able to see a difference."""
     owner, *_ = owner_and_admin(gateway)
     _plant(gateway, owner, tmp_path, monkeypatch)
