@@ -147,7 +147,7 @@ GATEWAY_CODES = frozenset({
     "paid_option_unsupported", "pose_rewritten", "pose_risks_likeness", "previous_response_not_found", "profile_result",
     "prompt_erasure_unavailable", "prompt_not_accessible", "prompt_retention_pending", "provider_auth_failed", "provider_error",
     "provider_model_list_invalid", "provider_native_paid_remote_forbidden", "provider_no_sign_in_time", "provider_not_found",
-    "provider_passthrough_error", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable",
+    "provider_passthrough_error", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable", "reconnect_required",
     "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "same_face", "secret_needed",
     "selection_unavailable", "settings_conflict", "settings_revision_required", "shots_seconds_mismatch",
     "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",

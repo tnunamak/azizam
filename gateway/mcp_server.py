@@ -18,7 +18,7 @@ challenge, and both protected-resource metadata documents name the
 authorization server, so any spec-following client can sign in. Browser
 ``Origin`` headers must be on an explicit list.
 
-Tools (about 200 standing tokens each, generated from discovery, never one tool
+Tools (about 200 standing tokens each for the media tools, generated from discovery, never one tool
 per model):
 
 * ``capabilities``: list or describe workflows, stable aliases and operations
@@ -26,6 +26,9 @@ per model):
 * ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
+* ``rename_app`` and ``rename_key``: give one of the signed-in person's own Apps or keys a new name. They
+  work for a client the person signed in (an OAuth connection) whose consent included renaming (the grant's
+  ``mcp:rename`` scope), never for an App key, and change a label only: no new key, no new access.
 
 The module owns no business logic. Authentication, profile policy, receipts and
 job storage stay in the core routes: every action is dispatched in process to
@@ -75,7 +78,8 @@ SERVER_NAME = "azizam"
 INSTRUCTIONS = (
     "Media generation gateway. Call `capabilities` to see workflows and aliases "
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
-    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs."
+    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs. "
+    "`rename_app` and `rename_key` rename the signed-in person's own apps and keys."
 )
 
 DEFAULT_WAIT_SECONDS = 30
@@ -124,6 +128,9 @@ class McpDeps:
     # the scopes the 401 challenge asks for. Empty means API keys only.
     authorization_servers: Callable[[Request], list[str]] = lambda _request: []
     scopes: tuple[str, ...] = ()
+    # (request, auth, tool name, arguments) -> the result, or a ``CallError`` the model can act on. The gateway
+    # decides who may rename what; ``None`` means this host offers no renaming.
+    rename: Callable[[Request, Any, str, Mapping[str, Any]], dict[str, Any]] | None = None
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -215,6 +222,42 @@ TOOLS: list[dict[str, Any]] = [
                 "cancel": {"type": "boolean", "default": False},
             },
             "required": ["job_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "rename_app",
+        "title": "Rename one of your apps",
+        "description": (
+            "Give one of the signed-in person's own apps a new name. Only the name changes: its keys and access stay."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "The app's current name (or its id if two share a name)."},
+                "name": {"type": "string", "minLength": 1, "maxLength": 80, "description": "The new name."},
+            },
+            "required": ["app", "name"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "rename_key",
+        "title": "Rename one of your keys",
+        "description": (
+            "Give an active key of one of the signed-in person's own apps a new name. Only the label changes: the key "
+            "still works and no new key is made."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "The app's current name (or its id)."},
+                "key": {"type": "string", "description": "The key's current name (or its id if two share a name)."},
+                "name": {"type": "string", "minLength": 1, "maxLength": 80, "description": "The new name."},
+            },
+            "required": ["app", "key", "name"],
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -533,6 +576,20 @@ class Tools:
         return await self._await(job_id, wait, None)
 
 
+    async def rename(self, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``rename_app`` and ``rename_key``: the gateway renames; this adapter only checks the arguments are text."""
+        fields = ("app", "name") if tool == "rename_app" else ("app", "key", "name")
+        for field in fields:
+            if not isinstance(args.get(field), str) or not args[field].strip():
+                raise CallError(f"`{field}` is required")
+        unknown = sorted(set(args) - set(fields))
+        if unknown:
+            raise CallError(f"unknown argument {unknown[0]!r}")
+        if self.deps.rename is None:
+            raise CallError("this gateway does not offer renaming over MCP")
+        return await asyncio.to_thread(self.deps.rename, self.request, self.auth, tool, dict(args))
+
+
 def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: str = MODERN_VERSION) -> dict[str, Any]:
     """MCP tool result: JSON text for any client, structured content, links for media.
 
@@ -562,7 +619,8 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
-    handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
+    handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job,
+               "rename_app": lambda a: tools.rename("rename_app", a), "rename_key": lambda a: tools.rename("rename_key", a)}[name]
     try:
         # Both run and job expose generation failures to the caller as errors.
         # A canceled job is a valid outcome, including an explicit cancel request.

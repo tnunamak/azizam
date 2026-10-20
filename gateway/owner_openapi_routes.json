@@ -34,6 +34,10 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "success_status": 201
   },
+  "PATCH /admin/api/apps/{app_id}/keys/{credential_id}": {
+    "tag": "apps and keys",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
   "GET /admin/api/apps/{app_id}/trusted-addresses": {
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"

@@ -18,7 +18,9 @@ function sql(db: string, statement: string) {
 
 const pictureUrl = (person: string) => `https://avatars.fixture.example/${person}.png`;
 
-test("the browser never answers a picture request from its cache, across sessions and rights", async ({
+// It writes and deletes the lane owner's avatar row, which avatar.spec.ts also saves a choice on: the two run one
+// at a time (@global-state), never together on one server.
+test("the browser never answers a picture request from its cache, across sessions and rights", { tag: "@global-state" }, async ({
   page,
   context,
   baseURL,

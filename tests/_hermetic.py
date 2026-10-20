@@ -35,7 +35,7 @@ _REAL_CONNECT = _REAL_SOCKET.connect
 _REAL_CONNECT_EX = _REAL_SOCKET.connect_ex
 _INET_FAMILIES = frozenset((socket.AF_INET, socket.AF_INET6))
 _FORBIDDEN_COMMANDS = frozenset(
-    {"systemctl", "service", "tmux", "loginctl", "machinectl", "killall", "pkill"}
+    {"systemctl", "service", "tmux", "loginctl", "machinectl", "killall", "pkill", "nvidia-smi"}
 )
 
 

@@ -79,7 +79,7 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
 | | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
-| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech` | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
 | | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
 | | Auth | Bearer app key, or sign-in through the gateway's OAuth flow for hosted clients; see [Recipe: MCP clients](#recipe-mcp-clients-chatgpt-claudeai-claude-code-cursor-pi-codex). A 401 carries an RFC 9728 `resource_metadata` challenge. | same |
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
@@ -1506,14 +1506,18 @@ Expected unsupported features:
 
 ## Recipe: MCP clients (ChatGPT, Claude.ai, Claude Code, Cursor, Pi, Codex)
 
-The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three tools, so an
-agent pays about 600 tokens once and gets every workflow:
+The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three media tools, so an
+agent pays about 600 tokens once and gets every workflow. Two more tools, `rename_app` and
+`rename_key`, rename the signed-in person's own apps and keys (names only; they need a client the
+person signed in to, not an App key):
 
 | Tool | Use |
 |---|---|
 | `capabilities` | List workflows, aliases (`image`, `video`, `music`, `sfx`, ...) and `speech`. With `target`, return the typed inputs, outputs and expected run time. |
 | `run` | Start a `target` with `inputs`. Fast work returns the result. Slow work returns a `job_id` after `wait_seconds` (default 30, at most 120). |
 | `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
+| `rename_app` | Give one of your apps a new `name`. `app` is its current name (or its id when two share a name). |
+| `rename_key` | Give an active key of one of your apps a new `name`. `app` and `key` are current names (or ids). |
 
 Arguments for `job`:
 
