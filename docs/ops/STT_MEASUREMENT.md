@@ -85,7 +85,7 @@ crosses the margin; confidently_worse means the lower CI exceeds the margin
 abstain. Reference word timing may be interpolated; reports preserve that label.
 Seam times use the gateway planner and are checked against executed attempts.
 
-References and hypotheses use one tokenizer: lowercase Unicode words, retain
+References and hypotheses use one tokenizer: normalize Unicode to NFC, lowercase words, retain
 internal underscores, join apostrophes, split punctuation, and omit annotation
 tags and standalone underscores. Each split reference token keeps its source
 time interval; omitted tokens contribute no alignment position. Alignment stays

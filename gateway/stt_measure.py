@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import random
 import re
+import unicodedata
 from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ def normalize(text: str, drop: frozenset[str] = frozenset()) -> list[str]:
     Punctuation splits words; annotation tags, standalone underscores and ``drop`` words are removed.
     Timed reference readers attach the source interval to each resulting token.
     """
-    text = _TAG.sub(" ", text.lower().replace("’", "'"))
+    text = _TAG.sub(" ", unicodedata.normalize("NFC", text.lower().replace("’", "'")))
     words = (word.replace("'", "") for word in _WORD.findall(text))
     return [word for word in words if word != "_" and word not in drop]
 
