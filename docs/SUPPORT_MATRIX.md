@@ -72,7 +72,6 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `PUT` | `/gateway/v1/providers/{provider}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_request` |
 | `GET` | `/gateway/v1/receipts` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_receipts` |
 | `GET` | `/gateway/v1/receipts/{request_id}` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_receipt` |
-| `GET` | `/gateway/v1/requests/{request_id}/ledger` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `request_retention_ledger` |
 | `GET` | `/gateway/v1/resources` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_resources` |
 | `GET` | `/gateway/v1/workflows` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_workflows` |
 | `GET` | `/gateway/v1/workflows/{workflow_id}` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_workflow` |

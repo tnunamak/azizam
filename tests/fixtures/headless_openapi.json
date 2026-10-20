@@ -11817,6 +11817,98 @@
         ]
       }
     },
+    "/admin/api/requests/{request_id}/retention/ledger": {
+      "get": {
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_requests_request_id_retention_ledger",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Request Retention Ledger",
+        "tags": [
+          "retention facts"
+        ]
+      }
+    },
     "/admin/api/session": {
       "get": {
         "description": "Actor identity + CSRF token for browser (cookie-session) clients.\n\nThe web app (served at ``/``) bootstraps the actor and CSRF token\nfrom this endpoint using its session cookie. ``csrf_token`` is empty for\nbearer-key callers, whose mutations don't require CSRF headers.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
@@ -16289,46 +16381,6 @@
           }
         },
         "summary": "Get Receipt",
-        "tags": [
-          "gateway-discovery"
-        ]
-      }
-    },
-    "/gateway/v1/requests/{request_id}/ledger": {
-      "get": {
-        "operationId": "request_retention_ledger_gateway_v1_requests__request_id__ledger_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "request_id",
-            "required": true,
-            "schema": {
-              "title": "Request Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Request Retention Ledger",
         "tags": [
           "gateway-discovery"
         ]
