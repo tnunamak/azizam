@@ -52,8 +52,8 @@ def request(person="owner", *, connection=None):
 @pytest.mark.parametrize("viewer", ["owner", "admin", "maker"])
 def test_real_gateway_ledger_reuses_receipt_maker_mask(stores, viewer):
     receipts, _, _ = stores
-    row = RouteReceipt(backend="destination", maker_person_id="maker")
-    row.set_retention(kind="library_prompt", decision="kept", reason="kept", kept_until_ms=123456)
+    row = RouteReceipt(protocol="test", intent="test", backend="destination", maker_person_id="maker")
+    row.set_retention(kind="library_prompt", decision="kept", reason="kept", kept_until_ms=123456, parts=["accepted"], limited_by="member_choice")
     receipt_store.record(row, path=receipts)
     view = proxy._gateway_retention_ledger(request(viewer)[0], row.request_id)
     kind = next(k for k in view["kinds"] if k["id"] == "library_prompt")
@@ -84,7 +84,7 @@ def test_oauth_management_identity_can_read_real_mcp_ledger(stores, monkeypatch)
                                       "openai.audio.speech", "openai.audio", "openai.video"])
 def test_lifecycle_freezes_captured_facts_for_every_receipt_kind(stores, protocol):
     _, facts, registry = stores
-    row = RouteReceipt(backend="destination", protocol=protocol)
+    row = RouteReceipt(intent="test", backend="destination", protocol=protocol)
     original = copy.deepcopy(retention_facts.ledger(registry, service_id="destination"))
     async def run():
         async with ReceiptLifecycleOwner(row) as owner:
@@ -102,7 +102,7 @@ def test_lifecycle_freezes_captured_facts_for_every_receipt_kind(stores, protoco
 
 
 def test_client_cannot_fingerprint_retention_destination():
-    row = RouteReceipt(retention_facts=["a" * 64])
+    row = RouteReceipt(protocol="test", intent="test", retention_facts=["a" * 64])
     assert "retention_facts" not in serialize_receipt_for_audience(row.to_dict(), "client")
     assert serialize_receipt_for_audience(row.to_dict(), "admin")["retention_facts"] == ["a" * 64]
 
@@ -115,7 +115,7 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
     else:
         monkeypatch.setattr(media_jobs, "save_fact_revisions", lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
         monkeypatch.setattr(media_jobs, "save_fact_snapshot", lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")), raising=False)
-    row = RouteReceipt(backend="destination")
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
     proxy._capture_retention_facts(row)
     proxy._record_terminal_retention_receipt(row, path=stores[0])
     assert receipt_store.get(row.request_id) is not None
@@ -124,7 +124,7 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
 
 
 def test_missing_saved_revisions_show_no_longer_kept(stores):
-    row = RouteReceipt(backend="destination", retention_facts=["f" * 64])
+    row = RouteReceipt(protocol="test", intent="test", backend="destination", retention_facts=["f" * 64])
     receipt_store.record(row, path=stores[0])
     view = proxy._gateway_retention_ledger(request()[0], row.request_id)
     assert "no longer kept" in view["fact_basis"].lower()
