@@ -85,8 +85,47 @@ crosses the margin; confidently_worse means the lower CI exceeds the margin
 abstain. Reference word timing may be interpolated; reports preserve that label.
 Seam times use the gateway planner and are checked against executed attempts.
 
+References and hypotheses use one tokenizer: normalize Unicode to NFC, casefold
+words, retain combining marks and internal underscores, join straight and curly
+apostrophes and backticks, normalize digit groups (`1,000` = `1000`), split other punctuation, and omit annotation
+tags and standalone underscores. Each split reference token keeps its source
+time interval; omitted tokens contribute no alignment position. A separate
+midpoint-sorted index selects words for half-open time windows, including
+overlapping speakers while preserving transcript order and reference identity.
+Known limit: scripts without spaces between words score per contiguous run,
+not per word. The tokenizer does not segment CJK text.
+
+Each manifest source requires `audio_rights` and `transcript_rights` objects with
+`status` (`stated`, `not-stated`, or `not-applicable`) and a nonempty `note`.
+The recipe's audio source cannot use `not-applicable` for audio rights.
+Each source also requires nonempty `provenance` and `human_transcribed_evidence` strings.
+These fields record source claims and their evidence, not independent verification
+of rights or authorship. Options, start responses, job status and reports include
+these fields under each sample's `sources`, plus `rights_unstated` and `rights_note`
+for either audio or transcript caveats. The audio-only fields
+`audio_rights_unstated` and `audio_rights_note` remain available. The sample selector shows
+unstated rights before a trial starts. Selected-sample notices stay visible
+beside Measure when the sample settings are collapsed. A sample-level `licence` label does
+not establish rights for every source.
+
+Earnings-21 remains available with a stated CC BY-SA licence for transcripts and
+alignment files; the source states no separate audio licence. Public hosting does
+not establish audio reuse rights. The operator decides whether to retain and use
+this sample. It is excluded from the default selection; use `sample_ids` to choose
+it explicitly. Generated start commands and the MCP tool description carry a
+generic rights caveat.
+
+In the recorded synthetic before/after comparisons, AMI perfect-transcript WER
+fell from 25% to 0%, and WER for a Unicode insertion rose from 0% to the correct
+50%. Injected seam excess stayed at 16.07 pp (95% CI 14.07–18.28), with zero
+placebo excess. The noisy fixture kept its 37 s target, 50 s maximum and 1 s
+search; the sparse fixture still abstained. These checks do not update historical
+real-speech reports.
+
 **Apply recommended settings** is a separate action. It requires the current
-registry revision and refuses if the engine changed since measurement. Applying
+registry revision and refuses if the engine changed since measurement. Every
+report includes `scorer_version`. Apply refuses reports without the current
+version and asks you to re-run the measurement. Applying
 enables cutting and sets its threshold to the recommended maximum. No trial
 changes saved settings.
 
@@ -121,7 +160,8 @@ Replace `3.2` with that engine's declared demand in GB. CPU services use
 `{"resources":{"gpu_required":false}}`. This goes through the normal service
 record validation, owner authorization, compare-and-swap and hot reload.
 
-The sample manifest includes AMI, ICSI and Earnings21. Each default trial uses
+The sample manifest includes AMI, ICSI and Earnings21; defaults select AMI and ICSI.
+Each default trial uses
 up to 300 seconds of its recording, within the request and 512 MB download caps.
 Synthetic noisy-engine
 tests with 10% shared deletions and about 3% run-to-run disagreement show this

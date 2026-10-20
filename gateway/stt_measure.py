@@ -16,20 +16,40 @@ from __future__ import annotations
 import math
 import random
 import re
+import unicodedata
 from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-_WORD = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
+_TAG = re.compile(r"[<\[{].*?[>\]}]")
+# Bump when tokenization, reference membership or recommendation scoring changes.
+SCORER_VERSION = 2
 # Which statuses count as an error for a reference word.
 OK, SUBSTITUTED, DELETED = 0, 1, 2
 
 
 def normalize(text: str, drop: frozenset[str] = frozenset()) -> list[str]:
-    """Lowercase words with punctuation removed and apostrophes joined ("that's" -> "thats", as some corpora write
-    it); ``drop`` words are removed."""
-    words = (word.replace("'", "") for word in _WORD.findall(text.lower().replace("’", "'")))
-    return [word for word in words if word and word not in drop]
+    """Canonical reference and hypothesis tokens: casefolded Unicode words with marks and joined apostrophes.
+
+    Punctuation splits words; annotation tags, standalone underscores and ``drop`` words are removed.
+    Timed reference readers attach the source interval to each resulting token.
+    """
+    text = _TAG.sub(" ", unicodedata.normalize("NFC", text.casefold()))
+    text = text.translate(str.maketrans({"‘": "'", "’": "'", "`": "'"}))
+    # A comma groups digits only in complete groups of three, not lists like 1,2.
+    text = re.sub(r"(?<![\w,])\d{1,3}(?:,\d{3})+(?![\w,])", lambda m: m[0].replace(",", ""), text)
+    words, token = [], []
+    for i, char in enumerate(text):
+        if char.isalnum() or char == "_" or (token and unicodedata.category(char).startswith("M")):
+            token.append(char)
+        elif char == "'" and token and i + 1 < len(text) and (text[i + 1].isalnum() or text[i + 1] == "_"):
+            continue  # Internal apostrophes join the two word parts.
+        elif token:
+            words.append("".join(token))
+            token = []
+    if token:
+        words.append("".join(token))
+    return [word for word in words if word != "_" and word not in drop]
 
 
 @dataclass(frozen=True)
@@ -138,9 +158,20 @@ class Scored:
     alignment: Alignment
     mids: list[float]
     reference_indexes: list[int]
+    _time_indexes: list[int] = field(init=False, repr=False)
+    _sorted_mids: list[float] = field(init=False, repr=False)
 
-    def window(self, centre: float, half: float) -> range:
-        return range(bisect_left(self.mids, centre - half), bisect_left(self.mids, centre + half))
+    def __post_init__(self) -> None:
+        # Overlapping words can reverse midpoint order. Alignment and identity stay in transcript order.
+        self._time_indexes = sorted(range(len(self.mids)), key=self.mids.__getitem__)
+        self._sorted_mids = [self.mids[i] for i in self._time_indexes]
+
+    def between(self, lo: float, hi: float) -> list[int]:
+        """Local alignment indexes whose reference midpoints fall in [lo, hi)."""
+        return self._time_indexes[bisect_left(self._sorted_mids, lo):bisect_left(self._sorted_mids, hi)]
+
+    def window(self, centre: float, half: float) -> list[int]:
+        return self.between(centre - half, centre + half)
 
 
 def score_run(reference: Sequence[RefWord], run: Run) -> Scored:
@@ -244,17 +275,20 @@ def piece_counts(scored: Scored, *, trim: float = 2.0) -> list[tuple[int, int, f
         lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
         if hi <= lo:
             continue
-        indexes = range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi))
+        indexes = scored.between(lo, hi)
         out.append((len(indexes), sum(1 for i in indexes if scored.alignment.status[i] == DELETED), end - start))
     return out
 
 
 def interior_deletions(scored: Scored, *, trim: float = 2.0) -> dict[int, int]:
-    """Reference word index -> 1 if the run dropped it, for words at least ``trim`` s inside a piece."""
+    """Local alignment index -> 1 if dropped, for words at least ``trim`` s inside a piece.
+
+    Use ``scored.reference_indexes`` to map these indexes to the supplied reference.
+    """
     out: dict[int, int] = {}
     for start, end in scored.run.segments:
         lo, hi = start + scored.run.offset + trim, end + scored.run.offset - trim
-        for i in range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi)) if hi > lo else ():
+        for i in scored.between(lo, hi) if hi > lo else ():
             out[i] = 1 if scored.alignment.status[i] == DELETED else 0
     return out
 
@@ -326,7 +360,7 @@ def deletion_by_length(
             hi = end + scored.run.offset - trim
             if hi <= lo:
                 continue
-            indexes = range(bisect_left(scored.mids, lo), bisect_left(scored.mids, hi))
+            indexes = scored.between(lo, hi)
             slot = bisect_left(list(edges), length)
             bucket = buckets[slot]
             bucket["pieces"] += 1

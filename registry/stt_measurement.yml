@@ -1,5 +1,6 @@
 # Owner-editable trial policy, not engine limits. Trials never change saved settings.
-sample_ids: [ami-TS3003a, icsi-Bdb001-first30min, earnings21-4366522]
+# Unstated audio rights require an explicit sample_ids choice at start time.
+sample_ids: [ami-TS3003a, icsi-Bdb001-first30min]
 lengths: [20, 30, 40, 50, 60]
 search_widths: [0, 1, 2, 5]
 max_samples: 4

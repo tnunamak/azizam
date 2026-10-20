@@ -41,6 +41,14 @@
 # Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
 # legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
+# STT scoring: +5 overlapping-word window/counting paths, +3 perfect recipe scores,
+# +1 Unicode/split/drop timing case, +2 interrupted-download cleanup cases,
+# +1 rights visibility case, and +4 source-rights/provenance schema cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 14975 (14959 + 16).
+# STT review followups: +11 tokenizer inputs, +2 source-rights cases,
+# +1 default/CLI case, +2 REST/MCP rights surfaces, +2 stale-scorer versions,
+# +1 filtered-overlap runner case and +1 MCP description case.
+# Full hermetic collection on 2026-10-20: 14995; full Vitest list: 3050.
 # D47 conformance: +55 cases for misleading duration metadata, bounded decode,
 # source-sample hard limits, off-grid frames, whole-file mode/envelope guards,
 # buffered voice references and direct/chunked receipt outcomes.

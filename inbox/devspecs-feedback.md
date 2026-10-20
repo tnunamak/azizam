@@ -1,5 +1,14 @@
 # devspecs feedback
 
+## 2026-10-20 — STT measurement scoring
+
+`ds recent` returned relevant STT work. A sliced `ds task` and a retry with
+`--no-refresh` both waited for another index update without returning a task ID.
+I stopped only my four `ds` processes (including two diagnostic calls) and
+continued from the task brief and deterministic tests. The retry did not create
+its requested task directory. A bounded index wait with the writer's progress
+would help concurrent implementation lanes.
+
 ## 2026-10-07 — principal ownership implementation lane
 
 `ds tldr` and `ds recent` returned useful workflow and recent repository context.
