@@ -43,6 +43,10 @@ def _schema15_expected_registry(registry: dict) -> dict:
         chunking = expected["services"][service_id]["config"]["chunking"]
         if chunking.get("silence_search_seconds") == seed:
             chunking.pop("silence_search_seconds")
+    cpu = expected["services"]["stt"]["config"]["chunking"]
+    for key, seed in (("silence_noise_db", "-30dB"), ("silence_min_seconds", 0.5)):
+        if cpu.get(key) == seed:
+            cpu.pop(key)
     return expected
 
 
