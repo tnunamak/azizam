@@ -978,3 +978,39 @@ def test_measurement_options_use_only_mode_specific_native_settings(setup, inval
     assert "native_long_audio" not in settings
     assert "native_long_audio_offline" in settings
     assert "native_long_audio_streaming" in settings
+
+
+def test_measurement_scratch_symlink_returns_operator_error(setup, tmp_path):
+    _, owner, _, runner, ctx = setup
+    scratch = runner._scratch_directory()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside-scratch"
+    target.mkdir()
+    marker = target / "keep"
+    marker.write_text("untouched")
+    scratch.symlink_to(target, target_is_directory=True)
+    response = owner.get("/admin/api/engines/speech-test/stt-measurements")
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "measurement_scratch_unavailable"
+    assert "private temporary directory" in response.json()["error"]["message"]
+    with pytest.raises(sm.EngineRouteError, match="private temporary directory") as error:
+        asyncio.run(operate(runner, ctx, "speech-test", "options"))
+    assert error.value.status_code == 503
+    assert marker.read_text() == "untouched"
+    assert scratch.is_symlink()
+
+
+def test_measurement_startup_cleanup_refuses_scratch_symlink_without_crashing(setup, tmp_path):
+    _, _, _, runner, _ = setup
+    scratch = runner._scratch_directory()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside-scratch"
+    folder = target / "job-abandoned"
+    folder.mkdir(parents=True)
+    marker = folder / "keep"
+    marker.write_text("untouched")
+    scratch.symlink_to(target, target_is_directory=True)
+    runner.startup_cleanup()
+    assert marker.read_text() == "untouched"
+    assert scratch.is_symlink()
+    assert runner._lease_fd is None

@@ -102,6 +102,48 @@ class SttServiceSelectionTests(SttCase):
         self.assertEqual([request.url.port for request in seen], [8012])
         self.assertIn(b"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n", seen[0].content)
 
+    def test_file_first_alias_chunks_in_original_spool_and_refuses_workspace_escape(self) -> None:
+        spool_a = Path(self.tmp.name) / "spool-a"
+        spool_b = Path(self.tmp.name) / "spool-b"
+        self.cfg["backends"]["stt"]["chunking"]["spool_dir"] = str(spool_a)
+        self.cfg["backends"]["stt-nemotron"]["chunking"].update(
+            enabled=True, spool_dir=str(spool_b), threshold_seconds=30,
+            target_seconds=20, search_seconds=0, max_segment_seconds=30,
+        )
+        seen = self._json_upstream()
+        extracted = []
+        extract = stt_chunking.extract_segment
+
+        async def command(argv, **_kwargs):
+            destination = Path(argv[-1])
+            destination.write_bytes(b"RIFF" + b"x" * 100)
+            return b"", b""
+
+        async def checked_extract(source, destination, **kwargs):
+            self.assertEqual(kwargs["config"].service_id, "stt-nemotron")
+            self.assertEqual(kwargs["config"].spool_dir, spool_a)
+            self.assertEqual(source.parent.parent, spool_a)
+            outside = source.parent.parent / "outside.wav"
+            with self.assertRaises(stt_chunking.SttConfigurationError):
+                await extract(source, outside, **kwargs)
+            self.assertFalse(outside.exists())
+            await extract(source, destination, **kwargs)
+            extracted.append(destination)
+
+        async def probe(path, **_kwargs):
+            return stt_chunking.ProbedAudio(20 if path.name.startswith("segment-") else 60, 16000, 1)
+
+        with patch.object(stt_chunking, "probe_audio", side_effect=probe), planning_pcm(60), \
+                patch.object(stt_chunking, "run_media_command", side_effect=command), \
+                patch.object(stt_chunking, "extract_segment", side_effect=checked_extract):
+            response, body = self._post_file_first_past_peek([("model", "stt-fast")])
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(len(extracted), 3)
+        self.assertEqual([request.url.port for request in seen], [8012] * 3)
+        self.assertTrue(all(not path.exists() for path in extracted))
+        self.assertEqual(list(spool_a.iterdir()), [])
+        self.assertFalse(spool_b.exists())
+
     def test_file_first_model_for_default_service_keeps_default_dispatch(self) -> None:
         seen = self._json_upstream()
         response, body = self._post_file_first_past_peek([("model", "parakeet")])
