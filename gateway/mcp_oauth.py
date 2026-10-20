@@ -941,6 +941,8 @@ class McpOAuth:
                 return unavailable()
             if not self.token_limit.allow(self.deps.client_ip(request)):
                 return oauth_json(429, {"error": "slow_down", "error_description": "Too many token requests"})
+            if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+                return oauth_json(400, {"error": "invalid_request", "error_description": "Expected application/x-www-form-urlencoded"})
             form = await request.form()
             items = [(k, v) for k, v in form.multi_items() if isinstance(v, str)]
             try:
@@ -957,6 +959,8 @@ class McpOAuth:
                 return unavailable()
             if not self.token_limit.allow(self.deps.client_ip(request)):
                 return oauth_json(429, {"error": "slow_down"})
+            if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+                return oauth_json(400, {"error": "invalid_request", "error_description": "Expected application/x-www-form-urlencoded"})
             form = await request.form()
             items = [(k, v) for k, v in form.multi_items() if isinstance(v, str)]
             try:

@@ -113,15 +113,15 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             (self.private / "left-by-a-crash").write_text("old audio")
             (work / "proxy.py").write_text(
                 "import os\n"
-                "names = ('TMPDIR', 'TMP', 'TEMP', 'AZIZAM_PRIVATE_TMPDIR', 'AZIZAM_PRIVATE_TMPDIR_PREPARED')\n"
+                "names = ('TMPDIR', 'TMP', 'TEMP', 'AZIZAM_PRIVATE_TMPDIR')\n"
                 "print([os.environ[name] for name in names], os.listdir(os.environ['TMPDIR']))\n"
             )
             _write_python_wrapper(work / "bin" / "python3")
             _write_awk_wrapper(work / "bin" / "awk")
             env = {**os.environ, "AZIZAM_MANAGE_LITELLM": "false", "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
-            result = subprocess.run(["/bin/bash", "start.sh"], cwd=work, env=env, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(["/bin/bash", f"{work.name}/start.sh"], cwd=work.parent, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 5) + " ['.owner.lock']")
+            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 4) + " ['.owner.lock']")
 
     def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

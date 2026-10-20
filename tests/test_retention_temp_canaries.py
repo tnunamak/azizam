@@ -109,7 +109,6 @@ def world(host_disk_dir: Path, monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setattr(private_tmp, "_lock_pid", None)
     monkeypatch.setenv(private_tmp.ENV_LOCK_FD, "")
     monkeypatch.delenv(private_tmp.ENV_LOCK_FD)
-    monkeypatch.setenv(private_tmp.ENV_PREPARED, "")
     for name in ("TMPDIR", "TMP", "TEMP", private_tmp.ENV_DIR):
         monkeypatch.setenv(name, str(built.os_tmp))
     private_tmp.activate(built.private)
@@ -362,19 +361,18 @@ def test_stt_upload_cut_off_mid_body_leaves_nothing(world: World, cpu_stt_only: 
     async def scenario() -> proxy.Response:
         halves = iter((body[: len(body) // 2],))
         disconnect = asyncio.Event()
+        waiting_for_body = asyncio.Event()
 
         async def receive():
             try:
                 return {"type": "http.request", "body": next(halves), "more_body": True}
             except StopIteration:
+                waiting_for_body.set()
                 await disconnect.wait()
                 return {"type": "http.disconnect"}
 
         task = asyncio.create_task(_run_stt(_stt_config(world), _stt_request(body, content_type, receive)))
-        for _ in range(100):
-            await asyncio.sleep(0.01)
-            if world.files_holding(world.private):
-                break
+        await asyncio.wait_for(waiting_for_body.wait(), 10)
         assert world.files_holding(world.private), "positive control: the half-received audio is on disk"
         assert world.files_holding(world.os_tmp, world.legacy_spool) == []
         disconnect.set()
@@ -410,7 +408,7 @@ def test_no_route_reads_a_form_without_closing_it() -> None:
     """A direct ``request.form()`` leaves its spilled files open until garbage collection; ``read_form`` closes them."""
     root = Path(__file__).resolve().parent.parent
     allowed = {  # file: how many direct calls may remain, and why
-        "gateway/mcp_oauth.py": 2,  # urlencoded forms: no file parts, nothing spills
+        "gateway/mcp_oauth.py": 2,  # rejects non-urlencoded content types before parsing
     }
     found: dict[str, int] = {}
     for path in [root / "proxy.py", *sorted((root / "gateway").rglob("*.py"))]:
@@ -467,7 +465,7 @@ def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World
     def probe(command, **kwargs):
         paths.append(Path(command[-1]))
         started.set()
-        assert release.wait(5)
+        assert release.wait(30)
         return type("Result", (), {"returncode": 1, "stdout": b""})()
 
     monkeypatch.setattr(proxy.shutil, "which", lambda name: "/fake/ffprobe")
@@ -480,13 +478,7 @@ def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World
             {"inputs": {"source": {"type": "asset"}},
              "bindings": {proxy._GRAPH_BINDING: {"map": {"source": "1.file"}}}},
             {"source_video_input": "source"}, None))
-        for _ in range(1000):
-            if started.is_set():
-                break
-            if task.done():
-                await task
-                raise AssertionError("request did not probe the video")
-            await asyncio.sleep(0.001)
+        assert await asyncio.to_thread(started.wait, 10), "worker did not start"
         assert started.is_set(), "video probe did not start"
         try:
             assert paths[0].is_file()
@@ -517,7 +509,7 @@ def test_conversion_cancellation_waits_for_cleanup_even_when_repeated(world: Wor
     def convert(command, **kwargs):
         paths.append(Path(command[command.index("-i") + 1]))
         started.set()
-        assert release.wait(5)
+        assert release.wait(30)
         raise RuntimeError("conversion failed after cancellation")
 
     monkeypatch.setattr(proxy.subprocess, "run", convert)
@@ -530,12 +522,7 @@ def test_conversion_cancellation_waits_for_cleanup_even_when_repeated(world: Wor
 
     async def scenario():
         task = asyncio.create_task(private_tmp.run_worker(function, *args))
-        for _ in range(1000):
-            if started.is_set():
-                break
-            if task.done():
-                await task
-            await asyncio.sleep(0.001)
+        assert await asyncio.to_thread(started.wait, 10), "worker did not start"
         try:
             assert started.is_set() and world.files_holding(world.private)
             assert paths and all(path.is_relative_to(world.private) for path in paths)

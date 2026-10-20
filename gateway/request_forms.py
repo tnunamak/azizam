@@ -24,6 +24,7 @@ async def read_form(request: Any, **limits: Any) -> FormData:
             and parse_options_header(request.headers.get("content-type", ""))[0] == b"multipart/form-data"):
         # Own the parser before it awaits the body. Starlette 0.50 closes this list only for
         # MultiPartException, leaving spills open on disconnect/cancellation with a retained traceback.
+        # Re-check these Starlette private APIs on every Starlette upgrade.
         parser = MultiPartParser(request.headers, request.stream(), **limits)
         try:
             request._form = await parser.parse()
