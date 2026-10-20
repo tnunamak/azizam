@@ -2056,6 +2056,7 @@ AuthIdentity = RuntimeIdentity
 @dataclass(frozen=True)
 class AuthContext:
     identity: Optional[AuthIdentity] = None
+    retention_receipt: RouteReceipt | None = None
 
 
 NO_AUTH_CONTEXT = AuthContext()
@@ -4431,7 +4432,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if receipt is not None:
         receipt.backend = tts_service_id
         receipt.resolved_model = body_json.get("model") if isinstance(body_json, dict) else None
-        _capture_retention_facts(receipt)
+        _capture_retention_facts(receipt, auth_context=auth_context)
 
     if stream_mode:
         return await _stream_tts_upstream(
@@ -5167,7 +5168,7 @@ async def proxy_stt_request(
                 target_service = (model_resolution.alias.service if model_resolution.alias is not None else None) or execution.service_id
                 service_changed = target_service != execution.service_id
                 receipt.backend = target_service
-                _capture_retention_facts(receipt)
+                _capture_retention_facts(receipt, auth_context=auth_context)
                 decision = _apply_selected_stt_policy(
                     receipt, auth_context, operation=operation,
                     model=model_resolution.alias.engine if model_resolution.alias is not None else None,
@@ -13929,7 +13930,7 @@ def _snapshot_retention_facts(receipt: Any) -> None:
         print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
 
 
-def _capture_retention_facts(receipt: RouteReceipt) -> None:
+def _capture_retention_facts(receipt: RouteReceipt, *, auth_context: AuthContext | None = None) -> None:
     """Freeze the dated ledger before dispatch without writing an orphan reference."""
     if not receipt.backend:
         return
@@ -13945,6 +13946,12 @@ def _capture_retention_facts(receipt: RouteReceipt) -> None:
                 overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
                 service_id=receipt.backend,
             ))
+            # A protocol loopback carries its outer receipt in the existing
+            # authenticated handoff, so both owners freeze the dispatched facts.
+            outer = auth_context.retention_receipt if auth_context is not None else None
+            if outer is not None and getattr(outer, "_retention_fact_snapshot", None) is None:
+                outer.backend = receipt.backend
+                outer._retention_fact_snapshot = receipt._retention_fact_snapshot
     except Exception as error:
         print(f"[proxy] retention fact capture unavailable: {type(error).__name__}", flush=True)
 
@@ -25871,6 +25878,9 @@ async def _forward_chat_completions(
     # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
     # never trips before the inner timeout does.
     source_headers = _protocol_loopback_source_headers(request)
+    outer_receipt = getattr(request.state, "retention_receipt", None)
+    if outer_receipt is not None:
+        auth_context = replace(auth_context, retention_receipt=outer_receipt)
     parent_request_id = getattr(
         getattr(request, "state", None), "route_receipt_parent_request_id", ""
     )
@@ -27288,6 +27298,7 @@ async def create_response(request: Request):
                     kind=retention.CONVERSATION, decision="not_kept", reason=outcome.reason,
                 )
 
+        request.state.retention_receipt = outer_receipt
         owner = ReceiptLifecycleOwner(outer_receipt)
         async with owner:
             if stream:
@@ -28437,7 +28448,7 @@ async def _forward_current_loaded_openai_request(
             # the same in-progress row without replacing immutable acceptance facts.
             receipt.backend = target.backend
             receipt.resolved_model = target.model
-            _capture_retention_facts(receipt)
+            _capture_retention_facts(receipt, auth_context=auth_context)
 
             body = copy.deepcopy(dict(body_for_backend))
             body.pop("_vf_requested_model", None)
@@ -29317,7 +29328,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             api_key_name=caller.name if caller else None, visibility=_access_for_auth_context(auth_context).receipt_detail)
     receipt.backend = target.engine_id
     receipt.resolved_model = target.upstream
-    _capture_retention_facts(receipt)
+    _capture_retention_facts(receipt, auth_context=auth_context)
     backend_body = {**body, "model": target.upstream}
 
     def _finish_chat_receipt(reason: str, status: str) -> None:
@@ -30159,7 +30170,7 @@ def _native_passthrough_receipt(
         # Usage of a pass-through call cannot be measured; say so rather than leave the cost blank.
         receipt.metadata["cost"] = "unknown"
         receipt.cost = {"usd": None, "source": "unknown", "cost_class": "unknown", "reconciliation_status": "unknown"}
-    _capture_retention_facts(receipt)
+    _capture_retention_facts(receipt, auth_context=auth_context)
     return receipt
 
 

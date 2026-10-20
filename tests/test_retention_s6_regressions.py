@@ -116,6 +116,7 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
         monkeypatch.setattr(media_jobs, "save_fact_revisions", lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
         monkeypatch.setattr(media_jobs, "save_fact_snapshot", lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")), raising=False)
     row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    receipt_store.begin(row)
     proxy._capture_retention_facts(row)
     row.finish("succeeded")
     proxy._record_terminal_retention_receipt(row, path=stores[0])
@@ -130,3 +131,22 @@ def test_missing_saved_revisions_show_no_longer_kept(stores):
     view = proxy._gateway_retention_ledger(request()[0], row.request_id)
     assert "no longer kept" in view["fact_basis"].lower()
     assert not any(d["facts"] for d in view["destinations"])
+
+
+def test_protocol_loopback_freezes_outer_receipt_facts(stores):
+    outer = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+    child = RouteReceipt(protocol="openai.chat", intent="chat.generate", backend="destination",
+                         parent_request_id=outer.request_id)
+    auth = proxy.AuthContext(retention_receipt=outer)
+    async def run():
+        async with ReceiptLifecycleOwner(outer) as owner:
+            async with ReceiptLifecycleOwner(child) as inner:
+                proxy._capture_retention_facts(child, auth_context=auth)
+                stores[2]["services"]["destination"]["config"]["retention_facts"] = []
+                inner.report(status="succeeded", reason="completed")
+            owner.report(status="succeeded", reason="completed")
+    asyncio.run(run())
+    assert outer.backend == "destination"
+    assert outer.retention_facts == child.retention_facts
+    assert outer.retention_facts
+    assert media_jobs.fact_revisions_for_source("receipt", outer.request_id, path=stores[1])
