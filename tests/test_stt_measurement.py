@@ -30,6 +30,7 @@ def setup(gateway, monkeypatch):
     registry["services"]["speech-test"] = record
     _put_registry(gateway, registry)
     runner = gateway.proxy.STT_MEASUREMENTS
+    monkeypatch.setattr(sm.private_tmp, "current", lambda: gateway.path.parent / "private-tmp")
     monkeypatch.setattr(runner, "path", gateway.path.with_name("stt_measurements.db"))
     monkeypatch.setattr(runner, "initialized", False)
     monkeypatch.setattr(runner, "tasks", {})
@@ -272,7 +273,7 @@ def test_owner_role_removal_invalidates_measurement_access(setup, monkeypatch):
     assert not gw.proxy._operator_stt_owner_active(ctx)
 
 
-def test_startup_cleanup_removes_orphaned_workspaces(setup, tmp_path):
+def test_startup_cleanup_removes_legacy_db_adjacent_workspaces(setup, tmp_path):
     _, _, _, runner, _ = setup
     orphan = tmp_path / "stt-measurement-work" / "job-orphan"
     orphan.mkdir(parents=True)
@@ -406,7 +407,7 @@ def test_cancel_during_http_transcription_unwinds_request_and_persists_terminal_
         assert sm.TRIAL.get() is None
     asyncio.run(scenario())
     assert cleaned == [True]
-    assert not list((runner.path.parent / "stt-measurement-work").iterdir())
+    assert not list(runner._scratch_directory().iterdir())
 
 
 def test_job_deadline_also_cancels_preparation(setup, monkeypatch):
@@ -760,7 +761,7 @@ def test_resident_vram_is_credited_only_to_the_measured_service():
 def test_startup_cleans_orphan_scratch_but_respects_live_worker_lease(setup):
     gw, _, _, runner, _ = setup
     import fcntl
-    scratch = runner.path.parent / "stt-measurement-work" / "job-abandoned"
+    scratch = runner._scratch_directory() / "job-abandoned"
     scratch.mkdir(parents=True)
     (scratch / "partial-download").write_bytes(b"synthetic partial source")
     with (runner.path.parent / "stt-measurement-work.lock").open("a+b") as lease:
@@ -977,3 +978,39 @@ def test_measurement_options_use_only_mode_specific_native_settings(setup, inval
     assert "native_long_audio" not in settings
     assert "native_long_audio_offline" in settings
     assert "native_long_audio_streaming" in settings
+
+
+def test_measurement_scratch_symlink_returns_operator_error(setup, tmp_path):
+    _, owner, _, runner, ctx = setup
+    scratch = runner._scratch_directory()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside-scratch"
+    target.mkdir()
+    marker = target / "keep"
+    marker.write_text("untouched")
+    scratch.symlink_to(target, target_is_directory=True)
+    response = owner.get("/admin/api/engines/speech-test/stt-measurements")
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "measurement_scratch_unavailable"
+    assert "private temporary directory" in response.json()["error"]["message"]
+    with pytest.raises(sm.EngineRouteError, match="private temporary directory") as error:
+        asyncio.run(operate(runner, ctx, "speech-test", "options"))
+    assert error.value.status_code == 503
+    assert marker.read_text() == "untouched"
+    assert scratch.is_symlink()
+
+
+def test_measurement_startup_cleanup_refuses_scratch_symlink_without_crashing(setup, tmp_path):
+    _, _, _, runner, _ = setup
+    scratch = runner._scratch_directory()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside-scratch"
+    folder = target / "job-abandoned"
+    folder.mkdir(parents=True)
+    marker = folder / "keep"
+    marker.write_text("untouched")
+    scratch.symlink_to(target, target_is_directory=True)
+    runner.startup_cleanup()
+    assert marker.read_text() == "untouched"
+    assert scratch.is_symlink()
+    assert runner._lease_fd is None

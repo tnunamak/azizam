@@ -464,7 +464,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_extraction_refuses_a_piece_whose_actual_duration_exceeds_the_hard_maximum(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
             destination = root / "piece.wav"
 
             async def fake_command(args, **_kwargs):
@@ -491,7 +491,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temp_dir)
                 source = root / "source.wav"
                 source.write_bytes(b"original")
-                config = _config(root, target_seconds=30, threshold_seconds=40, search_seconds=10, max_duration_seconds=150)
+                config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, search_seconds=10, max_duration_seconds=150)
                 extracted = []
                 posted = []
 
@@ -530,7 +530,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             source.write_bytes(b"source")
             config_limits = dict(limits)
             max_segment_seconds = config_limits.pop("max_segment_seconds", 40)
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=max_segment_seconds,
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=max_segment_seconds,
                              max_duration_seconds=3000, **config_limits)
             posts = []
 
@@ -572,7 +572,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             fmt = struct.pack("<HHIIHH", 0x7777, 1, 8000, 8000, 1, 8)
             body = b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(samples)) + samples
             source.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40)
             deadline = asyncio.get_running_loop().time() + 30
             probed = await stt_chunking.probe_audio(source, config=config, cancellation_waiters=(), deadline_at=deadline, on_cancel=None)
             self.assertAlmostEqual(probed.duration_seconds, 10, delta=0.01)
@@ -614,7 +614,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_uncut_upload_without_a_recorded_or_measured_maximum_is_allowed_whole(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=None)
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=None)
             with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(4000, 16000, 1))):
                 await stt_chunking.guard_uncut_uploads(
                     [root / "upload.wav"], config=config, cancellation_waiters=(),
@@ -626,7 +626,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             source = root / "source.wav"
             source.write_bytes(b"source")
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=150)
+            config = _config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=150)
             posted = []
 
             async def fake_decode(_source, destination, **_kwargs):
@@ -681,7 +681,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 outcome = await stt_chunking.execute_chunking(
                     source_path=source, source_stem="source", fields=[("response_format", "json")],
-                    config=_config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40),
+                    config=_config(root, spool_dir=str(root.parent), target_seconds=30, threshold_seconds=40, max_segment_seconds=40),
                     post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
                 )
         self.assertEqual((outcome.mode, outcome.fallback_reason), ("passthrough", "below_threshold"))
@@ -732,7 +732,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "source.wav"
             source.write_bytes(b"source")
-            config = _config(Path(temp_dir))
+            config = _config(Path(temp_dir), spool_dir=str(Path(temp_dir).parent))
 
             async def extract(_source, destination, **_kwargs):
                 Path(destination).write_bytes(b"RIFFchunk")
@@ -770,7 +770,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(rows=rows, limits=limits), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                base = _config(root, setup_failure_policy=policy, **limits)
+                base = _config(root, spool_dir=str(root.parent), setup_failure_policy=policy, **limits)
                 config = stt_chunking.SttExecutionConfig.from_service(
                     service_id="stt-test", config_directory=root,
                     service_config={**base.backend_config, "transforms": rows},
@@ -808,7 +808,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_failure_never_replays_the_whole_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root)
+            config = _config(root, spool_dir=str(root.parent))
             source = root / "source.wav"
             source.write_bytes(b"source")
             attempts: list[str] = []
@@ -961,10 +961,10 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             source = root / "source.wav"
             source.write_bytes(b"not examined by the fake probe")
             cases = (
-                ("duration", _config(root, max_duration_seconds=60), 61, 8000, 1),
-                ("sample rate", _config(root, max_sample_rate=8000), 1, 8001, 1),
-                ("channels", _config(root, max_channels=1), 1, 8000, 2),
-                ("decoded bytes", _config(root, max_decoded_bytes=10_000), 1, 8000, 1),
+                ("duration", _config(root, spool_dir=str(root.parent), max_duration_seconds=60), 61, 8000, 1),
+                ("sample rate", _config(root, spool_dir=str(root.parent), max_sample_rate=8000), 1, 8001, 1),
+                ("channels", _config(root, spool_dir=str(root.parent), max_channels=1), 1, 8000, 2),
+                ("decoded bytes", _config(root, spool_dir=str(root.parent), max_decoded_bytes=10_000), 1, 8000, 1),
             )
             for name, config, duration, sample_rate, channels in cases:
                 with self.subTest(name=name):
@@ -1046,7 +1046,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             source = root / "source.webm"
             source.write_bytes(b"not examined by the fake probe")
-            config = _config(root)
+            config = _config(root, spool_dir=str(root.parent))
             format_probe_payload = json.dumps({
                 "format": {},
                 "streams": [{
@@ -1106,7 +1106,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
 
             # libopus always reports a 48 kHz stream regardless of the
             # requested encode rate (Opus operates internally at 48 kHz).
-            config = _config(root, max_duration_seconds=60, max_sample_rate=48_000)
+            config = _config(root, spool_dir=str(root.parent), max_duration_seconds=60, max_sample_rate=48_000)
             probed = await stt_chunking.probe_audio(
                 source,
                 config=config,
@@ -1125,7 +1125,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temp_dir)
                 source = root / "source.wav"
                 source.write_bytes(b"source")
-                config = _config(root, max_segments=2)
+                config = _config(root, spool_dir=str(root.parent), max_segments=2)
                 extract = AsyncMock()
                 post = AsyncMock()
                 with (
@@ -1151,7 +1151,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             self.skipTest("ffmpeg and ffprobe are required for the local media fixture")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, max_decoded_bytes=4 * 1024 * 1024)
+            config = _config(root, spool_dir=str(root.parent), max_decoded_bytes=4 * 1024 * 1024)
             source = root / "fixture.wav"
             _write_silenced_wav(source)
             uploaded: list[bytes] = []

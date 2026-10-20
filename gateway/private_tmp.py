@@ -1,8 +1,8 @@
 """Private scratch storage for request content, held by one gateway for its lifetime.
 
 Launchers use ``python3 -m gateway.private_tmp exec COMMAND ...`` to sweep while locked,
-then pass the lock and TMPDIR through exec. Retained-media thumbnail staging is deliberately
-beside its retained asset for atomic replacement; see REQUEST_RETENTION.md 5.1 rows 4-5.
+then pass the lock and TMPDIR through exec. Retained-media thumbnail and metadata-clean
+staging stays beside its retained asset for atomic replacement; see REQUEST_RETENTION.md 5.1.
 """
 from __future__ import annotations
 

@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from gateway import private_tmp
+
 VIDEO_SUFFIXES = (".mp4", ".webm", ".mov", ".mkv")
 _MIME_SUFFIX = {
     "video/mp4": ".mp4",
@@ -65,11 +67,13 @@ def probe_video(data: bytes, suffix: str = ".mp4", *, workdir: Path | None = Non
     Returns None when ffprobe is missing, fails, or finds no video stream; the
     caller then falls back to the workflow's configured frame rate.
     """
+    workdir = workdir if workdir is not None else private_tmp.current() / "video_inputs"
+    if not private_tmp.inside(workdir):
+        raise private_tmp.PrivateTmpError("Video probe workspace must stay inside the private temporary directory")
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return None
-    if workdir is not None:
-        workdir.mkdir(parents=True, exist_ok=True)
+    workdir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         path = Path(tmp) / f"source{suffix}"
         path.write_bytes(data)

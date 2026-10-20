@@ -492,7 +492,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
             max_part_size=config.max_field_bytes,
         )
         self._config = config
-        self._workspace = workspace
+        self._workspace = _validated_workspace(workspace, config)
         self._uploaded_bytes = 0
         self.max_parsed_field_bytes = 0
         self._spool_paths: set[Path] = set()
@@ -573,6 +573,8 @@ async def parse_bounded_multipart(
     deadline_at: float | None = None,
 ) -> ParsedMultipart:
     """Parse the request body directly to bounded disk files, never bytes buffers."""
+    if workspace is not None:
+        workspace = _validated_workspace(workspace, config)
     try:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
@@ -608,6 +610,23 @@ async def parse_bounded_multipart(
             _remove_workspace_after_parse_failure(active_workspace)
         raise
     return ParsedMultipart(form=form, parser=parser, workspace=active_workspace)
+
+
+def _validated_workspace(workspace: Path, config: SttExecutionConfig) -> Path:
+    """A request owns a strict child of the spool, never the shared spool itself."""
+    workspace = workspace.resolve()
+    spool = config.spool_dir.resolve()
+    if workspace == spool or not workspace.is_relative_to(spool):
+        raise SttConfigurationError("STT workspace must be a request directory inside the configured spool directory")
+    return workspace
+
+
+def _validate_media_paths(source: Path, config: SttExecutionConfig, destination: Path | None = None) -> None:
+    workspace = _validated_workspace(source.parent, config)
+    if source.resolve().parent != workspace:
+        raise SttConfigurationError("STT source must stay inside its request workspace")
+    if destination is not None and (destination.resolve().parent != workspace or destination.resolve() == source.resolve()):
+        raise SttConfigurationError("Derived STT media must stay inside its request workspace")
 
 
 def create_request_workspace(config: SttExecutionConfig) -> Path:
@@ -1049,6 +1068,7 @@ async def decode_planning_pcm(
     on_cancel: Callable[[], None] | None,
 ) -> None:
     """Decode once within the upload's disk, duration, deadline and cancellation budgets."""
+    _validate_media_paths(source_path, config, destination_path)
     bytes_per_second = _PLANNING_SAMPLE_RATE * 2
     max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * bytes_per_second))
     # Ask for one extra sample to detect an over-limit stream without decoding an unbounded input.
@@ -1165,6 +1185,7 @@ async def extract_segment(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
 ) -> None:
+    _validate_media_paths(source_path, config, destination_path)
     expected = end_seconds - start_seconds
     await run_media_command(
         [
@@ -1242,6 +1263,7 @@ async def guard_uncut_uploads(
         return
     for index, path in enumerate(paths):
         pcm_path = path.parent / f"uncut-{index}-16k.pcm"
+        _validate_media_paths(path, config, pcm_path)
         try:
             await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
                               deadline_at=deadline_at, on_cancel=on_cancel)
@@ -1296,6 +1318,7 @@ async def execute_chunking(
     cleanup: "SttCleanupOwner | None" = None,
 ) -> ChunkingOutcome:
     """Probe, plan, extract, and submit chunks without a whole-file replay."""
+    _validate_media_paths(source_path, config, source_path.parent / "planning-16k.pcm")
     if not config.chunking_enabled or not request_supports_chunking(fields, file_count=1):
         return ChunkingOutcome("passthrough", 0, "ineligible_envelope")
 
@@ -1383,6 +1406,7 @@ async def execute_chunking(
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
+        _validate_media_paths(source_path, config, chunk_path)
         if cleanup is not None:
             cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
         try:
