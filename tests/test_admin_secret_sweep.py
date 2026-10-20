@@ -61,8 +61,6 @@ OWNER_EXPORT_ROUTES = frozenset({"/admin/api/config/export"})
 def _seed_registry(gateway) -> None:
     """Plant every canary: records moved into the store, left-out records written raw, a package source."""
     registry = canary.seed_direct(gateway)
-    receipt_store.record(RouteReceipt(request_id=PARAMETERS["request_id"], protocol="test", intent="video.generate"),
-                         path=receipt_store.DB_PATH)
     # The long-audio options route is a real success path for a transcription
     # engine. Keep the other canary carriers intact while making engine-a fit.
     registry["services"]["engine-a"]["capabilities"].append("transcriptions")
@@ -139,6 +137,8 @@ def host_isolated(monkeypatch):
     created = [path for path in (media_jobs.DB_PATH, receipt_store.DB_PATH) if not path.exists()]
     media_jobs.init_db()
     receipt_store.init_db()
+    receipt_store.record(RouteReceipt(request_id=PARAMETERS["request_id"], protocol="test", intent="video.generate"),
+                         path=receipt_store.DB_PATH)
     yield
     for path in created:
         for leftover in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
