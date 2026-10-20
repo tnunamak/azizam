@@ -1,5 +1,6 @@
 """Second review regressions: real media and deterministic resource races, no inference."""
 import asyncio
+import errno
 import hashlib
 import json
 import subprocess
@@ -222,6 +223,7 @@ def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operat
                 assert response.headers.get("Retry-After") == (None if cap else "5")
                 finalize.assert_called_once()
                 if not cap:
+                    assert (receipt.status, receipt.termination_reason) == ("rejected", "resource_admission_denied")
                     assert "busy" in error["message"]
                     reasons = receipt.to_dict()["resource_decision"]["reasons"]
                     assert any(r["code"] == ("queue_full" if shortage == "queue" else "capacity_insufficient")
@@ -249,3 +251,33 @@ def test_gate_classifies_reserved_disk_shortage_as_storage(tmp_path, free_mib):
             assert gate.active_count == 1
         finally:
             held.release()
+
+
+@pytest.mark.parametrize("error_number", [errno.ENOSPC, errno.EDQUOT])
+def test_multipart_write_storage_shortage_is_retryable_and_removes_partial_file(tmp_path, error_number):
+    from starlette.requests import Request
+    from tests.test_stt_chunking import _multipart_body
+
+    async def run():
+        execution = config(tmp_path, spool_dir=str(tmp_path))
+        body, content_type = _multipart_body(content=b"audio")
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+        request = Request({"type": "http", "headers": [(b"content-type", content_type.encode())]}, receive)
+        files = []
+        async def partial_write(upload, data):
+            upload.file.write(data[:1])
+            files.append(upload.file)
+            raise OSError(error_number, "synthetic storage shortage")
+        with patch.object(stt.UploadFile, "write", partial_write):
+            with pytest.raises(stt.SttStorageUnavailable) as caught:
+                await stt.parse_bounded_multipart(request, execution)
+        assert caught.value.__cause__.errno == error_number
+        assert files and all(handle.closed for handle in files)
+        assert list(tmp_path.iterdir()) == []
+        response = proxy._stt_resource_limit_response(caught.value,
+            RouteReceipt(protocol="openai.audio", intent="audio.transcribe"))
+        assert response.status_code == 503
+        assert json.loads(response.body)["error"]["code"] == "resource_admission_denied"
+        assert response.headers["Retry-After"] == "5"
+    asyncio.run(run())
