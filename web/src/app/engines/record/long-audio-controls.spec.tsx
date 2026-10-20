@@ -93,9 +93,10 @@ describe("Long-audio operator controls", () => {
 
   it("starts measurement with manifest samples and exact-cut baseline, without saving", async () => {
     const user = mount();
-    expect(await screen.findByText(/Audio rights not stated/)).toHaveTextContent(
-      options.samples[0].audio_rights_note,
-    );
+    const warning = await screen.findByText(/Audio rights not stated/);
+    expect(warning).toHaveTextContent(options.samples[0].audio_rights_note);
+    expect(warning).toBeVisible();
+    expect(warning.closest("details:not([open])")).toBeNull();
     await user.click(
       await screen.findByRole("button", {
         name: "Measure long-audio settings",
