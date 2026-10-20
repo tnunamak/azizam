@@ -135,6 +135,17 @@ def test_options_fetches_manifest_metadata_and_generates_owner_commands(setup):
     assert "fingerprint" not in reply.text
 
 
+def test_options_exposes_unstated_audio_rights_before_sample_selection(setup):
+    _, owner, _, _, _ = setup
+    options = owner.get("/admin/api/engines/speech-test/stt-measurements").json()
+    sample = next(s for s in options["samples"] if s["id"] == "earnings21-4366522")
+    assert sample["audio_rights_unstated"] is True
+    audio = next(s for s in sample["sources"] if s["name"] == "audio")
+    assert audio["audio_rights"]["status"] == "not-stated"
+    assert "no separate" in audio["audio_rights"]["note"].lower()
+    assert all(s["provenance"] and s["human_transcribed_evidence"] for s in sample["sources"])
+
+
 def test_options_survives_invalid_saved_chunking_for_repair(setup):
     gw, owner, _, runner, _ = setup
     registry, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
