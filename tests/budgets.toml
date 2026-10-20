@@ -73,10 +73,10 @@
 # Round-4 followups: invalid unsaved facts, three writer cancellation/error
 # cases, and a virtual-clock reload event case (+5). Full hermetic collection
 # remeasured at 15115.
-pytest = 15115
-vitest = 3050
+# Train r84: remeasured hermetic pytest 15241, Vitest 3051, Playwright 471 + 3 + 18 = 492 (2026-10-20).
+pytest = 15241
+vitest = 3051
 playwright = 492
-
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
