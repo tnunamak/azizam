@@ -139,7 +139,12 @@ def test_retention_capture_and_terminal_are_best_effort(stores, monkeypatch, fai
     proxy._record_terminal_retention_receipt(row, path=stores[0])
     assert receipt_store.get(row.request_id) is not None
     view = proxy._gateway_retention_ledger(request()[0], row.request_id)
-    assert view["fact_basis"].startswith("Today's facts")
+    if failure == "invalid_config":
+        assert next(d for d in view["destinations"] if d["id"] == "destination")["facts"] == []
+        assert any(d["facts"] for d in view["destinations"] if d["id"] != "destination")
+        assert view["fact_basis"] == "Facts saved for this request."
+    else:
+        assert view["fact_basis"].startswith("Today's facts")
 
 
 def test_missing_saved_revisions_show_no_longer_kept(stores):
@@ -246,6 +251,8 @@ def test_busy_fact_cleanup_commits_expiry_and_sweeps_orphans(stores, monkeypatch
         assert run() == 1
         assert receipt_store.get(row.request_id) is None
     monkeypatch.setattr(media_jobs, "release_fact_reference_batch", real_release)
+    now = time.time()
+    monkeypatch.setattr(receipt_store.time, "time", lambda: now + 301)
     assert receipt_store.maintain(proxy.ADMIN_STORE.path, path=stores[0], fact_store_path=stores[1]) == 0
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=stores[1]) == {}
 

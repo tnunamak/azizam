@@ -112,7 +112,7 @@ def test_snapshot_rolls_back_all_destinations_on_later_write_failure(stores):
 
 @pytest.mark.parametrize("operation", ["prune", "save", "maintain", "settings"])
 @pytest.mark.parametrize("damage", ["garbage", "tableless"])
-def test_expiry_commits_before_damaged_facts_and_sweeps_after_recovery(stores, operation, damage, caplog):
+def test_expiry_commits_before_damaged_facts_and_sweeps_after_recovery(stores, operation, damage, caplog, monkeypatch):
     fact = _fact()
     _save(stores, "receipt", "expired", fact)
     _save(stores, "kept_record", "kept", fact)
@@ -145,6 +145,7 @@ def test_expiry_commits_before_damaged_facts_and_sweeps_after_recovery(stores, o
     assert receipt_store.get("expired", path=stores["receipts"]) is None
     assert "fact" in caplog.text.lower()
     assert media_jobs.fact_revisions_for_source("receipt", "expired", path=stores["facts"])
+    monkeypatch.setattr(receipt_store.time, "time", lambda: NOW + 301)
     assert receipt_store.maintain(stores["admin"], path=stores["receipts"], fact_store_path=stores["facts"]) == 0
     assert media_jobs.fact_revisions_for_source("receipt", "expired", path=stores["facts"]) == {}
     assert media_jobs.fact_destinations_for_source("receipt", "expired", path=stores["facts"]) == {}

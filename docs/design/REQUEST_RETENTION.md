@@ -1509,7 +1509,9 @@ Each slice lists its own subset in section 17.
     lock contention never restores expired receipts. Maintenance sweeps
     orphan receipt sources even when it deletes no new receipts; revisions
     shared with kept records remain. A new unattached snapshot has a short
-    grace period so a concurrent receipt commit can finish. The hourly task
+    300-second grace period so a concurrent receipt commit can finish.
+    A writer paused between those commits longer than that can lose optional
+    historical evidence; receipt expiry still proceeds. The hourly task
     starts before initial cleanup, and catches cleanup failures on every run.
     Settings return 202 with `cleanup_pending` and the deletion count when
     references need a later sweep. Cleanup receives the fact-store path
