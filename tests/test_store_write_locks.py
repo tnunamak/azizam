@@ -130,7 +130,7 @@ def test_media_jobs_schema_mismatch_names_the_stored_version(tmp_path):
         conn.execute("UPDATE media_jobs_schema_version SET version = 99")
     with pytest.raises(sqlite3.DatabaseError) as raised:
         mj.init_db(path)
-    assert str(raised.value) == "media_jobs schema version mismatch: db=99 code=2"
+    assert str(raised.value) == "media_jobs schema version mismatch: db=99 code=3"
 
 
 def test_writing_a_job_takes_the_write_lock_before_it_reads_the_previous_row(jobs_db, monkeypatch):

@@ -13975,7 +13975,7 @@ def _record_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
     return receipt_store.record(receipt, **kwargs)
 
 
-def _finalize_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
+def _record_terminal_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
     _snapshot_retention_facts(receipt)
     return receipt_store.finalize(receipt, **kwargs)
 
@@ -29327,7 +29327,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         receipt.metadata["terminal_reason"] = reason
         record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": reason})
         receipt.finish(status)
-        _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
+        _record_terminal_retention_receipt(receipt, path=receipt_store.DB_PATH)
     closes_chat = op == "chat" and owns_receipt
     if op == "chat":
         receipt.metadata["request_shape"] = request_shape_fields(body)
@@ -29402,7 +29402,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                             record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": "failed"})
                             receipt.metadata["terminal_reason"] = "failed"
                         receipt.finish("failed")
-                        _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
+                        _record_terminal_retention_receipt(receipt, path=receipt_store.DB_PATH)
                         yield b"data: " + _protocol_failure(error).body + b"\n\n"
                     finally:
                         await reply.aclose()
@@ -29444,7 +29444,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     except asyncio.CancelledError:
         if owns_receipt:
             receipt.finish("cancelled")
-            _finalize_retention_receipt(receipt, path=receipt_store.DB_PATH)
+            _record_terminal_retention_receipt(receipt, path=receipt_store.DB_PATH)
         raise
     finally:
         if lease is not None and not lease.handed_off:

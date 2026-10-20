@@ -136,6 +136,10 @@ def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
+    if (path in {"/gateway/v1/me/retention/ledger", "/gateway/v1/requests/sample/ledger",
+                 "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
+            or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
+        return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
     if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
@@ -257,6 +261,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner command permission route
         if kind == "sessions" and key not in old:
             continue  # new session settings, step-up and sign-out-everywhere routes
+        if kind == "retention_ledger" and key not in old:
+            continue  # new offline ledger and fact editor routes
         if kind == "secret_entries" and key not in old:
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
@@ -301,6 +307,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         kind = _deliberate(key)
         if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar"}:
+            continue
+        if kind == "retention_ledger" and key not in old:
             continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key

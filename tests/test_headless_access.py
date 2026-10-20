@@ -418,7 +418,7 @@ HANDLER_ERRORS = {
     "generation_mismatch", "audit_event_not_found", "person_not_found",
     "invalid_instance", "invalid_prompt_memory", "invalid_sessions",
     "address_invalid", "client_id_required", "test_not_passed", "test_not_found", "owner_person_required",
-    "invalid_password", "service_not_found", "record_not_found",
+    "invalid_password", "service_not_found", "record_not_found", "retention_destination_not_found",
 }
 
 

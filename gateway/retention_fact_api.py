@@ -64,7 +64,7 @@ def register_routes(
         registry = store.get_service_registry()
         actual = _service_id(registry, "engine", service_id)
         if actual is None:
-            return egress.safe_error_response(404, "engine_not_found", "Engine not found")
+            return egress.safe_error_response(404, "retention_destination_not_found", "Engine not found")
         return reply(view(actual))
 
     def get_fact_override(target_type: str, target_id: str, request: Request) -> JSONResponse:
@@ -76,7 +76,7 @@ def register_routes(
         if kind != "system":
             actual = _service_id(store.get_service_registry(), kind, target_id)
         if actual is None:
-            return egress.safe_error_response(404, "not_found", "Destination not found")
+            return egress.safe_error_response(404, "retention_destination_not_found", "Destination not found")
         overrides = admin_store.retention_fact_overrides(path=store.path)
         return egress.plain_json_response(
             {"retention_facts": overrides.get((kind, actual)), "overridden": (kind, actual) in overrides},
@@ -94,7 +94,7 @@ def register_routes(
         if kind != "system":
             actual = _service_id(store.get_service_registry(), kind, target_id)
         if actual is None:
-            return egress.safe_error_response(404, "not_found", "Destination not found")
+            return egress.safe_error_response(404, "retention_destination_not_found", "Destination not found")
         body = await read_json(request)
         if not isinstance(body, Mapping) or set(body) != {"retention_facts"}:
             return egress.safe_error_response(400, "invalid_facts", "Send retention_facts only")
