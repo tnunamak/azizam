@@ -73,7 +73,7 @@ def test_capture_memoizes_validated_hashed_generation_and_invalidates(capture_st
     assert first.retention_facts
 
 
-def test_request_fact_persistence_does_not_wait_for_busy_store(capture_stores):
+def test_request_fact_persistence_has_bounded_busy_wait(capture_stores):
     _, media, registry = capture_stores
     row = RouteReceipt(protocol="test", intent="test", backend="capture-destination")
     row.capture_retention_facts(registry=registry, overrides={})
@@ -83,7 +83,7 @@ def test_request_fact_persistence_does_not_wait_for_busy_store(capture_stores):
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             row.persist_retention_facts()
         elapsed = time.monotonic() - started
-    assert elapsed < 0.25
+    assert elapsed < 0.8
     assert row.retention_facts == []
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=media) == {}
 

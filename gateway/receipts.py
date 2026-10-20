@@ -15,6 +15,8 @@ import json
 from datetime import date
 from functools import lru_cache
 import threading
+import sqlite3
+from time import sleep
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Mapping
@@ -597,10 +599,20 @@ class RouteReceipt:
             return
         from gateway import media_jobs
 
-        self.retention_facts = media_jobs.save_fact_snapshot(
-            captured[2], source_kind="receipt", source_id=self.request_id,
-            path=media_jobs.DB_PATH, timeout=0.2,
-        )
+        for attempt in range(3):
+            try:
+                self.retention_facts = media_jobs.save_fact_snapshot(
+                    captured[2], source_kind="receipt", source_id=self.request_id,
+                    path=media_jobs.DB_PATH, timeout=0.2,
+                )
+                break
+            except sqlite3.OperationalError as error:
+                code = getattr(error, "sqlite_errorcode", 0) & 0xff
+                if code not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or attempt == 2:
+                    raise
+                # Runs in the ordered receipt worker: at most 620 ms of lock
+                # waits/backoff, without delaying the event loop or finalizing early.
+                sleep(0.01)
         self._retention_facts_persisted = True
 
     def attach_manifest(
