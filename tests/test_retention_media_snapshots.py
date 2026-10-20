@@ -12,7 +12,7 @@ from tests.test_adapter_differential import _audio_comfy, _video_comfy, _capture
 
 
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="media execution needs ffmpeg")
-@pytest.mark.parametrize("kind,background", [("audio", False), ("audio", True), ("video", False), ("video", True)])
+@pytest.mark.parametrize("kind,background", [("audio", False), ("audio", True), ("music", True), ("sfx", True), ("video", False), ("video", True)])
 def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background):
     with GatewayRig(f"retention-{kind}-{background}", tmp_path) as rig:
         fact = copy.deepcopy(ledger({}, kinds={})["destinations"][0]["facts"][0])
@@ -26,7 +26,7 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
         }}}}
         rig.set(proxy.ADMIN_STORE, "get_service_registry", lambda: copy.deepcopy(registry))
         _capture_scheduling(rig)
-        if kind == "audio":
+        if kind != "video":
             _audio_comfy(rig)
             body = {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}
             path = "/v1/audio/generate"
@@ -52,7 +52,7 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
                 })
                 assert response.status_code == 202, response.text
                 job_id = response.json()["job_id"]
-                worker = proxy._run_audio_media_job if kind == "audio" else proxy._run_video_media_job
+                worker = proxy._run_audio_media_job if kind != "video" else proxy._run_video_media_job
                 await worker(job_id)
                 job = media_jobs.get(job_id, path=rig.media_jobs_db)
                 assert job["status"] == "succeeded", job
@@ -68,6 +68,7 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
             assert len(work) == 1, receipts
             receipt = work[0]
             assert receipt["backend"] == proxy._GRAPH_BACKEND_ID
+            assert receipt["intent"] == f"{kind}.generate"
             assert receipt["status"] == "succeeded"
             saved = media_jobs.fact_revisions_for_source("receipt", receipt["request_id"], path=rig.media_jobs_db)
             assert saved[proxy._GRAPH_BACKEND_ID][0]["revision"] == expected

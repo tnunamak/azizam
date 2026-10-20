@@ -24232,19 +24232,6 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     ``store_full`` is for the media-job executor, which stores the bytes: they
     keep full metadata and the delivery mode is applied when the asset is served.
     """
-    if receipt is None:
-        from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(
-            request, auth_context, intent="audio.generate",
-            route_path=str(getattr(getattr(request, "url", None), "path", "/v1/audio/generate")),
-        )
-        try:
-            response = await proxy_audio_generate(request, auth_context, store_full=store_full, receipt=receipt)
-        except BaseException as error:
-            media_ingestion.finish_receipt(receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
-            raise
-        return media_ingestion.finish_response(receipt, response)
-
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -24277,8 +24264,9 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
     _begin_media_delivery(auth_context, receipt)
-    receipt.backend = _GRAPH_BACKEND_ID
-    _capture_retention_facts(receipt)
+    if receipt is not None:
+        receipt.backend = _GRAPH_BACKEND_ID
+        _capture_retention_facts(receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
