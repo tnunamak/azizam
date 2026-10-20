@@ -174,9 +174,10 @@ class SttChunkMergeTests(unittest.TestCase):
         # A window with no quiet place and equal frames: the frame nearest `near`.
         self.assertAlmostEqual(quietest(20, 25, 22.0), 22.0, delta=0.006)
         self.assertAlmostEqual(quietest(20, 25, 20.0), 20.0, delta=0.006)
-        # The result always lies inside the window, also past the end of the data.
+        # Only complete decoded frames are candidates; a wholly empty window fails.
         self.assertTrue(55 <= quietest(55, 70, 69.0) <= 70)
-        self.assertEqual(quietest(100, 110, 105.0), 105.0)
+        with self.assertRaises(stt_chunking.SttSetupFailure):
+            quietest(100, 110, 105.0)
 
     def test_the_quietest_frame_of_a_lower_floor_beats_a_nearer_quiet_one(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -955,16 +956,14 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
-    async def test_probe_enforces_duration_rate_channel_and_decoded_byte_limits(self) -> None:
+    async def test_probe_enforces_rate_and_channel_limits_but_duration_is_advisory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.wav"
             source.write_bytes(b"not examined by the fake probe")
             cases = (
-                ("duration", _config(root, spool_dir=str(root.parent), max_duration_seconds=60), 61, 8000, 1),
                 ("sample rate", _config(root, spool_dir=str(root.parent), max_sample_rate=8000), 1, 8001, 1),
                 ("channels", _config(root, spool_dir=str(root.parent), max_channels=1), 1, 8000, 2),
-                ("decoded bytes", _config(root, spool_dir=str(root.parent), max_decoded_bytes=10_000), 1, 8000, 1),
             )
             for name, config, duration, sample_rate, channels in cases:
                 with self.subTest(name=name):
@@ -990,14 +989,8 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                                 on_cancel=None,
                             )
 
-    async def test_probe_falls_back_to_packet_timestamps_when_format_duration_is_missing(self) -> None:
-        """Regression test: a Chrome MediaRecorder webm with no trailing Cues
-        element reports no format-level duration at all (not merely an
-        unparsable one). Without a fallback, probe_audio() raised
-        SttSetupFailure for every such recording, which — under the
-        operator's setup_failure_policy: passthrough default — sent the
-        whole file to the STT backend in one request instead of letting
-        threshold/quiet-place chunking engage."""
+    async def test_missing_duration_is_advisory_without_a_packet_scan(self) -> None:
+        """Missing container duration must reach bounded PCM decoding, not a packet listing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.webm"
@@ -1015,17 +1008,10 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                     "channels": 2,
                 }],
             }).encode()
-            packet_probe_stdout = (
-                b"0.020000,0.020000\n"
-                b"683.100000,0.060000\n"
-                b"683.164000,0.060000\n"
-            )
             with patch.object(
                 stt_chunking,
                 "run_media_command",
-                new=AsyncMock(
-                    side_effect=[(format_probe_payload, b""), (packet_probe_stdout, b"")]
-                ),
+                new=AsyncMock(return_value=(format_probe_payload, b"")),
             ) as mock_run:
                 probed = await stt_chunking.probe_audio(
                     source,
@@ -1034,14 +1020,13 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                     deadline_at=asyncio.get_running_loop().time() + 1,
                     on_cancel=None,
                 )
-            self.assertAlmostEqual(probed.duration_seconds, 683.224, places=3)
+            self.assertEqual(probed.duration_seconds, 0)
             self.assertEqual(probed.sample_rate, 16000)
             self.assertEqual(probed.channels, 2)
-            self.assertEqual(mock_run.await_count, 2)
-            fallback_command = mock_run.await_args_list[1].args[0]
-            self.assertIn("-select_streams", fallback_command)
+            self.assertEqual(mock_run.await_count, 1)
+            self.assertNotIn("-select_streams", mock_run.await_args.args[0])
 
-    async def test_probe_raises_setup_failure_when_packet_fallback_also_finds_no_duration(self) -> None:
+    async def test_probe_accepts_a_mono_stream_with_no_duration(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.webm"
@@ -1051,31 +1036,30 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 "format": {},
                 "streams": [{
                     "codec_type": "audio",
-                    "sample_rate": "48000",
+                    "sample_rate": "16000",
                     "channels": 1,
                 }],
             }).encode()
             with patch.object(
                 stt_chunking,
                 "run_media_command",
-                new=AsyncMock(side_effect=[(format_probe_payload, b""), (b"", b"")]),
+                new=AsyncMock(return_value=(format_probe_payload, b"")),
             ):
-                with self.assertRaises(stt_chunking.SttSetupFailure):
-                    await stt_chunking.probe_audio(
-                        source,
-                        config=config,
-                        cancellation_waiters=(),
-                        deadline_at=asyncio.get_running_loop().time() + 1,
-                        on_cancel=None,
-                    )
+                probed = await stt_chunking.probe_audio(
+                    source,
+                    config=config,
+                    cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time() + 1,
+                    on_cancel=None,
+                )
+                self.assertEqual(probed.duration_seconds, 0)
 
-    async def test_real_offline_ffmpeg_duration_less_webm_recovers_true_duration(self) -> None:
+    async def test_real_offline_ffmpeg_duration_less_webm_decodes_without_packet_scan(self) -> None:
         """End-to-end with real ffmpeg/ffprobe: encoding audio to webm on a
         pipe (rather than a seekable file) reproduces the exact container
         shape a Chrome MediaRecorder session leaves behind when a recording
         ends without a clean stop — no trailing Cues/duration element. This
-        proves the fallback recovers a real, correct duration from the same
-        binary this module shells out to, not just from a mocked payload."""
+        proves the PCM decoder establishes duration without packet timestamps."""
         if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
             self.skipTest("ffmpeg and ffprobe are required for the local media fixture")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1114,9 +1098,12 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 deadline_at=asyncio.get_running_loop().time() + 30,
                 on_cancel=None,
             )
-            self.assertGreater(probed.duration_seconds, 4.5)
-            self.assertLess(probed.duration_seconds, 5.5)
+            self.assertEqual(probed.duration_seconds, 0)
             self.assertEqual(probed.channels, 1)
+            destination = root / "decoded.pcm"
+            await stt_chunking.decode_planning_pcm(source, destination, config=config,
+                cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 30, on_cancel=None)
+            self.assertAlmostEqual(destination.stat().st_size / 32000, 5, delta=0.01)
 
     async def test_segment_limit_and_deadline_are_deterministic(self) -> None:
         # The same admission contract covers cuts at a quiet place and cuts with none.
@@ -1436,10 +1423,19 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                         )
                     if "s16le" in command:
                         await block_or_return("plan", cancellation_waiters, deadline_at, on_cancel)
-                        Path(command[-1]).write_bytes(pcm_bytes(75, [20.0, 40.0]))
+                        input_path = Path(command[command.index("-i") + 1])
+                        if input_path.name.startswith("segment-"):
+                            with wave.open(str(input_path)) as audio:
+                                duration = audio.getnframes() / audio.getframerate()
+                        else:
+                            duration = 75
+                        Path(command[-1]).write_bytes(pcm_bytes(duration, [20.0, 40.0]))
                         return b"", b""
                     await block_or_return("extract", cancellation_waiters, deadline_at, on_cancel)
-                    Path(command[-1]).write_bytes(b"RIFF" + b"x" * 64)
+                    length = float(command[command.index("-t") + 1])
+                    with wave.open(str(command[-1]), "wb") as audio:
+                        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                        audio.writeframes(pcm_bytes(length))
                     return b"", b""
 
                 class DelayedResponse:

@@ -41,6 +41,13 @@
 # Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
 # legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
 # Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
+# D47 conformance: +55 cases for misleading duration metadata, bounded decode,
+# source-sample hard limits, off-grid frames, whole-file mode/envelope guards,
+# buffered voice references and direct/chunked receipt outcomes.
+# Review regressions include frame-grid round trips, fractional source samples,
+# bounded whole-file verification, missing-duration packet scans, internal attempts
+# and an exact on-grid hard maximum affected by floating-point subtraction.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 15014.
 # Private-temp hardening: 32 regression cases for explicit workspace escapes,
 # metadata staging/orphans, anonymous memfd failures and allocation ownership,
 # including rejected segment aliases with local and route-owned cleanup.

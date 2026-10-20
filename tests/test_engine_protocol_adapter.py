@@ -452,7 +452,7 @@ def test_a_short_clip_is_posted_as_the_old_multipart_call_did(fake_upstreams) ->
             return await client.post(f"{STT}/v1/audio/transcriptions", files=files, data=data)
     run(old_call())
     conn = Connection(address=STT, timeouts=Timeouts(connect_s=10, first_byte_s=120, total_s=120))
-    reply = run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files)))
+    reply = run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files, execution=_stt_execution())))
     assert _wire(seen[1]) == _wire(seen[0])
     assert (reply.status, reply.json()) == (200, {"text": "the words"})
 
@@ -460,7 +460,7 @@ def test_a_short_clip_is_posted_as_the_old_multipart_call_did(fake_upstreams) ->
         raise httpx.ConnectError("refused")
     fake_upstreams.router._routes[STT_HOST] = HandlerTransport(refuse)
     with pytest.raises(TransportFailure) as raised:
-        run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files)))
+        run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files, execution=_stt_execution())))
     assert raised.value.kind == "unreachable" and "ConnectError" in str(raised.value) and "refused" not in str(raised.value)
 
 

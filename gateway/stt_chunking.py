@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import time
+import wave
 from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from itertools import accumulate
@@ -967,32 +968,13 @@ async def probe_audio(
         )
     except (IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata") from error
-    if duration is None:
-        # Some containers (notably a Chrome MediaRecorder webm whose recording
-        # session ended without a clean stop) carry audio/video sample data but
-        # never get a trailing Cues/duration element written. ffprobe's cheap
-        # format-level read then reports no duration at all even though the
-        # stream decodes fine. Recover the true length from packet timestamps
-        # instead of assuming the file is unusable: this is what lets duration
-        # gate the chunking decision below instead of forcing every such file
-        # through a single unbounded passthrough request.
-        duration = await _probe_duration_from_packets(
-            source_path,
-            config=config,
-            cancellation_waiters=cancellation_waiters,
-            deadline_at=deadline_at,
-            on_cancel=on_cancel,
-        )
-    if duration is None or sample_rate <= 0 or channels <= 0:
+    if sample_rate <= 0 or channels <= 0:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
-    probed = ProbedAudio(duration, sample_rate, channels)
-    if duration > config.max_duration_seconds:
-        raise SttResourceLimitExceeded("Audio duration exceeds the configured STT limit")
     if sample_rate > config.max_sample_rate or channels > config.max_channels:
         raise SttResourceLimitExceeded("Audio format exceeds the configured STT limit")
-    if probed.decoded_bytes > config.max_decoded_bytes:
-        raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
-    return probed
+    # Container and packet durations can be absent or false. Only bounded PCM
+    # decoding enforces duration/decoded-byte budgets; this duration is advisory.
+    return ProbedAudio(duration or 0.0, sample_rate, channels)
 
 
 def _finite_positive_or_none(value: Any) -> float | None:
@@ -1005,59 +987,6 @@ def _finite_positive_or_none(value: Any) -> float | None:
     return parsed
 
 
-async def _probe_duration_from_packets(
-    source_path: Path,
-    *,
-    config: SttExecutionConfig,
-    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
-    deadline_at: float,
-    on_cancel: Callable[[], None] | None,
-) -> float | None:
-    """Recover duration from the last audio packet's timestamp plus its length.
-
-    Cheaper than a full decode (``-count_frames``): ffprobe only needs to
-    demux packet headers, not decode every frame. Malformed trailing packets
-    (a truncated final Opus frame from an interrupted recording) print a
-    decoder warning on stderr but do not stop packet enumeration, so this
-    still recovers a usable duration for files with minor trailing damage.
-    """
-    try:
-        stdout, _ = await run_media_command(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "a:0",
-                "-show_entries",
-                "packet=pts_time,duration_time",
-                "-of",
-                "csv=p=0",
-                os.fspath(source_path),
-            ],
-            timeout_seconds=min(60.0, config.timeout_seconds),
-            cancellation_waiters=cancellation_waiters,
-            deadline_at=deadline_at,
-            on_cancel=on_cancel,
-            max_output_bytes=config.max_media_output_bytes,
-        )
-    except SttSetupFailure:
-        return None
-    last_end: float | None = None
-    for line in stdout.decode("utf-8", errors="replace").splitlines():
-        parts = line.strip().split(",")
-        if len(parts) != 2:
-            continue
-        pts = _finite_positive_or_none(parts[0])
-        packet_duration = _finite_positive_or_none(parts[1])
-        if pts is None:
-            continue
-        end = pts + packet_duration if packet_duration is not None else pts
-        if last_end is None or end > last_end:
-            last_end = end
-    return last_end
-
-
 async def decode_planning_pcm(
     source_path: Path,
     destination_path: Path,
@@ -1066,18 +995,25 @@ async def decode_planning_pcm(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    sample_rate: int = _PLANNING_SAMPLE_RATE,
+    channels: int = 1,
+    stop_after_seconds: float | None = None,
 ) -> None:
-    """Decode once within the upload's disk, duration, deadline and cancellation budgets."""
+    """Decode bounded PCM; planning defaults to mono 16 kHz, strict duration checks retain the source format."""
     _validate_media_paths(source_path, config, destination_path)
-    bytes_per_second = _PLANNING_SAMPLE_RATE * 2
-    max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * bytes_per_second))
-    # Ask for one extra sample to detect an over-limit stream without decoding an unbounded input.
+    bytes_per_second = sample_rate * channels * 2
+    frame_bytes = channels * 2
+    max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * sample_rate) * frame_bytes)
+    # One complete interleaved frame detects overflow, including stereo input.
+    output_limit = max_pcm_bytes + frame_bytes
+    if stop_after_seconds is not None:
+        output_limit = min(output_limit, (math.floor(stop_after_seconds * sample_rate) + 1) * frame_bytes)
     await run_media_command(
         [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-i", os.fspath(source_path),
-            "-vn", "-ac", "1", "-ar", str(_PLANNING_SAMPLE_RATE), "-f", "s16le",
-            "-t", str((max_pcm_bytes + 2) / bytes_per_second), "-fs", str(max_pcm_bytes + 2),
+            "-vn", "-ac", str(channels), "-ar", str(sample_rate), "-f", "s16le",
+            "-t", str(output_limit / bytes_per_second), "-fs", str(output_limit),
             os.fspath(destination_path),
         ],
         timeout_seconds=config.timeout_seconds,
@@ -1096,6 +1032,22 @@ async def decode_planning_pcm(
         raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
 
 
+def _frame_index_bounds(lo: float, hi: float) -> tuple[int, int]:
+    """Frame starts whose centre times lie in the window, including exact grid boundaries.
+
+    Correct the rounded index estimate using the same sample-to-time conversion
+    as the reader. Dividing seconds by a float hop can lose an on-grid endpoint.
+    """
+    rate, hop, half = _PLANNING_SAMPLE_RATE, _FRAME_HOP_SAMPLES, _FRAME_SAMPLES // 2
+    first = max(0, math.floor((lo * rate - half) / hop))
+    if (first * hop + half) / rate < lo:
+        first += 1
+    last = math.ceil((hi * rate - half) / hop)
+    if (last * hop + half) / rate > hi:
+        last -= 1
+    return first, last
+
+
 def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], float]:
     """Return ``quietest(lo, hi, near)``: the centre time of the lowest-energy 20 ms frame centred in [lo, hi].
 
@@ -1106,10 +1058,9 @@ def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], flo
     half = _FRAME_SAMPLES // 2
 
     def quietest(lo: float, hi: float, near: float) -> float:
-        first = max(0, math.ceil((lo * rate - half) / _FRAME_HOP_SAMPLES))
-        last = math.floor((hi * rate - half) / _FRAME_HOP_SAMPLES)
+        first, last = _frame_index_bounds(lo, hi)
         if last < first:
-            return min(max(near, lo), hi)
+            raise SttSetupFailure("No complete STT energy frame lies inside the cut window")
         # A service record may ask for a wide search. Read one second of frames
         # at a time so the memory cost does not grow with that width.
         best: tuple[int, float] | None = None
@@ -1131,7 +1082,9 @@ def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], flo
                              abs(centre_sample - near_sample))
                     if best is None or score < best:
                         best, best_centre = score, centre_sample / rate
-        return min(max(best_centre, lo), hi)
+        if best is None:
+            raise SttSetupFailure("No complete STT energy frame lies inside the decoded audio")
+        return best_centre
 
     return quietest
 
@@ -1144,16 +1097,21 @@ def plan_quietest_frame_segments(
     search_seconds: float,
     max_segment_seconds: float,
     max_segments: int,
+    sample_rate: int = _PLANNING_SAMPLE_RATE,
 ) -> list[tuple[float, float]]:
     """Cut at the quietest frame near each multiple of the target; no overlap, no segment above the hard maximum.
 
     The cut for target ``k * T`` is searched in ``k * T +- W`` (W is the record's search width). The
     range is clipped to what keeps the segment ending at the cut within ``max_segment_seconds``, so the maximum is
     kept even when the signal gives no quiet place. Cutting stops when the rest of the file fits one segment of at
-    most ``T`` plus a quarter of ``T`` (and never more than the hard maximum). Segments tile the file exactly.
+    most ``T`` plus a quarter of ``T`` (and never more than the hard maximum). If a zero/narrow search window
+    contains no frame centre, inspect the nearest frame that keeps the hard maximum. Segments tile the file exactly.
     """
     if max_segment_seconds < target_seconds:
         raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
+    # ffmpeg rounds extraction times to source samples. A fractional-sample
+    # maximum must be rounded down before planning, never after a chunk is sent.
+    max_segment_seconds = math.floor(max_segment_seconds * sample_rate) / sample_rate
     width = min(search_seconds, target_seconds / 2)
     min_segment_seconds = min(_MIN_SEGMENT_SECONDS, target_seconds / 2)
     end_limit = min(max_segment_seconds, target_seconds * (1.0 + _TAIL_FRACTION_OF_TARGET))
@@ -1163,10 +1121,18 @@ def plan_quietest_frame_segments(
         if len(cuts) + 2 > max_segments:
             raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
         target = target_seconds * (len(cuts) + 1)
-        highest = min(previous + max_segment_seconds, duration_seconds - min_segment_seconds, target + width)
-        lowest = max(previous + min_segment_seconds, target - width)
-        if lowest > highest:
-            raise SttSetupFailure("No legal STT cut lies inside the target search window")
+        safe_lowest = previous + min_segment_seconds
+        safe_highest = min(previous + max_segment_seconds, duration_seconds - min_segment_seconds)
+        highest = min(safe_highest, target + width)
+        lowest = max(safe_lowest, target - width)
+        first, last = _frame_index_bounds(lowest, highest)
+        if first > last:
+            first, last = _frame_index_bounds(safe_lowest, safe_highest)
+            if first > last:
+                raise SttSetupFailure("No legal STT energy frame keeps the hard maximum")
+            near = round((target * _PLANNING_SAMPLE_RATE - _FRAME_SAMPLES // 2) / _FRAME_HOP_SAMPLES)
+            index = min(max(near, first), last)
+            lowest = highest = (index * _FRAME_HOP_SAMPLES + _FRAME_SAMPLES // 2) / _PLANNING_SAMPLE_RATE
         cut = min(max(quietest_frame(lowest, highest, min(max(target, lowest), highest)), lowest), highest)
         cuts.append(cut)
         previous = cut
@@ -1219,17 +1185,29 @@ async def extract_segment(
         raise SttSetupFailure("STT segment extraction did not create audio") from error
     if size <= 44 or size > config.max_decoded_bytes:
         raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured limit")
-    actual = await probe_audio(
-        destination_path,
-        config=config,
-        cancellation_waiters=cancellation_waiters,
-        deadline_at=deadline_at,
-        on_cancel=on_cancel,
-    )
-    if abs(actual.duration_seconds - expected) > 0.1:
-        raise SttSetupFailure("STT segment extraction has an unexpected duration")
-    if actual.duration_seconds > config.max_segment_seconds:
-        raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
+    pcm_path = destination_path.with_suffix(".verify.pcm")
+    try:
+        # The extractor promises PCM16 WAV. Retain its sample rate/channels:
+        # resampling can round a one-source-sample overrun down to the maximum.
+        try:
+            with wave.open(os.fspath(destination_path)) as audio:
+                rate, channels = audio.getframerate(), audio.getnchannels()
+                if audio.getsampwidth() != 2:
+                    raise SttSetupFailure("STT segment extraction did not create PCM16 audio")
+        except (wave.Error, EOFError) as error:
+            raise SttSetupFailure("STT segment extraction did not create PCM16 audio") from error
+        if rate > config.max_sample_rate or channels > config.max_channels:
+            raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured audio format")
+        await decode_planning_pcm(destination_path, pcm_path, config=config,
+            cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
+            sample_rate=rate, channels=channels)
+        actual_duration = pcm_path.stat().st_size / (rate * channels * 2)
+        if actual_duration > config.max_segment_seconds:
+            raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
+        if abs(actual_duration - expected) > 0.1:
+            raise SttSetupFailure("STT segment extraction has an unexpected duration")
+    finally:
+        _unlink_chunk_path(pcm_path)
 
 
 def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
@@ -1257,7 +1235,11 @@ async def guard_uncut_uploads(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
     on_cancel: Callable[[], None] | None, streaming: bool = False,
 ) -> None:
-    """Refuse an over-limit file when the request envelope cannot be cut, if its record has a known maximum."""
+    """Refuse a whole file over a known maximum before sending it.
+
+    D47 amendment 2: native long audio for this mode deliberately bypasses the
+    chunk maximum. An undeclared/derived maximum cannot justify a refusal.
+    """
     native = config.native_long_audio_streaming if streaming else config.native_long_audio_offline
     if native or not config.max_segment_declared:
         return
@@ -1265,11 +1247,13 @@ async def guard_uncut_uploads(
         pcm_path = path.parent / f"uncut-{index}-16k.pcm"
         _validate_media_paths(path, config, pcm_path)
         try:
-            await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
-                              deadline_at=deadline_at, on_cancel=on_cancel)
+            probed = await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
+                                       deadline_at=deadline_at, on_cancel=on_cancel)
             await decode_planning_pcm(path, pcm_path, config=config, cancellation_waiters=cancellation_waiters,
-                                      deadline_at=deadline_at, on_cancel=on_cancel)
-            duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+                                      deadline_at=deadline_at, on_cancel=on_cancel,
+                                      sample_rate=probed.sample_rate, channels=probed.channels,
+                                      stop_after_seconds=config.max_segment_seconds)
+            duration = pcm_path.stat().st_size / (probed.sample_rate * probed.channels * 2)
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
         finally:
@@ -1324,6 +1308,7 @@ async def execute_chunking(
 
     probed: ProbedAudio | None = None
     planning_duration: float | None = None
+    source_sample_rate = _PLANNING_SAMPLE_RATE
     pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
@@ -1333,6 +1318,7 @@ async def execute_chunking(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
+        source_sample_rate = probed.sample_rate
         if cleanup is not None:
             cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         try:
@@ -1360,6 +1346,7 @@ async def execute_chunking(
             search_seconds=config.search_seconds,
             max_segment_seconds=config.max_segment_seconds,
             max_segments=config.max_segments,
+            sample_rate=source_sample_rate,
         )
     except (
         asyncio.CancelledError,
@@ -1383,7 +1370,7 @@ async def execute_chunking(
 
     planned_duration = planning_duration if planning_duration is not None else probed.duration_seconds
     if config.max_segment_declared and planned_duration > config.max_segment_seconds and (
-        not segments or len(segments) <= 1 or any(end - start > config.max_segment_seconds for start, end in segments)
+        not segments or len(segments) <= 1 or any(end > start + config.max_segment_seconds for start, end in segments)
     ):
         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds)
     if not segments or len(segments) <= 1:
