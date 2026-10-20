@@ -640,3 +640,27 @@ def test_reference_guard_obeys_concurrency_admission_before_spooling(tmp_path):
             lease.release()
         assert gate.active_count == gate._reserved_bytes == 0
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_implicit_owner_reports_cleanup_failure_without_hiding_cancellation(tmp_path, cancel):
+    async def run():
+        source = wav(tmp_path / "source.wav", 0.6)
+        unlink = stt._unlink_chunk_path
+        async def post(path, filename):
+            if cancel:
+                raise asyncio.CancelledError()
+            return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
+        def fail_shared_pcm(path):
+            if path.name == "extraction-source.pcm":
+                raise OSError("test unlink failed")
+            unlink(path)
+        with patch.object(stt, "_unlink_chunk_path", side_effect=fail_shared_pcm):
+            with pytest.raises(asyncio.CancelledError if cancel else stt.SttCleanupFailure):
+                await stt.execute_chunking(source_path=source, source_stem="source", fields=[],
+                    config=config(tmp_path, target_seconds=0.25, threshold_seconds=0.3, max_segment_seconds=0.3),
+                    post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10,
+                    on_cancel=None)
+        assert not list(tmp_path.glob("segment-*"))
+        unlink(tmp_path / "extraction-source.pcm")
+    asyncio.run(run())
