@@ -30,11 +30,12 @@
   "media_jobs": {
     "media_jobs_schema_version": [
       {
-        "version": 3
+        "version": 4
       }
     ],
     "retention_fact_destinations": [
       {
+        "created_at": "<time>",
         "destination_id": "gateway",
         "metadata_json": {
           "kind": "system",
@@ -44,6 +45,7 @@
         "source_kind": "receipt"
       },
       {
+        "created_at": "<time>",
         "destination_id": "litellm",
         "metadata_json": {
           "kind": "system",
@@ -53,6 +55,7 @@
         "source_kind": "receipt"
       },
       {
+        "created_at": "<time>",
         "destination_id": "local-chat",
         "metadata_json": {
           "address": "http://chat.fk.test/v1",
