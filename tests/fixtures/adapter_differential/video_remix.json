@@ -239,7 +239,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 2
+        "version": 3
       }
     ],
     "video_job_records": [
