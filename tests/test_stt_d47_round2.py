@@ -146,3 +146,76 @@ def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, re
         else:
             retry_after.assert_not_called()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["transcriptions", "translations"])
+@pytest.mark.parametrize("shortage", ["cap", "disk900", "disk1024", "queue"])
+def test_stt_routes_distinguish_request_caps_from_busy_capacity(tmp_path, operation, shortage):
+    from starlette.requests import Request
+    from tests.support.access import access_context
+    from tests.test_stt_chunking import _multipart_body
+
+    async def run():
+        mib = 1024**2
+        execution = config(tmp_path, max_input_bytes=8 if shortage == "cap" else 512 * mib)
+        gate = stt.SttResourceGate()
+        leases = []
+        body, content_type = _multipart_body(content=b"over cap!")
+        delivered = False
+        async def receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await asyncio.Future()
+        request = Request({"type": "http", "method": "POST", "path": f"/v1/audio/{operation}",
+                           "headers": [(b"content-type", content_type.encode())]}, receive)
+        receipt = RouteReceipt(protocol="openai.audio", intent="audio.transcribe")
+        with patch.object(stt, "_disk_free_bytes", return_value=4096 * mib) as free, \
+             patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), \
+             patch.object(proxy, "_service_availability_response", return_value=None), \
+             patch.object(proxy.receipt_store, "begin"), \
+             patch.object(proxy.receipt_store, "finalize") as finalize:
+            try:
+                if shortage != "cap":
+                    leases.append(gate.acquire(request_id="held", config=execution))
+                if shortage == "queue":
+                    leases.append(gate.acquire(request_id="held2", config=execution))
+                if shortage.startswith("disk"):
+                    free.return_value = int(shortage[4:]) * mib
+                response = await proxy.proxy_stt_request(request, access_context(), operation=operation,
+                    execution_snapshot=execution, route_receipt=receipt)
+                error = json.loads(response.body)["error"]
+                assert response.status_code == (413 if shortage == "cap" else 503)
+                assert error["code"] == ("stt_upload_limit" if shortage == "cap" else "resource_admission_denied")
+                assert error["type"] == ("invalid_request_error" if shortage == "cap" else "api_error")
+                assert response.headers.get("Retry-After") == (None if shortage == "cap" else "5")
+                finalize.assert_called_once()
+                if shortage != "cap":
+                    assert "busy" in error["message"]
+                    reasons = receipt.to_dict()["resource_decision"]["reasons"]
+                    assert any(r["code"] == ("queue_full" if shortage == "queue" else "capacity_insufficient")
+                               and r["resource_class"] == ("queue" if shortage == "queue" else "disk") for r in reasons)
+                assert gate.active_count == len(leases)
+            finally:
+                for lease in leases:
+                    lease.release()
+        assert gate.active_count == gate._reserved_bytes == 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("free_mib", [900, 1024])
+def test_gate_classifies_reserved_disk_shortage_as_storage(tmp_path, free_mib):
+    gate = stt.SttResourceGate()
+    execution = config(tmp_path)
+    with patch.object(stt, "_disk_free_bytes", return_value=4096 * 1024**2) as free:
+        held = gate.acquire(request_id="held", config=execution)
+        try:
+            free.return_value = free_mib * 1024**2
+            with pytest.raises(stt.SttStorageUnavailable) as caught:
+                gate.acquire(request_id="denied", config=execution)
+            assert any(r.code == "capacity_insufficient" and r.resource_class == "disk"
+                       for r in caught.value.decision.details.reasons)
+            assert gate.active_count == 1
+        finally:
+            held.release()
