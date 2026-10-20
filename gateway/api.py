@@ -45,6 +45,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from gateway import egress
 from gateway import media_jobs as _media_jobs
 from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
@@ -961,16 +962,17 @@ def create_request_retention_router(*, ledger_provider: LedgerProvider) -> APIRo
     The injected provider uses the same owner/admin guard as other ledger reads
     and masks receipt retention fields for the authenticated viewer.
     """
-    router = APIRouter(prefix="/admin/api")
+    router = APIRouter(prefix="/admin/api", route_class=egress.ManagementRoute)
 
     @router.get("/requests/{request_id}/retention/ledger")
     def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:
         try:
             view = ledger_provider(request, request_id)
         except PermissionError:
-            return JSONResponse(status_code=403, content=_error_payload("admin_required", "An owner or administrator is required"))
+            return egress.safe_error_response(403, "admin_required", "An owner or administrator is required")
         if view is None:
-            return JSONResponse(status_code=404, content=_error_payload("ledger_not_found", "Ledger not found"))
-        return JSONResponse(content={"ledger": view}, headers={"Cache-Control": "no-store"})
+            return egress.safe_error_response(404, "ledger_not_found", "Ledger not found")
+        return egress.plain_json_response({"ledger": view}, response_class="retention_ledger",
+                                          headers={"Cache-Control": "no-store"})
 
     return router
