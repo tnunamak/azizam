@@ -175,12 +175,16 @@ class Measurements:
                             if folder.is_dir() and not folder.is_symlink():
                                 shutil.rmtree(folder)
         except EngineRouteError:
-            pass  # A live worker inherited the lease; never remove its files.
+            pass  # A live worker or unsafe scratch directory prevents cleanup.
 
     def _scratch_directory(self) -> Path:
-        scratch = private_tmp.current() / "stt-measurement-work"
-        if scratch.is_symlink() or not private_tmp.inside(scratch):
-            raise private_tmp.PrivateTmpError("Measurement scratch must stay inside the private temporary directory")
+        try:
+            scratch = private_tmp.current() / "stt-measurement-work"
+            if scratch.is_symlink() or not private_tmp.inside(scratch):
+                raise private_tmp.PrivateTmpError("Unsafe measurement scratch directory")
+        except private_tmp.PrivateTmpError as error:
+            raise EngineRouteError(503, "measurement_scratch_unavailable",
+                "Measurement scratch must stay inside the private temporary directory. Repair its configuration before measuring.") from error
         return scratch
 
     def startup_cleanup(self) -> None:
@@ -189,6 +193,7 @@ class Measurements:
 
     @contextlib.contextmanager
     def _db(self):
+        self._scratch_directory()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._cleanup_abandoned_workspaces()
         db = sqlite3.connect(self.path)
