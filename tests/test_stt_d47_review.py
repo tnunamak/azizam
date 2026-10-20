@@ -28,7 +28,7 @@ async def chunk(source, execution, post, **kwargs):
 def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channels, codec, suffix):
     source = tmp_path / f"noise.{suffix}"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-        f"anoisesrc=r={rate}:d=2:seed=47", "-ac", str(channels), "-c:a", codec,
+        f"anoisesrc=r={rate}:d=4:seed=47", "-ac", str(channels), "-c:a", codec,
         *(["-q:a", "4"] if codec == "libmp3lame" else []), str(source)], check=True)
 
     async def run(limit):
@@ -44,7 +44,7 @@ def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channel
 
     shared = asyncio.run(run(2**20))
     # Enough for planning and two segment buffers, but not the full source PCM.
-    streamed = asyncio.run(run(70000))
+    streamed = asyncio.run(run(150000))
     assert streamed == shared
     assert not list(tmp_path.glob("*.pcm"))
 
@@ -184,7 +184,7 @@ def test_voice_contention_returns_retryable_busy_response(tmp_path):
                  patch.object(proxy, "_custom_voice_engines", return_value=["test"]):
                 store.return_value.get_voice.return_value = {"id": "test"}
                 store.return_value.reference_path.return_value = source
-                response = await proxy._resolve_custom_voice({}, "test", {"custom_voices": True},
+                response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True},
                     None, "omnivoice")
             assert response.status_code == 503
             assert response.headers["Retry-After"] == "5"
