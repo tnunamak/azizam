@@ -16,7 +16,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import os
 
@@ -226,6 +226,7 @@ def put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
     admin_path: Path | None = None, created_at: int | None = None,
+    on_result: Callable[[retention.WriteOutcome], None] | None = None,
 ) -> bool:
     if not asset_id or not person_id or not isinstance(prompt_text, str) or not prompt_text:
         raise ValueError("asset, maker and nonempty prompt text are required")
@@ -249,7 +250,7 @@ def put(
 
     return retention.write(
         retention.LIBRARY_PROMPT, admin_path=admin_path, person_id=person_id, created_at=started,
-        kept_until=kept_until, commit=insert,
+        kept_until=kept_until, commit=insert, on_result=on_result,
     )
 
 
@@ -257,14 +258,17 @@ def safe_put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
     admin_path: Path | None = None, created_at: int | None = None,
+    on_result: Callable[[retention.WriteOutcome], None] | None = None,
 ) -> bool:
     """Best-effort prompt write; storage contention cannot fail media delivery."""
     try:
         return put(
             asset_id, person_id, prompt_text, kept_until=kept_until, metadata=metadata,
-            path=path, admin_path=admin_path, created_at=created_at,
+            path=path, admin_path=admin_path, created_at=created_at, on_result=on_result,
         )
     except Exception:
+        if on_result is not None:
+            on_result(retention.WriteOutcome(False, "write_failed"))
         return False
 
 
@@ -287,6 +291,31 @@ def tighten_retention(period: str, *, person_id: str | None = None,
         return count
     finally:
         conn.close()
+
+
+def require_resolvable_periods(*, admin_path: Path) -> None:
+    """Startup check: every stored period ID is in the contract, or a finite offered choice can replace it.
+
+    A file that offers only no-expiry choices is valid until a stored ID is deleted from it. Then the gateway
+    has no period to apply, so it stops with the ID named (``retention.normalize_period`` raises).
+    """
+    try:
+        conn = connect_readonly(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+        try:
+            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences")}
+            row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        logging.getLogger(__name__).warning("stored retention period check deferred")
+        return
+    try:
+        groups = json.loads(row[0]).get("groups") if row else None
+        cap = (groups or {}).get(retention.GROUP_PROMPTS, {}).get("retention_cap")
+    except (AttributeError, TypeError, ValueError):
+        cap = None  # A corrupt setting is tolerated and logged by the deadline repair.
+    for period in sorted(item for item in (*stored, cap) if isinstance(item, str)):
+        retention.normalize_period(period, kind=retention.LIBRARY_PROMPT, owner_cap=period == cap)
 
 
 def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> int:

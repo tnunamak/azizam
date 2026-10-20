@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from time import perf_counter, time
 import asyncio
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -55,6 +56,7 @@ CLIENT_VISIBLE_FIELDS = {
     "accepted_at_ms",
     "updated_at_ms",
     "refusal",
+    "retention",
     *PHASE_FIELDS,
     "attempt_number",
 }
@@ -81,6 +83,88 @@ OPERATOR_VISIBLE_FIELDS = ADMIN_VISIBLE_FIELDS | {"metadata"}
 REFUSAL_CODES = frozenset({"budget_exceeded", "provider_needs_reconciliation"})
 REFUSAL_PERIODS = frozenset({"daily", "monthly", "request"})
 REFUSAL_SCOPES = frozenset({"person", "app", "provider", "global"})
+
+# Content retention is a structural receipt fact. Keep this vocabulary closed:
+# the ordinary receipt key-name guard does not inspect scalar values.
+RETENTION_KINDS = frozenset({"library_prompt", "conversation"})
+RETENTION_DECISIONS = frozenset({"kept", "not_kept", "failed"})
+RETENTION_REASONS = frozenset({
+    "kept", "server_disabled", "request_forget", "no_person",
+    "member_disabled", "no_scope", "no_content", "storage_unavailable",
+    "erasure_cutoff", "expired",
+    "write_failed", "incomplete",
+})
+RETENTION_LIMITS = frozenset({"member_choice", "owner_cap", "prior_policy", "unbounded_store"})
+RETENTION_PARTS = {
+    "library_prompt": frozenset({"accepted"}),
+    "conversation": frozenset({"accepted", "received"}),
+}
+_INVALID_STORED_RETENTION_LOCK = threading.Lock()
+_invalid_stored_retention_logged = False
+
+
+def validate_retention(value: Any) -> list[dict[str, Any]]:
+    """Reject any content, unknown field, or value outside the receipt vocabulary."""
+    if not isinstance(value, list) or len(value) > len(RETENTION_KINDS):
+        raise ValueError("receipt retention must be a list of existing kinds")
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("receipt retention entry must be an object")
+        kind, decision, reason = item.get("kind"), item.get("decision"), item.get("reason")
+        if type(kind) is not str or kind not in RETENTION_KINDS or kind in seen:
+            raise ValueError("receipt retention kind is unknown or repeated")
+        if (type(decision) is not str or decision not in RETENTION_DECISIONS
+                or type(reason) is not str or reason not in RETENTION_REASONS):
+            raise ValueError("receipt retention decision or reason is unknown")
+        seen.add(kind)
+        if decision == "kept":
+            if set(item) != {"kind", "decision", "reason", "kept_until_ms", "parts", "limited_by"}:
+                raise ValueError("kept retention entry has unexpected fields")
+            if (reason != "kept" or type(item["limited_by"]) is not str
+                    or item["limited_by"] not in RETENTION_LIMITS):
+                raise ValueError("kept retention entry has an invalid reason or limit")
+            deadline = item["kept_until_ms"]
+            if deadline is not None and (type(deadline) is not int or deadline < 0):
+                raise ValueError("receipt retention deadline must be milliseconds or null")
+            parts = item["parts"]
+            if (not isinstance(parts, list) or not parts
+                    or any(type(part) is not str for part in parts)
+                    or len(parts) != len(set(parts))
+                    or any(part not in RETENTION_PARTS[kind] for part in parts)):
+                raise ValueError("receipt retention parts are invalid")
+        else:
+            if set(item) != {"kind", "decision", "reason"}:
+                raise ValueError("unkept retention entry has unexpected fields")
+            if decision == "failed" and reason != "write_failed":
+                raise ValueError("failed retention entry needs write_failed")
+            if decision == "not_kept" and reason in {"kept", "write_failed"}:
+                raise ValueError("not_kept retention entry has an invalid reason")
+        out.append(dict(item))
+    return out
+
+
+def _retention_from_store(value: Any) -> list[dict[str, Any]]:
+    """Keep valid historical entries without letting one retired value break receipt reads."""
+    if not isinstance(value, list):
+        _log_invalid_stored_retention_once()
+        return []
+    valid: list[dict[str, Any]] = []
+    for item in value:
+        try:
+            valid = validate_retention([*valid, item])
+        except ValueError:
+            _log_invalid_stored_retention_once()
+    return valid
+
+
+def _log_invalid_stored_retention_once() -> None:
+    global _invalid_stored_retention_logged
+    with _INVALID_STORED_RETENTION_LOCK:
+        if not _invalid_stored_retention_logged:
+            logging.getLogger(__name__).warning("Stored receipt retention entry is invalid; omitting it")
+            _invalid_stored_retention_logged = True
 
 
 def sanitize_refusal(value: Any) -> dict[str, Any] | None:
@@ -273,6 +357,9 @@ class RouteReceipt:
     # feed to one user. None when there is no owning App (unauthenticated,
     # legacy config keys, or provider-native passthrough without identity).
     app_id: str | None = None
+    # The person who made a content-bearing request. Internal only; an App's
+    # owner is not necessarily the maker of every request through that App.
+    maker_person_id: str | None = None
     api_key_name: str | None = None
     # The MCP sign-in connection (``mcp_oauth_grants.id``) that made the request.
     # Such a request runs as the person's own session App, so ``app_id`` alone
@@ -310,6 +397,8 @@ class RouteReceipt:
     usage: dict[str, Any] | None = None
     effective_output_limit: int | None = None
     refusal: dict[str, Any] | None = None
+    # None means a submit receipt defers the content outcome to its work receipt.
+    retention: list[dict[str, Any]] | None = field(default_factory=list)
     resource_decision: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
@@ -411,6 +500,14 @@ class RouteReceipt:
     def set_refusal(self, refusal: Mapping[str, Any]) -> None:
         """Record why the gateway refused this request (see sanitize_refusal)."""
         self.refusal = sanitize_refusal(refusal)
+
+    def set_retention(self, **entry: Any) -> None:
+        """Replace the outcome for one content kind after its write has resolved."""
+        if self.retention is None:
+            raise ValueError("content retention belongs to the work receipt")
+        kind = entry.get("kind")
+        updated = [item for item in self.retention if item["kind"] != kind]
+        self.retention = validate_retention([*updated, entry])
 
     def attach_manifest(
         self,
@@ -515,6 +612,10 @@ class RouteReceipt:
             "attempt_number": self.attempt_number,
             "metadata": dict(self.metadata),
         }
+        if self.maker_person_id is not None:
+            data["maker_person_id"] = self.maker_person_id
+        if self.retention is not None:
+            data["retention"] = validate_retention(self.retention)
         if self.resource_decision is not None:
             data["resource_decision"] = self.resource_decision
         if isinstance(self.refusal, Mapping):
@@ -523,8 +624,16 @@ class RouteReceipt:
         return serialize_receipt_for_audience(data, audience)
 
 
-def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "internal") -> dict[str, Any]:
+def serialize_receipt_for_audience(
+    data: Mapping[str, Any], audience: str = "internal", *,
+    from_store: bool = False, retention_detail: bool = True,
+) -> dict[str, Any]:
     data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
+    if "retention" in data:
+        entries = _retention_from_store(data["retention"]) if from_store else validate_retention(data["retention"])
+        data["retention"] = entries if retention_detail or audience == "internal" else [
+            {"kind": item["kind"], "decision": item["decision"]} for item in entries
+        ]
     if audience not in {"internal", "admin", "client"}:
         raise ValueError("audience must be internal, admin, or client")
     if audience == "internal":

@@ -307,6 +307,7 @@ def build_user_activity_snapshot(
     receipts = receipt_store.recent(
         limit=safe_limit,
         audience="client",
+        viewer_person_id=str(user["id"]),
         app_ids=None if owner else owned,
         path=receipts_path,
     )
@@ -358,7 +359,8 @@ def get_user_receipt(
         raise not_found
 
     found = receipt_store.get_with_created_at(
-        request_id, audience="client", path=receipts_path
+        request_id, audience="client", viewer_person_id=str(user["id"]),
+        path=receipts_path,
     )
     if found is None:
         raise not_found

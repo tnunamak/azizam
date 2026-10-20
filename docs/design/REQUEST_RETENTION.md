@@ -1316,8 +1316,9 @@ added to `CLIENT_VISIBLE_FIELDS` (`gateway/receipts.py:29`):
 ```
 
 - `decision` is one of `kept`, `not_kept`, `failed`.
-- `reason` comes from the closed set in section 3.3, plus `write_failed` and
-  `incomplete`.
+- `reason` comes from the closed set in section 3.3, plus `no_scope`,
+  `no_content`, `storage_unavailable`, `erasure_cutoff`, `expired`,
+  `write_failed` and `incomplete` for the existing kinds.
 
 A receipt also gets `replay_of` (Run again) and `retention_facts`: the
 revision hashes of the facts in force (section 6.1). All values are enums, ids,
@@ -1327,6 +1328,27 @@ counts and times. The receipt never holds content ([research] R1;
 The receipt store's guard checks key names only (`receipt_store.py:211`;
 `redaction.py:163,190`). Slice 2 adds a value check for these fields: each
 must be in its enum or be a bounded id.
+
+**Slice 2 as built.** Existing `library_prompt` and `conversation` receipts
+include `retention` as a list with at most one entry per kind. The entry has a
+closed kind, decision and reason vocabulary. A kept entry also has an actual
+`kept_until_ms` (or `null`), captured parts and `limited_by`. The writer sets
+the final value after the content write. A refusal or failed write cannot claim
+`kept`. The receipt store validates values as well as field names before it
+persists them. The current Responses store has no row expiry: its kept
+conversation entry therefore reports `kept_until_ms: null` and
+`limited_by: "unbounded_store"`, even when the member chose a finite period.
+This is the stored fact, not a promise that a later slice has already enforced
+that period.
+
+An image media-job submit receipt has no `retention` field: submission only
+queues work. The worker's separate receipt reports the content write. Audio
+and video job submissions currently create no route receipt. A stored receipt
+with a retired retention value remains readable; its invalid entry is omitted
+and the read logs one structural warning. Writes still refuse invalid values.
+The maker sees the full retention entry. In the owner's Home, receipt detail
+and Activity views, another person's entry contains only `kind` and
+`decision`; `reason`, deadline, parts and limit stay with the maker.
 
 ## 14. AGENTS.md and the extension rung (owner task 11)
 
@@ -1615,15 +1637,26 @@ the build chose a form that the text above leaves open:
 - A stored member period or owner cap keeps its exact meaning while its ID
   exists in `retention_choices`, even if it leaves the group's offered
   `choices`. The settings views mark it "(no longer offered)"; it cannot be
-  newly selected. If its ID leaves `retention_choices`, the shortest finite
-  offered choice applies, never `never`. One normalization feeds the settings
-  view, request decision, writer, maintenance and startup repair. On restart,
-  every finite effective period shortens saved prompt deadlines where needed,
-  including people with saved prompts but no preference row, changed defaults
-  and choice durations; earlier deadlines never lengthen. If startup repair
-  fails, the gateway logs the failure and recurring maintenance retries it.
-  The bundled file is pinned for the process lifetime so this repair precedes
-  serving requests under the new contract. Slice 1 refuses a bundled
+  newly selected; a stored `never` stays no-expiry. If its ID leaves
+  `retention_choices`, the shortest finite offered choice applies. One
+  normalization (`retention.effective_period`) feeds the settings view,
+  request decision, writer, maintenance and startup repair. A file that
+  offers only `never` is valid; it fails only when a stored ID was deleted
+  and no finite offered choice can replace it, and then the gateway stops at
+  startup and names the ID. The account note tells a removed ID (it names the
+  fallback) from an ID that still exists but is not offered (it says it still
+  applies, or that the gateway limit now applies). On restart, every finite
+  effective period shortens saved prompt deadlines where needed, including
+  people with saved prompts but no preference row, changed defaults and
+  choice durations; earlier deadlines never lengthen. If startup repair
+  fails, the gateway logs the failure, the owner's prompt status reports
+  `deadline_repair_pending`, and each recurring maintenance pass reruns the
+  repair until it succeeds.
+  A transient database lock defers the stored-ID check to that repair; it does
+  not by itself prove that an ID was deleted.
+  The bundled file is pinned for the process lifetime. Startup attempts this
+  repair before serving requests under the new contract; a failed attempt is
+  visible to the owner and retried by maintenance. Slice 1 refuses a bundled
   `household.never_keep: true`; the owner's setting can erase existing prompts.
 - Schema 14 keeps unknown legacy setting fields under `legacy_unclassified`
   in storage. The owner and member settings API projections omit them, in line

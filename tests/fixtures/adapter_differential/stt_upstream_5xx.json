@@ -251,6 +251,7 @@
               }
             ]
           },
+          "retention": [],
           "source_kind": "app",
           "source_label": "test-app",
           "started_at_ms": null,

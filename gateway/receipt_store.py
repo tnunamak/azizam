@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience
+from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience, validate_retention
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 from gateway.ownership import stored_owner_key
 
@@ -218,6 +218,8 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     if "request_id" not in data or not data["request_id"]:
         raise ValueError("receipt missing request_id")
     assert_safe_top_level("receipt", data)
+    if "retention" in data:
+        validate_retention(data["retention"])
     metadata = data.get("metadata")
     if metadata is None:
         return
@@ -360,10 +362,18 @@ def finalize(
     return cur.rowcount == 1
 
 
-def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
+def _filter_for_audience(
+    data: Mapping[str, Any], audience: str, *,
+    viewer_person_id: str | None = None,
+) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
-    return serialize_receipt_for_audience(_with_source(data), audience)
+    retention_detail = audience == "internal" or bool(
+        viewer_person_id and data.get("maker_person_id") == viewer_person_id
+    )
+    return serialize_receipt_for_audience(
+        _with_source(data), audience, from_store=True, retention_detail=retention_detail,
+    )
 
 
 def _with_source(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -509,6 +519,7 @@ def get_many(
     request_ids: Iterable[str],
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
@@ -529,7 +540,8 @@ def get_many(
                 if not isinstance(data, Mapping):
                     continue
                 receipt = _filter_for_audience(
-                    _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+                    _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+                    viewer_person_id=viewer_person_id,
                 )
                 receipt.setdefault("_stored_at", int(row[2]))
                 out[row[0]] = receipt
@@ -540,13 +552,15 @@ def get(
     request_id: str,
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Return the stored receipt filtered for ``audience``, or None."""
     found = get_with_created_at(
-        request_id, audience=audience, now_ms=now_ms, stale_after_ms=stale_after_ms, path=path
+        request_id, audience=audience, viewer_person_id=viewer_person_id,
+        now_ms=now_ms, stale_after_ms=stale_after_ms, path=path,
     )
     return None if found is None else found[0]
 
@@ -555,6 +569,7 @@ def get_with_created_at(
     request_id: str,
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
@@ -571,7 +586,8 @@ def get_with_created_at(
     if not isinstance(data, Mapping):
         return None
     out = _filter_for_audience(
-        _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+        _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+        viewer_person_id=viewer_person_id,
     )
     out.setdefault("_stored_at", int(row[1]))
     return out, row[1]
@@ -581,6 +597,7 @@ def recent(
     limit: int = 50,
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     owner_key_hashes: list[str] | None = None,
@@ -656,7 +673,8 @@ def recent(
         if not isinstance(data, Mapping):
             continue
         filtered = _filter_for_audience(
-            _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+            _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+            viewer_person_id=viewer_person_id,
         )
         filtered.setdefault("_stored_at", int(created_at))
         out.append(filtered)

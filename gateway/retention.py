@@ -119,12 +119,6 @@ class Contract:
     def parts(self, kind: str) -> tuple[str, ...]:
         return tuple(self.data["kinds"][kind]["parts"]["default"])
 
-    def no_expiry(self, kind: str) -> str:
-        """The choice that keeps content with no deadline; the group's default period when it has none."""
-        seconds = self.data["retention_choices"]
-        group = self.group(kind)
-        return next((name for name in group["choices"] if seconds[name] is None), group["default_retention"])
-
     def public(self, kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
         """What the settings screens need to draw one group: its choices (listing order) and every default."""
         seconds = self.data["retention_choices"]
@@ -169,8 +163,6 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for choice in group["choices"]:
             if choice not in seconds:
                 errors.append(f"groups/{name}/choices: {choice} is not in retention_choices")
-        if not any(seconds.get(choice) is not None for choice in group["choices"] if choice in seconds):
-            errors.append(f"groups/{name}/choices: slice 1 needs a finite choice for deleted stored periods")
         for field in ("default_retention", "default_cap"):
             if group[field] not in group["choices"]:
                 errors.append(f"groups/{name}/{field}: {group[field]} is not one of the group's choices")
@@ -340,12 +332,18 @@ def unoffered_household_cap(document: Mapping[str, Any] | None) -> str | None:
 
 
 def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
-    """Keep known stored IDs; a deleted ID uses the shortest finite offered period."""
+    """Keep a stored ID that is in ``retention_choices``, offered or not; a deleted ID uses the shortest
+    finite offered period. A file that offers only no-expiry choices has no such period: that is a data error
+    only when a stored ID was deleted."""
     contract = bundled()
     seconds = contract.seconds_map()
     if value in seconds:
         return value
     finite = [choice for choice in contract.choices(kind) if seconds[choice] is not None]
+    if not finite:
+        raise RetentionDataError(
+            f"{contract.source}: the stored period {value} is not in retention_choices and the group offers "
+            "no finite choice to replace it; restore the ID or offer a finite choice")
     return min(finite, key=lambda choice: seconds[choice])
 
 
@@ -355,15 +353,13 @@ def unoffered_period(value: Any, *, kind: str = LIBRARY_PROMPT) -> str | None:
 
 
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:
-    """The shorter normalized period; display, decisions and writes use this same result."""
-    contract = bundled()
-    seconds = contract.seconds_map()
+    """The shorter normalized period; display, decisions, writes, maintenance and startup repair all use it.
+    When neither period expires, the member's own ID stands: it keeps its exact meaning."""
+    seconds = bundled().seconds_map()
     periods = (normalize_period(member_period, kind=kind, owner_cap=False),
                normalize_period(cap, kind=kind, owner_cap=True))
     finite = [value for value in periods if seconds[value] is not None]
-    if not finite:
-        return contract.no_expiry(kind)
-    return min(finite, key=lambda value: seconds[value] or 0)
+    return min(finite, key=lambda value: seconds[value]) if finite else periods[0]
 
 
 def effective(member: Mapping[str, Any] | None, household_policy: Mapping[str, Any] | None,
@@ -395,6 +391,15 @@ class Decision:
     created_at: int | None = None
     kind: str = LIBRARY_PROMPT
     parts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class WriteOutcome:
+    """The policy-fenced result, observed only after the content writer committed."""
+    kept: bool
+    reason: str
+    kept_until: int | None = None
+    limited_by: str | None = None
 
 
 def requested_mode(body: Mapping[str, Any] | None) -> str | None:
@@ -567,7 +572,7 @@ def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: in
         limits.append(started + seconds)
     deadline = min(limits) if limits else None
     if deadline is not None and deadline <= int(time.time()):
-        return False, None
+        return False, deadline
     return True, deadline
 
 
@@ -582,9 +587,37 @@ def _conversation_gate(policy: Mapping[str, Any], decision: Decision, created_at
     )
 
 
+def _library_limit_source(policy: Mapping[str, Any], started: int, prior_deadline: int | None) -> str:
+    seconds = seconds_map()
+    member = seconds[normalize_period(policy["retention"], kind=LIBRARY_PROMPT, owner_cap=False)]
+    cap = seconds[normalize_period(policy["retention_cap"], kind=LIBRARY_PROMPT, owner_cap=True)]
+    current_limit = min((started + duration for duration in (member, cap) if duration is not None), default=None)
+    if prior_deadline is not None and (current_limit is None or prior_deadline < current_limit):
+        return "prior_policy"
+    return "owner_cap" if cap is not None and (member is None or cap < member) else "member_choice"
+
+
+def _write_denial_reason(
+    policy: Mapping[str, Any], created_at: int, deadline: int | None,
+    decision: Decision | None = None,
+) -> str:
+    if policy["never_keep"]:
+        return "server_disabled"
+    if (created_at <= int(policy.get("forgot_before") or 0)
+            or decision is not None and decision.created_at is not None
+            and decision.created_at <= int(policy.get("forgot_before") or 0)):
+        return "erasure_cutoff"
+    if not policy["remember"]:
+        return "member_disabled"
+    if deadline is not None and deadline <= int(time.time()):
+        return "expired"
+    return "incomplete"
+
+
 def write(
     kind: str, *, admin_path: Path | None, person_id: str | None, created_at: int,
     commit: Callable[[int | None], Any], decision: Decision | None = None, kept_until: int | None = None,
+    on_result: Callable[[WriteOutcome], None] | None = None,
 ) -> bool:
     """Run ``commit(deadline)`` only if the policy in force now still allows the write.
 
@@ -594,6 +627,7 @@ def write(
     """
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
+    outcome: WriteOutcome
     with guard(admin_path, person_id) as policy:
         if kind == LIBRARY_PROMPT:
             allowed, deadline = _library_prompt_gate(policy, created_at, kept_until)
@@ -602,6 +636,14 @@ def write(
                 raise ValueError("a conversation write needs the decision made for the request")
             allowed, deadline = _conversation_gate(policy, decision, created_at), None
         if not allowed:
-            return False
-        commit(deadline)
-        return True
+            outcome = WriteOutcome(False, _write_denial_reason(policy, created_at, deadline, decision))
+        else:
+            commit(deadline)
+            outcome = WriteOutcome(
+                True, "kept", deadline,
+                _library_limit_source(policy, created_at, kept_until)
+                if kind == LIBRARY_PROMPT else "unbounded_store",
+            )
+    if on_result is not None:
+        on_result(outcome)
+    return outcome.kept

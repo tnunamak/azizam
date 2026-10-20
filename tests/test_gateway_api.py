@@ -650,12 +650,12 @@ class GatewayReceiptsEndpointTests(unittest.TestCase):
     def test_explicit_providers_override_store_path(self) -> None:
         captured: dict[str, Any] = {}
 
-        def lister(*, audience, limit, app_profile=None, since_s=None):
+        def lister(*, audience, limit, app_profile=None, since_s=None, viewer_person_id=None):
             captured["audience"] = audience
             captured["limit"] = limit
             return [{"request_id": "stub", "status": "ok"}]
 
-        def getter(request_id, *, audience):
+        def getter(request_id, *, audience, viewer_person_id=None):
             captured["get_audience"] = audience
             return {"request_id": request_id, "status": "ok"}
 

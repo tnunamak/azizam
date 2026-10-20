@@ -62,9 +62,14 @@ the web read these values through the settings API
 (`docs/design/REQUEST_RETENTION.md` section 3.2).
 Restart the gateway after editing `retention.yml`. A stored period keeps its
 duration while its ID remains in `retention_choices`, even if it is no longer
-offered for new selections. If its ID is deleted, the shortest finite offered
-period applies. Startup validates the file and attempts to shorten saved
-prompt deadlines before serving; the recurring maintenance pass retries a
-failed repair.
+offered for new selections; a stored `never` stays no-expiry. If its ID is
+deleted, the shortest finite offered period applies. A file that offers only
+`never` is valid until a stored period ID is deleted and no finite offered
+period can replace it; then the gateway stops at startup and names the ID.
+Startup validates the file and attempts to shorten saved prompt deadlines
+before serving. If that repair fails, the owner's prompt status shows
+`deadline_repair_pending` and the recurring maintenance pass retries it until
+it succeeds. A transient database lock defers the stored-ID check to repair;
+it does not by itself invalidate the retention file.
 Slice 1 refuses `household.never_keep: true` in this file; the owner setting
 performs the required erasure when that switch is enabled.

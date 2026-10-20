@@ -12,7 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import receipt_store  # noqa: E402
+from gateway import receipt_store, receipts  # noqa: E402
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, record_validation_result  # noqa: E402
 
 
@@ -22,6 +22,80 @@ class FakeValidationResult:
 
 
 class TestRouteReceipt(unittest.TestCase):
+    def test_retention_is_client_visible_and_has_a_closed_value_vocabulary(self) -> None:
+        receipt = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+        receipt.set_retention(
+            kind="conversation", decision="kept", reason="kept",
+            kept_until_ms=None, parts=["accepted", "received"], limited_by="unbounded_store",
+        )
+        self.assertEqual(receipt.to_dict("client")["retention"], [{
+            "kind": "conversation", "decision": "kept", "reason": "kept",
+            "kept_until_ms": None, "parts": ["accepted", "received"],
+            "limited_by": "unbounded_store",
+        }])
+        for field, value in (
+            ("kind", "conversation PRIVATE_PROMPT"),
+            ("decision", "kept PRIVATE_PROMPT"),
+            ("reason", "kept PRIVATE_PROMPT"),
+            ("limited_by", "member_choice PRIVATE_PROMPT"),
+            ("parts", ["accepted", "PRIVATE_PROMPT"]),
+            ("kept_until_ms", "PRIVATE_PROMPT"),
+        ):
+            entry = {
+                "kind": "conversation", "decision": "kept", "reason": "kept",
+                "kept_until_ms": None, "parts": ["accepted", "received"],
+                "limited_by": "unbounded_store",
+            }
+            entry[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                receipt.set_retention(**entry)
+
+    def test_retention_store_guard_rejects_a_forged_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            receipt = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+            receipt.finish("succeeded")
+            data = receipt.to_dict("internal")
+            data["retention"] = [{
+                "kind": "conversation", "decision": "kept", "reason": "kept",
+                "kept_until_ms": None, "parts": ["accepted", "received"],
+                "limited_by": "unbounded_store", "note": "PRIVATE_PROMPT",
+            }]
+            with self.assertRaises(ValueError):
+                receipt_store.record(data, path=db)
+            self.assertEqual(receipt_store.count(db), 0)
+
+    def test_old_invalid_retention_entry_does_not_break_a_receipt_list(self) -> None:
+        import json
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            old = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+            good = RouteReceipt(protocol="openai.responses", intent="chat.responses", maker_person_id="maker")
+            good.set_retention(kind="conversation", decision="not_kept", reason="request_forget")
+            receipt_store.record(old, path=db)
+            receipt_store.record(good, path=db)
+            with sqlite3.connect(db) as conn:
+                row = json.loads(conn.execute(
+                    "SELECT receipt_json FROM receipts WHERE request_id=?", (old.request_id,),
+                ).fetchone()[0])
+                row["retention"] = [{"kind": "conversation", "decision": "not_kept", "reason": "retired_reason"}]
+                conn.execute("UPDATE receipts SET receipt_json=? WHERE request_id=?",
+                             (json.dumps(row), old.request_id))
+            with patch.object(receipts, "_invalid_stored_retention_logged", False):
+                with self.assertLogs("gateway.receipts", level="WARNING") as logs:
+                    first = receipt_store.recent(path=db, audience="client", viewer_person_id="maker")
+                    second = receipt_store.recent(path=db, audience="client", viewer_person_id="maker")
+            self.assertEqual(len(logs.output), 1)
+            self.assertNotIn("retired_reason", logs.output[0])
+            self.assertEqual({row["request_id"] for row in first}, {old.request_id, good.request_id})
+            self.assertEqual(next(row for row in first if row["request_id"] == old.request_id)["retention"], [])
+            self.assertEqual(next(row for row in second if row["request_id"] == good.request_id)["retention"],
+                             [{"kind": "conversation", "decision": "not_kept", "reason": "request_forget"}])
+
     def test_receipt_records_inputs_without_values(self) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",

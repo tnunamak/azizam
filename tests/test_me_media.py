@@ -297,6 +297,22 @@ class MeMediaRouterTests(unittest.TestCase):
         people = {row["id"]: row["label"] for row in everyone["people"]}
         self.assertEqual(people["self"], "You")
 
+    def test_usage_receipts_show_retention_detail_only_to_maker(self) -> None:
+        entry = {"kind": "conversation", "decision": "kept", "reason": "kept",
+                 "kept_until_ms": 1792300000000, "parts": ["accepted"], "limited_by": "member_choice"}
+        receipt_store.record({"request_id": "req_private_usage", "status": "succeeded",
+                              "intent": "chat.completions", "app_id": self.app_a["id"],
+                              "maker_person_id": self.alice["id"], "retention": [entry]},
+                             path=self.receipts_db)
+        mine = self.client.get("/me/api/usage/summary")
+        assert mine.status_code == 200
+        assert mine.json()["receipts"][0]["retention"] == [entry]
+        self.current_user = self.owner
+        everyone = self.client.get("/me/api/usage/summary?person=all")
+        assert everyone.status_code == 200
+        assert everyone.json()["receipts"][0]["retention"] == [
+            {"kind": "conversation", "decision": "kept"}]
+
     def test_media_defaults_to_your_own_work_for_every_role(self) -> None:
         self._write_asset("img_" + "1" * 64, ["sha256:bob"])
         self.current_user = self.owner

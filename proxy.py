@@ -6976,6 +6976,27 @@ def store_asset_bytes(content: bytes, **options: Any) -> str:
     return asset_id
 
 
+def _set_prompt_retention_from_write(receipt: RouteReceipt, outcome: retention.WriteOutcome) -> None:
+    prior = next((item for item in receipt.retention if item["kind"] == retention.LIBRARY_PROMPT), None)
+    # Several assets can share one receipt. A later failed write cannot undo
+    # a row that an earlier asset committed. Policy refusals may have purged it.
+    if prior is not None and prior["decision"] == "kept" and outcome.reason == "write_failed":
+        return
+    if outcome.kept:
+        receipt.set_retention(
+            kind=retention.LIBRARY_PROMPT, decision="kept", reason="kept",
+            kept_until_ms=outcome.kept_until * 1000 if outcome.kept_until is not None else None,
+            parts=list(retention.bundled().parts(retention.LIBRARY_PROMPT)),
+            limited_by=outcome.limited_by,
+        )
+    else:
+        receipt.set_retention(
+            kind=retention.LIBRARY_PROMPT,
+            decision="failed" if outcome.reason == "write_failed" else "not_kept",
+            reason=outcome.reason,
+        )
+
+
 def _store_asset_bytes(
     content: bytes,
     *,
@@ -7002,6 +7023,8 @@ def _store_asset_bytes(
             # A metadata/storage failure never discards a finished generation.
             decision = prompt_memory.Decision(decision.person_id, False, "storage_failed")
             delivery.prompt_decision = decision
+            if getattr(delivery, "receipt", None) is not None:
+                _set_prompt_retention_from_write(delivery.receipt, retention.WriteOutcome(False, "write_failed"))
     content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
@@ -7025,13 +7048,25 @@ def _store_asset_bytes(
             metadata_sidecar["maker_person_ids"] = sorted(makers)
         _write_asset_metadata(asset_id, metadata_sidecar)
     if decision is not None and decision.keep and text:
+        receipt = getattr(delivery, "receipt", None)
+        observed = False
+
+        def note_write(outcome: retention.WriteOutcome) -> None:
+            nonlocal observed
+            observed = True
+            if receipt is not None:
+                _set_prompt_retention_from_write(receipt, outcome)
+
         saved = prompt_memory.safe_put(
             asset_id, decision.person_id, text,
             kept_until=decision.kept_until, metadata=metadata,
             admin_path=ADMIN_STORE.path, created_at=decision.created_at,
+            on_result=note_write,
         )
         if not saved:
             delivery.prompt_decision = prompt_memory.Decision(decision.person_id, False, "storage_failed")
+            if receipt is not None and not observed:
+                _set_prompt_retention_from_write(receipt, retention.WriteOutcome(False, "write_failed"))
     return asset_id
 
 
@@ -12715,12 +12750,26 @@ def _migrate_host_command_permission() -> None:
     )
 
 
+#: Set when startup could not shorten saved prompt deadlines; the owner's prompt status shows it until a
+#: maintenance pass repairs them.
+_PROMPT_DEADLINE_REPAIR_PENDING = False
+
+
 async def _repair_prompt_deadlines_at_startup() -> None:
+    global _PROMPT_DEADLINE_REPAIR_PENDING
     try:
         await asyncio.to_thread(prompt_memory.tighten_contract_periods,
                                 admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
     except Exception as exc:
+        _PROMPT_DEADLINE_REPAIR_PENDING = True
         print(f"[proxy] prompt deadline repair pending: {type(exc).__name__}", flush=True)
+
+
+def _retry_prompt_deadline_repair() -> None:
+    global _PROMPT_DEADLINE_REPAIR_PENDING
+    if _PROMPT_DEADLINE_REPAIR_PENDING:
+        prompt_memory.tighten_contract_periods(admin_path=ADMIN_STORE.path, path=media_jobs.DB_PATH)
+        _PROMPT_DEADLINE_REPAIR_PENDING = False
 
 
 @asynccontextmanager
@@ -12731,6 +12780,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
     # Try deadline repair before serving; recurring maintenance retries failures.
     await _repair_prompt_deadlines_at_startup()
@@ -13055,6 +13105,8 @@ def _begin_media_delivery(auth_context: AuthContext | None, receipt: Any = None)
     identity = getattr(auth_context, "identity", None)
     ctx.app_id = getattr(identity, "app_id", None)
     ctx.person_id = _auth_person_id(auth_context)
+    if receipt is not None:
+        receipt.maker_person_id = ctx.person_id
     return ctx
 
 
@@ -13089,6 +13141,14 @@ def _note_media_metadata_body(body: Any) -> Response | None:
                 expiry = decision.kept_until - (decision.created_at - started) if decision.kept_until is not None else None
                 ctx.prompt_decision = prompt_memory.Decision(decision.person_id, True, decision.reason, expiry, started)
             ctx.prompt_text = prompt_memory.prompt_text(body)
+            if ctx.receipt is not None and ctx.receipt.retention is not None:
+                decision = ctx.prompt_decision
+                ctx.receipt.set_retention(
+                    kind=retention.LIBRARY_PROMPT, decision="not_kept",
+                    reason="incomplete" if decision.keep and ctx.prompt_text else (
+                        decision.reason if not decision.keep else "no_content"
+                    ),
+                )
     except prompt_memory.PromptModeError as exc:
         return Response(
             content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error", "code": "invalid_prompt_mode", "param": f"extensions.{prompt_memory.NAMESPACE}.mode"}}),
@@ -13843,6 +13903,10 @@ def _gateway_audience_resolver(request: Request) -> str:
     return discovery_audience_for_access(_access_for_auth_context(auth_context))
 
 
+def _gateway_receipt_viewer(request: Request) -> str | None:
+    return _auth_person_id(_auth_context_from_scope(request))
+
+
 def _gateway_record_scope(request: Request) -> dict[str, Any]:
     auth_context = _auth_context_from_scope(request)
     identity = auth_context.identity
@@ -14032,6 +14096,7 @@ app.include_router(
         entry_visible=_gateway_discovery_visible,
         alias_resolver=_gateway_alias_resolver,
         audience_resolver=_gateway_audience_resolver,
+        receipt_viewer_resolver=_gateway_receipt_viewer,
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
@@ -20225,10 +20290,18 @@ def _finish_prompt_purge(person_id: str, generation: int, cutoff: int, *, comple
 
 
 def _prompt_purge_status(person_id: str) -> dict[str, Any]:
-    """Report queued cached-file cleanup for one person, household cleanup included.
+    """Report queued cached-file cleanup for one person, household cleanup included, and for the owner
+    ("*") a startup deadline repair that has not finished.
 
     Rows carry error codes and counts only, never file names or prompt text.
     """
+    status = _queued_prompt_purge_status(person_id)
+    if person_id == "*" and _PROMPT_DEADLINE_REPAIR_PENDING:
+        return {**status, "pending": True, "retry_scheduled": True, "deadline_repair_pending": True}
+    return status
+
+
+def _queued_prompt_purge_status(person_id: str) -> dict[str, Any]:
     rows = []
     if _prompt_migration_state_path().exists():
         with _prompt_purge_queue() as conn:
@@ -20456,14 +20529,14 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        period = retention.normalize_period(policy["retention"], kind=retention.LIBRARY_PROMPT, owner_cap=False)
+        period = retention.effective_period(policy["retention"], policy["retention_cap"])
     prompt_memory.tighten_retention(period, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
     # Each step reads its own setting when it runs. A decision read at the
     # start of the pass can be stale by the time a slow step reaches it.
-    operations = [_maintain_household_prompt_memory]
+    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)
@@ -22876,6 +22949,9 @@ async def gateway_image_generations_media_job(request: Request):
         "/gateway/v1/media/jobs/image-generations",
         auth_context,
     )
+    # Submission queues work but does not commit prompt content. The worker
+    # owns the separate receipt that reports its eventual retention outcome.
+    receipt.retention = None
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
@@ -27035,6 +27111,7 @@ async def create_response(request: Request):
             intent="chat.responses",
             app_profile=plan_ref(auth_context.identity),
             app_id=auth_context.identity.app_id if auth_context.identity else None,
+            maker_person_id=prompt_decision.person_id,
             owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity else None,
             requested_model=(str(req_body["model"]) if isinstance(req_body.get("model"), str) else None),
@@ -27043,6 +27120,36 @@ async def create_response(request: Request):
             stream=stream,
             effective_output_limit=effective_output_limit(cc_body),
         )
+        if store:
+            # A policy decision is not a persisted response. Replace this only
+            # after retention.write has finished the actual store transaction.
+            outer_receipt.set_retention(
+                kind=retention.CONVERSATION, decision="not_kept", reason="incomplete",
+            )
+        else:
+            reason = (
+                "no_scope" if response_scope is None and
+                (prompt_decision.keep or prompt_decision.reason == "no_person")
+                else prompt_decision.reason
+            )
+            outer_receipt.set_retention(
+                kind=retention.CONVERSATION, decision="not_kept", reason=reason,
+            )
+
+        def note_conversation_write(outcome: retention.WriteOutcome) -> None:
+            if outcome.kept:
+                # The existing Responses store has no row deadline. A finite
+                # policy choice does not currently expire these rows.
+                outer_receipt.set_retention(
+                    kind=retention.CONVERSATION, decision="kept", reason="kept",
+                    kept_until_ms=None, parts=list(retention.bundled().parts(retention.CONVERSATION)),
+                    limited_by="unbounded_store",
+                )
+            else:
+                outer_receipt.set_retention(
+                    kind=retention.CONVERSATION, decision="not_kept", reason=outcome.reason,
+                )
+
         owner = ReceiptLifecycleOwner(outer_receipt)
         async with owner:
             if stream:
@@ -27103,8 +27210,12 @@ async def create_response(request: Request):
                                         api_key_name=_api_key_name(auth_context),
                                         **response_scope,
                                     ),
+                                    on_result=note_conversation_write,
                                 )
                             except Exception:  # noqa: BLE001
+                                outer_receipt.set_retention(
+                                    kind=retention.CONVERSATION, decision="failed", reason="write_failed",
+                                )
                                 for ev in translator.fail("Azizam could not persist the response."):
                                     yield ev
                                 final_obj = translator.build_final_response()
@@ -27185,8 +27296,12 @@ async def create_response(request: Request):
                             api_key_name=_api_key_name(auth_context),
                             **response_scope,
                         ),
+                        on_result=note_conversation_write,
                     )
                 except Exception:  # noqa: BLE001
+                    outer_receipt.set_retention(
+                        kind=retention.CONVERSATION, decision="failed", reason="write_failed",
+                    )
                     owner.report(status="failed", reason="failed")
                     return _responses_error(
                         "Azizam could not persist the response.",

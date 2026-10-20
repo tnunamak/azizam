@@ -1868,7 +1868,10 @@ def _usage_summary(
                     made.add(asset_id)
     receipt_list = []
     shown = receipts[:USAGE_RECEIPT_LIMIT]
-    visible_receipts = receipt_store.get_many([internal["request_id"] for internal in shown], audience="client", path=receipts_path)
+    visible_receipts = receipt_store.get_many(
+        [internal["request_id"] for internal in shown], audience="client",
+        viewer_person_id=actor.user_id, path=receipts_path,
+    )
     for internal in shown:
         visible = visible_receipts.get(internal["request_id"])
         if visible:

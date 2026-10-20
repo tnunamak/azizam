@@ -125,6 +125,13 @@
           "requested_workflow": null,
           "resolved_model": "supertonic",
           "resolved_workflow": null,
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
           "source_kind": "app",
           "source_label": "test-app",
           "started_at_ms": null,
