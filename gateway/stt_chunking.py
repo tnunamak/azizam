@@ -1074,6 +1074,22 @@ async def decode_planning_pcm(
         raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
 
 
+def _frame_index_bounds(lo: float, hi: float) -> tuple[int, int]:
+    """Frame starts whose centre times lie in the window, including exact grid boundaries.
+
+    Correct the rounded index estimate using the same sample-to-time conversion
+    as the reader. Dividing seconds by a float hop can lose an on-grid endpoint.
+    """
+    rate, hop, half = _PLANNING_SAMPLE_RATE, _FRAME_HOP_SAMPLES, _FRAME_SAMPLES // 2
+    first = max(0, math.floor((lo * rate - half) / hop))
+    if (first * hop + half) / rate < lo:
+        first += 1
+    last = math.ceil((hi * rate - half) / hop)
+    if (last * hop + half) / rate > hi:
+        last -= 1
+    return first, last
+
+
 def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], float]:
     """Return ``quietest(lo, hi, near)``: the centre time of the lowest-energy 20 ms frame centred in [lo, hi].
 
@@ -1084,8 +1100,7 @@ def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], flo
     half = _FRAME_SAMPLES // 2
 
     def quietest(lo: float, hi: float, near: float) -> float:
-        first = max(0, math.ceil((lo * rate - half) / _FRAME_HOP_SAMPLES))
-        last = math.floor((hi * rate - half) / _FRAME_HOP_SAMPLES)
+        first, last = _frame_index_bounds(lo, hi)
         if last < first:
             raise SttSetupFailure("No complete STT energy frame lies inside the cut window")
         # A service record may ask for a wide search. Read one second of frames
@@ -1148,14 +1163,14 @@ def plan_quietest_frame_segments(
         safe_highest = min(previous + max_segment_seconds, duration_seconds - min_segment_seconds)
         highest = min(safe_highest, target + width)
         lowest = max(safe_lowest, target - width)
-        hop = _FRAME_HOP_SAMPLES / _PLANNING_SAMPLE_RATE
-        # Frame centres are on the hop grid (the half-frame equals one hop).
-        if math.ceil(lowest / hop) > math.floor(highest / hop):
-            first = max(1, math.ceil(safe_lowest / hop))
-            last = math.floor(safe_highest / hop)
+        first, last = _frame_index_bounds(lowest, highest)
+        if first > last:
+            first, last = _frame_index_bounds(safe_lowest, safe_highest)
             if first > last:
                 raise SttSetupFailure("No legal STT energy frame keeps the hard maximum")
-            lowest = highest = min(max(round(target / hop), first), last) * hop
+            near = round((target * _PLANNING_SAMPLE_RATE - _FRAME_SAMPLES // 2) / _FRAME_HOP_SAMPLES)
+            index = min(max(near, first), last)
+            lowest = highest = (index * _FRAME_HOP_SAMPLES + _FRAME_SAMPLES // 2) / _PLANNING_SAMPLE_RATE
         cut = min(max(quietest_frame(lowest, highest, min(max(target, lowest), highest)), lowest), highest)
         cuts.append(cut)
         previous = cut
