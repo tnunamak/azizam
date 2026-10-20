@@ -1509,7 +1509,16 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 config = _config(root)
-                body, content_type = _multipart_body(content=b"RIFF-direct", fields=fields)
+                content = b"RIFF-direct"
+                if kind == "short":
+                    source = root / "short.wav"
+                    with wave.open(os.fspath(source), "wb") as handle:
+                        handle.setnchannels(1)
+                        handle.setsampwidth(2)
+                        handle.setframerate(8000)
+                        handle.writeframes(b"\0" * 32_000)
+                    content = source.read_bytes()
+                body, content_type = _multipart_body(content=content, fields=fields)
                 received: list[httpx.Request] = []
                 finished_body = False
 
@@ -1522,7 +1531,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
 
                 async def transport_handler(outgoing: httpx.Request) -> httpx.Response:
                     received.append(outgoing)
-                    self.assertIn(b"RIFF-direct", await outgoing.aread())
+                    self.assertIn(content, await outgoing.aread())
                     return httpx.Response(
                         203,
                         content=b'{"text":"direct","segments":[]}',
@@ -1608,9 +1617,9 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
             assert finalized[0].metadata["stt"]["attempts_started"] == 0
 
     async def test_the_route_refuses_a_long_unplannable_file_in_the_gateways_words_and_posts_nothing(self) -> None:
-        for reason, error, status in (
-            ("unreadable_media", stt_chunking.SttMediaCommandFailed("secret-path /srv/x ffmpeg said sk-1234"), 422),
-            ("split_failed", stt_chunking.SttSetupFailure("secret-path /srv/x"), 502),
+        for reason, error, status, code in (
+            ("undecodable_media", stt_chunking.SttMediaCommandFailed("secret-path /srv/x ffmpeg said sk-1234"), 400, "invalid_value"),
+            ("split_failed", stt_chunking.SttSetupFailure("secret-path /srv/x"), 502, "stt_audio_cannot_be_split"),
         ):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
@@ -1660,9 +1669,12 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(response.status_code, status)
                 payload = json.loads(response.body)["error"]
-                self.assertEqual(payload["code"], "stt_audio_cannot_be_split")
-                self.assertIn("recorded or measured 40-second maximum", payload["message"])
-                self.assertNotIn("longer than", payload["message"])
+                self.assertEqual(payload["code"], code)
+                if status == 400:
+                    self.assertEqual(payload["message"], "Audio file might be corrupted or unsupported")
+                else:
+                    self.assertIn("recorded or measured 40-second maximum", payload["message"])
+                    self.assertNotIn("longer than", payload["message"])
                 self.assertNotIn("secret-path", response.body.decode())
                 self.assertNotIn("sk-1234", response.body.decode())
                 self.assertEqual((finalized[0].status, finalized[0].metadata["stt"]["attempts_started"]), ("failed", 0))

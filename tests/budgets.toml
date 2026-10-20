@@ -22,9 +22,10 @@
 # its no-extraction/no-upload assertions cover both silence and forced cuts.
 # Gate speed r5: three more ci-local cases after r4 = 12702 collected.
 # Measured full-gate count before that consolidation: 12303; after: 12302 on the pre-merge base; train r69 (12664) + 9 = 12673 after the merge.
-# Measured after merging main r79 with D47: full hermetic pytest collected 14856,
+# Measured after merging main r79 with D47: full hermetic pytest collected 14856;
+# the two review followups add one malformed-audio case and one migration case (14858).
 # Vitest ran 3046 cases, and Playwright listed 469 + 18 + 3 cases across gate configs.
-pytest = 14856
+pytest = 14858
 vitest = 3046
 playwright = 490
 

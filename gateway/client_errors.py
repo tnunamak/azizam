@@ -332,7 +332,6 @@ def client_error(
 
 _STT_SPLIT_REASONS = {
     "unknown_duration": (422, "its duration could not be determined"),
-    "unreadable_media": (422, "could not be read as audio"),
     "split_failed": (502, "could not be cut by the gateway"),
     "unsupported_request": (422, "uses request options that cannot be preserved across pieces"),
 }

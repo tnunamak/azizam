@@ -150,11 +150,11 @@ class SttAudioNotSplittable(SttExecutionError):
     """A file cannot be verified or cut to fit the engine's hard maximum, so the gateway refuses it.
 
     ``reason`` is one of a fixed set (never text from a tool or an engine): ``unknown_duration`` when the probe
-    could not establish a length, ``unreadable_media`` when decoded audio could not be read, ``split_failed`` when
+    could not establish a length, ``split_failed`` when
     a local step failed, or ``unsupported_request`` when cutting would change the response contract.
     """
 
-    def __init__(self, reason: Literal["unknown_duration", "unreadable_media", "split_failed", "unsupported_request"], *, limit_seconds: float) -> None:
+    def __init__(self, reason: Literal["unknown_duration", "split_failed", "unsupported_request"], *, limit_seconds: float) -> None:
         super().__init__(reason)
         self.reason = reason
         self.limit_seconds = limit_seconds
@@ -1271,8 +1271,6 @@ def _unplanned_outcome(
         raise error
     if probed is None:
         reason = "unknown_duration"
-    elif isinstance(error, SttMediaCommandFailed):
-        reason = "unreadable_media"
     else:
         reason = "split_failed"
     raise SttAudioNotSplittable(reason, limit_seconds=config.max_segment_seconds) from error
@@ -1308,17 +1306,20 @@ async def execute_chunking(
         )
         if cleanup is not None:
             cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
-        await decode_planning_pcm(
-            source_path,
-            pcm_path,
-            config=config,
-            cancellation_waiters=cancellation_waiters,
-            deadline_at=deadline_at,
-            on_cancel=on_cancel,
-        )
-        planning_duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
-        if planning_duration <= 0:
-            raise SttMediaCommandFailed("STT planning decode holds no audio")
+        try:
+            await decode_planning_pcm(
+                source_path,
+                pcm_path,
+                config=config,
+                cancellation_waiters=cancellation_waiters,
+                deadline_at=deadline_at,
+                on_cancel=on_cancel,
+            )
+            planning_duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+            if planning_duration <= 0:
+                raise SttMediaCommandFailed("STT planning decode holds no audio")
+        except SttMediaCommandFailed as error:
+            raise SttInvalidAudio("STT input is not readable audio") from error
         probed = ProbedAudio(planning_duration, _PLANNING_SAMPLE_RATE, 1)
         if planning_duration <= config.chunk_above_seconds:
             return ChunkingOutcome("passthrough", 0, "below_threshold")

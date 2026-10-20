@@ -38,6 +38,14 @@ upgrades:
     service_id: stt
     when: {silence_search_seconds: 120}
     drop: [silence_search_seconds]
+  - note: Remove the unused noise value only while it still holds the seeded value.
+    service_id: stt
+    when: {silence_noise_db: "-30dB"}
+    drop: [silence_noise_db]
+  - note: Remove the unused minimum-silence value only while it still holds the seeded value.
+    service_id: stt
+    when: {silence_min_seconds: 0.5}
+    drop: [silence_min_seconds]
   - note: Remove only the unused search value seeded on the alternate CPU transcription record.
     service_id: stt-canary
     when: {silence_search_seconds: 40}
