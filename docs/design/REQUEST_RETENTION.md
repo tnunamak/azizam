@@ -1695,7 +1695,7 @@ absolute STT spool paths are also outside the private-root guarantee.
 - The directory is `AZIZAM_PRIVATE_TMPDIR`, else `private-tmp` beside the admin
   database (`data/private-tmp` on a normal install). `gateway/private_tmp.py`
   opens it with `O_DIRECTORY|O_NOFOLLOW`, checks ownership and mode through the
-  descriptor, refuses tmpfs/ramfs and checks that each parent is owned by the
+  descriptor, refuses tmpfs/ramfs and checks that the parent is owned by the
   service user or root and is not group/world writable unless sticky. The sweep
   uses directory-relative operations, so swapping the pathname for a symlink
   cannot delete files outside it. A pathname identity check refuses the swap.

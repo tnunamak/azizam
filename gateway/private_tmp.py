@@ -116,15 +116,15 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
     keep_lock = False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Check every ancestor: trusting only the immediate parent still permits its replacement.
+        # Traverse without following ancestor links, then require a trusted immediate parent.
         parent_fd = os.open("/", os.O_DIRECTORY | os.O_NOFOLLOW)
         for component in target.parent.parts[1:]:
             next_fd = os.open(component, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
             os.close(parent_fd)
             parent_fd = next_fd
-            info = os.fstat(parent_fd)
-            if info.st_uid not in {0, os.geteuid()} or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX):
-                raise PrivateTmpError(f"The private temporary directory parent {target.parent} is not trusted.")
+        parent_info = os.fstat(parent_fd)
+        if parent_info.st_uid not in {0, os.geteuid()} or (parent_info.st_mode & 0o022 and not parent_info.st_mode & stat.S_ISVTX):
+            raise PrivateTmpError(f"The private temporary directory parent {target.parent} is not trusted.")
         try:
             os.mkdir(target.name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
@@ -147,12 +147,12 @@ def prepare(directory: Path | None = None, *, clear: bool = True, hold: bool = F
         owned = _lock_fd if hold and _lock_pid == os.getpid() else None
         if owned is not None or inherited:
             lock_fd = owned if owned is not None else int(inherited)
+            keep_lock = True  # borrowed descriptor: never close a caller's FD on validation failure
             lock_info = os.stat(_LOCK_NAME, dir_fd=directory_fd, follow_symlinks=False)
             inherited_info = os.fstat(lock_fd)
             if (inherited_info.st_dev, inherited_info.st_ino) != (lock_info.st_dev, lock_info.st_ino):
                 raise PrivateTmpError("The inherited private temporary directory lock does not match its directory.")
             clear = False
-            keep_lock = True
         else:
             lock_fd = os.open(_LOCK_NAME, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
         lock_info = os.fstat(lock_fd)
