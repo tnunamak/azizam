@@ -102,6 +102,16 @@ def test_ledger_read_does_not_use_network(monkeypatch: pytest.MonkeyPatch) -> No
     assert view["never_save_text"]
 
 
+def test_reader_rules_have_plain_explanations() -> None:
+    kinds = {
+        "library_prompt": {"purpose": "Find it again", "readers": "maker"},
+        "conversation": {"purpose": "Continue it", "readers": "scope"},
+    }
+    view = ledger({"services": {}}, kinds=kinds)
+    assert "personal App keys" in view["kinds"][0]["reader_explanation"]
+    assert "app that saved it" in view["kinds"][1]["reader_explanation"]
+
+
 def test_ledger_drops_url_credentials_and_ignores_non_data_ids() -> None:
     registry = {"services": {"p": {"kind": "provider", "config": {
         "remote_provider": True,

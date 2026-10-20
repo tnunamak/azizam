@@ -27,6 +27,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 _FACT_SCHEMA = json.loads((_ROOT / "registry/retention_fact.schema.json").read_text(encoding="utf-8"))
 _VALIDATOR = jsonschema.Draft202012Validator(_FACT_SCHEMA, format_checker=jsonschema.FormatChecker())
 _DATA_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
+_READER_DESCRIPTIONS = {
+    "maker": "The maker and holders of their personal App keys",
+    "scope": "The app that saved it, within its access scope",
+}
 
 
 def validate_facts(facts: Any) -> list[dict[str, Any]]:
@@ -195,7 +199,11 @@ def ledger(
         destinations.append(row)
 
     result = {
-        "kinds": [{"id": name, **copy.deepcopy(values)} for name, values in kinds.items()],
+        "kinds": [
+            {"id": name, **copy.deepcopy(values),
+             "reader_explanation": _READER_DESCRIPTIONS.get(values.get("readers"), "Reader access is unknown")}
+            for name, values in kinds.items()
+        ],
         "destinations": destinations,
         "stale_after_days": stale_days,
     }

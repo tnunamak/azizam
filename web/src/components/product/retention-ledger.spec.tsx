@@ -21,7 +21,8 @@ it("loads only when opened and shows dated destination facts and server disclosu
         {
           id: "library_prompt",
           purpose: "A Library prompt can be kept so you can find it again.",
-          readers: "Only you",
+          readers: "maker",
+          reader_explanation: "The maker and holders of their personal App keys",
         },
       ],
       destinations: [
@@ -84,7 +85,7 @@ it("loads only when opened and shows dated destination facts and server disclosu
   expect(
     within(destination).getByRole("link", { name: "Source" }),
   ).toHaveAttribute("href", "https://example.com/history");
-  expect(screen.getByText("Only you", { exact: false })).toBeVisible();
+  expect(screen.getByText("The maker and holders of their personal App keys", { exact: false })).toBeVisible();
   expect(
     screen.getByText(
       "Azizam will not keep the request. The engine may keep its own history.",

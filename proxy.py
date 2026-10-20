@@ -4431,6 +4431,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if receipt is not None:
         receipt.backend = tts_service_id
         receipt.resolved_model = body_json.get("model") if isinstance(body_json, dict) else None
+        _capture_retention_facts(receipt)
 
     if stream_mode:
         return await _stream_tts_upstream(
@@ -5166,6 +5167,7 @@ async def proxy_stt_request(
                 target_service = (model_resolution.alias.service if model_resolution.alias is not None else None) or execution.service_id
                 service_changed = target_service != execution.service_id
                 receipt.backend = target_service
+                _capture_retention_facts(receipt)
                 decision = _apply_selected_stt_policy(
                     receipt, auth_context, operation=operation,
                     model=model_resolution.alias.engine if model_resolution.alias is not None else None,
@@ -28437,6 +28439,7 @@ async def _forward_current_loaded_openai_request(
             # the same in-progress row without replacing immutable acceptance facts.
             receipt.backend = target.backend
             receipt.resolved_model = target.model
+            _capture_retention_facts(receipt)
 
             body = copy.deepcopy(dict(body_for_backend))
             body.pop("_vf_requested_model", None)
@@ -30158,6 +30161,7 @@ def _native_passthrough_receipt(
         # Usage of a pass-through call cannot be measured; say so rather than leave the cost blank.
         receipt.metadata["cost"] = "unknown"
         receipt.cost = {"usd": None, "source": "unknown", "cost_class": "unknown", "reconciliation_status": "unknown"}
+    _capture_retention_facts(receipt)
     return receipt
 
 

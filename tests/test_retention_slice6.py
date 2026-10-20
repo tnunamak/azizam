@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, mcp_server, media_jobs, receipt_store, retention_fact_api
+from gateway import admin_store, egress, mcp_server, media_jobs, receipt_store, retention_fact_api
 from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.retention_facts import ledger, revision
@@ -21,7 +21,7 @@ from gateway.retention_facts import ledger, revision
 
 def _registry() -> dict:
     return {"services": {
-        "local": {"name": "Local graph", "config": {
+        "local": {"name": "ComfyUI", "config": {
             "connection": {"protocol": "node-graph", "base_url": "http://127.0.0.1:18188"},
         }},
         "remote": {"name": "Remote provider", "config": {
@@ -33,7 +33,7 @@ def _registry() -> dict:
 def _client(path, roles: set[str]) -> TestClient:
     admin_store.init_db(path)
     app = FastAPI()
-    router = APIRouter(prefix="/admin/api")
+    router = APIRouter(prefix="/admin/api", route_class=egress.ManagementRoute)
     store = SimpleNamespace(path=path, get_service_registry=_registry)
     retention_fact_api.register_routes(
         router, store=store,
@@ -53,6 +53,7 @@ def test_owner_can_remove_seed_and_it_stays_removed_after_database_reopen(tmp_pa
     provider = next(row for row in before.json()["ledger"]["destinations"] if row["id"] == "remote")
     assert provider["facts"]
     disclosure = before.json()["ledger"]["never_save_text"]
+    assert "ComfyUI" in disclosure
     assert "submitted graphs" in disclosure
     assert "Azizam reaches it at http://127.0.0.1:18188" in disclosure
     assert "Azizam reaches it on this computer" in disclosure

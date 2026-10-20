@@ -28,6 +28,7 @@ export interface RetentionLedger {
     id: string;
     purpose: string;
     readers: string;
+    reader_explanation?: string;
     decision?: string;
     kept_until_ms?: number | null;
   }>;
@@ -168,7 +169,7 @@ export function RetentionLedgerPanel({
                         <p>{kind.purpose}</p>
                         <p>{kind.decision ?? "Whether this is kept depends on the request and your settings."}</p>
                         <p className="text-muted-foreground">
-                          Readers: {kind.readers}
+                          Readers: {kind.reader_explanation ?? kind.readers}
                           {kind.kept_until_ms ? ` · Until ${new Date(kind.kept_until_ms).toLocaleString()}` : ""}
                         </p>
                       </li>
