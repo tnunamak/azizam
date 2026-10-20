@@ -42,8 +42,12 @@
 # +1 Unicode/split/drop timing case, +2 interrupted-download cleanup cases,
 # +1 rights visibility case, and +4 source-rights/provenance schema cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 14975 (14959 + 16).
-pytest = 14975
-vitest = 3049  # +1 long-audio controls remount spec (r80 gate fix), then +2 retention settings cases.
+# STT review followups: +11 tokenizer inputs, +2 source-rights cases,
+# +1 default/CLI case, +2 REST/MCP rights surfaces, +2 stale-scorer versions,
+# +1 filtered-overlap runner case and +1 MCP description case.
+# Full hermetic collection on 2026-10-20: 14995; full Vitest list: 3050.
+pytest = 14995
+vitest = 3050  # +1 collapsed-trials transcript-rights notice case.
 playwright = 490
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
