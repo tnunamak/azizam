@@ -25783,7 +25783,8 @@ async def _start_receipts_maintenance(stop_event: asyncio.Event) -> asyncio.Task
     """Schedule retries before the first cleanup, including when startup cleanup fails."""
     task = asyncio.create_task(_receipts_maintenance_loop(stop_event), name="receipt-maintenance")
     try:
-        await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
+        pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
+        print(f"[proxy] receipt startup maintenance pruned {pruned} receipts", flush=True)
     except Exception as exc:
         print(f"[proxy] receipt startup maintenance failed: {type(exc).__name__}", flush=True)
     return task

@@ -17,7 +17,7 @@ from fastapi import Request
 from starlette.responses import Response
 
 from gateway import media_delivery, media_jobs, provenance, receipt_store
-from gateway.receipts import run_receipt_write, RouteReceipt, new_request_id
+from gateway.receipts import RouteReceipt, new_request_id, record_retention_fact_failure, run_receipt_write
 from gateway.ownership import owner_key
 from gateway.runtime_auth import plan_ref
 
@@ -138,7 +138,7 @@ def finish_receipt(receipt: RouteReceipt, *, status_code: int) -> RouteReceipt:
     try:
         receipt.persist_retention_facts()
     except Exception as error:
-        print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
+        record_retention_fact_failure("persist", receipt.request_id, error)
     receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
     return receipt
 
