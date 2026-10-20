@@ -57,7 +57,6 @@ CLIENT_VISIBLE_FIELDS = {
     "updated_at_ms",
     "refusal",
     "retention",
-    "retention_facts",
     *PHASE_FIELDS,
     "attempt_number",
 }
@@ -73,6 +72,7 @@ ADMIN_VISIBLE_FIELDS = frozenset(
         "parent_request_id", "visibility",
         "policy_decision", "policy_sources", "policy_reasons",
         "resource_decision",
+        "retention_facts",
     }
 )
 
@@ -511,6 +511,18 @@ class RouteReceipt:
         updated = [item for item in self.retention if item["kind"] != kind]
         self.retention = validate_retention([*updated, entry])
 
+    def persist_retention_facts(self) -> None:
+        """Persist the evidence captured before dispatch, once per receipt."""
+        captured = getattr(self, "_retention_fact_snapshot", None)
+        if self.retention_facts or captured is None or captured[0] != self.backend:
+            return
+        from gateway import media_jobs
+
+        self.retention_facts = media_jobs.save_fact_snapshot(
+            captured[1]["destinations"], source_kind="receipt", source_id=self.request_id,
+            path=media_jobs.DB_PATH,
+        )
+
     def attach_manifest(
         self,
         *,
@@ -746,6 +758,10 @@ class ReceiptLifecycleOwner:
             except Exception as error:
                 self._log(f"receipt terminal annotation failed: {error}")
         self.receipt.finish(status)
+        try:
+            self.receipt.persist_retention_facts()
+        except Exception as error:
+            self._log(f"receipt retention facts unavailable: {type(error).__name__}")
         try:
             self._finalize(self.receipt)
         except Exception as error:

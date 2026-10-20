@@ -13912,48 +13912,21 @@ def _gateway_receipt_viewer(request: Request) -> str | None:
 
 def _retention_ledger_allowed(auth_context: AuthContext) -> bool:
     person_id = _auth_person_id(auth_context)
-    return bool(person_id and {"owner", "admin", "superadmin"} & set(
+    return bool(getattr(auth_context.identity, "connection_id", None) and person_id and {"owner", "admin", "superadmin"} & set(
         admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path)
     ))
-
-
-_RETENTION_FACT_FIELDS = (
-    "id", "holds", "where", "how_long", "default", "condition", "reach",
-    "control", "evidence_url", "checked", "confidence",
-)
 
 
 def _snapshot_retention_facts(receipt: Any) -> None:
     """Attach evidence captured before egress, when available, to the receipt."""
     if not isinstance(receipt, RouteReceipt) or not receipt.backend or receipt.retention_facts:
         return
-    from gateway import retention, retention_facts
-
-    captured = getattr(receipt, "_retention_fact_snapshot", None)
-    if captured is not None and captured[0] == receipt.backend:
-        view = captured[1]
-    else:
-        registry = ADMIN_STORE.get_service_registry()
-        if receipt.backend not in (registry.get("services") or {}):
-            return
-        view = retention_facts.ledger(
-            registry, kinds=retention.bundled().data["kinds"],
-            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
-            service_id=receipt.backend,
-        )
-    revisions: list[str] = []
-    for destination in view["destinations"]:
-        facts = [
-            {key: row[key] for key in _RETENTION_FACT_FIELDS if key in row}
-            for row in destination["facts"]
-        ]
-        if facts:
-            revisions.extend(media_jobs.save_fact_revisions(
-                facts, source_kind="receipt", source_id=receipt.request_id,
-                destination_id=destination["id"], destination=destination,
-                path=media_jobs.DB_PATH,
-            ))
-    receipt.retention_facts = list(dict.fromkeys(revisions))
+    try:
+        if getattr(receipt, "_retention_fact_snapshot", None) is None:
+            _capture_retention_facts(receipt)
+        receipt.persist_retention_facts()
+    except Exception as error:
+        print(f"[proxy] receipt retention facts unavailable: {type(error).__name__}", flush=True)
 
 
 def _capture_retention_facts(receipt: RouteReceipt) -> None:
@@ -13961,13 +13934,19 @@ def _capture_retention_facts(receipt: RouteReceipt) -> None:
     if not receipt.backend:
         return
     from gateway import retention, retention_facts
-    registry = ADMIN_STORE.get_service_registry()
-    if receipt.backend in (registry.get("services") or {}):
-        receipt._retention_fact_snapshot = (receipt.backend, retention_facts.ledger(
-            registry, kinds=retention.bundled().data["kinds"],
-            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
-            service_id=receipt.backend,
-        ))
+    captured = getattr(receipt, "_retention_fact_snapshot", None)
+    if captured is not None and captured[0] == receipt.backend:
+        return
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+        if receipt.backend in (registry.get("services") or {}):
+            receipt._retention_fact_snapshot = (receipt.backend, retention_facts.ledger(
+                registry, kinds=retention.bundled().data["kinds"],
+                overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+                service_id=receipt.backend,
+            ))
+    except Exception as error:
+        print(f"[proxy] retention fact capture unavailable: {type(error).__name__}", flush=True)
 
 
 def _record_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
@@ -13982,21 +13961,31 @@ def _record_terminal_retention_receipt(receipt: Any, **kwargs: Any) -> Any:
 
 def _gateway_retention_ledger(request: Request, request_id: str | None = None) -> dict[str, Any] | None:
     """Read local retention evidence only; never contact a provider or engine."""
-    if not _retention_ledger_allowed(_auth_context_from_scope(request)):
-        raise PermissionError("An owner or administrator is required")
+    ctx = _require_admin(ADMIN_AUTH, request)
+    if isinstance(ctx, Response):
+        raise PermissionError("An owner or administrator management credential is required")
+    return _retention_ledger_view(request, request_id)
+
+
+def _retention_ledger_view(request: Request, request_id: str | None = None) -> dict[str, Any] | None:
     from gateway import retention, retention_facts
 
-    receipt = receipt_store.get(request_id, audience="internal") if request_id else None
+    receipt = receipt_store.get(request_id, audience="admin", viewer_person_id=_gateway_receipt_viewer(request)) if request_id else None
     if request_id and receipt is None:
         return None
     service_id = str(receipt.get("backend") or "") if receipt else None
     registry = ADMIN_STORE.get_service_registry()
-    view = retention_facts.ledger(
-        registry if not service_id or service_id in (registry.get("services") or {}) else {"services": {}},
-        kinds=retention.bundled().data["kinds"],
-        overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
-        service_id=service_id if service_id in (registry.get("services") or {}) else None,
-    )
+    try:
+        view = retention_facts.ledger(
+            registry if not service_id or service_id in (registry.get("services") or {}) else {"services": {}},
+            kinds=retention.bundled().data["kinds"],
+            overrides=admin_store.retention_fact_overrides(path=ADMIN_STORE.path),
+            service_id=service_id if service_id in (registry.get("services") or {}) else None,
+        )
+    except Exception as error:
+        print(f"[proxy] retention fact lookup unavailable: {type(error).__name__}", flush=True)
+        view = retention_facts.ledger({"services": {}}, kinds=retention.bundled().data["kinds"])
+        view["fact_basis"] = "Today's facts. Some destination facts are unavailable."
     if receipt:
         view["request_id"] = request_id
         view["observed"] = {key: receipt[key] for key in ("backend", "resolved_model", "requested_model", "accepted_at_ms", "sent_at_ms") if receipt.get(key) is not None}
@@ -14006,10 +13995,19 @@ def _gateway_retention_ledger(request: Request, request_id: str | None = None) -
                 kind.update({key: by_kind[kind["id"]][key] for key in ("decision", "kept_until_ms") if key in by_kind[kind["id"]]})
         hashes = receipt.get("retention_facts") or []
         if hashes:
-            grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
-            saved_destinations = media_jobs.fact_destinations_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+            try:
+                grouped = media_jobs.fact_revisions_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+                saved_destinations = media_jobs.fact_destinations_for_source("receipt", request_id, path=media_jobs.DB_PATH)
+            except Exception as error:
+                print(f"[proxy] saved retention facts unavailable: {type(error).__name__}", flush=True)
+                view["fact_basis"] = "Today's facts. Saved fact revisions are temporarily unavailable."
+                return view
             if set(hashes) != {fact["revision"] for facts in grouped.values() for fact in facts}:
-                raise KeyError("receipt fact revisions are incomplete")
+                for destination in view["destinations"]:
+                    destination["facts"] = []
+                view["fact_basis"] = "The facts saved for this request are no longer kept."
+                view["never_save_text"] = retention_facts.assemble_never_save(view)
+                return view
             for destination in view["destinations"]:
                 destination["facts"] = grouped.pop(destination["id"], [])
                 saved = saved_destinations.pop(destination["id"], None)
@@ -14682,7 +14680,7 @@ def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -
     if not isinstance(auth, AuthContext) or not _retention_ledger_allowed(auth):
         raise PermissionError("An owner or administrator is required")
     request.scope["auth_context"] = auth
-    return _gateway_retention_ledger(request, request_id)
+    return _retention_ledger_view(request, request_id)
 
 
 def _mount_mcp(app: FastAPI) -> None:

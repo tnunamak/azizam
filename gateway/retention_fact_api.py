@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from typing import Any
+import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -38,12 +39,18 @@ def register_routes(
         registry = store.get_service_registry()
         if service_id is not None and service_id not in (registry.get("services") or {}):
             raise KeyError(service_id)
-        return retention_facts.ledger(
-            registry,
-            kinds=retention.bundled().data["kinds"],
-            overrides=admin_store.retention_fact_overrides(path=store.path),
-            service_id=service_id,
-        )
+        try:
+            return retention_facts.ledger(
+                registry,
+                kinds=retention.bundled().data["kinds"],
+                overrides=admin_store.retention_fact_overrides(path=store.path),
+                service_id=service_id,
+            )
+        except Exception as error:
+            logging.getLogger(__name__).warning("Retention facts unavailable: %s", type(error).__name__)
+            result = retention_facts.ledger({"services": {}}, kinds=retention.bundled().data["kinds"])
+            result["fact_basis"] = "Today's facts. Some destination facts are unavailable."
+            return result
 
     def reply(data: dict[str, Any], code: int = 200) -> JSONResponse:
         return egress.plain_json_response({"ledger": data}, response_class="retention_ledger",
