@@ -955,16 +955,14 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
-    async def test_probe_enforces_duration_rate_channel_and_decoded_byte_limits(self) -> None:
+    async def test_probe_enforces_rate_and_channel_limits_but_duration_is_advisory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.wav"
             source.write_bytes(b"not examined by the fake probe")
             cases = (
-                ("duration", _config(root, max_duration_seconds=60), 61, 8000, 1),
                 ("sample rate", _config(root, max_sample_rate=8000), 1, 8001, 1),
                 ("channels", _config(root, max_channels=1), 1, 8000, 2),
-                ("decoded bytes", _config(root, max_decoded_bytes=10_000), 1, 8000, 1),
             )
             for name, config, duration, sample_rate, channels in cases:
                 with self.subTest(name=name):
@@ -1041,7 +1039,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             fallback_command = mock_run.await_args_list[1].args[0]
             self.assertIn("-select_streams", fallback_command)
 
-    async def test_probe_raises_setup_failure_when_packet_fallback_also_finds_no_duration(self) -> None:
+    async def test_probe_leaves_duration_unknown_when_packets_also_have_no_duration(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.webm"
@@ -1060,14 +1058,14 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 "run_media_command",
                 new=AsyncMock(side_effect=[(format_probe_payload, b""), (b"", b"")]),
             ):
-                with self.assertRaises(stt_chunking.SttSetupFailure):
-                    await stt_chunking.probe_audio(
-                        source,
-                        config=config,
-                        cancellation_waiters=(),
-                        deadline_at=asyncio.get_running_loop().time() + 1,
-                        on_cancel=None,
-                    )
+                probed = await stt_chunking.probe_audio(
+                    source,
+                    config=config,
+                    cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time() + 1,
+                    on_cancel=None,
+                )
+                self.assertEqual(probed.duration_seconds, 0)
 
     async def test_real_offline_ffmpeg_duration_less_webm_recovers_true_duration(self) -> None:
         """End-to-end with real ffmpeg/ffprobe: encoding audio to webm on a

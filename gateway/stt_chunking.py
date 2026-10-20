@@ -953,10 +953,8 @@ async def probe_audio(
         # session ended without a clean stop) carry audio/video sample data but
         # never get a trailing Cues/duration element written. ffprobe's cheap
         # format-level read then reports no duration at all even though the
-        # stream decodes fine. Recover the true length from packet timestamps
-        # instead of assuming the file is unusable: this is what lets duration
-        # gate the chunking decision below instead of forcing every such file
-        # through a single unbounded passthrough request.
+        # stream decodes fine. Packet timestamps provide an advisory length;
+        # even if these are absent, bounded decoding determines the true length.
         duration = await _probe_duration_from_packets(
             source_path,
             config=config,

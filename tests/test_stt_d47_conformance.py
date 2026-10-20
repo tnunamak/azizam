@@ -6,6 +6,7 @@ import struct
 import subprocess
 import wave
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -14,7 +15,7 @@ from starlette.requests import Request
 
 import proxy
 from gateway import stt_chunking as stt
-from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
+from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter, SttRun
 from tests.support.access import access_context
 from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401
 from tests.test_stt_chunking import _multipart_body
@@ -103,6 +104,22 @@ def test_extraction_checks_decoded_piece_even_when_probe_understates_it(tmp_path
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("budget", ["max_duration_seconds", "max_decoded_bytes"])
+def test_understated_metadata_cannot_bypass_bounded_decode(tmp_path, misleading_audio, budget):
+    async def run():
+        source = misleading_audio(0.1)
+        changes = {budget: 0.5 if budget == "max_duration_seconds" else 16000}
+        destination = tmp_path / "bounded.pcm"
+        execution = config(tmp_path, **changes)
+        with pytest.raises(stt.SttResourceLimitExceeded):
+            await stt.decode_planning_pcm(source, destination, config=execution,
+                cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
+        limit = min(execution.max_decoded_bytes, int(execution.max_duration_seconds * 32000))
+        assert limit < destination.stat().st_size <= limit + 2
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("width", [0, 0.0001])
 def test_off_grid_narrow_search_uses_a_frame_centre_within_hard_maximum(tmp_path, width):
     pcm = tmp_path / "audio.pcm"
@@ -132,6 +149,55 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
         with pytest.raises(stt.SttAudioNotSplittable):
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
     assert seen == [], "a known-over-limit reference must never be posted whole"
+    assert list((tmp_path / "spool").iterdir()) == []
+
+
+@pytest.mark.parametrize("envelope", ["disabled", "timestamps", "streaming", "multiple_files", "setup_failure"])
+@pytest.mark.parametrize("policy", ["known", "unknown", "native_offline", "native_streaming"])
+def test_final_whole_file_guard_covers_every_run_path(tmp_path, fake_upstreams, envelope, policy):
+    async def run():
+        paths = [wav(tmp_path / "request.wav", 0.6)]
+        if envelope == "multiple_files":
+            paths.append(wav(tmp_path / "request-2.wav", 0.7))
+        contacted = []
+
+        def handle(request):
+            contacted.append(request)
+            return httpx.Response(200, json={"text": "whole"})
+
+        fake_upstreams.router.add_transport("guard.fk.test:9876", HandlerTransport(handle))
+        execution = config(tmp_path, enabled=envelope != "disabled", target_seconds=0.25,
+            threshold_seconds=0.3, search_seconds=0.05,
+            max_segment_seconds=None if policy == "unknown" else 0.3,
+            native_long_audio_offline=policy == "native_offline",
+            native_long_audio_streaming=policy == "native_streaming")
+        fields = [("stream", "true")] if envelope == "streaming" else (
+            [("timestamp_granularities[]", "word")] if envelope == "timestamps" else [])
+        uploads = [("file", SimpleNamespace(file=path.open("rb"), filename=path.name,
+                                            content_type="audio/wav")) for path in paths]
+        cleanup = stt.SttCleanupOwner()
+        attempts = []
+        request = SttRun(op="stt.transcribe", execution=execution, fields=fields, multipart_fields=dict(fields),
+            uploads=uploads, workspace=tmp_path, cleanup=cleanup, cancellation_waiters=(),
+            deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=lambda: None,
+            on_attempt_started=lambda count: None, on_outcome=lambda outcome: None,
+            on_whole_file_attempt=lambda: attempts.append(1), stream=envelope == "streaming")
+        permits_whole = policy == "unknown" or policy == ("native_streaming" if request.stream else "native_offline")
+        try:
+            with patch.object(stt, "plan_quietest_frame_segments", side_effect=stt.SttSetupFailure("test setup")):
+                adapter = ChunkedSttAdapter()
+                if permits_whole:
+                    await adapter._run("http://guard.fk.test:9876/v1/audio/transcriptions", httpx.Timeout(5), request)
+                else:
+                    with pytest.raises(stt.SttAudioNotSplittable):
+                        await adapter._run("http://guard.fk.test:9876/v1/audio/transcriptions", httpx.Timeout(5), request)
+            assert len(contacted) == len(attempts) == int(permits_whole)
+        finally:
+            await cleanup.aclose()
+            for _, upload in uploads:
+                upload.file.close()
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("chunked", [False, True])
