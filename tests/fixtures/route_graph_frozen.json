@@ -207,6 +207,15 @@
    "POST": "/admin/api/apps/{app_id}/keys create_key",
    "PUT": "/{path:path} unmatched_route"
   },
+  "/admin/api/apps/sample/keys/sample": {
+   "DELETE": "/{path:path} unmatched_route",
+   "GET": "/{path:path} unmatched_route",
+   "HEAD": "405 allow=PATCH via /admin/api/apps/{app_id}/keys/{credential_id} rename_key",
+   "OPTIONS": "/{path:path} unmatched_route",
+   "PATCH": "/admin/api/apps/{app_id}/keys/{credential_id} rename_key",
+   "POST": "/{path:path} unmatched_route",
+   "PUT": "/{path:path} unmatched_route"
+  },
   "/admin/api/apps/sample/trusted-addresses": {
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/admin/api/apps/{app_id}/trusted-addresses list_trusted_addresses",
@@ -1859,7 +1868,7 @@
    "GET": "/{path:path} unmatched_route",
    "HEAD": "405 allow=DELETE via /me/api/apps/{app_id} user_portal_delete_app",
    "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
+   "PATCH": "/me/api/apps/{app_id} user_portal_rename_app",
    "POST": "/{path:path} unmatched_route",
    "PUT": "/{path:path} unmatched_route"
   },
@@ -1886,7 +1895,7 @@
    "GET": "/{path:path} unmatched_route",
    "HEAD": "405 allow=DELETE via /me/api/credentials/{credential_id} user_portal_revoke_key",
    "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
+   "PATCH": "/me/api/credentials/{credential_id} user_portal_rename_key",
    "POST": "/{path:path} unmatched_route",
    "PUT": "/{path:path} unmatched_route"
   },
@@ -3673,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "64d37e94b75d5ef4ec5608f2263bf9a10fc88a2ed59b744507c5749af492f8a2",
+ "openapi_sha256": "a905cbaf433defc75ba594adb4c59504a01fb34aa08d07253d8b75f21d92d1b2",
  "policy": {
   "aliases": [
    {
@@ -5129,6 +5138,19 @@
    "name": "remove_service",
    "openapi_extra": null,
    "path": "/admin/api/operator/services/{service_id}",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "gateway.admin_api.create_admin_router.<locals>.rename_key",
+   "include_in_schema": true,
+   "methods": [
+    "PATCH"
+   ],
+   "name": "rename_key",
+   "openapi_extra": null,
+   "path": "/admin/api/apps/{app_id}/keys/{credential_id}",
    "response_class": null,
    "status_code": null,
    "type": "APIRoute"
@@ -9039,6 +9061,32 @@
    "name": "user_portal_receipt_detail",
    "openapi_extra": null,
    "path": "/me/api/receipts/{request_id}",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "proxy.user_portal_rename_app",
+   "include_in_schema": false,
+   "methods": [
+    "PATCH"
+   ],
+   "name": "user_portal_rename_app",
+   "openapi_extra": null,
+   "path": "/me/api/apps/{app_id}",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "proxy.user_portal_rename_key",
+   "include_in_schema": false,
+   "methods": [
+    "PATCH"
+   ],
+   "name": "user_portal_rename_key",
+   "openapi_extra": null,
+   "path": "/me/api/credentials/{credential_id}",
    "response_class": null,
    "status_code": null,
    "type": "APIRoute"

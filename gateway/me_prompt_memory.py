@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, prompt_memory
+from gateway import admin_store, prompt_memory, retention
 from gateway.admin_oidc import AdminSession
 
 SessionProvider = Callable[[Request], AdminSession | None]
@@ -18,9 +18,6 @@ HouseholdProvider = Callable[[], Mapping[str, Any]]
 PersonPromptPurger = Callable[[str], Any]
 PurgeStatusProvider = Callable[[str], Mapping[str, Any] | None]
 
-MEMBER_DEFAULT = {"remember": True, "retention": "never"}
-HOUSEHOLD_DEFAULT = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
-RETENTION_ORDER = {"3_months": 0, "1_year": 1, "never": 2}
 
 
 def create_me_prompt_memory_router(
@@ -52,6 +49,13 @@ def create_me_prompt_memory_router(
         household = _household(request)
         member = _member_settings(person_id, path=admin_db_path)
         effective = _effective(member, household)
+        stored = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_db_path)
+        unoffered = {}
+        if member.get("unoffered_retention"):
+            unoffered["retention"] = member["unoffered_retention"]
+        cap = retention.unoffered_household_cap(stored["value"] if stored else None)
+        if cap:
+            unoffered["retention_cap"] = cap
         extra = dict(extra or {})
         if prompt_memory.erasure_pending(person_id, admin_path=admin_db_path):
             extra["prompt_purge"] = {**extra.get("prompt_purge", {}), "pending": True,
@@ -65,6 +69,8 @@ def create_me_prompt_memory_router(
                     "effective_retention": effective["retention"],
                     "household": household,
                 },
+                "contract": retention.public_contract(),
+                **({"unoffered": unoffered} if unoffered else {}),
                 **(extra or {}),
             },
             status_code=status_code,
@@ -97,8 +103,12 @@ def create_me_prompt_memory_router(
             if not isinstance(body, Mapping):
                 raise ValueError
             remember = body.get("remember")
-            retention = body.get("retention")
-            if not isinstance(remember, bool) or retention not in {"never", "3_months", "1_year"}:
+            period = body.get("retention")
+            person_id = str(session.subject)
+            current = admin_store.get_prompt_memory_preference(person_id, path=admin_db_path)
+            unchanged = current is not None and period == current["retention"]
+            if not isinstance(remember, bool) or (period not in retention.bundled().choices(retention.LIBRARY_PROMPT)
+                                                  and not unchanged):
                 raise ValueError
         except (ValueError, TypeError):
             return JSONResponse(
@@ -107,11 +117,10 @@ def create_me_prompt_memory_router(
             )
         from gateway import prompt_memory
 
-        person_id = str(session.subject)
         try:
             changed = await asyncio.to_thread(
                 admin_store.put_prompt_memory_preference,
-                person_id, remember=remember, retention=str(retention),
+                person_id, remember=remember, retention=str(period),
                 updated_by=person_id, path=admin_db_path,
             )
         except Exception:
@@ -121,7 +130,8 @@ def create_me_prompt_memory_router(
         purge_failed = False
         if remember:
             try:
-                await asyncio.to_thread(prompt_memory.tighten_retention, str(retention),
+                normalized = retention.normalize_period(str(period), kind=retention.LIBRARY_PROMPT, owner_cap=False)
+                await asyncio.to_thread(prompt_memory.tighten_retention, normalized,
                                         person_id=person_id, path=prompt_memory_path)
             except Exception:
                 return JSONResponse({"error": {"code": "prompt_retention_pending",
@@ -218,9 +228,15 @@ def _member_settings(person_id: str, *, path: Path) -> dict[str, Any]:
     record = admin_store.ensure_prompt_memory_preference(
         person_id, path=path,
     )
+    stored_period = str(record.get("retention") or retention.member_defaults()["retention"])
+    unoffered = retention.unoffered_period(stored_period)
     return {
         "remember": bool(record.get("remember")),
-        "retention": str(record.get("retention") or MEMBER_DEFAULT["retention"]),
+        "retention": retention.normalize_period(
+            stored_period,
+            kind=retention.LIBRARY_PROMPT, owner_cap=False,
+        ),
+        **({"unoffered_retention": unoffered} if unoffered else {}),
     }
 
 
@@ -238,23 +254,13 @@ def _has_pending_purge(value: Any) -> bool:
 
 def _household_policy(value: Any) -> dict[str, Any]:
     source = value if isinstance(value, Mapping) else {}
+    defaults = retention.household_defaults()
     return {
-        "default_remember": bool(source.get("default_remember", HOUSEHOLD_DEFAULT["default_remember"])),
-        "never_keep": bool(source.get("never_keep", HOUSEHOLD_DEFAULT["never_keep"])),
-        "retention_cap": str(source.get("retention_cap") or HOUSEHOLD_DEFAULT["retention_cap"]),
+        "default_remember": bool(source.get("default_remember", defaults["default_remember"])),
+        "never_keep": bool(source.get("never_keep", defaults["never_keep"])),
+        "retention_cap": str(source.get("retention_cap") or defaults["retention_cap"]),
     }
 
 
 def _effective(member: Mapping[str, Any], household: Mapping[str, Any]) -> dict[str, Any]:
-    remember = bool(member.get("remember", True)) and not bool(household.get("never_keep"))
-    retention = _shorter_retention(
-        str(member.get("retention") or MEMBER_DEFAULT["retention"]),
-        str(household.get("retention_cap") or HOUSEHOLD_DEFAULT["retention_cap"]),
-    )
-    return {"remember": remember, "retention": retention}
-
-
-def _shorter_retention(left: str, right: str) -> str:
-    left = left if left in RETENTION_ORDER else MEMBER_DEFAULT["retention"]
-    right = right if right in RETENTION_ORDER else HOUSEHOLD_DEFAULT["retention_cap"]
-    return left if RETENTION_ORDER[left] <= RETENTION_ORDER[right] else right
+    return retention.effective(member, household)

@@ -8,6 +8,7 @@ and says why. Nothing may be removed, re-handled, re-methoded or re-policied.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -37,14 +38,34 @@ ADDED_PATHS: dict[str, str] = {
                                     "outside the OpenAPI schema; tests/test_library_remove_missing.py covers it",
     "/me/api/profile": "a person's avatar choice, the sign-in picture served from the gateway and the choices a "
                               "viewer may see, outside the OpenAPI schema; tests/test_me_avatar.py covers them",
+    "/admin/api/apps/{app_id}/keys/{credential_id}": "an administrator or the owner renames an App's key (a label, no "
+                                                      "new credential, so no step-up); tests/test_rename_apps_keys.py covers it",
+}
+
+# Deliberate additions of one method to a path that was already frozen: (method, path template) -> reason. The path
+# was frozen answering that method with the 405 of its other methods; each is a route of its own now.
+ADDED_METHODS: dict[tuple[str, str], str] = {
+    ("PATCH", "/me/api/apps/{app_id}"): "a person renames their own App (outside the OpenAPI schema); "
+                                         "tests/test_rename_apps_keys.py covers it",
+    ("PATCH", "/me/api/credentials/{credential_id}"): "a person renames their own key's label (outside the OpenAPI schema); "
+                                                       "tests/test_rename_apps_keys.py covers it",
 }
 
 
-def _reviewed(path: str | None) -> bool:
+def _template(path: str) -> re.Pattern[str]:
+    """A route template, or a probed path made from it, as one pattern: ``{x}`` stands for one segment."""
+    return re.compile("/".join("[^/]+" if part.startswith("{") else re.escape(part) for part in path.split("/")))
+
+
+def _reviewed(path: str | None, methods: list[str] | None = None) -> bool:
     # The owner's secret commands (decision D27) sit under each service: /admin/api/operator/services/{id}/secret-entries.
     if path is not None and path.startswith("/admin/api/operator/services/") and path.endswith("/secret-entries"):
         return True
-    return path is not None and any(path == prefix or path.startswith(prefix + "/") for prefix in ADDED_PATHS)
+    if path is not None and methods and all((method, path) in ADDED_METHODS for method in methods):
+        return True
+    return path is not None and any(
+        path == prefix or path.startswith(prefix + "/") or _template(prefix).fullmatch(path)
+        for prefix in ADDED_PATHS)
 
 
 def _frozen() -> dict:
@@ -66,7 +87,7 @@ def test_every_frozen_route_is_still_registered_the_same_way() -> None:
     missing = frozen_rows - live_rows
     assert not missing, f"routes removed or changed: {sorted(missing.elements())[:5]}"
     added = live_rows - frozen_rows
-    unreviewed = [row for row in added.elements() if not _reviewed(json.loads(row)["path"])]
+    unreviewed = [row for row in added.elements() if not _reviewed(json.loads(row)["path"], json.loads(row)["methods"])]
     assert not unreviewed, f"routes added without review: {unreviewed[:5]}"
 
 
@@ -74,11 +95,13 @@ def test_every_frozen_path_dispatches_the_same_way() -> None:
     frozen = _frozen()["dispatch"]
     live = route_graph.capture(proxy)["dispatch"]
 
+    added = {(method, _template(template)) for method, template in ADDED_METHODS}
     changed = {
         (path, method): (outcome, live.get(path, {}).get(method))
         for path, by_method in frozen.items()
         for method, outcome in by_method.items()
         if live.get(path, {}).get(method) != outcome
+        and not any(method == added_method and pattern.fullmatch(path) for added_method, pattern in added)
     }
     assert not changed, f"dispatch changed for {len(changed)} requests: {dict(list(changed.items())[:5])}"
     unreviewed = sorted(path for path in set(live) - set(frozen) if not _reviewed(path))

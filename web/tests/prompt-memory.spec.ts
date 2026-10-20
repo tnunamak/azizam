@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   isShorter,
+  isKnownRetention,
+  isRetention,
   keyPromptNote,
   purgeStatus,
   promptNotSavedReason,
@@ -8,6 +10,7 @@ import {
   tryKeepState,
   withForget,
   withinCap,
+  setRetentionContract,
   type MemberPromptMemory,
 } from "@/lib/prompt-memory";
 
@@ -40,6 +43,27 @@ describe("prompt memory rules", () => {
     expect(withinCap("never", "never")).toBe(true);
     expect(withinCap("never", "1_year")).toBe(false);
     expect(withinCap("1_year", "1_year")).toBe(true);
+    expect(withinCap("3_months", "1_year")).toBe(true);
+  });
+
+  it("compares a known saved period even when it is no longer offered", () => {
+    setRetentionContract({
+      choices: [
+        { id: "never", seconds: null },
+        { id: "3_months", seconds: 7_776_000 },
+      ],
+      known_unoffered: [{ id: "1_year", seconds: 31_536_000 }],
+      defaults: {
+        default_remember: true,
+        never_keep: false,
+        retention_cap: "never",
+        remember: true,
+        retention: "never",
+      },
+    });
+    expect(isKnownRetention("1_year")).toBe(true);
+    expect(isRetention("1_year")).toBe(false);
+    expect(isShorter("3_months", "1_year")).toBe(true);
     expect(withinCap("3_months", "1_year")).toBe(true);
   });
 
@@ -200,7 +224,10 @@ describe("prompt memory copy", () => {
       "Some older files still contain prompts. Azizam keeps retrying. 12 files left.",
     );
     expect(
-      purgeStatus({ pending: true, metadata_stripping: { status: "retrying" } }),
+      purgeStatus({
+        pending: true,
+        metadata_stripping: { status: "retrying" },
+      }),
     ).toBe("Some older files still contain prompts. Azizam keeps retrying.");
   });
 });

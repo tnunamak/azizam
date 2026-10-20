@@ -10,7 +10,33 @@
  */
 import { adminFetch, ApiError } from "./api";
 
-export type Retention = "never" | "1_year" | "3_months";
+/** How long prompts are kept: a choice id from the gateway's retention file (`registry/retention.yml`). */
+export type Retention = string;
+
+/** One way to keep prompts. `seconds: null` keeps them with no deadline. */
+export interface RetentionChoice {
+  id: Retention;
+  seconds: number | null;
+}
+
+/**
+ * The choices and defaults of the prompts group, as the gateway's retention
+ * file states them. Both prompt-memory responses carry it; the screens keep no
+ * copy of their own.
+ */
+export interface RetentionContract {
+  /** In the order the screens list them. */
+  choices: RetentionChoice[];
+  /** Existing saved periods whose durations are still known, but which cannot be chosen now. */
+  known_unoffered?: RetentionChoice[];
+  defaults: {
+    default_remember: boolean;
+    never_keep: boolean;
+    retention_cap: Retention;
+    remember: boolean;
+    retention: Retention;
+  };
+}
 
 export interface HouseholdPromptMemory {
   default_remember: boolean;
@@ -44,13 +70,19 @@ export interface PromptPurge {
 
 export interface MemberPromptMemoryResponse {
   prompt_memory: MemberPromptMemory;
+  /** Raw saved IDs absent from the offered choices, before normalization. */
+  unoffered?: { retention?: Retention; retention_cap?: Retention };
   prompt_purge?: PromptPurge;
+  contract?: RetentionContract;
 }
 
 export interface HouseholdPromptMemoryResponse {
   prompt_memory: HouseholdPromptMemory;
+  /** Raw saved IDs absent from the offered choices, before normalization. */
+  unoffered?: { retention?: Retention; retention_cap?: Retention };
   revision: string;
   prompt_purge?: PromptPurge;
+  contract?: RetentionContract;
 }
 
 export interface DeletePromptsResponse {
@@ -61,37 +93,103 @@ export interface DeletePromptsResponse {
 /** The react-query key for the signed-in person's prompt memory. */
 export const promptMemoryKey = ["account", "prompt-memory"] as const;
 
-/** Shortest first, so a cap can be compared by position. */
-const ORDER: Retention[] = ["3_months", "1_year", "never"];
+let current: RetentionContract | null = null;
 
-export const RETENTIONS: Retention[] = ["never", "1_year", "3_months"];
+/** Remember the contract a prompt-memory response carries. */
+export function setRetentionContract(
+  next: RetentionContract | null | undefined,
+) {
+  if (next && Array.isArray(next.choices)) current = next;
+}
+
+/** Keep the contract of a response, then hand the response on. */
+export function learnContract<T extends { contract?: RetentionContract }>(
+  response: T,
+): T {
+  setRetentionContract(response?.contract);
+  return response;
+}
+
+/** The choices, in the order the screens list them (empty until a response has arrived). */
+export function retentionChoices(): Retention[] {
+  return (current?.choices ?? []).map((choice) => choice.id);
+}
+
+/** The period a missing or unrecognised value stands for, from the gateway's defaults. */
+export function defaultCap(): Retention {
+  return current?.defaults.retention_cap ?? "";
+}
+
+export function defaultRetention(): Retention {
+  return current?.defaults.retention ?? "";
+}
+
+/** How long a choice keeps prompts; a choice with no deadline is the longest. */
+function length(value: Retention): number {
+  const choice = knownChoice(value);
+  if (!choice) return Number.NaN;
+  return choice.seconds ?? Number.POSITIVE_INFINITY;
+}
+
+function knownChoice(value: Retention): RetentionChoice | undefined {
+  return (
+    current?.choices.find((choice) => choice.id === value) ??
+    current?.known_unoffered?.find((choice) => choice.id === value)
+  );
+}
+
+/** True for the choice that keeps prompts with no deadline. */
+export function keepsForever(value: Retention): boolean {
+  return knownChoice(value)?.seconds === null;
+}
+
+function words(value: Retention): string {
+  return value.replaceAll("_", " ");
+}
 
 /** The member's choice: "Forget prompts after" … */
-export const memberRetentionLabel: Record<Retention, string> = {
-  never: "Never",
-  "1_year": "1 year",
-  "3_months": "3 months",
-};
+export function memberRetentionLabel(value: Retention): string {
+  return keepsForever(value) ? "Never" : words(value);
+}
 
 /** The owner's cap: "Keep prompts for" … */
-export const capLabel: Record<Retention, string> = {
-  never: "No limit",
-  "1_year": "1 year",
-  "3_months": "3 months",
-};
+export function capLabel(value: Retention): string {
+  return keepsForever(value) ? "No limit" : words(value);
+}
 
 export function isRetention(value: unknown): value is Retention {
-  return value === "never" || value === "1_year" || value === "3_months";
+  return (
+    typeof value === "string" &&
+    (current?.choices.some((choice) => choice.id === value) ?? false)
+  );
+}
+
+/** Known durations may remain in saved settings after they leave the offered choices. */
+export function isKnownRetention(value: unknown): value is Retention {
+  return typeof value === "string" && knownChoice(value) !== undefined;
+}
+
+/** Explain a saved period that cannot be newly selected, including a deleted ID's fallback. */
+export function unofferedRetentionNote(
+  stored: Retention | undefined,
+  effective: Retention,
+  label: (value: Retention) => string,
+): string | null {
+  if (!stored) return null;
+  const previous = label(stored).toLowerCase();
+  return stored === effective
+    ? `${previous} (no longer offered).`
+    : `Previous choice ${previous} (no longer offered). Using ${label(effective).toLowerCase()}.`;
 }
 
 /** True when `next` keeps prompts for less time than `current`. */
-export function isShorter(next: Retention, current: Retention): boolean {
-  return ORDER.indexOf(next) < ORDER.indexOf(current);
+export function isShorter(next: Retention, previous: Retention): boolean {
+  return length(next) < length(previous);
 }
 
 /** A member may choose any period no longer than the household's cap. */
 export function withinCap(value: Retention, cap: Retention): boolean {
-  return ORDER.indexOf(value) <= ORDER.indexOf(cap);
+  return length(value) <= length(cap);
 }
 
 /**
@@ -250,7 +348,7 @@ export const householdPromptMemoryApi = {
   get: () =>
     adminFetch<HouseholdPromptMemoryResponse>(
       "/admin/api/settings/prompt-memory",
-    ),
+    ).then(learnContract),
   put: (value: HouseholdPromptMemory, revision: string) =>
     adminFetch<HouseholdPromptMemoryResponse>(
       "/admin/api/settings/prompt-memory",
@@ -259,5 +357,7 @@ export const householdPromptMemoryApi = {
         body: value,
         headers: { "If-Match": revision },
       },
-    ).then(rejectPendingCleanup),
+    )
+      .then(rejectPendingCleanup)
+      .then(learnContract),
 };

@@ -270,9 +270,9 @@ def test_notification_is_202_without_body(env):
     assert resp.status_code == 202 and resp.content == b""
 
 
-def test_legacy_tools_list_has_exactly_the_three_meta_tools(env):
+def test_legacy_tools_list_has_the_three_meta_tools_and_the_two_rename_tools(env):
     tools = rpc(env, "tools/list", headers={"mcp-protocol-version": "2025-06-18"}).json()["result"]["tools"]
-    assert [t["name"] for t in tools] == ["capabilities", "run", "job"]
+    assert [t["name"] for t in tools] == ["capabilities", "run", "job", "rename_app", "rename_key"]
     assert all(t["inputSchema"]["type"] == "object" for t in tools)
 
 
@@ -793,3 +793,83 @@ def test_input_validation_error_has_plain_message(env):
     assert result["isError"] is True
     assert result["content"][0] == {"type": "text", "text": "`target` is required"}
     assert env.core.calls == []
+
+
+# ------------------------------------------------------------- rename tools
+
+
+def _renaming_env(rename):
+    deps = McpDeps(authenticate=lambda request, _path: SimpleNamespace(identity="k"), call=None, catalog=lambda: [],
+                   aliases=lambda: {}, store_asset=None, read_asset=None, public_base_url=lambda r: "https://gw.test",
+                   rename=rename)
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    return SimpleNamespace(client=TestClient(app))
+
+
+def test_the_rename_tools_declare_their_arguments_and_are_idempotent_writes():
+    tools = {tool["name"]: tool for tool in mcp_server.TOOLS}
+
+    for name, required in (("rename_app", ["app", "name"]), ("rename_key", ["app", "key", "name"])):
+        schema = tools[name]["inputSchema"]
+        assert schema["required"] == required and schema["additionalProperties"] is False
+        assert schema["properties"]["name"]["maxLength"] == 80
+        assert tools[name]["annotations"] == {
+            "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+
+
+def test_a_rename_call_reaches_the_gateway_with_the_callers_auth_and_returns_its_answer():
+    seen = []
+
+    def rename(request, auth, tool, args):
+        seen.append((auth.identity, tool, args))
+        return {"status": "renamed", "app": {"id": "app_1", "name": args["name"]}}
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Work laptop"})
+
+    assert seen == [("k", "rename_app", {"app": "Laptop", "name": "Work laptop"})]
+    assert "isError" not in result
+    assert result["structuredContent"] == {"status": "renamed", "app": {"id": "app_1", "name": "Work laptop"}}
+
+
+@pytest.mark.parametrize("tool, arguments, message", [
+    ("rename_app", {"name": "X"}, "`app` is required"),
+    ("rename_app", {"app": "Laptop"}, "`name` is required"),
+    ("rename_app", {"app": "Laptop", "name": "  "}, "`name` is required"),
+    ("rename_app", {"app": "Laptop", "name": 3}, "`name` is required"),
+    ("rename_key", {"app": "Laptop", "name": "X"}, "`key` is required"),
+    ("rename_key", {"app": "Laptop", "key": "Editor", "name": "X", "extra": 1}, "unknown argument 'extra'"),
+])
+def test_a_rename_call_with_bad_arguments_is_a_tool_error_that_never_reaches_the_gateway(tool, arguments, message):
+    def rename(*_args):
+        raise AssertionError("the adapter must refuse before it asks the gateway")
+
+    result = call(_renaming_env(rename), tool, arguments)
+
+    assert result["isError"] is True and message in result["structuredContent"]["error"]
+
+
+def test_a_refusal_from_the_gateway_is_a_tool_error_with_its_words_and_code():
+    def rename(*_args):
+        raise mcp_server.CallError("Another app already has that name. Choose a different name.", code="app_name_taken")
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Phone"})
+
+    assert result["isError"] is True
+    assert result["structuredContent"] == {"status": "error", "code": "app_name_taken",
+                                           "error": "Another app already has that name. Choose a different name."}
+
+
+def test_an_unexpected_failure_in_the_gateway_leaks_nothing():
+    def rename(*_args):
+        raise RuntimeError("secret path /var/lib/azizam")
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Phone"})
+
+    assert result["isError"] is True and "secret path" not in json.dumps(result)
+
+
+def test_a_host_without_renaming_says_so():
+    result = call(_renaming_env(None), "rename_key", {"app": "Laptop", "key": "Editor", "name": "Notes"})
+
+    assert result["isError"] is True and "does not offer renaming" in result["structuredContent"]["error"]

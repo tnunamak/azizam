@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/retention.schema.json",
+  "title": "Azizam request retention contract",
+  "description": "The bundled defaults of the retention contract (docs/design/REQUEST_RETENTION.md section 3.2). Closed: an unknown field is an error. gateway/retention.py adds the cross-row rules that a schema cannot say.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "retention_choices", "household", "groups", "kinds", "widening"],
+  "properties": {
+    "format_version": {"const": 1},
+    "retention_choices": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"type": ["integer", "null"], "minimum": 1}
+    },
+    "household": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["never_keep"],
+      "properties": {"never_keep": {"type": "boolean"}}
+    },
+    "groups": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"$ref": "#/$defs/group"}
+    },
+    "kinds": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"$ref": "#/$defs/kind"}
+    },
+    "widening": {"const": "none"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$"},
+    "idList": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds", "default_keep", "default_retention", "default_cap", "choices"],
+      "properties": {
+        "kinds": {"$ref": "#/$defs/idList"},
+        "default_keep": {"type": "boolean"},
+        "default_retention": {"$ref": "#/$defs/id"},
+        "default_cap": {"$ref": "#/$defs/id"},
+        "choices": {"$ref": "#/$defs/idList"}
+      }
+    },
+    "parts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "default"],
+      "properties": {
+        "allowed": {"$ref": "#/$defs/idList"},
+        "default": {"$ref": "#/$defs/idList"}
+      }
+    },
+    "kind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "parts", "readers"],
+      "properties": {
+        "purpose": {"type": "string", "minLength": 1},
+        "parts": {"$ref": "#/$defs/parts"},
+        "readers": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

@@ -207,9 +207,9 @@ POST   /oauth/revoke
 
 `GET /mcp` and `DELETE /mcp` return `405`.
 
-The MCP facade is a Streamable HTTP JSON-RPC endpoint. It supports the 2026-07-28 stateless revision and legacy handshake revisions 2025-11-25, 2025-06-18 and 2025-03-26. It exposes three generated meta-tools: `capabilities`, `run` and `job`.
+The MCP facade is a Streamable HTTP JSON-RPC endpoint. It supports the 2026-07-28 stateless revision and legacy handshake revisions 2025-11-25, 2025-06-18 and 2025-03-26. It exposes three generated meta-tools, `capabilities`, `run` and `job`, and two small management tools, `rename_app` and `rename_key`.
 
-Tool calls dispatch in process to existing gateway routes with the caller's credentials. `capabilities` reads the workflow catalog and stable aliases. `run` starts a workflow or the speech route. `job` polls, waits for or cancels a media job. Media results are returned as MCP `resource_link` blocks with signed asset URLs.
+Tool calls dispatch in process to existing gateway routes with the caller's credentials. `capabilities` reads the workflow catalog and stable aliases. `run` starts a workflow or the speech route. `job` polls, waits for or cancels a media job. Media results are returned as MCP `resource_link` blocks with signed asset URLs. `rename_app` and `rename_key` give one of the signed-in person's own apps or keys a new name (by its current name, or its id when two share a name). They work only for a client the person signed in to (an OAuth connection) and only when that consent included renaming: the grant records the `mcp:rename` scope, which a client cannot ask for and which connections made before it existed lack. Those answer with a tool error that tells the person to disconnect the client on the Connect page and connect it again. An App key is refused. A rename changes a label, not a credential, so it asks for no recent confirmation. They change nothing else: keys and access stay.
 
 Auth accepts an API key or an OAuth access token in the `Authorization` header. Missing or rejected credentials return `401` with a `WWW-Authenticate` challenge that names the protected-resource metadata and the `mcp` scope. The metadata names the gateway's own authorization server, so clients that cannot send a header (ChatGPT, Claude.ai) sign the person in instead; see `docs/design/MCP_AUTHORIZATION.md`. A browser `Origin` must be the saved public address or listed in `mcp.allowed_origins`.
 
@@ -218,7 +218,7 @@ Known limits:
 - There is no server-sent event stream on `GET /mcp` and no legacy HTTP+SSE transport; all responses are plain JSON.
 - Prompts, resources, completion, logging, sampling, elicitation and tasks are not offered.
 - The server does not mint an `Mcp-Session-Id`.
-- Only the three meta-tools are exposed. It does not generate one tool per workflow.
+- Only three meta-tools (plus the two rename tools) are exposed. It does not generate one tool per workflow.
 - Feature limits come from the core route that a tool calls, and are returned as tool errors.
 
 Evidence:

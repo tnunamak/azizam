@@ -6,6 +6,9 @@ const PHRASES: Record<string, string> = {
   "app.create": "Created an app",
   "app.self_create": "Created an app",
   "app.self_delete": "Removed an app",
+  "app.self_rename": "Renamed an app",
+  "credential.rename": "Renamed a key",
+  "credential.self_rename": "Renamed a key",
   "credential.self_create": "Created a key",
   "credential.self_revoke": "Revoked a key",
   "setup.local_owner_create": "Set up the owner account",
@@ -45,6 +48,7 @@ const PHRASES: Record<string, string> = {
 const VERBS: Record<string, string> = {
   create: "Created",
   update: "Updated",
+  rename: "Renamed",
   delete: "Deleted",
   remove: "Removed",
   revoke: "Revoked",

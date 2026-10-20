@@ -86,6 +86,7 @@ from gateway import (
     native_lane,
     prompt_memory,
     receipt_store,
+    retention,
     resource_admission_http,
     resource_decisions,
     route_registry,
@@ -136,6 +137,7 @@ from gateway import voice_audio
 from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
+from gateway.workflow_call import CallError
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
@@ -235,6 +237,10 @@ from gateway.user_runtime import (
     get_user_app_credential,
     get_user_receipt,
     mint_user_app_key,
+    rename_person_app,
+    rename_person_key,
+    rename_user_app,
+    rename_user_app_key,
     request_user_access,
     revoke_user_app_key,
 )
@@ -12709,13 +12715,25 @@ def _migrate_host_command_permission() -> None:
     )
 
 
+async def _repair_prompt_deadlines_at_startup() -> None:
+    try:
+        await asyncio.to_thread(prompt_memory.tighten_contract_periods,
+                                admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
+    except Exception as exc:
+        print(f"[proxy] prompt deadline repair pending: {type(exc).__name__}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    # The retention defaults are data (registry/retention.yml); without a valid file the gateway has none.
+    await asyncio.to_thread(retention.require_bundled)
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
+    # Try deadline repair before serving; recurring maintenance retries failures.
+    await _repair_prompt_deadlines_at_startup()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver
@@ -14313,6 +14331,34 @@ async def _mcp_dispatch_call(request: Request, method: str, path: str, **kwargs:
         return await http.request(method, path, headers={**forwarded, **headers}, **kwargs)
 
 
+def _mcp_rename(request: Request, auth: Any, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``rename_app`` and ``rename_key`` for a person who signed in to the client (an MCP connection).
+
+    The person's own rules apply, as on /me: their own apps and keys, never another person's. An App key is a
+    data-plane credential for one App and has no person who answers for a rename, so it is refused. A connection
+    made before the consent offered renaming lacks the grant's ``mcp:rename`` scope and is refused too. A rename
+    changes a label only (decision D36), so it asks for no recent confirmation.
+    """
+    identity = auth.identity if isinstance(auth, AuthContext) else None
+    if identity is None or not identity.person_id or not identity.connection_id:
+        raise CallError("Renaming works for a client you signed in to, not for an app key. "
+                        "Connect the client from the Connect page, then try again.")
+    if not MCP_OAUTH.grant_allows_rename(identity.connection_id, identity.person_id):
+        raise CallError("This connection was made before renaming could be allowed, so it can't rename apps or keys. "
+                        "Disconnect it on the Connect page and connect it again to allow renaming.",
+                        code="reconnect_required")
+    try:
+        if tool == "rename_app":
+            renamed = rename_person_app(
+                identity.person_id, str(args["app"]), str(args["name"]), via="mcp", path=ADMIN_STORE.path)
+            return {"status": "renamed", "app": {"id": renamed["app"]["id"], "name": renamed["app"]["name"]}}
+        renamed = rename_person_key(
+            identity.person_id, str(args["app"]), str(args["key"]), str(args["name"]), via="mcp", path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        raise CallError(exc.message, code=exc.code) from None
+    return {"status": "renamed", "key": {"id": renamed["id"], "name": renamed["display_name"], "app_id": renamed["app_id"]}}
+
+
 def _mcp_catalog() -> list[dict[str, Any]]:
     records = GATEWAY_WORKFLOW_REGISTRY.records()
     by_id = {record.id: record for record in records}
@@ -14458,6 +14504,7 @@ def _mount_mcp(app: FastAPI) -> None:
             authorization_servers=lambda request: (
                 [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
             scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
+            rename=_mcp_rename,
         ),
         path=MCP_PATH,
     )
@@ -16253,6 +16300,28 @@ async def user_portal_delete_app(app_id: str, request: Request):
     )
 
 
+@app.patch("/me/api/apps/{app_id}", include_in_schema=False)
+async def user_portal_rename_app(app_id: str, request: Request):
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name") if isinstance(body, Mapping) else None
+    try:
+        payload = await asyncio.to_thread(
+            rename_user_app, session, app_id, name if isinstance(name, str) else "", path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
+
+
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
@@ -16397,6 +16466,29 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
         content={"credential": credential},
         headers={"cache-control": "no-store"},
     )
+
+
+@app.patch("/me/api/credentials/{credential_id}", include_in_schema=False)
+async def user_portal_rename_key(credential_id: str, request: Request):
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    label = body.get("display_name") if isinstance(body, Mapping) else None
+    try:
+        credential = await asyncio.to_thread(
+            rename_user_app_key, session, credential_id, label if isinstance(label, str) else "",
+            path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
 
 
 def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
@@ -20364,8 +20456,8 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        retention = policy["retention"]
-    prompt_memory.tighten_retention(retention, person_id=person_id)
+        period = retention.normalize_period(policy["retention"], kind=retention.LIBRARY_PROMPT, owner_cap=False)
+    prompt_memory.tighten_retention(period, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
@@ -25434,15 +25526,8 @@ class _PreviousResponseNotFound(Exception):
 
 
 def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
-    """Match the creator person and stable App (or legacy credential) scope."""
-    if not row:
-        return False
-    scope = _responses_scope(auth_context)
-    if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
-        return False
-    if scope["app_id"]:
-        return row.get("app_id") == scope["app_id"]
-    return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+    """Match the creator person and stable App (or legacy credential) scope (retention.conversation_row_visible)."""
+    return retention.conversation_row_visible(row, _responses_scope(auth_context))
 
 
 def _responses_scope(auth_context) -> dict[str, str | None] | None:
@@ -26871,6 +26956,7 @@ async def create_response(request: Request):
                 _auth_person_id(auth_context),
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
+                kind=retention.CONVERSATION,
             )
         except prompt_memory.PromptModeError as exc:
             return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")
@@ -26937,15 +27023,11 @@ async def create_response(request: Request):
         )
         created_at = int(time.time())
         stream = bool(req_body.get("stream"))
-        store = req_body.get("store")
-        if store is None:
-            store = prompt_decision.person_id is not None
         response_scope = _responses_scope(auth_context)
-        if response_scope is None:
-            store = False
-        if not prompt_decision.keep and prompt_decision.reason != "no_person":
-            store = False
-        req_body["store"] = bool(store)
+        store = retention.conversation_store(
+            prompt_decision, req_body.get("store"), has_scope=response_scope is not None,
+        )
+        req_body["store"] = store
         access = _access_for_auth_context(auth_context)
         outer_receipt = RouteReceipt(
             protocol="openai.responses",
@@ -27008,23 +27090,20 @@ async def create_response(request: Request):
                         final_obj = translator.build_final_response()
                         if store:
                             try:
-                                with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                                    if (not policy["never_keep"]
-                                        and created_at > int(policy.get("forgot_before") or 0)
-                                        and (prompt_decision.person_id is None or (
-                                        policy["remember"]
-                                        and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                                    ))):
-                                        responses_store.save(
-                                            response_id,
-                                            created_at=created_at,
-                                            model=final_obj.get("model"),
-                                            previous_response_id=req_body.get("previous_response_id"),
-                                            request_json=req_body,
-                                            response_json=final_obj,
-                                            api_key_name=_api_key_name(auth_context),
-                                            **response_scope,
-                                        )
+                                retention.write(
+                                    retention.CONVERSATION, admin_path=ADMIN_STORE.path,
+                                    person_id=prompt_decision.person_id, decision=prompt_decision, created_at=created_at,
+                                    commit=lambda _deadline: responses_store.save(
+                                        response_id,
+                                        created_at=created_at,
+                                        model=final_obj.get("model"),
+                                        previous_response_id=req_body.get("previous_response_id"),
+                                        request_json=req_body,
+                                        response_json=final_obj,
+                                        api_key_name=_api_key_name(auth_context),
+                                        **response_scope,
+                                    ),
+                                )
                             except Exception:  # noqa: BLE001
                                 for ev in translator.fail("Azizam could not persist the response."):
                                     yield ev
@@ -27093,23 +27172,20 @@ async def create_response(request: Request):
 
             if store:
                 try:
-                    with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                        if (not policy["never_keep"]
-                            and created_at > int(policy.get("forgot_before") or 0)
-                            and (prompt_decision.person_id is None or (
-                            policy["remember"]
-                            and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                        ))):
-                            responses_store.save(
-                                response_id,
-                                created_at=created_at,
-                                model=resp_json.get("model"),
-                                previous_response_id=req_body.get("previous_response_id"),
-                                request_json=req_body,
-                                response_json=resp_json,
-                                api_key_name=_api_key_name(auth_context),
-                                **response_scope,
-                            )
+                    retention.write(
+                        retention.CONVERSATION, admin_path=ADMIN_STORE.path,
+                        person_id=prompt_decision.person_id, decision=prompt_decision, created_at=created_at,
+                        commit=lambda _deadline: responses_store.save(
+                            response_id,
+                            created_at=created_at,
+                            model=resp_json.get("model"),
+                            previous_response_id=req_body.get("previous_response_id"),
+                            request_json=req_body,
+                            response_json=resp_json,
+                            api_key_name=_api_key_name(auth_context),
+                            **response_scope,
+                        ),
+                    )
                 except Exception:  # noqa: BLE001
                     owner.report(status="failed", reason="failed")
                     return _responses_error(

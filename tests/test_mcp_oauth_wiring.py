@@ -93,7 +93,8 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         for modern in (False, True):
             tools = self.post(token, "tools/list", modern=modern)
             self.assertEqual(tools.status_code, 200, tools.text)
-            self.assertEqual([t["name"] for t in tools.json()["result"]["tools"]], ["capabilities", "run", "job"])
+            self.assertEqual([t["name"] for t in tools.json()["result"]["tools"]],
+                             ["capabilities", "run", "job", "rename_app", "rename_key"])
         discover = self.post(token, "server/discover", modern=True).json()["result"]
         self.assertIn(MODERN, discover["supportedVersions"])
         # Dispatched in process to GET /gateway/v1/media/jobs/{id}. A stand-in
@@ -276,6 +277,168 @@ class McpAuthorizationWiringTests(unittest.TestCase):
                                    json={"model": "default", "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(refused.status_code, 403, refused.text)
         self.assertEqual(refused.json()["error"]["code"], "no_access_plan")
+
+    def rename(self, token: str, tool: str, arguments: dict) -> dict:
+        response = self.post(token, "tools/call", {"name": tool, "arguments": arguments}, modern=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["result"]
+
+    def test_a_connected_client_renames_the_persons_own_app_and_key_and_nothing_else(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        mine = admin_store.create_app("Laptop", kind="personal", owner_user_id=self.person["id"],
+                                      access_plan="person", path=self.admin)
+        key = admin_store.create_credential_hash(subject_kind="app", subject_id=mine["id"], hash="hash-1",
+                                                 prefix="opk_secretsecret1", display_name="Editor", path=self.admin)
+        other = admin_store.upsert_oidc_user("issuer", "bo", email="bo@example.test", path=self.admin)
+        theirs = admin_store.create_app("Theirs", kind="personal", owner_user_id=other["id"],
+                                        access_plan="person", path=self.admin)
+
+        app = self.rename(token, "rename_app", {"app": "laptop", "name": "  Work laptop "})
+        renamed = self.rename(token, "rename_key", {"app": "Work laptop", "key": key["id"], "name": "Code editor"})
+        stolen = self.rename(token, "rename_app", {"app": theirs["id"], "name": "Mine now"})
+
+        self.assertNotIn("isError", app)
+        self.assertEqual(app["structuredContent"], {"status": "renamed", "app": {"id": mine["id"], "name": "Work laptop"}})
+        self.assertEqual(renamed["structuredContent"], {
+            "status": "renamed", "key": {"id": key["id"], "name": "Code editor", "app_id": mine["id"]}})
+        self.assertNotIn("secretsecret", json.dumps(renamed))
+        self.assertTrue(stolen["isError"])
+        self.assertEqual(stolen["structuredContent"]["code"], "app_not_found")
+        self.assertEqual(admin_store.get_app(theirs["id"], path=self.admin)["name"], "Theirs")
+        events = {event["action"]: event for event in admin_store.list_audit(path=self.admin)}
+        self.assertEqual(events["app.self_rename"]["actor_id"], self.person["id"])
+        self.assertEqual(events["app.self_rename"]["metadata"]["via"], "mcp")
+        self.assertEqual(events["credential.self_rename"]["metadata"]["previous_name"], "Editor")
+
+    def test_the_rename_tools_say_what_is_wrong_in_words(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        for name in ("Laptop", "Phone", "Phone", "Tablet"):
+            admin_store.create_app(name, kind="personal", owner_user_id=self.person["id"], access_plan="person",
+                                   path=self.admin)
+        laptop = next(app for app in admin_store.list_apps_for_user(self.person["id"], path=self.admin)
+                      if app["name"] == "Laptop")
+        first = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="h1", prefix="opk_x",
+                                                   display_name="Editor", path=self.admin)
+        second = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="h2", prefix="opk_x",
+                                                    display_name="Editor", path=self.admin)
+
+        def refused(tool: str, arguments: dict) -> dict:
+            result = self.rename(token, tool, arguments)
+            self.assertTrue(result["isError"], result)
+            return result["structuredContent"]
+
+        ambiguous_app = refused("rename_app", {"app": "Phone", "name": "Tablet"})
+        self.assertEqual(ambiguous_app["code"], "app_ambiguous")
+        self.assertIn("app_", ambiguous_app["error"])
+        ambiguous_key = refused("rename_key", {"app": "Laptop", "key": "Editor", "name": "Notes"})
+        self.assertEqual(ambiguous_key["code"], "key_ambiguous")
+        self.assertIn(first["id"], ambiguous_key["error"])
+        self.assertIn(second["id"], ambiguous_key["error"])
+        self.assertEqual(refused("rename_app", {"app": "Nope", "name": "X"})["code"], "app_not_found")
+        self.assertEqual(refused("rename_key", {"app": "Laptop", "key": "Nope", "name": "X"})["code"], "credential_not_found")
+        self.assertEqual(refused("rename_app", {"app": "Laptop", "name": "x" * 81})["code"], "app_name_too_long")
+        self.assertEqual(refused("rename_app", {"app": "Laptop", "name": "Tablet"})["code"], "app_name_taken")
+        self.assertEqual(refused("rename_app", {"app": "Laptop", "name": "Try"})["code"], "app_name_reserved")
+        self.assertEqual(refused("rename_key", {"app": "Laptop", "key": first["id"], "name": "a\nb"})["code"],
+                         "key_label_not_allowed")
+        self.assertIn("`name` is required", refused("rename_app", {"app": "Laptop"})["error"])
+        self.assertIn("unknown argument", refused("rename_app", {"app": "Laptop", "name": "X", "owner": "me"})["error"])
+        self.assertEqual(admin_store.get_app(laptop["id"], path=self.admin)["name"], "Laptop")
+
+    def test_an_app_key_cannot_rename_anything_over_mcp(self) -> None:
+        app = admin_store.create_app("Key app", kind="personal", owner_user_id=self.person["id"],
+                                     access_plan="person", path=self.admin)
+        key = "opk_" + secrets.token_urlsafe(24)
+        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"],
+                                           hash=proxy.hash_api_key(key), prefix=key[:8], created_by=self.person["id"],
+                                           display_name="Its key", path=self.admin)
+
+        for tool, arguments in (("rename_app", {"app": "Key app", "name": "Taken"}),
+                                ("rename_key", {"app": "Key app", "key": "Its key", "name": "Taken"})):
+            result = self.rename(key, tool, arguments)
+            self.assertTrue(result["isError"], result)
+            self.assertIn("not for an app key", result["structuredContent"]["error"])
+        self.assertEqual(admin_store.get_app(app["id"], path=self.admin)["name"], "Key app")
+        self.assertEqual(admin_store.list_audit(action_prefix="app.self_rename", path=self.admin), [])
+
+    def test_a_new_consent_records_the_rename_permission_on_the_grant_and_the_client_cannot_ask_for_it(self) -> None:
+        metadata = self.discover()
+        self.sign_in(metadata, self.register(metadata))
+
+        [grant] = proxy.MCP_OAUTH.deps.store.grants_for_person(self.person["id"])
+
+        self.assertIn(mcp_oauth.RENAME_SCOPE, grant.scope.split())
+        self.assertIn(mcp_oauth.SCOPE, grant.scope.split())
+        self.assertNotIn(mcp_oauth.RENAME_SCOPE, mcp_oauth.SCOPES_SUPPORTED)
+        asked = mcp_oauth.Client(proxy.MCP_OAUTH.deps.store.client(self.register(metadata)))
+        self.assertEqual(asked.get_allowed_scope(f"mcp {mcp_oauth.RENAME_SCOPE}"), "mcp")
+
+    def test_a_connection_made_before_renaming_was_offered_is_refused_in_words_and_changes_nothing(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        laptop = admin_store.create_app("Laptop", kind="personal", owner_user_id=self.person["id"],
+                                        access_plan="person", path=self.admin)
+        key = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="old-h",
+                                                 prefix="opk_x", display_name="Editor", path=self.admin)
+        # What a grant made before the permission existed looks like: its scope names only the MCP scope.
+        with admin_store._conn(self.admin) as conn:
+            conn.execute("UPDATE mcp_oauth_grants SET scope = 'mcp offline_access'")
+            conn.commit()
+
+        for tool, arguments in (("rename_app", {"app": "Laptop", "name": "Late"}),
+                                ("rename_key", {"app": "Laptop", "key": "Editor", "name": "Late"})):
+            result = self.rename(token, tool, arguments)
+            self.assertTrue(result["isError"], result)
+            self.assertEqual(result["structuredContent"]["code"], "reconnect_required")
+            self.assertIn("connect it again", result["structuredContent"]["error"])
+        self.assertEqual(admin_store.get_app(laptop["id"], path=self.admin)["name"], "Laptop")
+        self.assertEqual(admin_store.get_credential(key["id"], path=self.admin)["display_name"], "Editor")
+        # Its other tools still work: the connection keeps what it was granted.
+        self.assertEqual(self.post(token, "tools/list", modern=True).status_code, 200)
+
+    def test_starting_the_store_again_does_not_rewrite_old_grants(self) -> None:
+        metadata = self.discover()
+        self.sign_in(metadata, self.register(metadata))
+        with admin_store._conn(self.admin) as conn:
+            conn.execute("UPDATE mcp_oauth_grants SET scope = 'mcp'")
+            conn.commit()
+
+        reopened = mcp_oauth_store.Store(lambda: self.admin)
+        reopened.grants_for_person(self.person["id"])
+        accounts.initialize(self.admin)
+        admin_store.init_db(self.admin)
+
+        self.assertEqual([g.scope for g in reopened.grants_for_person(self.person["id"])], ["mcp"])
+
+    def test_a_disconnected_client_can_no_longer_rename(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        laptop = admin_store.create_app("Laptop", kind="personal", owner_user_id=self.person["id"],
+                                        access_plan="person", path=self.admin)
+        grant_id = self.client.get("/me/api/mcp/connections",
+                                   headers={"x-test-person": self.person["id"]}).json()["connections"][0]["id"]
+        self.client.post(f"/me/api/mcp/connections/{grant_id}/revoke", headers={"x-test-person": self.person["id"]})
+
+        gone = self.post(token, "tools/call", {"name": "rename_app", "arguments": {"app": "Laptop", "name": "Late"}},
+                         modern=True)
+
+        self.assertEqual(gone.status_code, 401)
+        self.assertEqual(admin_store.get_app(laptop["id"], path=self.admin)["name"], "Laptop")
+
+    def test_the_consent_page_says_the_client_may_rename_apps_and_keys(self) -> None:
+        metadata = self.discover()
+        verifier = secrets.token_urlsafe(48)
+        start = self.client.get(urlsplit(metadata["authorization_endpoint"]).path, params={
+            "response_type": "code", "client_id": self.register(metadata), "redirect_uri": CALLBACK, "state": "s",
+            "code_challenge": create_s256_code_challenge(verifier), "code_challenge_method": "S256",
+            "resource": f"{BASE}/mcp", "scope": "mcp"})
+        request_id = parse_qs(urlsplit(start.headers["location"]).query)["request"][0]
+
+        details = self.client.get(f"/me/api/mcp/requests/{request_id}", headers={"x-test-person": self.person["id"]})
+
+        self.assertTrue(any("Rename your own apps and keys" in line for line in details.json()["access"]), details.json()["access"])
 
     def test_receipts_record_the_connection_that_made_the_request(self) -> None:
         metadata = self.discover()

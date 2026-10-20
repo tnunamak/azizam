@@ -2,6 +2,7 @@ import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
 import { parseReauth, requestReauth } from "./reauth";
 import {
+  learnContract,
   rejectPendingCleanup,
   type DeletePromptsResponse,
   type MemberPromptMemoryResponse,
@@ -153,6 +154,18 @@ export const accountApi = {
       method: "POST",
       body: { name },
     }).then((r) => r.app),
+  /** Rename an app. The answer is the saved record: show its name, not the one sent. */
+  renameApp: (appId: string, name: string) =>
+    accountRequest<{ app: AccountApp }>(
+      `/me/api/apps/${encodeURIComponent(appId)}`,
+      { method: "PATCH", body: { name } },
+    ).then((r) => r.app),
+  /** Rename a key. The answer is the saved record: show its label, not the one sent. */
+  renameKey: (credentialId: string, displayName: string) =>
+    accountRequest<{ credential: Credential }>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}`,
+      { method: "PATCH", body: { display_name: displayName } },
+    ).then((r) => r.credential),
   mintKey: (appId: string, label: string) =>
     accountRequest<{ credential: MintedCredential }>(
       `/me/api/apps/${encodeURIComponent(appId)}/keys`,
@@ -174,13 +187,17 @@ export const accountApi = {
     }),
   /** The signed-in person's prompt memory and the household's rules. */
   promptMemory: () =>
-    accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory"),
+    accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory").then(
+      learnContract,
+    ),
   /** Turning memory off or shortening the period deletes prompts now. */
   savePromptMemory: (value: { remember: boolean; retention: Retention }) =>
     accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory", {
       method: "PUT",
       body: value,
-    }).then(rejectPendingCleanup),
+    })
+      .then(rejectPendingCleanup)
+      .then(learnContract),
   /** The signed-in person's avatar choice. */
   avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
   /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */

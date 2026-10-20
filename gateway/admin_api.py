@@ -200,6 +200,10 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
+    def rename_credential(
+        self, *, app_id: str, credential_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
@@ -2007,6 +2011,10 @@ def create_admin_router(
             return _app_outranks_you(exc)
         except PermissionError as exc:
             return _owner_required(exc)
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
+        except admin_store.NameRejected as exc:
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2265,6 +2273,34 @@ def create_admin_router(
         return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
+
+    @router.patch("/apps/{app_id}/keys/{credential_id}")
+    async def rename_key(app_id: str, credential_id: str, request: Request) -> JSONResponse:
+        """Give an App's key a new label. The key itself stays; this is not a credential change."""
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if store.get_app(app_id) is None:
+            return _app_not_found(app_id)
+        try:
+            record = store.rename_credential(app_id=app_id, credential_id=credential_id, data=body, actor=ctx)
+        except ActorOutranked as exc:
+            return _app_outranks_you(exc)
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
+        except admin_store.NameRejected as exc:
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND, "credential_not_found",
+                f"key {credential_id!r} not found on app {app_id!r}",
+            ).as_response()
+        return egress.plain_json_response(response_class="credentials",
+            status_code=status.HTTP_200_OK, content={"credential": _scrub_credential(record)})
 
     @router.post("/admin-keys")
     async def create_admin_key(request: Request) -> JSONResponse:

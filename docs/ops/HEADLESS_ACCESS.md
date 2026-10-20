@@ -107,6 +107,47 @@ with `before=<next_cursor>` until `next_cursor` is null. Registry writes need th
 current `ETag` in `If-Match`; settings that require a revision do too. Do not
 silently retry a rejected mutation with a newer revision.
 
+## Rename an app or a key
+
+Apps and keys can be renamed from the web app (Apps & keys), REST, MCP and the command line. A rename changes
+a label only: no new key is made and no key moves, so it asks for no recent confirmation (decision D36). It
+still needs a live sign-in for a browser caller, and the CSRF/action header; a key needs neither.
+
+```sh
+# An app. `name` is trimmed and must be 1 to 80 characters with no control or hidden characters.
+curl --fail-with-body -sS -X PATCH "$AZIZAM_URL/admin/api/apps/$APP_ID" \
+  -H @owner-header.txt -H 'Content-Type: application/json' --data '{"name":"Work laptop"}'
+
+# One key of that app. The key and its secret stay as they are; only `display_name` changes.
+curl --fail-with-body -sS -X PATCH "$AZIZAM_URL/admin/api/apps/$APP_ID/keys/$KEY_ID" \
+  -H @owner-header.txt -H 'Content-Type: application/json' --data '{"display_name":"Code editor"}'
+
+# The same two with Restish (the Azizam command line is generated from the OpenAPI document):
+restish azizam owner-patch-admin-api-apps-app-id "$APP_ID" 'name: Work laptop' -o json
+restish azizam owner-patch-admin-api-apps-app-id-keys-credential-id "$APP_ID" "$KEY_ID" \
+  'display_name: Code editor' -o json
+```
+
+Who may rename follows who may change the app: the owner any app, an administrator any app except one that
+answers to the owner (`403 app_outranks_you`), and a member only their own apps and keys, through
+`PATCH /me/api/apps/{app_id}` (`name`) and `PATCH /me/api/credentials/{credential_id}` (`display_name`) with
+the sign-in's cookie, CSRF token and the action header. A name that is empty, has no visible character (only zero-width or combining marks), is too long or has hidden characters
+is `400` (`app_name_required`, `app_name_too_long`, `app_name_not_allowed`; for a key `key_label_...`). A name
+another active app of the same person already has, or another active key of the same app, is `409`
+(`app_name_taken`, `key_label_taken`). The Try page's app is named `Try` and keeps that name
+(`409 app_name_reserved`; also for a name that is `Try` once folded to Unicode compatibility form and lower case). Two names are the same name when they are equal after Unicode NFKC and case folding (`Café` and `CAFÉ`, or a fullwidth `Ｃａｆé`), in a write and in an MCP lookup alike. Only active app keys can be renamed here; an admin automation key cannot. Each rename
+writes an audit event (`app.update` with `previous_name`, `credential.rename`, or `app.self_rename` and
+`credential.self_rename` for a person's own).
+
+A receipt stores the name the app had when the request arrived (`api_key_name`, read from the app at that
+moment) and is never rewritten. A later request carries the new name.
+
+An MCP client the person signed in to can rename the person's own apps and keys with the `rename_app` and
+`rename_key` tools, by current name or id, if that connection's consent included renaming (connections made before it existed must be disconnected and connected again). An app key cannot.
+
+There is no Azizam-specific command line for apps. On the gateway host, `python proxy.py generate-admin-key`
+(above) makes an owner key with no browser; use it with the Restish commands, or `curl`, as shown.
+
 ## Use Restish 2.3.0
 
 Install Restish in a private tool directory to build commands from OpenAPI
@@ -189,9 +230,9 @@ verbose output with credentials; it can include request headers.
 ## Registered route inventory
 
 Captured by walking `proxy.app.routes` when the web app moved to `/`. Counts
-are per registered method/path, including trailing-slash aliases: **120
-owner-bearer** (118 JSON/YAML owner API operations, 2 browser/HTML routes),
-**39 session-only**, **2 session-view**, **12 browser/public**; **173 total**.
+are per registered method/path, including trailing-slash aliases: **123
+owner-bearer** (121 JSON/YAML owner API operations, 2 browser/HTML routes),
+**45 session-only**, **2 session-view**, **14 browser/public**; **184 total**.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -224,6 +265,7 @@ Selected successful workflows are exercised separately.
 | `PATCH /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.update_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps/{app_id}/enable` | owner-bearer | denied | `gateway.admin_api.enable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps/{app_id}/keys` | owner-bearer | denied | `gateway.admin_api.create_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PATCH /admin/api/apps/{app_id}/keys/{credential_id}` | owner-bearer | denied | `gateway.admin_api.rename_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; an administrator is refused on an App that answers to the owner (`app_outranks_you`) | owner |
 | `GET /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.list_trusted_addresses`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address | owner |
 | `DELETE /admin/api/apps/{app_id}/trusted-addresses/{entry_id}` | owner-bearer | denied | `gateway.admin_api.delete_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -359,9 +401,11 @@ Selected successful workflows are exercised separately.
 | `GET /me/api/activity` | session-view | no owner authority | `proxy.user_portal_activity`; Optional browser session; returns empty unauthenticated activity without cookie | hidden |
 | `POST /me/api/apps` | session-only | denied | `proxy.user_portal_create_app`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
+| `PATCH /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_rename_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/apps/{app_id}/keys` | session-only | denied | `proxy.user_portal_mint_key`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/connection-test` | session-only | denied | `gateway.home_api.connection_test`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
+| `PATCH /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_rename_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/credentials/{credential_id}/access` | session-only | denied | `proxy.user_portal_credential_access`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/credentials/{credential_id}/revoke` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/home` | session-only | denied | `gateway.home_api.home`; Browser session; mutations require CSRF/action header | hidden |

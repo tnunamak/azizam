@@ -1,0 +1,44 @@
+# Request retention: the bundled defaults of the contract
+# (docs/design/REQUEST_RETENTION.md section 3.2).
+#
+# This is data. gateway/retention.py loads and validates it and holds no default of its own;
+# Python and the web read these values through the settings API. A missing or invalid file
+# stops the gateway at startup with the rule it broke. registry/retention.schema.json is the
+# closed schema. The owner's household policy (operator setting "retention") and each member's
+# choice can only narrow what this file allows.
+format_version: 1
+
+# The shared vocabulary of how long content is kept. Seconds are data, not code; null means
+# no expiry.
+retention_choices:
+  never: null
+  3_months: 7776000
+  1_year: 31536000
+
+# The household-wide kill switch. The owner turns it on to stop every kind from being kept.
+household:
+  never_keep: false
+
+# One member switch per group. A group is a set of kinds that share one switch. The values are
+# the ones the gateway used before this file existed.
+groups:
+  prompts:
+    kinds: [library_prompt, conversation]
+    default_keep: true          # for a new member; never applied later to a person who has a row
+    default_retention: never    # the member's default period
+    default_cap: never          # the household's default cap on every member's period
+    choices: [never, 1_year, 3_months]   # the order the settings screens list them
+
+# One purpose per kind, and what a record of the kind may hold and who may read it.
+kinds:
+  library_prompt:
+    purpose: Library keeps the words that made each thing you created, so you can find it and make it again.
+    parts: {allowed: [accepted], default: [accepted]}
+    readers: maker
+  conversation:
+    purpose: An app can ask Azizam to keep a conversation so it can continue it later.
+    parts: {allowed: [accepted, received], default: [accepted, received]}
+    readers: scope
+
+# Nothing in data widens who can read content. The validator accepts only none.
+widening: none

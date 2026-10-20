@@ -64,7 +64,8 @@
     "prettier-plugin-tailwindcss": "^0.8.0",
     "react-doctor": "^0.5.1",
     "typescript": "^5",
-    "vitest": "3.2.7"
+    "vitest": "3.2.7",
+    "yaml": "^2.9.0"
   },
   "browserslist": [
     "Chrome >= 111",

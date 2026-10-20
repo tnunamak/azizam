@@ -511,8 +511,14 @@ for an invalid name or a store validation error. Do not send legacy
 
 The router validates `name` when supplied and passes the JSON body to
 `store.update_app`. `200` → `{ "app": { … } }`;
-`400 invalid_app`, `404 app_not_found`. Assignment-write fields are
+`400 invalid_app` (no name), `400 app_name_too_long` / `app_name_not_allowed`, `409 app_name_taken` /
+`app_name_reserved`, `404 app_not_found`, `403 app_outranks_you`, `401 login_required` (a browser sign-in that
+ended before the write). A `name` is trimmed, 1 to 80 characters, with no control or hidden characters. The audit
+event `app.update` carries `name` and `previous_name`. Assignment-write fields are
 UNVERIFIED here; `default_profile_id` is not a current database column.
+
+A person's own app: `PATCH /me/api/apps/{app_id}` with `{ "name" }` → `200` `{ "app": { … } }` (the same shape
+as `POST /me/api/apps`); `404 app_not_found` for an app that is not theirs (never `403`), `403 app_disabled`.
 
 ### DELETE /admin/api/apps/{app_id}  (disable — one-way soft delete)
 
@@ -569,6 +575,19 @@ Do not offer a per-key profile selector.
 
 `api_key` is **reveal-once**: show in the reveal dialog, never log, never
 refetchable. `404 app_not_found`, `400 invalid_credential`.
+
+### PATCH /admin/api/apps/{app_id}/keys/{credential_id}  (rename key)
+
+Request: `{ "display_name": "required, trimmed, 1–80 characters, no control or hidden characters" }`.
+`200` → `{ "credential": { …credential fields above, no secret… } }`. Only the label changes: the key, its hash and
+its app stay, so this is not a credential change and asks for no step-up. Authorization is that of renaming the
+key's app (`403 app_outranks_you` for an administrator on an app that answers to the owner). `404 app_not_found`,
+`404 credential_not_found` (missing, revoked, expired, on another app, or not an app key), `400
+key_label_required` / `key_label_too_long` / `key_label_not_allowed`, `409 key_label_taken` (another active key of
+the same app has the label), `401 login_required`. Audit event `credential.rename` with `previous_name`.
+
+A person's own key: `PATCH /me/api/credentials/{credential_id}` with `{ "display_name" }` → `200`
+`{ "credential": { … } }`; `404 credential_not_found` for any key that is not theirs or not active.
 
 ### POST /admin/api/admin-keys  (admin automation key)
 

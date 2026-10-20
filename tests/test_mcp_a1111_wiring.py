@@ -45,7 +45,7 @@ class ProxyWiringTests(unittest.TestCase):
     def test_tools_and_catalog_come_from_the_real_manifests(self) -> None:
         with authenticated():
             tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
-            self.assertEqual([t["name"] for t in tools], ["capabilities", "run", "job"])
+            self.assertEqual([t["name"] for t in tools], ["capabilities", "run", "job", "rename_app", "rename_key"])
             rows = _tool(self.client, "capabilities", {})["structuredContent"]["workflows"]
             targets = {r["target"] for r in rows}
             self.assertTrue({"krea2-turbo", "speech"} <= targets, targets)

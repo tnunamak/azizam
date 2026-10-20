@@ -128,6 +128,14 @@
     "schema": true
   },
   {
+    "method": "PATCH",
+    "path": "/admin/api/apps/{app_id}/keys/{credential_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.rename_key",
+    "schema": true
+  },
+  {
     "method": "GET",
     "path": "/admin/api/apps/{app_id}/trusted-addresses",
     "auth": "owner-bearer",
@@ -1144,6 +1152,14 @@
     "schema": false
   },
   {
+    "method": "PATCH",
+    "path": "/me/api/apps/{app_id}",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_rename_app",
+    "schema": false
+  },
+  {
     "method": "POST",
     "path": "/me/api/apps/{app_id}/keys",
     "auth": "session-only",
@@ -1165,6 +1181,14 @@
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "proxy.user_portal_revoke_key",
+    "schema": false
+  },
+  {
+    "method": "PATCH",
+    "path": "/me/api/credentials/{credential_id}",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_rename_key",
     "schema": false
   },
   {

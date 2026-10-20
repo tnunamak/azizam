@@ -19,14 +19,15 @@ const info = (methods: ReauthInfo["methods"]): ReauthInfo => ({
   oidcUrl: "/login?reauth=1",
 });
 
-/** Open the prompt the way adminFetch does, and wait for the lazy dialog. */
+/** Load the lazy module before opening the prompt, then flush its React render. */
 async function open(methods: ReauthInfo["methods"]) {
+  await import("@/components/shell/reauth-dialog");
   render(<ReauthGate />);
   let answer!: Promise<boolean>;
-  act(() => {
+  await act(async () => {
     answer = requestReauth(info(methods));
   });
-  const dialog = await screen.findByRole("dialog", { name: "Confirm it’s you" });
+  const dialog = screen.getByRole("dialog", { name: "Confirm it’s you" });
   return { dialog, answer };
 }
 
