@@ -22,10 +22,10 @@ from tests.test_stt_chunking import _multipart_body
 from tests.test_stt_round4_planner import config
 
 
-def wav(path, seconds):
+def wav(path, seconds, rate=16000):
     with wave.open(str(path), "wb") as audio:
-        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
-        audio.writeframes(b"\0\0" * round(seconds * 16000))
+        audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * round(seconds * rate))
     return path
 
 
@@ -81,25 +81,31 @@ def test_container_duration_does_not_refuse_or_shorten_decodable_audio(tmp_path,
     asyncio.run(run())
 
 
-def test_extraction_checks_decoded_piece_even_when_probe_understates_it(tmp_path):
+@pytest.mark.parametrize("rate,extra_samples", [(16000, 800), (48000, 1), (48000, 0)])
+def test_extraction_checks_decoded_piece_even_when_probe_understates_it(tmp_path, rate, extra_samples):
     async def run():
         destination = tmp_path / "piece.wav"
         real_run = stt.run_media_command
 
         async def wrong_extraction(command, **kwargs):
             if command[-1] == str(destination):
-                # Simulate an extractor that wrote 50 ms beyond the requested end.
-                wav(destination, 0.35)
+                # Include a one-source-sample overrun and an exact-boundary control.
+                wav(destination, 0.3 + extra_samples / rate, rate)
                 return b"", b""
             return await real_run(command, **kwargs)
 
         with patch.object(stt, "run_media_command", side_effect=wrong_extraction), patch.object(
             stt, "probe_audio", new=AsyncMock(return_value=stt.ProbedAudio(0.3, 16000, 1))
         ):
-            with pytest.raises(stt.SttSetupFailure, match="hard maximum"):
+            async def extract():
                 await stt.extract_segment(tmp_path / "source.wav", destination, start_seconds=0,
                     end_seconds=0.3, config=config(tmp_path, target_seconds=0.25, max_segment_seconds=0.3),
                     cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
+            if extra_samples:
+                with pytest.raises(stt.SttSetupFailure, match="hard maximum"):
+                    await extract()
+            else:
+                await extract()
 
     asyncio.run(run())
 
@@ -130,6 +136,12 @@ def test_off_grid_narrow_search_uses_a_frame_centre_within_hard_maximum(tmp_path
     cuts = [end for _, end in segments[:-1]]
     assert all(cut * 100 == pytest.approx(round(cut * 100)) for cut in cuts)
     assert all(end - start <= 0.253 for start, end in segments)
+    # A single off-grid cut must also inspect a frame, independently of drift
+    # or floating-point failure at later tight-maximum cuts.
+    simple = stt.plan_quietest_frame_segments(duration_seconds=0.5,
+        quietest_frame=stt.quietest_frame_reader(pcm), target_seconds=0.253,
+        search_seconds=width, max_segment_seconds=0.3, max_segments=10)
+    assert simple[0][1] == 0.25
 
 
 def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_upstreams):

@@ -66,7 +66,8 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                                 }
                                 return Process(json.dumps(payload).encode())
                             if "s16le" in args:
-                                target.write_bytes(pcm_bytes(75, [20.0, 40.0]))
+                                input_name = Path(args[args.index("-i") + 1]).name
+                                target.write_bytes(pcm_bytes(durations.get(input_name, 75), [20.0, 40.0]))
                                 return Process()
                             extracted.append(target.name)
                             if len(extracted) - 1 == failure_index:
@@ -331,4 +332,3 @@ class SttReservationGapTests(unittest.TestCase):
                 exact = gate.acquire(request_id="exact-floor", config=config)
                 exact.release()
             self.assertEqual((gate._active, gate._reserved_bytes), (0, 0))
-
