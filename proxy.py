@@ -22181,7 +22181,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 from gateway import media_ingestion
                 receipt = await media_ingestion.start_receipt(
                     request_shim, auth_context, intent=str(job.get("intent") or "audio.generate"), protocol="openai.audio",
-                    request_id=str(job["request_id"]), job_id=job_id,
+                    request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                 )
                 try:
                     response = await proxy_audio_generate(request_shim, auth_context, store_full=True, receipt=receipt)
@@ -22677,7 +22677,7 @@ async def _run_video_media_job(job_id: str) -> None:
                     from gateway import media_ingestion
                     receipt = await media_ingestion.start_receipt(
                         request_shim, auth_context, intent="video.generate", protocol="openai.video",
-                        request_id=str(job["request_id"]), job_id=job_id,
+                        request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                     )
                     try:
                         submit_response = await proxy_graph_video_create(request_shim, auth_context, receipt=receipt)

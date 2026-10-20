@@ -54,10 +54,15 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
                 job_id = response.json()["job_id"]
                 worker = proxy._run_audio_media_job if kind == "audio" else proxy._run_video_media_job
                 await worker(job_id)
-                assert media_jobs.get(job_id, path=rig.media_jobs_db)["status"] == "succeeded"
+                job = media_jobs.get(job_id, path=rig.media_jobs_db)
+                assert job["status"] == "succeeded", job
             else:
                 response = await rig.call("POST", path, json_body=body)
                 assert 200 <= response.status_code < 300, response.text
+                if kind == "video":
+                    video_id = response.json()["id"]
+                    assert (await rig.call("GET", f"/v1/videos/{video_id}")).status_code == 200
+                    assert (await rig.call("GET", f"/v1/videos/{video_id}/content")).status_code == 200
             receipts = receipt_store.recent(path=rig.receipts_db, audience="internal")
             work = [row for row in receipts if expected in row.get("retention_facts", [])]
             assert len(work) == 1, receipts

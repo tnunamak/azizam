@@ -99,7 +99,7 @@ def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_prof
 
 async def start_receipt(
     request: Request, auth_context: Any, *, intent: str, protocol: str = "openai.audio",
-    request_id: str | None = None, job_id: str | None = None,
+    request_id: str | None = None, job_id: str | None = None, route_path: str | None = None,
 ) -> RouteReceipt:
     """Begin a route receipt for synchronous audio/media routes."""
     identity = getattr(auth_context, "identity", None)
@@ -110,7 +110,7 @@ async def start_receipt(
         intent=intent,
         request_id=request_id or new_request_id(),
         job_id=job_id,
-        path=str(request.url.path),
+        path=route_path if route_path is not None else str(request.url.path),
         app_profile=profile_id,
         app_id=getattr(identity, "app_id", None) if identity is not None else None,
         owner_key_hash=owner_key(auth_context),
