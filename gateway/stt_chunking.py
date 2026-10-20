@@ -964,16 +964,13 @@ async def probe_audio(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
-    if duration is None or sample_rate <= 0 or channels <= 0:
+    if sample_rate <= 0 or channels <= 0:
         raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
-    probed = ProbedAudio(duration, sample_rate, channels)
-    if duration > config.max_duration_seconds:
-        raise SttResourceLimitExceeded("Audio duration exceeds the configured STT limit")
     if sample_rate > config.max_sample_rate or channels > config.max_channels:
         raise SttResourceLimitExceeded("Audio format exceeds the configured STT limit")
-    if probed.decoded_bytes > config.max_decoded_bytes:
-        raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
-    return probed
+    # Container and packet durations can be absent or false. Only bounded PCM
+    # decoding enforces duration/decoded-byte budgets; this duration is advisory.
+    return ProbedAudio(duration or 0.0, sample_rate, channels)
 
 
 def _finite_positive_or_none(value: Any) -> float | None:
@@ -1089,7 +1086,7 @@ def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], flo
         first = max(0, math.ceil((lo * rate - half) / _FRAME_HOP_SAMPLES))
         last = math.floor((hi * rate - half) / _FRAME_HOP_SAMPLES)
         if last < first:
-            return min(max(near, lo), hi)
+            raise SttSetupFailure("No complete STT energy frame lies inside the cut window")
         # A service record may ask for a wide search. Read one second of frames
         # at a time so the memory cost does not grow with that width.
         best: tuple[int, float] | None = None
@@ -1111,7 +1108,9 @@ def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], flo
                              abs(centre_sample - near_sample))
                     if best is None or score < best:
                         best, best_centre = score, centre_sample / rate
-        return min(max(best_centre, lo), hi)
+        if best is None:
+            raise SttSetupFailure("No complete STT energy frame lies inside the decoded audio")
+        return best_centre
 
     return quietest
 
@@ -1130,7 +1129,8 @@ def plan_quietest_frame_segments(
     The cut for target ``k * T`` is searched in ``k * T +- W`` (W is the record's search width). The
     range is clipped to what keeps the segment ending at the cut within ``max_segment_seconds``, so the maximum is
     kept even when the signal gives no quiet place. Cutting stops when the rest of the file fits one segment of at
-    most ``T`` plus a quarter of ``T`` (and never more than the hard maximum). Segments tile the file exactly.
+    most ``T`` plus a quarter of ``T`` (and never more than the hard maximum). If a zero/narrow search window
+    contains no frame centre, inspect the nearest frame that keeps the hard maximum. Segments tile the file exactly.
     """
     if max_segment_seconds < target_seconds:
         raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
@@ -1143,10 +1143,18 @@ def plan_quietest_frame_segments(
         if len(cuts) + 2 > max_segments:
             raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
         target = target_seconds * (len(cuts) + 1)
-        highest = min(previous + max_segment_seconds, duration_seconds - min_segment_seconds, target + width)
-        lowest = max(previous + min_segment_seconds, target - width)
-        if lowest > highest:
-            raise SttSetupFailure("No legal STT cut lies inside the target search window")
+        safe_lowest = previous + min_segment_seconds
+        safe_highest = min(previous + max_segment_seconds, duration_seconds - min_segment_seconds)
+        highest = min(safe_highest, target + width)
+        lowest = max(safe_lowest, target - width)
+        hop = _FRAME_HOP_SAMPLES / _PLANNING_SAMPLE_RATE
+        # Frame centres are on the hop grid (the half-frame equals one hop).
+        if math.ceil(lowest / hop) > math.floor(highest / hop):
+            first = max(1, math.ceil(safe_lowest / hop))
+            last = math.floor(safe_highest / hop)
+            if first > last:
+                raise SttSetupFailure("No legal STT energy frame keeps the hard maximum")
+            lowest = highest = min(max(round(target / hop), first), last) * hop
         cut = min(max(quietest_frame(lowest, highest, min(max(target, lowest), highest)), lowest), highest)
         cuts.append(cut)
         previous = cut
@@ -1198,17 +1206,17 @@ async def extract_segment(
         raise SttSetupFailure("STT segment extraction did not create audio") from error
     if size <= 44 or size > config.max_decoded_bytes:
         raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured limit")
-    actual = await probe_audio(
-        destination_path,
-        config=config,
-        cancellation_waiters=cancellation_waiters,
-        deadline_at=deadline_at,
-        on_cancel=on_cancel,
-    )
-    if abs(actual.duration_seconds - expected) > 0.1:
-        raise SttSetupFailure("STT segment extraction has an unexpected duration")
-    if actual.duration_seconds > config.max_segment_seconds:
-        raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
+    pcm_path = destination_path.with_suffix(".verify.pcm")
+    try:
+        await decode_planning_pcm(destination_path, pcm_path, config=config,
+            cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel)
+        actual_duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
+        if actual_duration > config.max_segment_seconds:
+            raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
+        if abs(actual_duration - expected) > 0.1:
+            raise SttSetupFailure("STT segment extraction has an unexpected duration")
+    finally:
+        _unlink_chunk_path(pcm_path)
 
 
 def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
@@ -1236,7 +1244,11 @@ async def guard_uncut_uploads(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
     on_cancel: Callable[[], None] | None, streaming: bool = False,
 ) -> None:
-    """Refuse an over-limit file when the request envelope cannot be cut, if its record has a known maximum."""
+    """Refuse a whole file over a known maximum before sending it.
+
+    D47 amendment 2: native long audio for this mode deliberately bypasses the
+    chunk maximum. An undeclared/derived maximum cannot justify a refusal.
+    """
     native = config.native_long_audio_streaming if streaming else config.native_long_audio_offline
     if native or not config.max_segment_declared:
         return

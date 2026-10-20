@@ -123,7 +123,7 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
         seen.append(request)
         return httpx.Response(200, json={"text": "words"})
 
-    fake_upstreams.router.add("reference.fk.test:9876", HandlerTransport(handle))
+    fake_upstreams.router.add_transport("reference.fk.test:9876", HandlerTransport(handle))
     service = {"host": "reference.fk.test", "port": 9876, "default_model": "test",
                "chunking": {"target_seconds": 0.25, "max_segment_seconds": 0.3,
                             "spool_dir": str(tmp_path / "spool")}}
@@ -152,7 +152,7 @@ def test_receipts_count_each_started_attempt_once(tmp_path, fake_upstreams, chun
                 await asyncio.Future()
             return httpx.Response(400 if result == "refusal" else 200, json={"text": "piece"})
 
-        fake_upstreams.router.add("attempts.fk.test:9876", HandlerTransport(handle))
+        fake_upstreams.router.add_transport("attempts.fk.test:9876", HandlerTransport(handle))
         execution = replace(config(tmp_path, enabled=chunked, target_seconds=0.25,
             threshold_seconds=0.3, max_segment_seconds=0.3, search_seconds=0.05),
             host="http://attempts.fk.test:9876")
