@@ -16,7 +16,6 @@ const options = {
     target_seconds: 30,
     search_seconds: 2,
     max_segment_seconds: 40,
-    native_long_audio: false,
     native_long_audio_offline: false,
     native_long_audio_streaming: false,
   },
@@ -59,16 +58,13 @@ function mount(data: unknown = options) {
 }
 
 describe("Long-audio operator controls", () => {
-  it("saves all four settings independently with CAS and permits exact cuts", async () => {
+  it("saves exact cuts with CAS without changing native modes", async () => {
     const user = mount();
     const input = await screen.findByLabelText(
       "Search either side of each cut (seconds)",
     );
     await user.clear(input);
     await user.type(input, "0");
-    await user.click(
-      screen.getByLabelText("Engine handles long audio natively"),
-    );
     await user.click(
       screen.getByRole("button", { name: "Save long-audio settings" }),
     );
@@ -78,7 +74,6 @@ describe("Long-audio operator controls", () => {
     expect(writes[0][1].headers).toEqual({ "If-Match": '"os-4"' });
     expect(JSON.parse(writes[0][1].body)).toEqual({
       search_seconds: 0,
-      native_long_audio: true,
     });
   });
 
@@ -114,13 +109,75 @@ describe("Long-audio operator controls", () => {
     ).toBeNull();
   });
 
-  it("shows resource prerequisites and an unknown hard limit before offering measurement", async () => {
-    const user = mount({ ...options, measurement_ready: false, known_limit: false });
-    expect(await screen.findByText(/Declare engine resource requirements before measuring/)).toBeVisible();
-    expect(screen.getByText(/No measured hard limit is recorded/)).toBeVisible();
-    await user.click(screen.getByText("Measurement samples and trials"));
-    expect(screen.getByText(/current planner's safe piece limit of 40 seconds/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeEnabled();
+  it("offers only offline and streaming native controls", async () => {
+    mount();
+    expect(await screen.findByLabelText("Offline mode uses native long audio")).toBeVisible();
+    expect(screen.getByLabelText("Streaming mode uses native long audio")).toBeVisible();
+    expect(screen.queryByLabelText("Engine handles long audio natively")).toBeNull();
+    expect(screen.queryByText(/legacy fallback/i)).toBeNull();
+  });
+
+  it("explains missing resources in plain words beside disabled Measure", async () => {
+    mount({ ...options, measurement_ready: false });
+    const measure = await screen.findByRole("button", { name: "Measure long-audio settings" });
+    expect(measure).toHaveAccessibleDescription(/Measurement is unavailable.*graphics processor.*memory/i);
+    expect(screen.getByText(/Measurement is unavailable/)).toBeVisible();
+    expect(screen.queryByText(/resources\.gpu_required|resources\.vram_gb_estimate/)).toBeNull();
+  });
+
+  it("cannot start measurement when resource requirements are missing", async () => {
+    const user = mount({ ...options, measurement_ready: false });
+    const measure = await screen.findByRole("button", { name: "Measure long-audio settings" });
+    expect(measure).toBeDisabled();
+    await user.click(measure);
+    expect(request.mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
+  });
+
+  it.each([false, true])("allows ready measurement with a %s known limit", async (known_limit) => {
+    mount({ ...options, measurement_ready: true, known_limit });
+    expect(await screen.findByRole("button", { name: "Measure long-audio settings" })).toBeEnabled();
+  });
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+  ])("warns beside Measure without a limit for native modes %s/%s", async (offline, streaming) => {
+    mount({
+      ...options,
+      known_limit: false,
+      settings: {
+        ...options.settings,
+        native_long_audio_offline: offline,
+        native_long_audio_streaming: streaming,
+      },
+    });
+    const measure = await screen.findByRole("button", { name: "Measure long-audio settings" });
+    const warning = screen.getByText(/Long files that cannot be cut are sent whole and may fail at the engine/);
+    expect(warning).toBeVisible();
+    expect(warning.closest("details")).toBeNull();
+    expect(measure.parentElement).toContainElement(warning);
+    expect(warning).toHaveTextContent(/Measure long-audio settings to set a limit/);
+  });
+
+  it("hides no-limit advice when both modes are native", async () => {
+    mount({
+      ...options,
+      known_limit: false,
+      settings: {
+        ...options.settings,
+        native_long_audio_offline: true,
+        native_long_audio_streaming: true,
+      },
+    });
+    await screen.findByRole("button", { name: "Measure long-audio settings" });
+    expect(screen.queryByText(/No measured hard limit|No hard maximum|sent whole/)).toBeNull();
+  });
+
+  it("hides no-limit advice when a hard limit is recorded", async () => {
+    mount({ ...options, known_limit: true });
+    await screen.findByRole("button", { name: "Measure long-audio settings" });
+    expect(screen.queryByText(/No measured hard limit|No hard maximum|sent whole/)).toBeNull();
   });
 
   it("accepts a hard maximum equal to target and validates search width against half the target", async () => {

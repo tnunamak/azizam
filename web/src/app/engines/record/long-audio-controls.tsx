@@ -11,7 +11,6 @@ interface Settings {
   target_seconds: number;
   search_seconds: number;
   max_segment_seconds: number;
-  native_long_audio: boolean;
   native_long_audio_offline: boolean;
   native_long_audio_streaming: boolean;
 }
@@ -115,6 +114,9 @@ export function LongAudioControls({
   }, [serviceId]);
   const options = query.data;
   const job = options?.job;
+  const measurementUnavailable = options?.measurement_ready === false;
+  const noHardLimit = options?.known_limit === false
+    && !(options.settings.native_long_audio_offline && options.settings.native_long_audio_streaming);
   const running = !!job && !terminal.has(job.status);
   const settings = options ? { ...options.settings, ...draft } : undefined;
   const settingChanges = Object.fromEntries(
@@ -221,19 +223,6 @@ export function LongAudioControls({
       {query.error && <p role="alert">{query.error.message}</p>}
       {options && settings && (
         <>
-          {options.measurement_ready === false && (
-            <p className="text-meta text-muted-foreground">
-              Declare engine resource requirements before measuring. Set
-              resources.gpu_required, and add resources.vram_gb_estimate for a
-              GPU engine.
-            </p>
-          )}
-          {options.known_limit === false && (
-            <p className="text-meta text-muted-foreground">
-              No measured hard limit is recorded for this engine. Measure
-              long-audio settings to get evidence before declaring a limit.
-            </p>
-          )}
           {options.settings_note && (
             <p className="text-meta text-muted-foreground">
               {options.settings_note}
@@ -267,24 +256,6 @@ export function LongAudioControls({
                 />
               </label>
             ))}
-            <label className="text-meta flex items-center gap-2">
-              <input
-                type="checkbox"
-                aria-label="Engine handles long audio natively"
-                checked={settings.native_long_audio}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    native_long_audio: event.target.checked,
-                  })
-                }
-              />
-              Legacy fallback: use native long audio in modes without an override
-            </label>
-            <p className="text-meta text-muted-foreground">
-              Mode-specific values override this legacy fallback. Declare
-              native handling separately for offline and streaming requests.
-            </p>
             <label className="text-meta flex items-center gap-2">
               <input
                 type="checkbox"
@@ -405,11 +376,25 @@ export function LongAudioControls({
             Settings stay unchanged until you apply a recommendation.
           </p>
           <div className="flex flex-wrap gap-2">
+            {noHardLimit && (
+              <p id="stt-no-hard-limit" className="text-meta text-muted-foreground w-full">
+                No hard maximum is recorded for this engine. Long files that cannot be cut are sent whole and may fail at the engine. Measure long-audio settings to set a limit.
+              </p>
+            )}
+            {measurementUnavailable && (
+              <p id="stt-measurement-unavailable" className="text-meta text-muted-foreground w-full">
+                Measurement is unavailable. Say whether the engine needs a graphics processor (GPU) and, if so, how much memory it needs before measuring.
+              </p>
+            )}
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={busy || running || locked || hasSettingChanges || !settingsValid || !trialLengthsValid || !searchWidthsValid}
+              aria-describedby={[
+                noHardLimit && "stt-no-hard-limit",
+                measurementUnavailable && "stt-measurement-unavailable",
+              ].filter(Boolean).join(" ") || undefined}
+              disabled={measurementUnavailable || busy || running || locked || hasSettingChanges || !settingsValid || !trialLengthsValid || !searchWidthsValid}
               onClick={() =>
                 void action("/stt-measurements", "POST", {
                   sample_ids: samples ?? options.policy.sample_ids,
