@@ -1,6 +1,6 @@
 {
-  "baseline_commit": "d1a12cc1",
-  "fixed_commit": "2532b368",
+  "baseline_commit": "d1a12cc161d9d21db401e649567c94c3c99735b1",
+  "fixed_commit": "2532b368e44d83cf5e138a89b428b60104460397",
   "fixtures": {
     "test_a_cost_at_the_cuts_shows_as_excess_and_the_noise_floor_is_flat": {
       "after": {
@@ -1694,6 +1694,7 @@
       "identical": true
     }
   },
+  "method": "JUnit properties from hermetic pytest; test-only instrumentation was cherry-picked onto the baseline. All fixture before/after objects were compared for exact equality, excluding newly added source-rights metadata.",
   "perfect_recipe_wer": {
     "test_each_recipe_perfect_transcription_scores_zero[ami-words]": {
       "after": 0.0,
@@ -1708,7 +1709,8 @@
       "before": 0.0
     }
   },
-  "pure_baseline_commit": "84cd10a9",
+  "pure_baseline_commit": "d1a12cc161d9d21db401e649567c94c3c99735b1",
+  "pure_fixture_instrumentation_commit": "49fb2d07731936f2713a2a1d7e8e1e81e03decc9",
   "unicode_insertion_wer": {
     "after": 50.0,
     "before": 0.0

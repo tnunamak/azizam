@@ -106,6 +106,10 @@ alignment files; the source states no separate audio licence. Public hosting doe
 not establish audio reuse rights. The operator decides whether to retain and use
 this sample.
 
+The [offline scoring fixture evidence](STT_MEASURE_SCORING_FIXTURES.json) records
+before/after recommendations, deletion rates, seam excess and confidence intervals.
+These synthetic comparisons do not correct historical real-speech measurements.
+
 **Apply recommended settings** is a separate action. It requires the current
 registry revision and refuses if the engine changed since measurement. Applying
 enables cutting and sets its threshold to the recommended maximum. No trial

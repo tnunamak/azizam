@@ -149,8 +149,8 @@ def _ami_words(params: Mapping[str, Any], files: Mapping[str, Path]) -> list[Wor
 def _icsi_words(params: Mapping[str, Any], files: Mapping[str, Path]) -> list[Word]:
     """ICSI words XML. Some words have no start or end time: an untimed run is spread evenly between the previous
     known end and the next known start, and a missing end becomes the next start. A clitic ("'s", "'re") joins the
-    previous word without its apostrophe ("thats"), as build.py does, so the words equal its ref.json. Only classes W
-    and LET are words."""
+    previous word without its apostrophe ("thats"), following build.py's clitic convention. Only classes W and LET
+    are words."""
     words: list[list] = []
     for root in _xml_members(files[params["annotations"]], params["word_members"]):
         prev = None
