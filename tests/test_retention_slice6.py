@@ -14,6 +14,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from gateway import admin_store, mcp_server, media_jobs, receipt_store, retention_fact_api
+from gateway.api import create_gateway_router
+from gateway.discovery import WorkflowRegistry
 from gateway.retention_facts import ledger, revision
 
 
@@ -140,3 +142,18 @@ def test_mcp_ledger_action_is_hidden_and_rejected_without_admin_scope():
     allowed = asyncio.run(mcp_server.call_tool(deps, None, "admin", "requests", {"action": "ledger", "request_id": "r1"}))
     assert allowed.get("isError") is not True
     assert seen == ["r1"]
+
+
+def test_gateway_ledger_rest_requires_admin_and_returns_saved_request_view():
+    app = FastAPI()
+
+    def provider(request, request_id):
+        if request.headers.get("x-test-role") not in {"owner", "admin"}:
+            raise PermissionError("admin required")
+        return {"request_id": request_id, "destinations": []} if request_id != "missing" else None
+
+    app.include_router(create_gateway_router(WorkflowRegistry(), ledger_provider=provider))
+    client = TestClient(app)
+    assert client.get("/gateway/v1/me/retention/ledger").status_code == 403
+    assert client.get("/gateway/v1/requests/r1/ledger", headers={"x-test-role": "admin"}).json()["ledger"]["request_id"] == "r1"
+    assert client.get("/gateway/v1/requests/missing/ledger", headers={"x-test-role": "owner"}).status_code == 404
