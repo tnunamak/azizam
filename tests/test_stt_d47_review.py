@@ -114,9 +114,10 @@ def test_short_clip_admitted_and_large_clip_refused_at_topup(tmp_path):
             if large:
                 with source.open("r+b") as handle:
                     handle.truncate(execution.max_input_bytes)
-            with patch.object(stt, "_disk_free_bytes", return_value=2 * 1024**3):
+            with patch.object(stt, "_disk_free_bytes", return_value=2 * 1024**3) as free:
                 lease = gate.acquire(request_id="test", config=execution)
                 try:
+                    free.return_value -= source.stat().st_size
                     post = AsyncMock()
                     if large:
                         with patch.object(stt, "probe_audio", new=AsyncMock(return_value=stt.ProbedAudio(14400, 48000, 2))), \
@@ -164,8 +165,7 @@ def test_voice_errors_use_catalogued_codes_and_voice_param(tmp_path, error, stat
         with pytest.raises(custom_voices.VoiceError) as caught:
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
     assert (caught.value.status, caught.value.code, caught.value.param) == (status, code, "voice")
-    assert code in client_errors.GATEWAY_CODES
-    assert code in client_errors.CODE_REASONS
+    assert code in client_errors.ERROR_CODES
 
 
 def test_voice_contention_returns_retryable_busy_response(tmp_path):
@@ -187,7 +187,7 @@ def test_voice_contention_returns_retryable_busy_response(tmp_path):
                 response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True},
                     None, "omnivoice")
             assert response.status_code == 503
-            assert response.headers["Retry-After"] == "5"
+            assert response.headers.get("Retry-After") == "5", response.body
             assert b'resource_admission_denied' in response.body
             assert b'busy' in response.body
         finally:

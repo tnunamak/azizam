@@ -479,7 +479,7 @@ def test_reference_decode_holds_and_releases_resource_lease(tmp_path, fake_upstr
                     await proxy._reference_transcript(None, {"id": "test"}, source)
                 error = caught.value
                 assert error.status == (400 if result == "invalid" else 504)
-                assert error.code == ("invalid_audio" if result == "invalid" else "stt_deadline_exceeded")
+                assert error.code == ("invalid_value" if result == "invalid" else "stt_request_deadline")
                 assert ("readable audio" if result == "invalid" else "deadline") in str(error)
         assert observed == [1]
         assert gate.active_count == gate._reserved_bytes == 0
@@ -494,8 +494,11 @@ def test_disk_lease_covers_segment_and_verification_pcm(tmp_path):
     with patch.object(stt, "_disk_free_bytes", return_value=10**12):
         lease = gate.acquire(request_id="verify-peak", config=execution)
     try:
+        assert gate._reserved_bytes == mib
+        assert execution.request_claim().disk_mb == 1
+        lease.resize(5 * mib)
         assert gate._reserved_bytes == 5 * mib
-        assert execution.request_claim().disk_mb == 5
+        assert lease.decision.accepted
     finally:
         lease.release()
 
