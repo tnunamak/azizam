@@ -1347,7 +1347,7 @@ async def execute_chunking(
 
     planned_duration = planning_duration if planning_duration is not None else probed.duration_seconds
     if config.max_segment_declared and planned_duration > config.max_segment_seconds and (
-        not segments or len(segments) <= 1 or any(end - start > config.max_segment_seconds for start, end in segments)
+        not segments or len(segments) <= 1 or any(end > start + config.max_segment_seconds for start, end in segments)
     ):
         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds)
     if not segments or len(segments) <= 1:
