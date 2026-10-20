@@ -4108,9 +4108,10 @@ async def _apply_custom_voice(
         except custom_voices.VoiceError as exc:
             response = openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code,
                 error_type="api_error" if exc.status >= 500 else "invalid_request_error")
-            retry_after = client_errors.retry_after(str(exc.retry_after)) if exc.retry_after is not None else None
-            if retry_after is not None:
-                response.headers["Retry-After"] = retry_after
+            if exc.retry_after is not None:
+                retry_after = client_errors.retry_after(str(exc.retry_after))
+                if retry_after is not None:
+                    response.headers["Retry-After"] = retry_after
             return response
     return None
 
