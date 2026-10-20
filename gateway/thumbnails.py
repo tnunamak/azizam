@@ -103,6 +103,7 @@ def _first_frame(video: Path) -> Path | None:
     fd, name = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     out = Path(name)
+    transferred = False
     try:
         for seek in (("-ss", "0.1"), ()):
             run = subprocess.run(
@@ -111,8 +112,11 @@ def _first_frame(video: Path) -> Path | None:
                 capture_output=True, timeout=15, check=False,
             )
             if run.returncode == 0 and out.stat().st_size > 0:
+                transferred = True
                 return out
     except (OSError, subprocess.TimeoutExpired):
         pass
-    out.unlink(missing_ok=True)
+    finally:
+        if not transferred:
+            out.unlink(missing_ok=True)
     return None

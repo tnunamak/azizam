@@ -84,7 +84,7 @@ def _strip_file(path: Path, before: os.stat_result) -> str | None:
     temp = Path(name)
     try:
         with os.fdopen(fd, "wb") as target:
-            os.fchmod(target.fileno(), stat.S_IMODE(before.st_mode))
+            os.fchmod(target.fileno(), 0o600)
             target.write(clean)
             target.flush()
             os.fsync(target.fileno())
@@ -160,6 +160,15 @@ def strip_cached_assets(
         # Permanent failures must not starve later files in bounded batches.
         paths = sorted(cache_dir.iterdir(), key=lambda path: (attempts.get(str(path.absolute()), 0), path.name))
         for path in paths:
+            # Only this migration writes these names, while holding _SCAN_LOCK.
+            # Sweep even a selected/bounded run: no active staging file can exist here.
+            if path.name.startswith(".metadata-clean-"):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    result.pending += 1
+                    result.errors[path.name] = type(exc).__name__
+                continue
             staging = _STAGING.fullmatch(path.name)
             if staging and (digests is None or staging[1] in digests):
                 if media_metadata.media_kind("." + staging[2]) is None:
