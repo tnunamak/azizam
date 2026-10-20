@@ -41,7 +41,10 @@
 # Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
 # Admin sweep receipt isolation: +1 pre-existing-store teardown regression.
 # Full hermetic collection remeasured at 15110 after this repair.
-pytest = 15110
+# Round-4 followups: invalid unsaved facts, three writer cancellation/error
+# cases, and a virtual-clock reload event case (+5). Full hermetic collection
+# remeasured at 15115.
+pytest = 15115
 vitest = 3050
 playwright = 492
 
