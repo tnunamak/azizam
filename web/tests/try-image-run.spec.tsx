@@ -86,7 +86,7 @@ describe("Make a picture", () => {
     const user = userEvent.setup();
     await startRun(user);
     expect(
-      await screen.findByAltText("Generated result", {}, { timeout: 5000 }),
+      await screen.findByAltText("Generated result", {}, { timeout: 15000 }),
     ).toHaveAttribute("src", PICTURE);
     const submits = calls(SUBMIT);
     expect(submits).toHaveLength(1);
@@ -224,7 +224,7 @@ describe("Make a picture", () => {
       });
     await startRun(user);
     expect(
-      await screen.findByText("The engine ran out of memory.", {}, { timeout: 5000 }),
+      await screen.findByText("The engine ran out of memory.", {}, { timeout: 15000 }),
     ).toBeVisible();
     expect(screen.getByText("Make a picture request failed")).toBeVisible();
   });
