@@ -53,6 +53,10 @@ data/migration-backups/
 # must never become stageable after a crash or a mandatory-cleanup failure.
 data/stt-spool/
 
+# The gateway's private temporary directory: multipart spill, STT workspaces, ffmpeg scratch.
+# Emptied at every start; may hold request content while a request runs.
+data/private-tmp/
+
 # LiteLLM sidecar config is generated from the DB-owned service registry.
 # It is runtime state, not an editable source of truth. Generated backup/
 # snapshot copies of it are equally non-canonical.

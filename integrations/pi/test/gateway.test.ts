@@ -101,7 +101,8 @@ test("partial response body timeout is reported as timeout", async () => {
 	const gw = await startMockGateway();
 	try {
 		gw.setPartialBody(true);
-		await assert.rejects(fetchCatalog({ baseUrl: gw.baseUrl, timeoutMs: 30 }), /Timed out after 30 ms/);
+		// Long enough that a loaded host still delivers the request before the deadline; the body never completes.
+		await assert.rejects(fetchCatalog({ baseUrl: gw.baseUrl, timeoutMs: 500 }), /Timed out after 500 ms/);
 		assert.deepEqual(gw.requests.map((request) => request.url), ["/v1/models"]);
 	} finally {
 		await gw.close();

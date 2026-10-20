@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.secret_store import delete_provider_secret, put_provider_secret
@@ -41,6 +42,9 @@ FAKE_LITELLM = textwrap.dedent(
     #!/bin/bash
     # The handler must exist before the marker the harness waits for.
     trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    if [ -n "${AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-}" ] && [ -e "/proc/$$/fd/$AZIZAM_PRIVATE_TMPDIR_LOCK_FD" ]; then
+      echo "litellm holds the private temporary directory lock" >> "$FAKE_LOG"
+    fi
     echo "litellm started" >> "$FAKE_LOG"
     while true; do sleep 0.1; done
     """
@@ -93,6 +97,32 @@ WATCHER_HARNESS = textwrap.dedent(
 
 
 class StartScriptGracefulStopTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # start.sh empties the gateway's private temporary directory, which must be on disk; the hermetic temp dir is RAM.
+        self.private = Path(tempfile.mkdtemp(prefix="start-private-", dir=os.environ["HERMETIC_HOST_DISK_DIR"])) / "private-tmp"
+        self.private.mkdir(mode=0o700)
+        patcher = patch.dict(os.environ, {"AZIZAM_PRIVATE_TMPDIR": str(self.private)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.private.parent, ignore_errors=True)
+
+    def test_the_private_temporary_directory_is_emptied_before_the_proxy_starts_and_handed_to_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            _prepare_start_fixture(work)
+            (self.private / "left-by-a-crash").write_text("old audio")
+            (work / "proxy.py").write_text(
+                "import os\n"
+                "names = ('TMPDIR', 'TMP', 'TEMP', 'AZIZAM_PRIVATE_TMPDIR')\n"
+                "print([os.environ[name] for name in names], os.listdir(os.environ['TMPDIR']))\n"
+            )
+            _write_python_wrapper(work / "bin" / "python3")
+            _write_awk_wrapper(work / "bin" / "awk")
+            env = {**os.environ, "AZIZAM_MANAGE_LITELLM": "false", "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+            result = subprocess.run(["/bin/bash", f"{work.name}/start.sh"], cwd=work.parent, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 4) + " ['.owner.lock']")
+
     def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
@@ -180,6 +210,8 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 f"LiteLLM stopped before the proxy finished: {lines}",
             )
             self.assertIn("start.sh exit=0", lines)
+            # A LiteLLM that outlives the gateway must not keep the next launch from claiming the directory.
+            self.assertNotIn("litellm holds the private temporary directory lock", lines)
 
     def test_litellm_restarts_when_provider_secret_rotates_and_deletes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

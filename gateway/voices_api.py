@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
+from gateway import private_tmp, request_forms
 from gateway.custom_voices import (
     VOICE_ID_RE,
     VoiceError,
@@ -150,7 +151,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             raise VoiceError(413, "sample_too_large", f"The upload is larger than {max_bytes // (1024 * 1024)} MiB.")
         if "multipart/form-data" not in request.headers.get("content-type", ""):
             raise VoiceError(400, "multipart_required", "This request must be multipart/form-data.")
-        return await request.form(max_part_size=1024 * 1024)
+        return await request_forms.read_form(request, max_part_size=1024 * 1024)
 
     # ---- consents ----------------------------------------------------------
     async def create_consent(request: Request):
@@ -295,7 +296,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
                 if consent is not None and not isinstance(consent, str):
                     raise VoiceError(400, "invalid_consent", "consent must be a consent recording id.", param="consent")
                 original, extension = await _read_upload(form, "audio_sample", limits.max_bytes)
-                processed = await asyncio.to_thread(process_sample, original, limits, denoise=denoise)
+                processed = await private_tmp.run_worker(process_sample, original, limits, denoise=denoise)
                 meta = store.create_voice(
                     owner, name=name, voice_type="audio_sample", reference_wav=processed.wav,
                     duration_seconds=processed.duration_seconds, original=original, original_extension=extension,
@@ -335,7 +336,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             raise VoiceError(400, "invalid_prompt", str(exc), param="prompt") from exc
         wav = await deps.design_voice(instruct, script, seed)
         try:
-            processed: ProcessedSample = await asyncio.to_thread(process_sample, wav, limits, denoise=False)
+            processed: ProcessedSample = await private_tmp.run_worker(process_sample, wav, limits, denoise=False)
         except VoiceSampleError as exc:
             raise VoiceError(400, "script_too_short", f"The designed voice was too short to clone ({exc.message}); use a longer script_hint.", param="script_hint") from exc
         return deps.store().create_voice(

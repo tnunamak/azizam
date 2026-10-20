@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, log_egress, log_scrub
+from gateway import client_errors, log_egress, log_scrub, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -4465,7 +4465,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         content_type = client_errors.safe_content_type(resp.headers.get("content-type"), TTS_RESPONSE_MEDIA_TYPES["wav"])
         if 200 <= resp.status < 300 and requested_response_format not in {"wav", "mp3"}:
             try:
-                content = await asyncio.to_thread(
+                content = await private_tmp.run_worker(
                     convert_wav_to_audio_format,
                     resp.raw,
                     requested_response_format,
@@ -4479,7 +4479,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 )
         elif 200 <= resp.status < 300 and requested_response_format == "mp3":
             try:
-                content = await asyncio.to_thread(convert_wav_to_mp3, resp.raw)
+                content = await private_tmp.run_worker(convert_wav_to_mp3, resp.raw)
                 content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
             except Exception:
                 return Response(
@@ -8492,7 +8492,7 @@ async def proxy_graph_image_edit_request(
 
     form_dict: dict[str, Any] = {}
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
@@ -9096,7 +9096,7 @@ async def proxy_graph_image_variations_request(
         return service_response
 
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
@@ -10262,7 +10262,7 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     existing input_reference resolver can decode them without any new branch.
     """
     try:
-        form = await request.form(max_part_size=video_inputs.MAX_FORM_PART_BYTES)
+        form = await request_forms.read_form(request, max_part_size=video_inputs.MAX_FORM_PART_BYTES)
     except Exception as exc:
         raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
 
@@ -10481,11 +10481,11 @@ async def _resolve_video_workflow_assets(
     probe = None
     if source_input and source_input in assets:
         data, filename, mime = assets[source_input]
-        probe = await asyncio.to_thread(
+        probe = await private_tmp.run_worker(
             video_inputs.probe_video,
             data,
             video_inputs.suffix_for_video(filename, mime),
-            workdir=Path(__file__).parent / "cache" / "video_inputs",
+            workdir=private_tmp.current() / "video_inputs",
         )
         if probe is None and shutil.which("ffprobe") is not None:
             raise _VideoAssetError(
@@ -11607,9 +11607,9 @@ async def _submit_video_chain(
             return _video_asset_error_response(exc)
         if not source_bytes or len(source_bytes) > video_inputs.MAX_SOURCE_VIDEO_BYTES:
             return _json_error(400, "video is empty or larger than the size limit", param="video")
-        probe = await asyncio.to_thread(
+        probe = await private_tmp.run_worker(
             video_inputs.probe_video, source_bytes, video_inputs.suffix_for_video(source_name, _mime),
-            workdir=Path(__file__).parent / "cache" / "video_inputs")
+            workdir=private_tmp.current() / "video_inputs")
         if probe is None:
             return _json_error(400, "video is not a readable video", param="video")
 
@@ -12425,7 +12425,7 @@ async def _read_video_request_body(
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
         try:
-            form = await request.form(max_part_size=video_inputs.MAX_FORM_PART_BYTES)
+            form = await request_forms.read_form(request, max_part_size=video_inputs.MAX_FORM_PART_BYTES)
         except Exception as exc:
             raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
         try:
@@ -23563,7 +23563,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         )
     workflow_path = Path(__file__).parent / artifact
     try:
-        form = await request.form()
+        form = await request_forms.read_form(request)
         input_specs = record.manifest.get("inputs") or {}
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
@@ -24301,7 +24301,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                             audio_bytes = audio_resp.raw
                             peak_db = workflow_cfg.get("normalize_peak_db")
                             if peak_db is not None:
-                                audio_bytes = await asyncio.to_thread(
+                                audio_bytes = await private_tmp.run_worker(
                                     _peak_normalize_audio, audio_bytes, content_type, float(peak_db)
                                 )
                             audio_suffix = Path(file_info["filename"]).suffix or ".wav"
@@ -30899,6 +30899,9 @@ if __name__ == "__main__":
 
     if handle_cli_command():
         sys.exit(0)
+
+    # Request scratch for this process and its children uses the private directory (REQUEST_RETENTION.md 5.1).
+    private_tmp.activate()
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
