@@ -127,21 +127,22 @@ def test_understated_metadata_cannot_bypass_bounded_decode(tmp_path, misleading_
 
 
 @pytest.mark.parametrize("width", [0, 0.0001])
-def test_off_grid_narrow_search_uses_a_frame_centre_within_hard_maximum(tmp_path, width):
+@pytest.mark.parametrize("target", [0.253, 0.353])
+def test_off_grid_narrow_search_uses_a_frame_centre_within_hard_maximum(tmp_path, width, target):
     pcm = tmp_path / "audio.pcm"
     pcm.write_bytes(b"\0\0" * 16000)
     segments = stt.plan_quietest_frame_segments(duration_seconds=0.8,
-        quietest_frame=stt.quietest_frame_reader(pcm), target_seconds=0.253,
-        search_seconds=width, max_segment_seconds=0.253, max_segments=10)
+        quietest_frame=stt.quietest_frame_reader(pcm), target_seconds=target,
+        search_seconds=width, max_segment_seconds=target, max_segments=10)
     cuts = [end for _, end in segments[:-1]]
     assert all(cut * 100 == pytest.approx(round(cut * 100)) for cut in cuts)
-    assert all(end - start <= 0.253 for start, end in segments)
+    assert all(end - start <= target for start, end in segments)
     # A single off-grid cut must also inspect a frame, independently of drift
     # or floating-point failure at later tight-maximum cuts.
-    simple = stt.plan_quietest_frame_segments(duration_seconds=0.5,
-        quietest_frame=stt.quietest_frame_reader(pcm), target_seconds=0.253,
-        search_seconds=width, max_segment_seconds=0.3, max_segments=10)
-    assert simple[0][1] == 0.25
+    simple = stt.plan_quietest_frame_segments(duration_seconds=2 * target,
+        quietest_frame=stt.quietest_frame_reader(pcm), target_seconds=target,
+        search_seconds=width, max_segment_seconds=target + 0.05, max_segments=10)
+    assert simple[0][1] == round(target * 100) / 100
 
 
 def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_upstreams):
