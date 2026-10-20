@@ -1203,6 +1203,9 @@ async def extract_segment(
     if size <= 44 or size > config.max_decoded_bytes:
         raise SttResourceLimitExceeded("Extracted STT segment exceeds the configured limit")
     pcm_path = destination_path.with_suffix(".verify.pcm")
+    verification_cleanup = SttCleanupOwner()
+    verification_cleanup.add("verification_pcm", lambda: _unlink_chunk_path(pcm_path))
+    verified = False
     try:
         # The extractor promises PCM16 WAV. Retain its sample rate/channels:
         # resampling can round a one-source-sample overrun down to the maximum.
@@ -1223,8 +1226,11 @@ async def extract_segment(
             raise SttSetupFailure("STT segment extraction exceeds the engine's hard maximum")
         if abs(actual_duration - expected) > 0.1:
             raise SttSetupFailure("STT segment extraction has an unexpected duration")
+        verified = True
     finally:
-        _unlink_chunk_path(pcm_path)
+        await verification_cleanup.aclose()
+        if verified and verification_cleanup.failed:
+            raise SttCleanupFailure("STT verification cleanup failed")
 
 
 def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: int) -> bool:
