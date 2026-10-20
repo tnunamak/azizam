@@ -84,7 +84,10 @@
 # two-hour stereo admission, early PCM cleanup, staged disk claims, bounded
 # metadata retries, canonical/retryable voice errors, and high-rate WAV normalization. Full hermetic
 # --collect-only on 2026-10-20 measured 15289.
-pytest = 15289
+# D47 round-2 review: +4 multitrack first-audio-stream shared/fallback cases,
+# +2 lease receipt/unlink-race cases, +5 voice failure/retry-shape cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15300.
+pytest = 15300
 vitest = 3051
 playwright = 492
 
