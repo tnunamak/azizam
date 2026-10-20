@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, Mapping, Sequence
 
@@ -307,11 +307,7 @@ class ChunkedSttAdapter:
         return reply_from(resp)
 
     async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun) -> TranscriptReply | StreamReply:
-        execution = replace(
-            run.execution,
-            native_long_audio=(run.execution.native_long_audio_streaming if run.stream
-                               else run.execution.native_long_audio_offline),
-        )
+        execution = run.execution
         client = httpx.AsyncClient(timeout=timeout)
         run.cleanup.add("http_client", client.aclose)
         wire = _RunWire(self.label, client, url, run)
@@ -344,7 +340,7 @@ class ChunkedSttAdapter:
             await stt_chunking.guard_uncut_uploads(
                 [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
                 config=execution, cancellation_waiters=run.cancellation_waiters,
-                deadline_at=run.deadline_at, on_cancel=run.on_cancel,
+                deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
             )
         if run.on_whole_file_attempt is not None:
             run.on_whole_file_attempt()

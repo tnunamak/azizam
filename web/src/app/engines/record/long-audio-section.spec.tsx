@@ -10,7 +10,8 @@ const saved = {
   target_seconds: 30,
   search_seconds: 2,
   max_segment_seconds: 40,
-  native_long_audio: false,
+  native_long_audio_offline: false,
+  native_long_audio_streaming: false,
   from_bundled_defaults: [] as string[],
   note: "All values are saved on this engine.",
 };
@@ -28,6 +29,13 @@ describe("Long recordings", () => {
     expect(screen.getByText("Distance between cuts").nextElementSibling).toHaveTextContent("30 s");
     expect(screen.queryByText(/not saved on this engine/)).toBeNull();
     expect(screen.getByText("All values are saved on this engine.")).toBeVisible();
+  });
+
+  it("reports native long-audio support separately for offline and streaming requests", () => {
+    render(<LongAudioSection chunking={{ ...saved, native_long_audio_offline: true, native_long_audio_streaming: false }} />);
+    expect(screen.getByText("Takes long offline recordings whole").nextElementSibling).toHaveTextContent("Yes");
+    expect(screen.getByText("Takes long streaming recordings whole").nextElementSibling).toHaveTextContent("No");
+    expect(screen.queryByText("Takes long recordings whole")).toBeNull();
   });
 
   it("says which numbers are defaults that this engine does not save", () => {

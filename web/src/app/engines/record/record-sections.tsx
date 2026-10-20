@@ -43,12 +43,18 @@ export function LongAudioSection({ chunking }: { chunking: SttChunking | null | 
                     </dd>
                   </div>
                 ))}
-                <div className="contents">
-                  <dt>Takes long recordings whole</dt>
-                  <dd>{chunking.native_long_audio ? "Yes" : "No"}</dd>
-                </div>
               </dl>
             )}
+            <dl className="text-body grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
+              <div className="contents">
+                <dt>Takes long offline recordings whole</dt>
+                <dd>{chunking.native_long_audio_offline ? "Yes" : "No"}</dd>
+              </div>
+              <div className="contents">
+                <dt>Takes long streaming recordings whole</dt>
+                <dd>{chunking.native_long_audio_streaming ? "Yes" : "No"}</dd>
+              </div>
+            </dl>
             <p className="text-meta text-muted-foreground">{chunking.note}</p>
           </>
         )}

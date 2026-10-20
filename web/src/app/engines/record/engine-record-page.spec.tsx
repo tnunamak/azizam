@@ -580,7 +580,7 @@ describe("a locked engine", () => {
 
 it("shows one editable owner view for raw transcription capabilities", async () => {
   vi.spyOn(apiModule, "adminFetch").mockResolvedValue({
-    revision: '\"os-1\"', settings: { target_seconds: 30, search_seconds: 0, max_segment_seconds: 40, native_long_audio: false },
+    revision: '\"os-1\"', settings: { target_seconds: 30, search_seconds: 0, max_segment_seconds: 40, native_long_audio_offline: false, native_long_audio_streaming: false },
     policy: { sample_ids: [], lengths: [20, 40], search_widths: [0, 2], deadline_seconds: 600, max_download_bytes: 1024 },
     samples: [], job: null, commands: {},
   });

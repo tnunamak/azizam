@@ -26,6 +26,8 @@ def upgraded_chunking(service_id: str, chunking: Any, upgrades: Sequence[Mapping
     """The new ``chunking`` block, or None when no rule matches."""
     if not isinstance(chunking, Mapping):
         return None
+    result = copy.deepcopy(dict(chunking))
+    matched = False
     for rule in upgrades:
         if rule.get("service_id") != service_id:
             continue
@@ -36,13 +38,12 @@ def upgraded_chunking(service_id: str, chunking: Any, upgrades: Sequence[Mapping
             continue
         if any(chunking.get(key) not in values for key, values in (rule.get("allowed") or {}).items()):
             continue
-        result = copy.deepcopy(dict(chunking))
+        matched = True
         for key in rule.get("drop") or ():
             result.pop(key, None)
         for key, value in (rule.get("set") or {}).items():
             result.setdefault(key, value)
-        return result
-    return None
+    return result if matched else None
 
 
 def migrate_registry(conn: sqlite3.Connection) -> list[str]:
@@ -72,7 +73,7 @@ def migrate_registry(conn: sqlite3.Connection) -> list[str]:
 
         admin_store._record_audit_in_transaction(
             conn, "operator.stt_chunking.migrate", actor_kind="system", actor_id="migration",
-            actor_label="Schema 14 migration", target_kind="operator_setting", target_id="service_registry",
+            actor_label="Schema 15 migration", target_kind="operator_setting", target_id="service_registry",
             metadata={"services": changed}, now=int(time.time()),
         )
     return changed

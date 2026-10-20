@@ -196,14 +196,20 @@ engine page shows which values came from there (`stt_chunking.from_bundled_defau
 
 | Key | Meaning |
 |---|---|
-| `threshold_seconds` | Files longer than this are cut (a file longer than `max_segment_seconds` is always cut). |
+| `threshold_seconds` | Files longer than this are cut. A declared `max_segment_seconds` also forces cutting above its limit. |
 | `target_seconds` | Distance between cuts. |
 | `search_seconds` | The cut goes to the quietest 20 ms frame within this many seconds of each target, subject to the hard maximum. |
 | `max_segment_seconds` | The longest piece sent to the engine. No planned piece is longer. At least `target_seconds`. |
-| `native_long_audio` | `true` when the engine takes long audio whole. A file the gateway cannot cut is then sent whole; otherwise a file longer than `max_segment_seconds` that cannot be cut is refused (HTTP 422 or 502, code `stt_audio_cannot_be_split`). |
+| `native_long_audio_offline` | `true` when the engine takes long offline transcription audio whole. |
+| `native_long_audio_streaming` | `true` when the engine takes long streaming transcription audio whole. |
+
+An uncut file above a maximum declared on the record is refused unless its request mode declares native long audio
+(HTTP 422 or 502, code `stt_audio_cannot_be_split`). A record without a declared maximum sends an uncut file whole;
+the engine page marks this as no measured limit and offers the measure action.
 
 Pieces do not overlap and the texts are joined as they come. The silence keys (`silence_noise_db`,
-`silence_min_seconds`, `silence_search_seconds`) are no longer read. The measure action finds good values for an engine
+`silence_min_seconds`, `silence_search_seconds`) are no longer read. The default-only upgrade removes the old
+`silence_search_seconds` field when it still holds the seeded value. The measure action finds good values for an engine
 (`scripts/stt-seam-check`, `scripts/stt_seam_check/README.md`).
 
 ## Request body limits

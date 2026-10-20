@@ -300,6 +300,7 @@ def test_owner_only_stt_measurement_tool_is_not_listed_to_nonowners():
 def test_stt_measurement_mcp_settings_schema_exposes_native_audio_by_mode():
     tool = next(tool for tool in mcp_server.TOOLS if tool["name"] == "stt_measurement")
     settings = tool["inputSchema"]["properties"]["settings"]["properties"]
+    assert "native_long_audio" not in settings
     assert "native_long_audio_offline" in settings
     assert "native_long_audio_streaming" in settings
 

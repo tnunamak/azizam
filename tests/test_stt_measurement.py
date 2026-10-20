@@ -45,7 +45,7 @@ def test_owner_settings_route_uses_real_store_cas_and_keeps_unnamed_config(setup
     before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
     assert runner.record("speech-test")[0]["capabilities"] == ["audio", "transcriptions"]
     path = "/admin/api/engines/speech-test/stt-settings"
-    body = {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio": True}
+    body = {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio_offline": True, "native_long_audio_streaming": True}
     refused = admin.patch(path, headers={**csrf_for(admin), "If-Match": f'"os-{generation}"'}, json=body)
     assert refused.status_code == 403
     assert owner.patch(path, headers=csrf_for(owner), json=body).status_code == 412
@@ -288,7 +288,7 @@ def test_gpu_admission_credits_only_real_service_rows(setup, monkeypatch):
     monkeypatch.setattr(gw.proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     monkeypatch.setattr(status_endpoint, "_gpus_raw", lambda: [{"index": 0}])
     monkeypatch.setattr(gw.proxy, "_media_job_queue_depth", lambda: 0)
-    monkeypatch.setattr(gw.proxy.stt_chunking.GLOBAL_STT_RESOURCE_GATE, "_active", 2)
+    monkeypatch.setattr(gw.proxy.stt_chunking.GLOBAL_STT_RESOURCE_GATE, "_active", 0)
     monkeypatch.setattr(status_endpoint, "_vram_attribution", lambda *_: {"per_gpu": [{"index": 0, "services": [
         {"service": "speech-test", "used_mb": 700}, {"service": "desktop", "used_mb": 900},
         {"service": "__unattributed", "used_mb": 600}, {"service": "__headroom", "used_mb": 1000},
@@ -297,7 +297,7 @@ def test_gpu_admission_credits_only_real_service_rows(setup, monkeypatch):
     monkeypatch.setattr(sm, "gpu_admission", lambda *args, **kwargs: captured.update(kwargs) or {"admitted": True})
     asyncio.run(gw.proxy._operator_stt_admit(ctx, "speech-test"))
     assert captured["resident_mb"] == {0: 700}
-    assert captured["live_stt"] == 2
+    assert captured["live_stt"] == 0
     registry["services"]["__unattributed"] = registry["services"].pop("speech-test")
     asyncio.run(gw.proxy._operator_stt_admit(ctx, "__unattributed"))
     assert captured["resident_mb"] == {0: 0}
@@ -316,7 +316,7 @@ def test_durable_progress_interrupted_restart_and_explicit_stale_apply(setup):
     runner._save(job)
     restarted = sm.Measurements(gw.proxy.ADMIN_STORE, None)
     assert restarted.get("speech-test", job["id"])["status"] == "interrupted"
-    job.update(status="succeeded", report={"recommendation": {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio": False}})
+    job.update(status="succeeded", report={"recommendation": {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio_offline": False, "native_long_audio_streaming": False}})
     runner._save(job)
     before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
     assert before["services"]["speech-test"]["config"]["chunking"]["target_seconds"] == 36
@@ -334,7 +334,7 @@ def test_real_snapshot_accepts_all_length_trials_and_zero_width_without_leaking(
     original = gw.proxy._stt_execution_snapshot("transcriptions", "speech-test")
     for length in [20, 40, 50, 60, 90]:
         token = sm.TRIAL.set({"service_id": "speech-test", "settings": {"enabled": False, "target_seconds": length,
-            "max_segment_seconds": length, "threshold_seconds": length + 1, "native_long_audio": True, "search_seconds": 0}})
+            "max_segment_seconds": length, "threshold_seconds": length + 1, "native_long_audio_offline": True, "native_long_audio_streaming": True, "search_seconds": 0}})
         try:
             execution = gw.proxy._stt_execution_snapshot("transcriptions", "speech-test")
             assert execution.target_seconds == length and execution.search_seconds == 0
@@ -444,6 +444,9 @@ def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(se
     async def transcribe(ctx, sid, model, path):
         trial = sm.TRIAL.get()
         settings = trial["settings"]
+        assert "native_long_audio" not in settings
+        assert settings["native_long_audio_offline"] is (not settings["enabled"])
+        assert settings["native_long_audio_streaming"] is (not settings["enabled"])
         start, end = starts
         if settings["enabled"]:
             segments = stt_chunking.plan_quietest_frame_segments(duration_seconds=end-start,
@@ -467,6 +470,9 @@ def test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost(se
         assert all(row["deletion_pct"] == 0 for row in result["deletions_by_length"])
         assert all(row["points"] > 0 and row["excess_pp"] == 0 and row["noise"]["excess_pp"] == 0 for row in result["seam_excess"])
         assert result["recommendation"] is not None
+        assert "native_long_audio" not in result["recommendation"]
+        assert result["recommendation"]["native_long_audio_offline"] is False
+        assert result["recommendation"]["native_long_audio_streaming"] is False
         assert result["recommendation"]["search_seconds"] == (2 if width == 2 else 0)
         assert all(row["baseline_length"] == 20 and row["paired_deletion"]["excess_pp"] == 0 for row in result["deletions_by_length"])
         assert result["recommendation_state"] == "recommended"
@@ -734,7 +740,7 @@ def test_target_patch_above_threshold_preserves_absent_derived_fields(setup, ext
     chunking = runner.record("speech-test")[0]["config"]["chunking"]
     assert chunking["target_seconds"] == 50 and chunking["threshold_seconds"] == expected_threshold
     visible = owner.get("/admin/api/engines/speech-test").json()
-    assert visible["engine"]["stt_chunking"]["cut_files_longer_than_seconds"] == min(expected_threshold, extra.get("max_segment_seconds", 54))
+    assert visible["engine"]["stt_chunking"]["cut_files_longer_than_seconds"] == min(expected_threshold, extra.get("max_segment_seconds", expected_threshold))
     assert ("max_segment_seconds" in chunking) == ("max_segment_seconds" in extra)
     assert "native_long_audio" not in chunking
     assert stt_chunking.SttExecutionConfig.from_service(service_id="speech-test", service_config=runner.record("speech-test")[0]["config"], config_directory=gw.path.parent).max_segment_seconds == extra.get("max_segment_seconds", 54)
@@ -917,3 +923,57 @@ def test_default_measurement_pairs_shared_deletions_and_reports_abstention(setup
             assert all(row["paired_deletion"]["words"] >= policy["recommendation"]["min_length_words"] for row in report["deletions_by_length"])
             assert any(row["high_pct"] - row["low_pct"] > 1 for row in report["deletions_by_length"])
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_measurement_yields_to_live_stt_for_every_resource_type(required):
+    record = {"resources": {"gpu_required": required, "vram_gb_estimate": 2}}
+    result = sm.gpu_admission(record, None, None, {}, live_stt=1)
+    assert result["admitted"] is False
+    assert "live" in result["reason"].lower()
+
+
+def test_cpu_measurement_observes_live_gate_through_public_activity(setup, monkeypatch, tmp_path):
+    gw, _, _, runner, ctx = setup
+    registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    registry["services"]["speech-test"]["config"]["resources"] = {"gpu_required": False}
+    _put_registry(gw, registry)
+    gate = stt_chunking.SttResourceGate()
+    execution = stt_chunking.SttExecutionConfig.from_service(service_id="speech-test",
+        service_config={"chunking": {"spool_dir": str(tmp_path), "min_free_bytes": 1}},
+        config_directory=tmp_path)
+    class PublicActivity:
+        @property
+        def active_count(self):
+            return gate.active_count
+    monkeypatch.setattr(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", PublicActivity())
+    async def scenario():
+        lease = gate.acquire(request_id="live-user", config=execution)
+        try:
+            result = await gw.proxy._operator_stt_admit(ctx, "speech-test")
+            assert result["admitted"] is False
+        finally:
+            lease.release()
+        assert (await gw.proxy._operator_stt_admit(ctx, "speech-test"))["admitted"] is True
+    asyncio.run(scenario())
+
+
+def test_never_shipped_native_audio_key_is_rejected():
+    with pytest.raises(sm.EngineRouteError) as error:
+        sm.settings_patch({"native_long_audio": True})
+    assert error.value.code == "invalid_stt_settings"
+
+
+@pytest.mark.parametrize("invalid_saved", [False, True])
+def test_measurement_options_use_only_mode_specific_native_settings(setup, invalid_saved):
+    gw, owner, _, _, _ = setup
+    if invalid_saved:
+        registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+        registry["services"]["speech-test"]["config"]["chunking"]["target_seconds"] = "invalid"
+        _put_registry(gw, registry)
+    response = owner.get("/admin/api/engines/speech-test/stt-measurements")
+    assert response.status_code == 200
+    settings = response.json()["settings"]
+    assert "native_long_audio" not in settings
+    assert "native_long_audio_offline" in settings
+    assert "native_long_audio_streaming" in settings

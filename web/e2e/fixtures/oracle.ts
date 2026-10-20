@@ -292,7 +292,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
         base_url: engineOrigin,
         protocol: "openai-compatible",
         capabilities: ["audio", "transcriptions"],
-        chunking: { native_long_audio: true },
+        chunking: { native_long_audio_offline: true, native_long_audio_streaming: true },
         health_endpoint: "/health",
         models: [{ public: "whisper-large", upstream: "whisper-large" }],
         model_policy_schema_version: 1,

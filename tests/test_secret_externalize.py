@@ -25,7 +25,7 @@ S = {name: f"SEED-{name}" for name in (
 
 
 def _schema15_expected_registry(registry: dict) -> dict:
-    """The three default-only D47 seed changes that also run on old stores."""
+    """The default-only D47 seed changes that also run on old stores."""
     expected = copy.deepcopy(registry)
     parakeet = expected["services"]["stt-parakeet-gpu"]["config"]["chunking"]
     for old_key in ("silence_search_seconds", "silence_noise_db", "silence_min_seconds"):
@@ -39,6 +39,10 @@ def _schema15_expected_registry(registry: dict) -> dict:
         native_long_audio_offline=False,
         native_long_audio_streaming=True,
     )
+    for service_id, seed in (("stt", 120), ("stt-canary", 40), ("stt-nemotron", 30)):
+        chunking = expected["services"][service_id]["config"]["chunking"]
+        if chunking.get("silence_search_seconds") == seed:
+            chunking.pop("silence_search_seconds")
     return expected
 
 

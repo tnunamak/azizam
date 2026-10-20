@@ -294,18 +294,18 @@ class SttChunkMergeTests(unittest.TestCase):
     def test_record_fields_default_and_say_where_the_hard_maximum_came_from(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            declared = _config(root, target_seconds=30, threshold_seconds=40, search_seconds=2, max_segment_seconds=40, native_long_audio="true")
+            declared = _config(root, target_seconds=30, threshold_seconds=40, search_seconds=2, max_segment_seconds=40, native_long_audio_offline="true")
             self.assertEqual(
-                (declared.target_seconds, declared.search_seconds, declared.max_segment_seconds, declared.native_long_audio),
+                (declared.target_seconds, declared.search_seconds, declared.max_segment_seconds, declared.native_long_audio_offline),
                 (30.0, 2.0, 40.0, True),
             )
             self.assertEqual(declared.chunking_view()["from_bundled_defaults"], [])
             undeclared = _config(root, target_seconds=30, threshold_seconds=60)
-            self.assertEqual((undeclared.search_seconds, undeclared.max_segment_seconds, undeclared.native_long_audio), (2.0, 34.0, False))  # target + 2 * search: the bundled `derive`
+            self.assertEqual((undeclared.search_seconds, undeclared.max_segment_seconds, undeclared.native_long_audio_offline), (2.0, 34.0, False))  # target + 2 * search: the bundled `derive`
             self.assertFalse(undeclared.max_segment_declared)
             self.assertEqual(undeclared.chunking_view()["from_bundled_defaults"], ["search_seconds", "max_segment_seconds"])
-            # A file above the hard maximum is always cut, whatever the threshold says.
-            self.assertEqual(undeclared.chunk_above_seconds, 34.0)
+            # An undeclared derived piece bound must not override the saved cutting threshold.
+            self.assertEqual(undeclared.chunk_above_seconds, 60.0)
             self.assertEqual(declared.chunk_above_seconds, 40.0)
             with self.assertRaises(stt_chunking.SttConfigurationError):
                 _config(root, target_seconds=30, threshold_seconds=60, max_segment_seconds=20)
@@ -624,30 +624,18 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome.mode, "chunked")
             self.assertAlmostEqual(posted[-1][1], 75, delta=0.01)
 
-    async def test_a_file_the_engine_takes_whole_or_a_native_long_audio_engine_still_passes_through(self) -> None:
-        short_file = stt_chunking.ProbedAudio(41, 16000, 1)  # above the 40 s threshold, not above the 40 s... see below
-        for name, kwargs in (
-            ("native long-audio engine", {"probed": stt_chunking.ProbedAudio(1320, 16000, 1), "decode_error": stt_chunking.SttSetupFailure("x"), "native_long_audio": True}),
-            ("a hard maximum above the file", {"probed": short_file, "decode_error": stt_chunking.SttSetupFailure("x"), "max_segment_seconds": 60}),
-        ):
-            with self.subTest(name):
-                limits = {key: kwargs.pop(key) for key in ("native_long_audio", "max_segment_seconds") if key in kwargs}
-                if "max_segment_seconds" in limits:
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        root = Path(temp_dir)
-                        source = root / "source.wav"
-                        source.write_bytes(b"source")
-                        config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=60)
-                        with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=short_file)), patch.object(
-                            stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=stt_chunking.SttSetupFailure("x"))
-                        ):
-                            result = await stt_chunking.execute_chunking(
-                                source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
-                                post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
-                            )
-                else:
-                    result, _posts = await self._run_unplannable(**kwargs, **limits)
-                self.assertEqual((result.mode, result.attempts_started, result.fallback_reason), ("passthrough", 0, "setup_failed_before_attempt"))
+    async def test_native_offline_allows_decode_failure_but_a_short_header_does_not_prove_the_file_fits(self) -> None:
+        native, posts = await self._run_unplannable(
+            probed=stt_chunking.ProbedAudio(1320, 16000, 1),
+            decode_error=stt_chunking.SttSetupFailure("x"), native_long_audio_offline=True,
+        )
+        self.assertEqual((native.mode, native.fallback_reason, posts), ("passthrough", "setup_failed_before_attempt", []))
+        unverified, posts = await self._run_unplannable(
+            probed=stt_chunking.ProbedAudio(41, 16000, 1),
+            decode_error=stt_chunking.SttSetupFailure("x"), max_segment_seconds=60,
+        )
+        self.assertIsInstance(unverified, stt_chunking.SttAudioNotSplittable)
+        self.assertEqual(posts, [])
 
     async def test_the_error_policy_still_raises_the_setup_failure_itself(self) -> None:
         result, posts = await self._run_unplannable(
@@ -656,8 +644,10 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(type(result), stt_chunking.SttSetupFailure)
         self.assertEqual(posts, [])
 
-    async def test_a_short_file_is_not_decoded_for_planning(self) -> None:
-        decode = AsyncMock()
+    async def test_a_short_file_is_decoded_once_before_the_threshold_decision(self) -> None:
+        async def write_short_pcm(_source, destination, **_kwargs):
+            write_pcm(destination, 40)
+        decode = AsyncMock(side_effect=write_short_pcm)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source.wav"
@@ -671,7 +661,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
                 )
         self.assertEqual((outcome.mode, outcome.fallback_reason), ("passthrough", "below_threshold"))
-        decode.assert_not_awaited()
+        decode.assert_awaited_once()
 
     async def test_media_child_is_killed_and_reaped_on_task_cancellation(self) -> None:
         class BlockingReader:
@@ -1137,7 +1127,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             self.skipTest("ffmpeg and ffprobe are required for the local media fixture")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, max_decoded_bytes=2 * 1024 * 1024)
+            config = _config(root, max_decoded_bytes=4 * 1024 * 1024)
             source = root / "fixture.wav"
             _write_silenced_wav(source)
             uploaded: list[bytes] = []
@@ -1343,7 +1333,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_asgi_disconnect_cancels_delayed_downstream_upload_and_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = _config(root, enabled=False, native_long_audio=True)
+            config = _config(root, enabled=False, native_long_audio_offline=True)
             body, content_type = _multipart_body()
             disconnect = asyncio.Event()
             sent = False
@@ -1386,7 +1376,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
         for boundary in ("probe", "plan", "extract", "chunk_post", "response_read", "fallback_post"):
             with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                config = _config(root, enabled=boundary != "fallback_post", native_long_audio=boundary == "fallback_post")
+                config = _config(root, enabled=boundary != "fallback_post", native_long_audio_offline=boundary == "fallback_post")
                 body, content_type = _multipart_body()
                 disconnect = asyncio.Event()
                 sent = False
@@ -1582,6 +1572,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy, "_stt_execution_snapshot", return_value=config),
                 patch.object(proxy.httpx, "AsyncClient", NeverCalled),
                 patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(120, 16000, 1))),
+                planning_pcm(120),
                 patch.object(proxy.receipt_store, "begin"),
                 patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
             ):
@@ -1659,7 +1650,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
         for status, encoding in ((200, "gzip"), (500, "deflate"), (302, "gzip, deflate")):
             with self.subTest(status=status, encoding=encoding), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                config = _config(root, enabled=False, native_long_audio=True)
+                config = _config(root, enabled=False, native_long_audio_offline=True)
                 body, content_type = _multipart_body(content=b"RIFF-encoded")
                 sent = False
                 decoded = b'{"text":"decoded"}'

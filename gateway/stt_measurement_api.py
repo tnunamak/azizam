@@ -68,13 +68,12 @@ async def operate(runner: Measurements, ctx: Any, service_id: str, action: str, 
             settings = {"target_seconds": defaults["target_seconds"],
                         "search_seconds": defaults["search_seconds"],
                         "max_segment_seconds": max_segment,
-                        "native_long_audio": False,
                         "native_long_audio_offline": False,
                         "native_long_audio_streaming": False}
             note = f"Saved STT settings need repair ({error}). Safe bundled values are shown; edit the invalid setting and save."
         else:
             settings = {k: getattr(execution, k) for k in ("target_seconds", "search_seconds", "max_segment_seconds",
-                "native_long_audio", "native_long_audio_offline", "native_long_audio_streaming")}
+                "native_long_audio_offline", "native_long_audio_streaming")}
             note = execution.chunking_view()["note"]
         safe_trial_seconds = settings["max_segment_seconds"]
         trial_lengths = [length for length in options["policy"]["lengths"] if length <= safe_trial_seconds]

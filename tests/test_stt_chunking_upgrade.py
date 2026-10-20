@@ -1,4 +1,4 @@
-"""Schema 14: only a record holding the old seeded long-audio values is upgraded, from data."""
+"""Schema 15: only a record holding the old seeded long-audio values is upgraded, from data."""
 from __future__ import annotations
 
 import json
@@ -129,7 +129,9 @@ def test_native_long_audio_upgrade_is_mode_specific_and_only_applies_to_unchange
     changed_diarize = {**diarize_seed, "max_duration_seconds": 14000}
     changed_nemotron = {**nemotron_seed, "target_seconds": 61}
     assert stt_chunking_upgrade.upgraded_chunking("stt-diarize", changed_diarize, rules) is None
-    assert stt_chunking_upgrade.upgraded_chunking("stt-nemotron", changed_nemotron, rules) is None
+    assert stt_chunking_upgrade.upgraded_chunking("stt-nemotron", changed_nemotron, rules) == {
+        key: value for key, value in changed_nemotron.items() if key != "silence_search_seconds"
+    }
 
 
 def test_record_chunking_limits_allow_exact_max_and_clamp_search_to_half_target(tmp_path) -> None:

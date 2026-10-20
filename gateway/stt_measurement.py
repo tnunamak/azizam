@@ -32,7 +32,7 @@ from gateway import stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
-SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds", "native_long_audio",
+SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds",
                          "native_long_audio_offline", "native_long_audio_streaming"})
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 # This context is created only by the authenticated operator worker, never by an HTTP header.
@@ -70,6 +70,10 @@ def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_dept
     required = resources.get("gpu_required")
     if not isinstance(required, bool):
         raise EngineRouteError(400, "measurement_resources_required", "Declare resources.gpu_required on this engine before measuring it.")
+    if isinstance(live_stt, bool) or not isinstance(live_stt, int) or live_stt < 0:
+        return {"admitted": False, "reason": "Waiting for current live STT activity facts.", "gpu_required": required}
+    if live_stt:
+        return {"admitted": False, "reason": "Waiting for live STT requests to finish.", "gpu_required": required}
     if not required:
         return {"admitted": True, "reason": "CPU declared; normal gateway admission still applies.", "gpu_required": False}
     estimate = resources.get("vram_gb_estimate")
@@ -78,9 +82,6 @@ def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_dept
     reason = "Waiting for current GPU and shared media queue facts."
     if not gpus or queue_depth is None:
         return {"admitted": False, "reason": reason, "gpu_required": True}
-    if isinstance(live_stt, bool) or not isinstance(live_stt, int) or live_stt < 0:
-        return {"admitted": False, "reason": "Waiting for current live STT activity facts.", "gpu_required": True}
-    queue_depth += live_stt
     gpu_config = resources.get("gpu") or {}
     devices = gpu_config.get("devices") if isinstance(gpu_config, Mapping) else None
     if devices is not None:
@@ -120,7 +121,7 @@ def settings_patch(body: Any) -> dict:
         raise EngineRouteError(400, "invalid_stt_settings", "Use only target_seconds, threshold_seconds, search_seconds, max_segment_seconds and native long-audio settings.")
     patch = dict(body)
     for key, value in patch.items():
-        if key in {"native_long_audio", "native_long_audio_offline", "native_long_audio_streaming"}:
+        if key in {"native_long_audio_offline", "native_long_audio_streaming"}:
             if not isinstance(value, bool):
                 raise EngineRouteError(400, "invalid_stt_settings", f"{key} must be a boolean.")
         elif isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or (value < 0 if key == "search_seconds" else value <= 0):
@@ -468,7 +469,7 @@ class Measurements:
                         piece = folder / "piece.wav"
                         _wave_slice(source, piece, start, end)
                         try:
-                            run = await self._transcription(ctx, job, piece, {"enabled": False, "native_long_audio": True,
+                            run = await self._transcription(ctx, job, piece, {"enabled": False, "native_long_audio_offline": True, "native_long_audio_streaming": True,
                                 "max_segment_seconds": length, "target_seconds": length, "threshold_seconds": length + 1})
                         except EngineRouteError as error:
                             # Admission/cancellation are not evidence that a length is unsafe.
@@ -505,7 +506,7 @@ class Measurements:
             search_pairs = {width: ([], []) for width in job["search_widths"]}
             for folder, audio, reference in prepared:
                 for width in job["search_widths"]:
-                    settings = {"enabled": True, "native_long_audio": False, "threshold_seconds": maximum,
+                    settings = {"enabled": True, "native_long_audio_offline": False, "native_long_audio_streaming": False, "threshold_seconds": maximum,
                         "target_seconds": target, "max_segment_seconds": maximum, "search_seconds": width,
                         "max_segments": 512}
                     runs = []
@@ -531,7 +532,7 @@ class Measurements:
         recommendation = measure.recommend(safe_rows, searches, policy=recommendation_policy,
                                            failed_above=failed_above, current_search=current_search)
         rec = ({"target_seconds": recommendation.target_seconds, "search_seconds": recommendation.search_seconds,
-                "max_segment_seconds": recommendation.max_segment_seconds, "native_long_audio": False, "reasons": recommendation.reasons} if recommendation else None)
+                "max_segment_seconds": recommendation.max_segment_seconds, "native_long_audio_offline": False, "native_long_audio_streaming": False, "reasons": recommendation.reasons} if recommendation else None)
         state = "recommended" if rec else "inconclusive"
         evaluated = searches if length_choice else [r for r in rows if r["length"] != baseline]
         if not rec and evaluated and all(row["state"] == "confidently_worse" for row in evaluated):

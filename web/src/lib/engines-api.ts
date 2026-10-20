@@ -318,7 +318,8 @@ export type SttChunking =
       target_seconds: number;
       search_seconds: number;
       max_segment_seconds: number;
-      native_long_audio: boolean;
+      native_long_audio_offline: boolean;
+      native_long_audio_streaming: boolean;
       /** Keys of `chunking` the record does not save; their values come from the bundled defaults. */
       from_bundled_defaults: string[];
       note: string;

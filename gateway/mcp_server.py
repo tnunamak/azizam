@@ -235,7 +235,7 @@ TOOLS.append({
             "lengths": {"type": "array", "items": {"type": "number"}}, "search_widths": {"type": "array", "items": {"type": "number"}}, "model": {"type": "string"}}, "additionalProperties": False},
         "settings": {"type": "object", "properties": {"target_seconds": {"type": "number", "exclusiveMinimum": 0},
             "search_seconds": {"type": "number", "minimum": 0}, "max_segment_seconds": {"type": "number", "exclusiveMinimum": 0},
-            "native_long_audio": {"type": "boolean"}, "native_long_audio_offline": {"type": "boolean"},
+            "native_long_audio_offline": {"type": "boolean"},
             "native_long_audio_streaming": {"type": "boolean"}}, "additionalProperties": False},
     }, "required": ["service_id", "action"], "additionalProperties": False},
     "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},

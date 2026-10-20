@@ -360,7 +360,7 @@ def test_stt_long_audio_fields_round_trip_and_the_view_says_where_the_maximum_ca
     assert _create(owner, {"definition": "openai-compatible", "name": "ears", "disabled": True,
                            "values": {"address": "http://ears.fk.test/v1"}}).status_code == 201
     chunking = {"enabled": True, "threshold_seconds": 40, "target_seconds": 30, "search_seconds": 2,
-                "max_segment_seconds": 40, "native_long_audio": False}
+                "max_segment_seconds": 40, "native_long_audio_offline": False, "native_long_audio_streaming": False}
     registry = _registry(gateway)
     registry["services"]["ears"]["config"]["chunking"] = dict(chunking)
     _put_registry(gateway, registry)
@@ -368,7 +368,7 @@ def test_stt_long_audio_fields_round_trip_and_the_view_says_where_the_maximum_ca
     assert view["other_settings"]["chunking"] == chunking
     assert view["stt_chunking"] == {
         "enabled": True, "cut_files_longer_than_seconds": 40.0, "target_seconds": 30.0, "search_seconds": 2.0,
-        "max_segment_seconds": 40.0, "native_long_audio": False,
+        "max_segment_seconds": 40.0,
         "native_long_audio_offline": False, "native_long_audio_streaming": False,
         "from_bundled_defaults": [],
         "note": "All values are saved on this engine.",

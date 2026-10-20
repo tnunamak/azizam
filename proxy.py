@@ -15427,13 +15427,11 @@ async def _operator_stt_admit(ctx, service_id: str) -> dict:
     record = registry.get("services", {}).get(service_id) or {}
     resources = record.get("resources") or (record.get("config") or {}).get("resources") or {}
     policy = yaml.safe_load(stt_measurement.POLICY.read_text())
-    # CPU work needs no GPU probe. GPU work yields to the shared queued/running media work.
-    if resources.get("gpu_required") is not True:
-        return stt_measurement.gpu_admission(record, None, None, policy)
+    # Measurement yields to live STT on every engine before considering GPU work.
+    live_stt = stt_chunking.GLOBAL_STT_RESOURCE_GATE.active_count
+    if live_stt or resources.get("gpu_required") is not True:
+        return stt_measurement.gpu_admission(record, None, None, policy, live_stt=live_stt)
     gpus, depth = await asyncio.gather(asyncio.to_thread(status_endpoint._gpus_raw), asyncio.to_thread(_media_job_queue_depth))
-    # Gate acquire/release are synchronous in gateway coroutines on this event loop,
-    # so this snapshot cannot interleave with either counter update.
-    live_stt = stt_chunking.GLOBAL_STT_RESOURCE_GATE._active
     current_task = asyncio.current_task()
     measurement_waiters = sum(not task.done() and task is not current_task
                               for task in STT_MEASUREMENTS.tasks.values())
@@ -15445,6 +15443,9 @@ async def _operator_stt_admit(ctx, service_id: str) -> dict:
                                   and service_id != "desktop"
                                   and not str(row.get("service", "")).startswith("__"))
                 for gpu in attribution.get("per_gpu", [])}
+    # Read after the awaited probes so requests arriving during them retain priority.
+    # Gate acquire/release run synchronously on this event loop.
+    live_stt = stt_chunking.GLOBAL_STT_RESOURCE_GATE.active_count
     return stt_measurement.gpu_admission(record, gpus, depth, policy, resident_mb=resident, live_stt=live_stt)
 
 

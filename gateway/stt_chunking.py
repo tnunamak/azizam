@@ -212,7 +212,6 @@ class SttExecutionConfig:
     search_seconds: float
     max_segment_seconds: float
     max_segment_declared: bool
-    native_long_audio: bool
     native_long_audio_offline: bool
     native_long_audio_streaming: bool
     max_input_bytes: int
@@ -333,12 +332,11 @@ class SttExecutionConfig:
             search_seconds=search,
             max_segment_seconds=max_segment,
             max_segment_declared=max_segment_declared,
-            native_long_audio=_as_bool(chunking.get("native_long_audio", False)),
             native_long_audio_offline=_as_bool(
-                chunking.get("native_long_audio_offline", chunking.get("native_long_audio", False))
+                chunking.get("native_long_audio_offline", False)
             ),
             native_long_audio_streaming=_as_bool(
-                chunking.get("native_long_audio_streaming", chunking.get("native_long_audio", False))
+                chunking.get("native_long_audio_streaming", False)
             ),
             max_input_bytes=positive_int("max_input_bytes", 536_870_912),
             max_decoded_bytes=positive_int("max_decoded_bytes", 1_073_741_824),
@@ -380,7 +378,6 @@ class SttExecutionConfig:
             "target_seconds": self.target_seconds,
             "search_seconds": self.search_seconds,
             "max_segment_seconds": self.max_segment_seconds,
-            "native_long_audio": self.native_long_audio,
             "native_long_audio_offline": self.native_long_audio_offline,
             "native_long_audio_streaming": self.native_long_audio_streaming,
             "from_bundled_defaults": from_defaults,
@@ -394,7 +391,7 @@ class SttExecutionConfig:
     @property
     def chunk_above_seconds(self) -> float:
         """Files longer than this are cut when the request shape can be preserved."""
-        return min(self.threshold_seconds, self.max_segment_seconds)
+        return min(self.threshold_seconds, self.max_segment_seconds) if self.max_segment_declared else self.threshold_seconds
 
     @property
     def replay_limit_bytes(self) -> int:
@@ -702,6 +699,11 @@ class SttResourceGate:
         self._active = 0
         self._reserved_bytes = 0
         self._replays: set[SttReplayReservation] = set()
+
+    @property
+    def active_count(self) -> int:
+        """Number of live requests currently holding a transcription slot."""
+        return self._active
 
     def acquire(
         self,
@@ -1040,12 +1042,16 @@ async def decode_planning_pcm(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
 ) -> None:
-    """Decode the upload to raw 16 kHz mono 16-bit samples, the signal the cut search reads."""
+    """Decode once within the upload's disk, duration, deadline and cancellation budgets."""
+    bytes_per_second = _PLANNING_SAMPLE_RATE * 2
+    max_pcm_bytes = min(config.max_decoded_bytes, int(config.max_duration_seconds * bytes_per_second))
+    # Ask for one extra sample to detect an over-limit stream without decoding an unbounded input.
     await run_media_command(
         [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-i", os.fspath(source_path),
             "-vn", "-ac", "1", "-ar", str(_PLANNING_SAMPLE_RATE), "-f", "s16le",
+            "-t", str((max_pcm_bytes + 2) / bytes_per_second), "-fs", str(max_pcm_bytes + 2),
             os.fspath(destination_path),
         ],
         timeout_seconds=config.timeout_seconds,
@@ -1060,8 +1066,7 @@ async def decode_planning_pcm(
         raise SttSetupFailure("STT planning decode did not create audio") from error
     if size <= 0:
         raise SttMediaCommandFailed("STT planning decode holds no audio")
-    # The samples are the same audio at a fixed rate, so the duration limit bounds them (with a second of slack).
-    if size > (config.max_duration_seconds + 1.0) * _PLANNING_SAMPLE_RATE * 2:
+    if size > max_pcm_bytes:
         raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
 
 
@@ -1223,37 +1228,46 @@ def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: 
 async def guard_uncut_uploads(
     paths: Sequence[Path], *, config: SttExecutionConfig,
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]], deadline_at: float,
-    on_cancel: Callable[[], None] | None,
+    on_cancel: Callable[[], None] | None, streaming: bool = False,
 ) -> None:
     """Refuse an over-limit file when the request envelope cannot be cut, if its record has a known maximum."""
-    if config.native_long_audio or not config.max_segment_declared:
+    native = config.native_long_audio_streaming if streaming else config.native_long_audio_offline
+    if native or not config.max_segment_declared:
         return
-    for path in paths:
+    for index, path in enumerate(paths):
+        pcm_path = path.parent / f"uncut-{index}-16k.pcm"
         try:
-            audio = await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
+            await probe_audio(path, config=config, cancellation_waiters=cancellation_waiters,
+                              deadline_at=deadline_at, on_cancel=on_cancel)
+            await decode_planning_pcm(path, pcm_path, config=config, cancellation_waiters=cancellation_waiters,
                                       deadline_at=deadline_at, on_cancel=on_cancel)
+            duration = pcm_path.stat().st_size / (_PLANNING_SAMPLE_RATE * 2)
         except SttMediaCommandFailed as error:
             raise SttInvalidAudio("STT input is not readable audio") from error
-        if audio.duration_seconds > config.max_segment_seconds:
+        finally:
+            _unlink_chunk_path(pcm_path)
+        if duration > config.max_segment_seconds:
             raise SttAudioNotSplittable("unsupported_request", limit_seconds=config.max_segment_seconds)
 
 
-def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None) -> bool:
+def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None, *, duration_verified: bool) -> bool:
     """Whether a file whose cut failed may go whole under the setup policy and recorded limit."""
     if config.setup_failure_policy != "passthrough":
         return False
     return (
-        config.native_long_audio
+        config.native_long_audio_offline
         or not config.max_segment_declared
-        or (probed is not None and probed.duration_seconds <= config.max_segment_seconds)
+        or (duration_verified and probed is not None and probed.duration_seconds <= config.max_segment_seconds)
     )
 
 
-def _unplanned_outcome(config: SttExecutionConfig, probed: ProbedAudio | None, error: SttSetupFailure) -> ChunkingOutcome:
+def _unplanned_outcome(
+    config: SttExecutionConfig, probed: ProbedAudio | None, error: SttSetupFailure, *, duration_verified: bool = False,
+) -> ChunkingOutcome:
     """The cut could not be planned: send the file whole only when the engine can take it, else refuse it."""
-    if _may_send_whole(config, probed):
+    if _may_send_whole(config, probed, duration_verified=duration_verified):
         return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
-    if config.setup_failure_policy != "passthrough" or config.native_long_audio:
+    if config.setup_failure_policy != "passthrough" or config.native_long_audio_offline:
         raise error
     if probed is None:
         reason = "unknown_duration"
@@ -1292,8 +1306,6 @@ async def execute_chunking(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
-        if probed.duration_seconds <= config.chunk_above_seconds:
-            return ChunkingOutcome("passthrough", 0, "below_threshold")
         if cleanup is not None:
             cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         await decode_planning_pcm(
@@ -1308,6 +1320,8 @@ async def execute_chunking(
         if planning_duration <= 0:
             raise SttMediaCommandFailed("STT planning decode holds no audio")
         probed = ProbedAudio(planning_duration, _PLANNING_SAMPLE_RATE, 1)
+        if planning_duration <= config.chunk_above_seconds:
+            return ChunkingOutcome("passthrough", 0, "below_threshold")
         segments = await asyncio.to_thread(
             plan_quietest_frame_segments,
             duration_seconds=planning_duration,
@@ -1327,9 +1341,10 @@ async def execute_chunking(
     ):
         raise
     except SttSetupFailure as error:
-        return _unplanned_outcome(config, probed, error)
+        return _unplanned_outcome(config, probed, error, duration_verified=planning_duration is not None)
     except OSError:
-        return _unplanned_outcome(config, probed, SttSetupFailure("STT planning could not read the decoded audio"))
+        return _unplanned_outcome(config, probed, SttSetupFailure("STT planning could not read the decoded audio"),
+                                  duration_verified=planning_duration is not None)
     finally:
         if cleanup is None:
             _unlink_chunk_path(pcm_path)
@@ -1354,7 +1369,7 @@ async def execute_chunking(
     try:
         run_response_pipeline(response_transforms, {"text": ""})
     except (KeyError, TypeError, ValueError) as error:
-        if _may_send_whole(config, probed):
+        if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
             return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
         raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
@@ -1380,7 +1395,7 @@ async def execute_chunking(
                 # the configured explicit setup policy.  After progress it can
                 # never silently replay the original audio.
                 if attempts_started == 0:
-                    if _may_send_whole(config, probed):
+                    if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
                         return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
                     if config.setup_failure_policy == "passthrough":
                         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds) from error
