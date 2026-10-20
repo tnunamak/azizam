@@ -80,11 +80,11 @@
 # replanning a source-sample tail hidden by resampling, and verification cleanup
 # preserving cancellation, deadline and media failures when unlink also fails.
 # Full hermetic collection on 2026-10-20 measured 15272.
-# D47 cross-vendor review: +16 cases for decode-cap/disk fallback equality,
+# D47 cross-vendor review: +17 cases for decode-cap/disk fallback equality,
 # two-hour stereo admission, early PCM cleanup, staged disk claims, bounded
-# metadata retries, and canonical/retryable voice errors. Full hermetic
-# --collect-only on 2026-10-20 measured 15288.
-pytest = 15288
+# metadata retries, canonical/retryable voice errors, and high-rate WAV normalization. Full hermetic
+# --collect-only on 2026-10-20 measured 15289.
+pytest = 15289
 vitest = 3051
 playwright = 492
 

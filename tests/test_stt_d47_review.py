@@ -29,7 +29,7 @@ async def chunk(source, execution, post, **kwargs):
 def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channels, codec, suffix, constraint):
     source = tmp_path / f"noise.{suffix}"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-        f"anoisesrc=r={rate}:d=4:seed=47", "-ac", str(channels), "-c:a", codec,
+        f"anoisesrc=r={rate}:d=4.003:seed=47", "-ac", str(channels), "-c:a", codec,
         *(["-q:a", "4"] if codec == "libmp3lame" else []), str(source)], check=True)
 
     async def run(limit, limited_disk=False):
