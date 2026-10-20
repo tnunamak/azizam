@@ -120,6 +120,30 @@ provider_fact_catalog:
       evidence_url: https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html
       checked: '2026-10-19'
       confidence: documented
+    # PT-W2 exact quote: “By default, log data is stored in CloudWatch Logs indefinitely.”
+    # PT-W2 exact quote: “Expiration actions – These actions define when objects expire.”
+    - id: bedrock-log-lifetime
+      holds: supported request and response bodies and invocation metadata
+      where: customer CloudWatch Logs destinations
+      how_long: indefinite by default; configured expiry can take 72 additional hours and occasionally longer
+      default: 'off'
+      condition: model invocation logging is enabled for the account and Region
+      reach: people with effective destination IAM, bucket, log-group and encryption permissions
+      control: set the CloudWatch log-group retention; stopping collection does not erase delivered logs
+      evidence_url: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Working-with-log-groups-and-streams.html#SettingLogRetention
+      checked: '2026-10-19'
+      confidence: documented
+    - id: bedrock-object-lifetime
+      holds: supported request and response bodies and invocation metadata
+      where: customer S3 logging destinations
+      how_long: determined by separate object and version lifecycle configuration
+      default: 'off'
+      condition: model invocation logging is enabled for the account and Region
+      reach: people with effective destination IAM, bucket, log-group and encryption permissions
+      control: set S3 object and version lifecycle; stopping collection does not erase delivered objects
+      evidence_url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html
+      checked: '2026-10-19'
+      confidence: documented
   vertex:
     - id: vertex-implicit-cache
       holds: input, output and derived cache state for supported models
@@ -153,6 +177,18 @@ provider_fact_catalog:
       reach: workspace users and anyone allowed by its sharing settings
       control: disable tracing, hide inputs and outputs, and delete existing traces separately
       evidence_url: https://docs.langchain.com/langsmith/annotate-code
+      checked: '2026-10-19'
+      confidence: documented
+    # PT-SM2 exact quote: “Changes apply to new traces only—existing traces keep their original tier.”
+    - id: langsmith-trace-lifetime
+      holds: traced inputs, outputs and metadata
+      where: LangSmith traces
+      how_long: 'new traces from September 14, 2026: base 14 days or extended up to 180 days; existing traces keep their original tier; datasets are indefinite'
+      default: 'off'
+      condition: tracing is enabled or a RunTree is manually posted
+      reach: workspace users and anyone allowed by its sharing settings
+      control: check the trace tier and date, configure retention, and delete trace and dataset copies separately
+      evidence_url: https://docs.langchain.com/langsmith/usage-and-billing#data-retention
       checked: '2026-10-19'
       confidence: documented
 

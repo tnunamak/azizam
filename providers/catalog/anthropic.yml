@@ -34,7 +34,8 @@ retention_facts:
     control: check organization zero data retention terms and model and feature eligibility
     evidence_url: https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data
     checked: '2026-10-19'
-    confidence: documented
+    # PT-A5: complete normal-API staff access was not established.
+    confidence: inferred
   - id: feature-state
     holds: files, batch inputs, container state or cached schemas when used
     where: separate provider feature stores
