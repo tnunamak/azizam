@@ -14040,7 +14040,7 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
             for destination in view["destinations"]:
                 destination["facts"] = grouped.pop(destination["id"], [])
                 saved = saved_destinations.pop(destination["id"], None)
-                for field in ("name", "kind", "address", "reach"):
+                for field in ("name", "kind", "address", "reach", "facts_unavailable"):
                     destination.pop(field, None)
                 if saved:
                     destination.update(saved)
@@ -14058,6 +14058,8 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
                     fact["stale"] = (today - date.fromisoformat(fact["checked"])).days > view["stale_after_days"]
                     fact["stale_label"] = f"This was last checked on {fact['checked']}." if fact["stale"] else None
             view["fact_basis"] = "Facts saved for this request."
+            if any(destination.get("facts_unavailable") for destination in view["destinations"]):
+                view["fact_basis"] += " Some destination facts are unavailable."
         else:
             view["fact_basis"] = "Today's facts. This receipt has no saved fact revisions."
         view["never_save_text"] = retention_facts.assemble_never_save(view)

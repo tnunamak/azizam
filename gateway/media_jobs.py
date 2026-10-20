@@ -1459,6 +1459,10 @@ def prepare_fact_snapshot(destinations: list[Mapping[str, Any]]) -> PreparedFact
                     if key in destination}
         if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
             raise ValueError("invalid retention destination metadata")
+        if "facts_unavailable" in destination:
+            if type(destination["facts_unavailable"]) is not bool:
+                raise ValueError("invalid retention destination availability")
+            metadata["facts_unavailable"] = destination["facts_unavailable"]
         entries.append((destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True), tuple(
             (digest, json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
             for digest, fact in zip(revisions, checked)
@@ -1537,7 +1541,7 @@ def fact_revisions_for_source(
 
 def fact_destinations_for_source(
     source_kind: str, source_id: str, *, path: Path = DB_PATH,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, Any]]:
     """Return the public destination labels and reach captured with a request."""
     if source_kind not in {"receipt", "kept_record"}:
         raise ValueError("invalid fact revision reference")

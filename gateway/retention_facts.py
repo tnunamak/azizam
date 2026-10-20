@@ -176,22 +176,22 @@ def ledger(
     destinations: list[dict[str, Any]] = []
     unavailable = False
 
-    def destination_facts(raw: Any, *, owner: bool) -> list[dict[str, Any]]:
+    def destination_facts(raw: Any, *, owner: bool) -> dict[str, Any]:
         nonlocal unavailable
         try:
-            return _with_status(validate_facts(raw), now=today, stale_after_days=stale_days, owner=owner)
+            return {"facts": _with_status(validate_facts(raw), now=today, stale_after_days=stale_days, owner=owner)}
         except ValueError:
             # Legacy data can predate validation. Keep the other destinations
             # usable without replacing this destination's explicit owner list.
             unavailable = True
-            return []
+            return {"facts": [], "facts_unavailable": True}
 
     for system_id, bundled in contract.get("system_facts", {}).items():
         owner_facts = _owner_facts(overrides, "system", system_id)
         facts = destination_facts(
             owner_facts if owner_facts is not None else bundled["facts"], owner=owner_facts is not None,
         )
-        destinations.append({"id": system_id, "name": bundled["name"], "kind": "system", "facts": facts})
+        destinations.append({"id": system_id, "name": bundled["name"], "kind": "system", **facts})
 
     catalog = _file_data(_ROOT / "registry/engine_definitions.json")
     definitions = {row["definition"]: row for row in catalog["definitions"]}
@@ -227,7 +227,7 @@ def ledger(
         )
         row: dict[str, Any] = {
             "id": target_id, "name": str(service.get("name") or item_id), "kind": target_type,
-            "facts": facts,
+            **facts,
         }
         if address:
             row["address"] = address
@@ -254,6 +254,9 @@ def assemble_never_save(view: Mapping[str, Any]) -> str:
     """Explain remaining copies from the same dated fact rows shown by ledger."""
     lines = ["Never save stops Azizam from intentionally keeping a new request. It cannot erase copies kept by other systems."]
     for destination in view.get("destinations", []):
+        if destination.get("facts_unavailable"):
+            lines.append(f"{destination['name']}: retention facts are unavailable.")
+            continue
         place = f" Azizam reaches it at {destination['address']}" if destination.get("address") else ""
         port_reach = f"; {destination['reach']}" if destination.get("reach") else ""
         for fact in destination.get("facts", []):
