@@ -22,10 +22,10 @@ from tests.test_stt_chunking import _multipart_body
 from tests.test_stt_round4_planner import config
 
 
-def wav(path, seconds, rate=16000):
+def wav(path, seconds, rate=16000, channels=1):
     with wave.open(str(path), "wb") as audio:
-        audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
-        audio.writeframes(b"\0\0" * round(seconds * rate))
+        audio.setparams((channels, 2, rate, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * round(seconds * rate) * channels)
     return path
 
 
@@ -77,6 +77,70 @@ def test_container_duration_does_not_refuse_or_shorten_decodable_audio(tmp_path,
         assert outcome.mode == "chunked"
         assert sum(sent_durations) == pytest.approx(0.6)
         assert max(sent_durations) <= 0.3
+
+    asyncio.run(run())
+
+
+def test_missing_duration_does_not_need_an_unbounded_packet_listing(tmp_path):
+    async def run():
+        source = wav(tmp_path / "input.wav", 0.6)
+        container = tmp_path / "recording.webm"
+        container.write_bytes(subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(source),
+            "-c:a", "libopus", "-f", "webm", "pipe:1"]))
+        metadata = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of", "json", str(container)])
+        assert "duration" not in json.loads(metadata)["format"]
+        post = AsyncMock(return_value=stt.UpstreamResponse(200, b'{"text":"piece"}', {}))
+        outcome = await stt.execute_chunking(source_path=container, source_stem="audio", fields=[],
+            config=config(tmp_path, target_seconds=0.25, threshold_seconds=0.3,
+                          max_segment_seconds=0.3, search_seconds=0.05, max_media_output_bytes=256),
+            post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
+            on_cancel=None)
+        assert outcome.mode == "chunked"
+        assert post.await_count > 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_whole_file_guard_decodes_only_the_known_maximum_plus_one_frame(tmp_path, channels):
+    async def run():
+        source = wav(tmp_path / "long.wav", 3, 48000, channels)
+        observed = []
+        decoder = stt.decode_planning_pcm
+
+        async def decode(*args, **kwargs):
+            await decoder(*args, **kwargs)
+            observed.append(args[1].stat().st_size)
+
+        with patch.object(stt, "decode_planning_pcm", side_effect=decode):
+            with pytest.raises(stt.SttAudioNotSplittable):
+                await stt.guard_uncut_uploads([source], config=config(tmp_path, target_seconds=0.25,
+                    max_segment_seconds=0.3), cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
+        assert observed and 0 < observed[0] <= (round(0.3 * 48000) + 1) * channels * 2
+        assert not list(tmp_path.glob("uncut-*.pcm"))
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("rate,maximum", [(22050, 0.31), (11025, 0.3)])
+def test_fractional_source_sample_limits_remain_cuttable(tmp_path, rate, maximum):
+    async def run():
+        source = wav(tmp_path / "input.wav", 0.9, rate)
+        sent = []
+
+        async def post(path, _filename):
+            with wave.open(str(path)) as audio:
+                sent.append(audio.getnframes() / audio.getframerate())
+            return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
+
+        outcome = await stt.execute_chunking(source_path=source, source_stem="audio", fields=[],
+            config=config(tmp_path, target_seconds=maximum, threshold_seconds=0.4,
+                          max_segment_seconds=maximum, search_seconds=0), post_file=post,
+            cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None)
+        assert outcome.mode == "chunked"
+        assert sent and max(sent) <= maximum
 
     asyncio.run(run())
 
