@@ -306,9 +306,7 @@ backends:
       # concurrent load in the same test.
       threshold_seconds: 180
       target_seconds: 150
-      silence_noise_db: -30dB
-      silence_min_seconds: 0.5
-      silence_search_seconds: 120
+      search_seconds: 2
       max_input_bytes: 536870912
       max_decoded_bytes: 1073741824
       max_duration_seconds: 14400
@@ -439,13 +437,14 @@ backends:
     managed: false
     default_model: nemotron-3.5-asr-streaming-0.6b
     transforms: [{kind: drop-params, phase: response, drop: [timing]}]
-    # Offline mode handles about 120 s per request, so longer audio is cut at silences.
+    # Offline mode handles about 120 s per request, so longer audio is cut at the quietest point near each target.
     # (stream=true uses streaming mode, which has no length limit.)
     chunking:
       enabled: true
       threshold_seconds: 110
       target_seconds: 60
-      silence_search_seconds: 30
+      search_seconds: 2
+      max_segment_seconds: 120
       max_duration_seconds: 3600
       max_segments: 64
       spool_dir: data/stt-spool
@@ -477,12 +476,13 @@ backends:
     managed: false
     default_model: canary-180m-flash
     transforms: [{kind: drop-params, phase: response, drop: [timing]}]
-    # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at silences.
+    # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at the quietest point near each target.
     chunking:
       enabled: true
       threshold_seconds: 200
       target_seconds: 120
-      silence_search_seconds: 40
+      search_seconds: 2
+      max_segment_seconds: 240
       max_duration_seconds: 3600
       max_segments: 64
       spool_dir: data/stt-spool
@@ -512,16 +512,22 @@ backends:
       - audio
       - transcriptions
     managed: false
+    # Declared demand for operator measurement admission (the engine catalog notes 2.3-3.2 GB).
+    resources:
+      gpu_required: true
+      vram_gb_estimate: 3.2
+      gpu: {devices: [0]}
     default_model: parakeet-tdt-0.6b-v3
     transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured on 313 s and 1576 s read speech (WER): 15 s 1.7/3.3%, 20 s 1.5/3.8%, 30 s 1.5/3.3%, 45 s -/3.8%,
     # 60 s 2.0/4.8%, 90 s 2.0/5.4%, 200 s 6.0%; one 313 s request fails outright. Shorter than the 60 s the CPU
-    # service needs: cut at silences into about 30 s pieces.
+    # service needs: cut at the quietest point near each 30 s target, never past 40 s.
     chunking:
       enabled: true
       threshold_seconds: 40
       target_seconds: 30
-      silence_search_seconds: 10
+      search_seconds: 2
+      max_segment_seconds: 40
       max_duration_seconds: 3600
       max_segments: 128
       spool_dir: data/stt-spool

@@ -1,1474 +1,1522 @@
 [
   {
-    "method": "GET",
-    "path": "/admin/api/access-plans",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_access_plans",
+    "method": "GET",
+    "path": "/admin/api/access-plans",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/access-plans",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.admin_api.create_access_plan",
+    "method": "POST",
+    "path": "/admin/api/access-plans",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/access-plans/editor",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.access_plan_editor",
+    "method": "GET",
+    "path": "/admin/api/access-plans/editor",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/access-plans/{plan_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.admin_api.delete_access_plan",
+    "method": "DELETE",
+    "path": "/admin/api/access-plans/{plan_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/access-plans/{plan_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.get_access_plan",
+    "method": "GET",
+    "path": "/admin/api/access-plans/{plan_id}",
     "schema": true
   },
   {
-    "method": "PUT",
-    "path": "/admin/api/access-plans/{plan_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.admin_api.update_access_plan",
+    "method": "PUT",
+    "path": "/admin/api/access-plans/{plan_id}",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/access/check",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.check_access",
+    "method": "POST",
+    "path": "/admin/api/access/check",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/access/preview",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.preview_access",
+    "method": "POST",
+    "path": "/admin/api/access/preview",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/activity/requests",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.activity_api.requests",
+    "method": "GET",
+    "path": "/admin/api/activity/requests",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/admin-keys",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it",
     "handler": "gateway.admin_api.create_admin_key",
+    "method": "POST",
+    "path": "/admin/api/admin-keys",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/apps",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_apps",
+    "method": "GET",
+    "path": "/admin/api/apps",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/apps",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.create_app",
+    "method": "POST",
+    "path": "/admin/api/apps",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/apps/{app_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.disable_app",
+    "method": "DELETE",
+    "path": "/admin/api/apps/{app_id}",
     "schema": true
   },
   {
-    "method": "PATCH",
-    "path": "/admin/api/apps/{app_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_app",
+    "method": "PATCH",
+    "path": "/admin/api/apps/{app_id}",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/apps/{app_id}/enable",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.enable_app",
+    "method": "POST",
+    "path": "/admin/api/apps/{app_id}/enable",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/apps/{app_id}/keys",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.create_key",
+    "method": "POST",
+    "path": "/admin/api/apps/{app_id}/keys",
     "schema": true
   },
   {
-    "method": "PATCH",
-    "path": "/admin/api/apps/{app_id}/keys/{credential_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.rename_key",
+    "method": "PATCH",
+    "path": "/admin/api/apps/{app_id}/keys/{credential_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/apps/{app_id}/trusted-addresses",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_trusted_addresses",
+    "method": "GET",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/apps/{app_id}/trusted-addresses",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address",
     "handler": "gateway.admin_api.add_trusted_address",
+    "method": "POST",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/apps/{app_id}/trusted-addresses/{entry_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.delete_trusted_address",
+    "method": "DELETE",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses/{entry_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/audit",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.audit",
+    "method": "GET",
+    "path": "/admin/api/audit",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/audit-events",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.audit_events",
+    "method": "GET",
+    "path": "/admin/api/audit-events",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/audit/{event_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.audit_event",
+    "method": "GET",
+    "path": "/admin/api/audit/{event_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/categories/active",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_active",
+    "method": "GET",
+    "path": "/admin/api/categories/active",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/categories/candidates",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_create",
+    "method": "POST",
+    "path": "/admin/api/categories/candidates",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/categories/candidates/{revision}/activate",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_activate",
+    "method": "POST",
+    "path": "/admin/api/categories/candidates/{revision}/activate",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/categories/history",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_history",
+    "method": "GET",
+    "path": "/admin/api/categories/history",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/categories/preview-as",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_preview",
+    "method": "POST",
+    "path": "/admin/api/categories/preview-as",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/categories/revisions/{revision}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_revision",
+    "method": "GET",
+    "path": "/admin/api/categories/revisions/{revision}",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/categories/revisions/{revision}/restore",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_restore",
+    "method": "POST",
+    "path": "/admin/api/categories/revisions/{revision}/restore",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/categories/services",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.category_api.categories_services",
+    "method": "GET",
+    "path": "/admin/api/categories/services",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/config/export",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "proxy.admin_config_export",
+    "method": "GET",
+    "path": "/admin/api/config/export",
     "schema": false
   },
   {
-    "method": "POST",
-    "path": "/admin/api/config/reload",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "proxy.admin_config_reload",
+    "method": "POST",
+    "path": "/admin/api/config/reload",
     "schema": false
   },
   {
-    "method": "GET",
-    "path": "/admin/api/credentials",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_credentials",
+    "method": "GET",
+    "path": "/admin/api/credentials",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/credentials/{credential_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.delete_credential",
+    "method": "DELETE",
+    "path": "/admin/api/credentials/{credential_id}",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/credentials/{credential_id}/revoke",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.revoke_credential",
+    "method": "POST",
+    "path": "/admin/api/credentials/{credential_id}/revoke",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/drain",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only",
     "handler": "proxy.admin_drain_status",
+    "method": "GET",
+    "path": "/admin/api/drain",
     "schema": false
   },
   {
-    "method": "POST",
-    "path": "/admin/api/drain",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only",
     "handler": "proxy.admin_drain_set",
+    "method": "POST",
+    "path": "/admin/api/drain",
     "schema": false
   },
   {
-    "method": "GET",
-    "path": "/admin/api/engine-definitions",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.get_engine_definitions",
+    "method": "GET",
+    "path": "/admin/api/engine-definitions",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/engine-protocols",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_protocol_admin.engine_protocols",
+    "method": "GET",
+    "path": "/admin/api/engine-protocols",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/engines/check",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.engine_admin.check_engine",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/engines/test",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.engine_admin.test_engine",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/engines/access",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.engine_access",
+    "method": "POST",
+    "path": "/admin/api/engines/access",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/engines/{service_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.check_engine",
+    "method": "POST",
+    "path": "/admin/api/engines/check",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.test_engine",
+    "method": "POST",
+    "path": "/admin/api/engines/test",
+    "schema": true
+  },
+  {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.get_engine",
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}",
     "schema": true
   },
   {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.options",
     "method": "GET",
-    "path": "/admin/api/extensions",
+    "path": "/admin/api/engines/{service_id}/stt-measurements",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.start",
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.progress",
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.apply",
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/apply",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.cancel",
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.configure",
+    "method": "PATCH",
+    "path": "/admin/api/engines/{service_id}/stt-settings",
+    "schema": true
+  },
+  {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_extension_packages",
+    "method": "GET",
+    "path": "/admin/api/extensions",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/extensions/enable",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.enable_extension_package",
+    "method": "POST",
+    "path": "/admin/api/extensions/enable",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/extensions/validate",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.validate_extension_package",
+    "method": "POST",
+    "path": "/admin/api/extensions/validate",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/extensions/{package_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.remove_extension_package",
+    "method": "DELETE",
+    "path": "/admin/api/extensions/{package_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/invites",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.accounts_api.invites",
+    "method": "GET",
+    "path": "/admin/api/invites",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/invites",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.accounts_api.create_invite",
+    "method": "POST",
+    "path": "/admin/api/invites",
     "schema": true
   },
   {
-    "method": "DELETE",
-    "path": "/admin/api/invites/{link_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.accounts_api.revoke_invite",
+    "method": "DELETE",
+    "path": "/admin/api/invites/{link_id}",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/invites/{link_id}/link",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.accounts_api.copy_invite",
-    "schema": true
-  },
-  {
     "method": "GET",
-    "path": "/admin/api/operator/litellm-config",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.get_litellm_config",
+    "path": "/admin/api/invites/{link_id}/link",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/operator/litellm/keys",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.list_litellm_keys",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/litellm/keys",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.create_litellm_key",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/litellm/keys/delete",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.delete_litellm_keys",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/host-commands",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.admin_api.update_host_commands",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/operator/host-commands",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.get_host_commands",
+    "method": "GET",
+    "path": "/admin/api/operator/host-commands",
     "schema": true
   },
   {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.update_host_commands",
     "method": "PUT",
-    "path": "/admin/api/operator/media-job-admission",
+    "path": "/admin/api/operator/host-commands",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.get_litellm_config",
+    "method": "GET",
+    "path": "/admin/api/operator/litellm-config",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.list_litellm_keys",
+    "method": "GET",
+    "path": "/admin/api/operator/litellm/keys",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.create_litellm_key",
+    "method": "POST",
+    "path": "/admin/api/operator/litellm/keys",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.delete_litellm_keys",
+    "method": "POST",
+    "path": "/admin/api/operator/litellm/keys/delete",
+    "schema": true
+  },
+  {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_media_job_admission_overrides",
+    "method": "PUT",
+    "path": "/admin/api/operator/media-job-admission",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/operator/overrides",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_operator_overrides",
+    "method": "GET",
+    "path": "/admin/api/operator/overrides",
     "schema": true
   },
   {
-    "method": "PUT",
-    "path": "/admin/api/operator/service-availability",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_service_availability_overrides",
+    "method": "PUT",
+    "path": "/admin/api/operator/service-availability",
     "schema": true
   },
   {
-    "method": "GET",
-    "path": "/admin/api/operator/service-registry",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.get_service_registry",
+    "method": "GET",
+    "path": "/admin/api/operator/service-registry",
     "schema": true
   },
   {
-    "method": "PUT",
-    "path": "/admin/api/operator/service-registry",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_service_registry",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.add_service",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services/detect-models",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.detect_service_models",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services/test",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.test_service_connection",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/operator/services/{service_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.remove_service",
-    "schema": true
-  },
-  {
-    "method": "PATCH",
-    "path": "/admin/api/operator/services/{service_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.update_service",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services/{service_id}/enabled",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.set_service_enabled",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/overview",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.overview",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/people",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.people",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/people/{user_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.remove_person",
-    "schema": true
-  },
-  {
-    "method": "PATCH",
-    "path": "/admin/api/people/{user_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.update_person",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/people/{user_id}/reset",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.reset_link",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/providers",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.list_providers",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/providers",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.add_provider",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/providers/-/catalog",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.list_catalog",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/providers/-/global-caps",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.clear_global_caps",
-    "schema": true
-  },
-  {
     "method": "PUT",
-    "path": "/admin/api/providers/-/global-caps",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.set_global_caps",
+    "path": "/admin/api/operator/service-registry",
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/providers/-/test",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.test_unsaved_provider",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/providers/{provider_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.remove_provider",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/providers/{provider_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.get_provider",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/providers/{provider_id}/caps",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.clear_provider_caps",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/providers/{provider_id}/caps",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.set_provider_caps",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/providers/{provider_id}/key",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.delete_provider_key",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/providers/{provider_id}/key",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.set_provider_key",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/providers/{provider_id}/models",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.update_provider_models",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/providers/{provider_id}/reconciliation",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.list_provider_reconciliation",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/providers/{provider_id}/reconciliation/{reservation_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.reconcile_provider_reservation",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/providers/{provider_id}/test",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.provider_admin.test_provider",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/session",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.session",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/defaults",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_defaults",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/settings/defaults",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.put_defaults",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/effective",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_effective",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/effective/export",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.export_effective",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/instance",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_instance",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/settings/instance",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.put_instance",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/prompt-memory",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_prompt_memory",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/settings/prompt-memory",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.put_prompt_memory",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/receipts",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_receipts",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/settings/receipts",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.put_receipts",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/receipts/preview",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.preview_receipts",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/settings/sessions",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_sessions",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/settings/sessions",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.put_sessions",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/setup-dismiss",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.home_api.dismiss_setup",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/setup-evidence",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.home_api.setup_evidence",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/setup-progress",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.home_api.setup_progress",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/signin",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.signin_api.get_snapshot",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/signin",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.save",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/discover",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.discover_route",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/link-owner",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.link_owner",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/notice/dismiss",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.dismiss_notice",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/owner-password",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.owner_password",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/preview",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.preview",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/signin/test",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.start_test",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/signin/test/{test_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.cancel_test",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/signin/test/{test_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.get_test",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/signin/test/{test_id}/start",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.signin_api.begin_test",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/status",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.status_payload",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/users",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.list_users",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/oidc/callback",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.admin_oidc_callback",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/invite",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.inspect",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/invite/accept",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.accept",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/login",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.login",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/auth/api/options",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.get_options",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/reauth",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.reauth",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/password-reset",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.reset",
-    "schema": true
-  },
-  {
-    "method": "POST",
-    "path": "/auth/api/sign-out-everywhere",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.sign_out_everywhere",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/auth/logout-confirm",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.logout_confirmation",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/login",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.browser_login",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/logout",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.admin_logout",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/access-request",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_request_access",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/activity",
-    "auth": "session-view",
-    "gate": "Optional browser session; returns empty unauthenticated activity without cookie",
-    "handler": "proxy.user_portal_activity",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/apps",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_create_app",
-    "schema": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/me/api/apps/{app_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_delete_app",
-    "schema": false
-  },
-  {
-    "method": "PATCH",
-    "path": "/me/api/apps/{app_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_rename_app",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/apps/{app_id}/keys",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_mint_key",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/connection-test",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.home_api.connection_test",
-    "schema": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/me/api/credentials/{credential_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_revoke_key",
-    "schema": false
-  },
-  {
-    "method": "PATCH",
-    "path": "/me/api/credentials/{credential_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_rename_key",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/credentials/{credential_id}/access",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_credential_access",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/credentials/{credential_id}/revoke",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_revoke_key",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/home",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.home_api.home",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/jobs",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.list_jobs",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/jobs/{job_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.job_detail",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/make/jobs",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_make.list_jobs",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/make/jobs",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_make.submit",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/make/jobs/{job_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_make.get_job",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/make/jobs/{job_id}/cancel",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_make.cancel_job",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/mcp/connections",
-    "auth": "session-only",
-    "gate": "Browser session; own connections only",
-    "handler": "gateway.mcp_oauth.connections",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/mcp/connections/{grant_id}/revoke",
-    "auth": "session-only",
-    "gate": "Browser session; own connections only; mutations require CSRF/action header",
-    "handler": "gateway.mcp_oauth.revoke_connection",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/mcp/requests/{request_id}",
-    "auth": "session-only",
-    "gate": "Browser session; same-browser binding cookie",
-    "handler": "gateway.mcp_oauth.consent_details",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/mcp/requests/{request_id}",
-    "auth": "session-only",
-    "gate": "Browser session; same-browser binding cookie; mutations require CSRF/action header",
-    "handler": "gateway.mcp_oauth.consent_decision",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/media",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.list_media",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/media/remove-missing",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.remove_missing_media",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/media/confirm-folder",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.confirm_media_folder",
-    "schema": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/me/api/media/{asset_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.delete_media",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/media/{asset_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.media_detail",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/media/{asset_id}/download",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.media_download",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/models/catalog",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.models_catalog.models_catalog",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/profile/avatar",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_avatar.get_avatar",
-    "schema": false
-  },
-  {
-    "method": "PUT",
-    "path": "/me/api/profile/avatar",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_avatar.put_avatar",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/profile/avatars",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_avatar.list_avatars",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/profile/avatar/picture",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_avatar.get_picture",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/prompt-memory",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_prompt_memory.get_prompt_memory",
-    "schema": false
-  },
-  {
-    "method": "PUT",
-    "path": "/me/api/prompt-memory",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_prompt_memory.put_prompt_memory",
-    "schema": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/me/api/prompt-memory/prompts",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_prompt_memory.delete_prompt_memory",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/receipts/{request_id}",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_receipt_detail",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/session",
-    "auth": "session-view",
-    "gate": "Optional browser session; returns unauthenticated view without cookie",
-    "handler": "proxy.user_portal_session",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/status",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.home_api.member_status",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/api/try-key",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.user_portal_try_key",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/usage/summary",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.usage_summary",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/api/workflows",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.workflows_catalog.workflows_catalog",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/setup/api/state",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.setup_api.setup_state",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/setup/claim",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.setup_claim_admin_key",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/setup/console",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.setup_console",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/setup/first-app",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.setup_create_first_app",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/setup/local-login",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.setup_local_login",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/setup/local-owner",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.setup_create_local_owner",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/status/raw",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.status_dashboard_raw",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/status/raw/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.status_dashboard_raw",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services/{service_id}/secret-entries",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
-    "handler": "gateway.admin_api.change_secret_entries",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.fix_excluded_record",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.remove_excluded_record",
+    "method": "DELETE",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
     "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.fix_excluded_record",
+    "method": "PUT",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.add_service",
+    "method": "POST",
+    "path": "/admin/api/operator/services",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.detect_service_models",
+    "method": "POST",
+    "path": "/admin/api/operator/services/detect-models",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.test_service_connection",
+    "method": "POST",
+    "path": "/admin/api/operator/services/test",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.remove_service",
+    "method": "DELETE",
+    "path": "/admin/api/operator/services/{service_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.update_service",
+    "method": "PATCH",
+    "path": "/admin/api/operator/services/{service_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.set_service_enabled",
+    "method": "POST",
+    "path": "/admin/api/operator/services/{service_id}/enabled",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
+    "handler": "gateway.admin_api.change_secret_entries",
+    "method": "POST",
+    "path": "/admin/api/operator/services/{service_id}/secret-entries",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.overview",
+    "method": "GET",
+    "path": "/admin/api/overview",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.accounts_api.people",
+    "method": "GET",
+    "path": "/admin/api/people",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.accounts_api.remove_person",
+    "method": "DELETE",
+    "path": "/admin/api/people/{user_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.accounts_api.update_person",
+    "method": "PATCH",
+    "path": "/admin/api/people/{user_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.accounts_api.reset_link",
+    "method": "POST",
+    "path": "/admin/api/people/{user_id}/reset",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.list_providers",
+    "method": "GET",
+    "path": "/admin/api/providers",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.add_provider",
+    "method": "POST",
+    "path": "/admin/api/providers",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.list_catalog",
+    "method": "GET",
+    "path": "/admin/api/providers/-/catalog",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.clear_global_caps",
+    "method": "DELETE",
+    "path": "/admin/api/providers/-/global-caps",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.set_global_caps",
+    "method": "PUT",
+    "path": "/admin/api/providers/-/global-caps",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.test_unsaved_provider",
+    "method": "POST",
+    "path": "/admin/api/providers/-/test",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.remove_provider",
+    "method": "DELETE",
+    "path": "/admin/api/providers/{provider_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.get_provider",
+    "method": "GET",
+    "path": "/admin/api/providers/{provider_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.clear_provider_caps",
+    "method": "DELETE",
+    "path": "/admin/api/providers/{provider_id}/caps",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.set_provider_caps",
+    "method": "PUT",
+    "path": "/admin/api/providers/{provider_id}/caps",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.delete_provider_key",
+    "method": "DELETE",
+    "path": "/admin/api/providers/{provider_id}/key",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.set_provider_key",
+    "method": "PUT",
+    "path": "/admin/api/providers/{provider_id}/key",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.update_provider_models",
+    "method": "PUT",
+    "path": "/admin/api/providers/{provider_id}/models",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.list_provider_reconciliation",
+    "method": "GET",
+    "path": "/admin/api/providers/{provider_id}/reconciliation",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.reconcile_provider_reservation",
+    "method": "POST",
+    "path": "/admin/api/providers/{provider_id}/reconciliation/{reservation_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.provider_admin.test_provider",
+    "method": "POST",
+    "path": "/admin/api/providers/{provider_id}/test",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.session",
+    "method": "GET",
+    "path": "/admin/api/session",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_defaults",
+    "method": "GET",
+    "path": "/admin/api/settings/defaults",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_defaults",
+    "method": "PUT",
+    "path": "/admin/api/settings/defaults",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_effective",
+    "method": "GET",
+    "path": "/admin/api/settings/effective",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.export_effective",
+    "method": "GET",
+    "path": "/admin/api/settings/effective/export",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_instance",
+    "method": "GET",
+    "path": "/admin/api/settings/instance",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_instance",
+    "method": "PUT",
+    "path": "/admin/api/settings/instance",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_prompt_memory",
+    "method": "GET",
+    "path": "/admin/api/settings/prompt-memory",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_prompt_memory",
+    "method": "PUT",
+    "path": "/admin/api/settings/prompt-memory",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_receipts",
+    "method": "GET",
+    "path": "/admin/api/settings/receipts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_receipts",
+    "method": "PUT",
+    "path": "/admin/api/settings/receipts",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.preview_receipts",
+    "method": "GET",
+    "path": "/admin/api/settings/receipts/preview",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_sessions",
+    "method": "GET",
+    "path": "/admin/api/settings/sessions",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_sessions",
+    "method": "PUT",
+    "path": "/admin/api/settings/sessions",
+    "schema": true
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.home_api.dismiss_setup",
+    "method": "POST",
+    "path": "/admin/api/setup-dismiss",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.home_api.setup_evidence",
+    "method": "POST",
+    "path": "/admin/api/setup-evidence",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.home_api.setup_progress",
+    "method": "GET",
+    "path": "/admin/api/setup-progress",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.signin_api.get_snapshot",
+    "method": "GET",
+    "path": "/admin/api/signin",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.save",
+    "method": "PUT",
+    "path": "/admin/api/signin",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.discover_route",
+    "method": "POST",
+    "path": "/admin/api/signin/discover",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.link_owner",
+    "method": "POST",
+    "path": "/admin/api/signin/link-owner",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.dismiss_notice",
+    "method": "POST",
+    "path": "/admin/api/signin/notice/dismiss",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.owner_password",
+    "method": "POST",
+    "path": "/admin/api/signin/owner-password",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.preview",
+    "method": "POST",
+    "path": "/admin/api/signin/preview",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.start_test",
+    "method": "POST",
+    "path": "/admin/api/signin/test",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.cancel_test",
+    "method": "DELETE",
+    "path": "/admin/api/signin/test/{test_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.get_test",
+    "method": "GET",
+    "path": "/admin/api/signin/test/{test_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.begin_test",
+    "method": "GET",
+    "path": "/admin/api/signin/test/{test_id}/start",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.status_payload",
+    "method": "GET",
+    "path": "/admin/api/status",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.list_users",
+    "method": "GET",
+    "path": "/admin/api/users",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.admin_oidc_callback",
+    "method": "GET",
+    "path": "/admin/oidc/callback",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.inspect",
+    "method": "POST",
+    "path": "/auth/api/invite",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.accept",
+    "method": "POST",
+    "path": "/auth/api/invite/accept",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.login",
+    "method": "POST",
+    "path": "/auth/api/login",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.get_options",
+    "method": "GET",
+    "path": "/auth/api/options",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.reset",
+    "method": "POST",
+    "path": "/auth/api/password-reset",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.reauth",
+    "method": "POST",
+    "path": "/auth/api/reauth",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.sign_out_everywhere",
+    "method": "POST",
+    "path": "/auth/api/sign-out-everywhere",
+    "schema": true
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.logout_confirmation",
+    "method": "GET",
+    "path": "/auth/logout-confirm",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.browser_login",
+    "method": "GET",
+    "path": "/login",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.admin_logout",
+    "method": "POST",
+    "path": "/logout",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_request_access",
+    "method": "POST",
+    "path": "/me/api/access-request",
+    "schema": false
+  },
+  {
+    "auth": "session-view",
+    "gate": "Optional browser session; returns empty unauthenticated activity without cookie",
+    "handler": "proxy.user_portal_activity",
+    "method": "GET",
+    "path": "/me/api/activity",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_create_app",
+    "method": "POST",
+    "path": "/me/api/apps",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_delete_app",
+    "method": "DELETE",
+    "path": "/me/api/apps/{app_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_rename_app",
+    "method": "PATCH",
+    "path": "/me/api/apps/{app_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_mint_key",
+    "method": "POST",
+    "path": "/me/api/apps/{app_id}/keys",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.home_api.connection_test",
+    "method": "POST",
+    "path": "/me/api/connection-test",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_revoke_key",
+    "method": "DELETE",
+    "path": "/me/api/credentials/{credential_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_rename_key",
+    "method": "PATCH",
+    "path": "/me/api/credentials/{credential_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_credential_access",
+    "method": "GET",
+    "path": "/me/api/credentials/{credential_id}/access",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_revoke_key",
+    "method": "POST",
+    "path": "/me/api/credentials/{credential_id}/revoke",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.home_api.home",
+    "method": "GET",
+    "path": "/me/api/home",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.list_jobs",
+    "method": "GET",
+    "path": "/me/api/jobs",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.job_detail",
+    "method": "GET",
+    "path": "/me/api/jobs/{job_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_make.list_jobs",
+    "method": "GET",
+    "path": "/me/api/make/jobs",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_make.submit",
+    "method": "POST",
+    "path": "/me/api/make/jobs",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_make.get_job",
+    "method": "GET",
+    "path": "/me/api/make/jobs/{job_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_make.cancel_job",
+    "method": "POST",
+    "path": "/me/api/make/jobs/{job_id}/cancel",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; own connections only",
+    "handler": "gateway.mcp_oauth.connections",
+    "method": "GET",
+    "path": "/me/api/mcp/connections",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; own connections only; mutations require CSRF/action header",
+    "handler": "gateway.mcp_oauth.revoke_connection",
+    "method": "POST",
+    "path": "/me/api/mcp/connections/{grant_id}/revoke",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; same-browser binding cookie",
+    "handler": "gateway.mcp_oauth.consent_details",
+    "method": "GET",
+    "path": "/me/api/mcp/requests/{request_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; same-browser binding cookie; mutations require CSRF/action header",
+    "handler": "gateway.mcp_oauth.consent_decision",
+    "method": "POST",
+    "path": "/me/api/mcp/requests/{request_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.list_media",
+    "method": "GET",
+    "path": "/me/api/media",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.confirm_media_folder",
+    "method": "POST",
+    "path": "/me/api/media/confirm-folder",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.remove_missing_media",
+    "method": "POST",
+    "path": "/me/api/media/remove-missing",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.delete_media",
+    "method": "DELETE",
+    "path": "/me/api/media/{asset_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.media_detail",
+    "method": "GET",
+    "path": "/me/api/media/{asset_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.media_download",
+    "method": "GET",
+    "path": "/me/api/media/{asset_id}/download",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.models_catalog.models_catalog",
+    "method": "GET",
+    "path": "/me/api/models/catalog",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_avatar",
+    "method": "GET",
+    "path": "/me/api/profile/avatar",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.put_avatar",
+    "method": "PUT",
+    "path": "/me/api/profile/avatar",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_picture",
+    "method": "GET",
+    "path": "/me/api/profile/avatar/picture",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.list_avatars",
+    "method": "GET",
+    "path": "/me/api/profile/avatars",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_prompt_memory.get_prompt_memory",
+    "method": "GET",
+    "path": "/me/api/prompt-memory",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_prompt_memory.put_prompt_memory",
+    "method": "PUT",
+    "path": "/me/api/prompt-memory",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_prompt_memory.delete_prompt_memory",
+    "method": "DELETE",
+    "path": "/me/api/prompt-memory/prompts",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_receipt_detail",
+    "method": "GET",
+    "path": "/me/api/receipts/{request_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-view",
+    "gate": "Optional browser session; returns unauthenticated view without cookie",
+    "handler": "proxy.user_portal_session",
+    "method": "GET",
+    "path": "/me/api/session",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.home_api.member_status",
+    "method": "GET",
+    "path": "/me/api/status",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_try_key",
+    "method": "POST",
+    "path": "/me/api/try-key",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.usage_summary",
+    "method": "GET",
+    "path": "/me/api/usage/summary",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.workflows_catalog.workflows_catalog",
+    "method": "GET",
+    "path": "/me/api/workflows",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.setup_api.setup_state",
+    "method": "GET",
+    "path": "/setup/api/state",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.setup_claim_admin_key",
+    "method": "POST",
+    "path": "/setup/claim",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.setup_console",
+    "method": "GET",
+    "path": "/setup/console",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.setup_create_first_app",
+    "method": "POST",
+    "path": "/setup/first-app",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.setup_local_login",
+    "method": "POST",
+    "path": "/setup/local-login",
+    "schema": false
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "proxy.setup_create_local_owner",
+    "method": "POST",
+    "path": "/setup/local-owner",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "proxy.status_dashboard_raw",
+    "method": "GET",
+    "path": "/status/raw",
+    "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "proxy.status_dashboard_raw",
+    "method": "GET",
+    "path": "/status/raw/",
+    "schema": false
   }
 ]

@@ -186,6 +186,12 @@ def test_member_probe_detects_role_bypass_behind_action_guard(principals, gatewa
             test_every_owner_route_rejects_app_and_member_without_effects(row, principals, gateway_test_state_dir)
 
 
+def test_headless_snapshots_have_stable_key_order():
+    for name in ("headless_openapi.json", "headless_routes.json"):
+        snapshot = (FIXTURES / name).read_text()
+        assert snapshot == json.dumps(json.loads(snapshot), indent=2, sort_keys=True) + "\n"
+
+
 def test_openapi_snapshot_and_security():
     proxy.app.openapi_schema = None
     schema = proxy.app.openapi()

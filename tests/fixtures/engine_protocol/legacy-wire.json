@@ -1052,10 +1052,8 @@
         "max_sample_rate": 48000,
         "max_segments": 16,
         "min_free_bytes": 67108864,
+        "search_seconds": 2,
         "setup_failure_policy": "passthrough",
-        "silence_min_seconds": 0.5,
-        "silence_noise_db": "-30dB",
-        "silence_search_seconds": 120,
         "spool_dir": "data/stt-spool",
         "target_seconds": 150,
         "threshold_seconds": 180
@@ -1098,8 +1096,9 @@
         "deadline_seconds": 360,
         "enabled": true,
         "max_duration_seconds": 3600,
+        "max_segment_seconds": 240,
         "max_segments": 64,
-        "silence_search_seconds": 40,
+        "search_seconds": 2,
         "spool_dir": "data/stt-spool",
         "target_seconds": 120,
         "threshold_seconds": 200
@@ -1199,8 +1198,9 @@
         "deadline_seconds": 360,
         "enabled": true,
         "max_duration_seconds": 3600,
+        "max_segment_seconds": 120,
         "max_segments": 64,
-        "silence_search_seconds": 30,
+        "search_seconds": 2,
         "spool_dir": "data/stt-spool",
         "target_seconds": 60,
         "threshold_seconds": 110
@@ -1251,8 +1251,9 @@
         "deadline_seconds": 360,
         "enabled": true,
         "max_duration_seconds": 3600,
+        "max_segment_seconds": 40,
         "max_segments": 128,
-        "silence_search_seconds": 10,
+        "search_seconds": 2,
         "spool_dir": "data/stt-spool",
         "target_seconds": 30,
         "threshold_seconds": 40
@@ -1281,6 +1282,15 @@
       "note": "On-demand audio.cpp Parakeet TDT 0.6B v3 (q8) on GPU0: CPU-Parakeet accuracy at 5-9x the speed; weights unload after 5 min idle; started by the gateway lifecycle driver.",
       "port": 8017,
       "priority": 200,
+      "resources": {
+        "gpu": {
+          "devices": [
+            0
+          ]
+        },
+        "gpu_required": true,
+        "vram_gb_estimate": 3.2
+      },
       "role": "standby",
       "timeout": 120,
       "transforms": [

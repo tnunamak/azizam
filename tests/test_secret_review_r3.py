@@ -592,7 +592,7 @@ from pathlib import Path  # noqa: E402
 from gateway import extension_packages, record_integrity  # noqa: E402
 from gateway.admin_api import AdminContext  # noqa: E402
 from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
-from tests.test_secret_externalize import FIXTURE, _v10_database  # noqa: E402
+from tests.test_secret_externalize import FIXTURE, _schema15_expected_registry, _v10_database  # noqa: E402
 
 PACKAGE_PROVENANCE = {"package_id": "pk", "package_hash": "h1", "package_version": "1"}
 
@@ -619,12 +619,12 @@ def _package(path: Path) -> dict:
 def test_a_live_shaped_registry_keeps_its_records_and_gets_keyed_proofs_that_still_tell_changed_from_unchanged(tmp_path):
     path = tmp_path / "admin.db"
     registry, unchanged, changed = _live_shaped_package_database(path)
-    before = json.dumps(registry)
+    expected_registry = json.dumps(_schema15_expected_registry(registry))
 
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == before, "the registry is not touched"
+        assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == expected_registry, "only the schema 15 D47 defaults change"
         audit = conn.execute("SELECT metadata_json FROM audit_events WHERE action='operator.secrets.externalize'").fetchall()
     assert [json.loads(row[0]) for row in audit] == [{"package_proofs": 1}]
     package = _package(path)
@@ -632,7 +632,7 @@ def test_a_live_shaped_registry_keeps_its_records_and_gets_keyed_proofs_that_sti
     entries = package["installed_records"]["services"]
     assert all("sha256" not in entry and set(entry) == {"kind", "id", "mac"} for entry in entries.values())
     key = record_integrity.install_key(path)
-    stored = json.loads(before)["services"]
+    stored = registry["services"]
     assert entries[unchanged]["mac"] and extension_packages._matches_install(stored[unchanged], entries[unchanged], package, None, key)
     assert entries[changed]["mac"] is None and not extension_packages._matches_install(stored[changed], entries[changed], package, None, key)
 

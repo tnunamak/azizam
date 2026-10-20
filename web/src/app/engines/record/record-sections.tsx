@@ -4,7 +4,64 @@
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { ApiError } from "@/lib/api";
-import type { EngineView } from "@/lib/engines-api";
+import type { EngineView, SttChunking } from "@/lib/engines-api";
+
+const CHUNKING_ROWS: { key: string; label: string; unit?: string }[] = [
+  { key: "cut_files_longer_than_seconds", label: "Cuts recordings longer than", unit: "s" },
+  { key: "target_seconds", label: "Distance between cuts", unit: "s" },
+  { key: "search_seconds", label: "Looks for the quietest moment within", unit: "s" },
+  { key: "max_segment_seconds", label: "Longest piece sent to the engine", unit: "s" },
+];
+const SAVED_KEY: Record<string, string> = { cut_files_longer_than_seconds: "threshold_seconds" };
+
+/** How long recordings are cut for a transcription engine. Read-only; the values are saved in the engine's `chunking` settings. */
+export function LongAudioSection({ chunking }: { chunking: SttChunking | null | undefined }) {
+  if (!chunking) return null;
+  return (
+    <section aria-labelledby="engine-long-audio" className="flex flex-col gap-2">
+      <h2 id="engine-long-audio" className="text-heading scroll-mt-20">Long recordings</h2>
+      <div className="bg-card rounded-panel flex flex-col gap-2 border p-4">
+        {"invalid" in chunking ? (
+          <p className="text-meta text-muted-foreground">These settings are not valid: {chunking.invalid}</p>
+        ) : (
+          <>
+            <p className="text-meta text-muted-foreground">
+              {chunking.enabled
+                ? "A recording longer than the engine takes is cut at the quietest moment near each target. Pieces do not overlap."
+                : "Azizam does not cut recordings for this engine. It refuses audio over the hard maximum unless the engine is marked as taking long recordings whole."}
+            </p>
+            {chunking.enabled && (
+              <dl className="text-body grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
+                {CHUNKING_ROWS.map(({ key, label, unit }) => (
+                  <div key={key} className="contents">
+                    <dt>{label}</dt>
+                    <dd>
+                      {String((chunking as unknown as Record<string, number>)[key])} {unit}
+                      {chunking.from_bundled_defaults.includes(SAVED_KEY[key] ?? key) && (
+                        <span className="text-meta text-muted-foreground"> (default, not saved on this engine)</span>
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            <dl className="text-body grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
+              <div className="contents">
+                <dt>Takes long offline recordings whole</dt>
+                <dd>{chunking.native_long_audio_offline ? "Yes" : "No"}</dd>
+              </div>
+              <div className="contents">
+                <dt>Takes long streaming recordings whole</dt>
+                <dd>{chunking.native_long_audio_streaming ? "Yes" : "No"}</dd>
+              </div>
+            </dl>
+            <p className="text-meta text-muted-foreground">{chunking.note}</p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
 
 /**
  * What the gateway saved, for troubleshooting. It holds the keys Azizam stores

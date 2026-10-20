@@ -13,12 +13,13 @@ from starlette.requests import Request
 
 from gateway import stt_chunking
 from test_stt_chunking import _config
+from tests.support.stt_pcm import pcm_bytes
 
 
 class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
     async def test_extraction_failure_policy_depends_on_started_attempts(self):
         # Only the process boundary is faked: a scripted ffprobe/ffmpeg whose
-        # N-th segment extraction exits non-zero.  Probe, silence parsing,
+        # N-th segment extraction exits non-zero.  Probe, the quiet-place search,
         # planning and extraction run for real.
         class Pipe:
             def __init__(self, data):
@@ -46,7 +47,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                         root = Path(temp_dir)
                         source = root / "source.wav"
                         source.write_bytes(b"original-audio")
-                        config = _config(root, setup_failure_policy=policy)
+                        config = _config(root, setup_failure_policy=policy, max_segment_seconds=100)
                         extracted = []
                         durations = {}
                         posted = []
@@ -64,13 +65,9 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                                     ],
                                 }
                                 return Process(json.dumps(payload).encode())
-                            if "silencedetect" in " ".join(args):
-                                return Process(stderr=(
-                                    b"[silencedetect @ 0x1] silence_start: 19.5\n"
-                                    b"[silencedetect @ 0x1] silence_end: 20.5 | silence_duration: 1\n"
-                                    b"[silencedetect @ 0x1] silence_start: 39.5\n"
-                                    b"[silencedetect @ 0x1] silence_end: 40.5 | silence_duration: 1\n"
-                                ))
+                            if "s16le" in args:
+                                target.write_bytes(pcm_bytes(75, [20.0, 40.0]))
+                                return Process()
                             extracted.append(target.name)
                             if len(extracted) - 1 == failure_index:
                                 return Process(returncode=1)

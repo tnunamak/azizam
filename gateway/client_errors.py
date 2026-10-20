@@ -138,8 +138,8 @@ GATEWAY_CODES = frozenset({
     "invalid_gateway_extensions", "invalid_instance", "invalid_mask_dimensions", "invalid_native_path", "invalid_prompt_memory",
     "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
     "invalid_shots", "invalid_source", "invalid_stt_chunk_response", "invalid_stt_stream_response", "invalid_workflow_extension",
-    "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
-    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_payload_capacity", "method_not_allowed",
+    "generation_mismatch", "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
+    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_payload_capacity", "measurement_engine_offline", "method_not_allowed",
     "missing_file", "missing_required_image", "model_policy_schema_unavailable", "model_switch_deferred", "native_ambiguous_path",
     "native_credential_origin_mismatch", "native_credential_unavailable", "native_destination_blocked", "native_not_allowed",
     "native_not_enabled", "native_owner_only", "native_remote_forbidden", "native_request_too_large", "no_access",
@@ -150,7 +150,7 @@ GATEWAY_CODES = frozenset({
     "provider_passthrough_error", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable", "reconnect_required",
     "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "same_face", "secret_needed",
     "selection_unavailable", "settings_conflict", "settings_revision_required", "shots_seconds_mismatch",
-    "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",
+    "stt_audio_cannot_be_split", "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",
     "stt_cleanup_failed", "stt_configuration_invalid", "stt_media_setup_failed", "stt_proxy_error", "stt_request_deadline",
     "stt_request_timeout", "stt_resource_limit", "stt_response_limit", "stt_upload_limit", "test_required", "too_many_images",
     "tts_backend_error", "unauthorized", "unsupported_audio_translation", "unsupported_media_job_content",
@@ -328,6 +328,32 @@ def client_error(
     message = f"{subject}: {text}" if subject else text
     error = {"message": message, "type": error_type or _default_type(status), "param": param, "code": code}
     return _response(status, error, request_id, headers)
+
+
+_STT_SPLIT_REASONS = {
+    "unknown_duration": (422, "its duration could not be determined"),
+    "split_failed": (502, "could not be cut by the gateway"),
+    "unsupported_request": (422, "uses request options that cannot be preserved across pieces"),
+}
+
+
+def stt_audio_cannot_be_split(reason: str, limit_seconds: float) -> Response:
+    """A plain refusal built from the validated service limit and a fixed local reason, never media-tool text."""
+    status, why = _STT_SPLIT_REASONS[reason]
+    if not math.isfinite(limit_seconds) or limit_seconds <= 0:
+        raise ValueError("The STT hard maximum must be finite and positive")
+    if reason == "unknown_duration":
+        message = (f"The gateway could not determine this audio's duration, so it could not verify the recorded or "
+                   f"measured {limit_seconds:g}-second maximum. The audio was not sent to the transcription engine.")
+    else:
+        message = (f"This audio exceeds the recorded or measured {limit_seconds:g}-second maximum and {why}, "
+                   f"so the gateway did not send it whole.")
+    return _response(status, {
+        "message": message,
+        "type": "api_error" if status >= 500 else "invalid_request_error",
+        "param": None,
+        "code": "stt_audio_cannot_be_split",
+    }, None, None)
 
 
 def upstream_error_response(

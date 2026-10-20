@@ -49,7 +49,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -70,6 +70,9 @@ _URL_BINDING_VERSION = 13
 # Schema 14 moves operator setting ``prompt_memory`` to ``retention`` (gateway.retention_migration). An older gateway
 # refuses a database at this version, so it cannot read the household policy as if it were unset.
 _RETENTION_KEY_VERSION = 14
+# Schema 15 adds mode-specific long-audio defaults to matching transcription records
+# (gateway.stt_chunking_upgrade; the rules are registry/stt_chunking_upgrades.yml).
+_STT_CHUNKING_VERSION = 15
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -527,6 +530,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import url_binding_migration
 
         url_binding_migration.migrate_registry(conn)
+    if row is not None and int(row[0]) < _STT_CHUNKING_VERSION:
+        from gateway import stt_chunking_upgrade
+
+        stt_chunking_upgrade.migrate_registry(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()

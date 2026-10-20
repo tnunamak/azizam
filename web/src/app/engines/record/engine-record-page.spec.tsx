@@ -3,6 +3,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { enginesApi, type EngineView } from "@/lib/engines-api";
 import { api, ApiError } from "@/lib/api";
+import * as apiModule from "@/lib/api";
 import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
 import { clockTime } from "../add-engine/draft";
@@ -574,4 +575,17 @@ describe("a locked engine", () => {
     expect(screen.getByLabelText("Address")).toBeDisabled();
     expect(screen.getByLabelText("Name")).toBeEnabled();
   });
+});
+
+
+it("shows one editable owner view for raw transcription capabilities", async () => {
+  vi.spyOn(apiModule, "adminFetch").mockResolvedValue({
+    revision: '\"os-1\"', settings: { target_seconds: 30, search_seconds: 0, max_segment_seconds: 40, native_long_audio_offline: false, native_long_audio_streaming: false },
+    policy: { sample_ids: [], lengths: [20, 40], search_widths: [0, 2], deadline_seconds: 600, max_download_bytes: 1024 },
+    samples: [], job: null, commands: {},
+  });
+  mount({ capabilities: ["transcriptions"], record: { ...engineView().record, capabilities: ["audio", "transcriptions"] } });
+  expect(await screen.findByLabelText("Distance between cuts (seconds)")).toBeVisible();
+  expect(screen.getAllByRole("heading", { name: "Long-audio settings" })).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: "Long recordings" })).toBeNull();
 });

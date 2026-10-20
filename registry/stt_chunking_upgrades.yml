@@ -1,0 +1,56 @@
+# One-time upgrades of stored transcription records from the silence-based cut planner (before D47).
+#
+# A record is upgraded only when every key under `when` equals its stored `chunking` value; nothing else changes.
+# `set` adds the listed keys when the record has none of its own; `drop` removes keys the planner no longer reads.
+# A record that does not match keeps its stored values (the dropped keys stay inert) and the engine page shows the
+# numbers in force.
+upgrades:
+  - note: >-
+      The seeded GPU transcription record as 915dc190 shipped it: 30 s target, 10 s silence search, 40 s threshold.
+      Checked on public speech (stt-seam-eval, 2026-10-19): the 40 s maximum is a safety bound, while the
+      piece-length sweep found no clear deletion rise through 60 s. The quality difference remains unproven.
+    service_id: stt-parakeet-gpu
+    when: {enabled: true, target_seconds: 30, threshold_seconds: 40, silence_search_seconds: 10}
+    allowed: {silence_noise_db: [null, "-30dB"], silence_min_seconds: [null, 0.5]}
+    absent: [search_seconds, max_segment_seconds, native_long_audio_offline, native_long_audio_streaming]
+    set: {search_seconds: 2, max_segment_seconds: 40}
+    drop: [silence_search_seconds, silence_noise_db, silence_min_seconds]
+  - note: >-
+      Default-only allowance for long offline recordings on the seeded diarization service. It applies only while
+      its safety and lifecycle budgets still match the shipped record; operators who changed those values keep
+      their choice.
+    service_id: stt-diarize
+    when: {enabled: false, backend_timeout_seconds: 1800, deadline_seconds: 2400, max_duration_seconds: 14400,
+           max_field_bytes: 8388608}
+    allowed: {spool_dir: [null, data/stt-spool]}
+    absent: [native_long_audio_offline, native_long_audio_streaming]
+    set: {native_long_audio_offline: true, native_long_audio_streaming: false}
+  - note: >-
+      Default-only allowance for streaming on the seeded streaming transcription service. It applies only while
+      its cut and request budgets still match the shipped record; operators who changed those values keep their choice.
+    service_id: stt-nemotron
+    when: {enabled: true, target_seconds: 60, threshold_seconds: 110, silence_search_seconds: 30, max_segments: 64,
+           max_duration_seconds: 3600, backend_timeout_seconds: 180, deadline_seconds: 360}
+    allowed: {spool_dir: [null, data/stt-spool]}
+    absent: [native_long_audio_offline, native_long_audio_streaming]
+    set: {native_long_audio_offline: false, native_long_audio_streaming: true}
+  - note: Remove only the unused search value seeded on the default CPU transcription record.
+    service_id: stt
+    when: {silence_search_seconds: 120}
+    drop: [silence_search_seconds]
+  - note: Remove the unused noise value only while it still holds the seeded value.
+    service_id: stt
+    when: {silence_noise_db: "-30dB"}
+    drop: [silence_noise_db]
+  - note: Remove the unused minimum-silence value only while it still holds the seeded value.
+    service_id: stt
+    when: {silence_min_seconds: 0.5}
+    drop: [silence_min_seconds]
+  - note: Remove only the unused search value seeded on the alternate CPU transcription record.
+    service_id: stt-canary
+    when: {silence_search_seconds: 40}
+    drop: [silence_search_seconds]
+  - note: Remove only the unused search value seeded on the streaming transcription record.
+    service_id: stt-nemotron
+    when: {silence_search_seconds: 30}
+    drop: [silence_search_seconds]

@@ -57,7 +57,15 @@ OWNER_EXPORT_ROUTES = frozenset({"/admin/api/config/export"})
 
 def _seed_registry(gateway) -> None:
     """Plant every canary: records moved into the store, left-out records written raw, a package source."""
-    canary.seed_direct(gateway)
+    registry = canary.seed_direct(gateway)
+    # The long-audio options route is a real success path for a transcription
+    # engine. Keep the other canary carriers intact while making engine-a fit.
+    registry["services"]["engine-a"]["capabilities"].append("transcriptions")
+    current = admin_store.get_service_registry_with_generation(path=gateway.path)
+    admin_store.write_service_registry_with_audit(
+        registry, expected_generation=int(current["operator_settings_generation"]), updated_by="test",
+        audit_action="test", audit_actor_kind=None, audit_actor_id=None, audit_actor_label=None,
+        audit_target_kind=None, audit_target_id=None, path=gateway.path)
 
 
 parameters: dict[str, str] = dict(PARAMETERS)
@@ -207,9 +215,10 @@ def test_no_admin_or_me_get_route_returns_a_canary_and_each_record_route_answere
     assert not stale, f"routes now answered with a success; drop them from NO_SUCCESS_FIXTURE: {stale}"
 
 
-# Management GET routes whose success needs a resource the sweep does not seed, each with the reason. Phase 2 seeds them.
+# Management GET routes whose success needs a resource the sweep does not seed, each with the reason.
 NO_SUCCESS_FIXTURE: dict[str, str] = {
     "/admin/api/operator/litellm/keys": "asks the LiteLLM sidecar, which does not run in a test; phase 2 gives it a fake sidecar",
+    "/admin/api/engines/{service_id}/stt-measurements/{job_id}": "the sweep does not seed a durable measurement job; owner job reads are covered by tests/test_stt_measurement.py",
 }
 
 

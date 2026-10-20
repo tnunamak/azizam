@@ -490,5 +490,29 @@
   "GET /admin/api/engine-protocols": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/engines/{service_id}/stt-measurements": {
+    "tag": "long-audio measurement",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "POST /admin/api/engines/{service_id}/stt-measurements": {
+    "tag": "long-audio measurement",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "GET /admin/api/engines/{service_id}/stt-measurements/{job_id}": {
+    "tag": "long-audio measurement",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel": {
+    "tag": "long-audio measurement",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/apply": {
+    "tag": "long-audio measurement",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
+  },
+  "PATCH /admin/api/engines/{service_id}/stt-settings": {
+    "tag": "long-audio settings",
+    "gate": "AdminAuthenticator / _require_admin; owner role required"
   }
 }

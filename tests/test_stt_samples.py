@@ -1,0 +1,412 @@
+"""gateway/stt_samples.py: the sample manifest, the checked download cache and the three word recipes.
+
+No network: every download goes through ``HandlerTransport``. The recipe inputs are miniature AMI, ICSI and
+Earnings-21 files written here; the audio is a 1-second WAV made with the wave module.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import io
+import shutil
+import wave
+import zipfile
+from pathlib import Path
+
+import httpx
+import pytest
+import yaml
+
+from gateway import stt_samples
+from gateway.stt_samples import SampleCancelled, SampleError
+from tests.support.fake_upstream import HandlerTransport
+
+HAVE_FFMPEG = shutil.which("ffmpeg") is not None
+needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg converts the sample audio")
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _source(name: str, data: bytes, url: str | None = None) -> dict:
+    return {"name": name, "url": url or f"https://samples.test/{name}", "sha256": _sha(data), "bytes": len(data)}
+
+
+def _sample(sources: list[dict], kind: str = "earnings21", params: dict | None = None, **extra) -> dict:
+    sample = {
+        "id": "call-1",
+        "corpus": "tiny",
+        "title": "A tiny call",
+        "licence": {"name": "CC BY 4.0", "url": "https://creativecommons.org/licenses/by/4.0/",
+                    "attribution": "Test", "note": "Synthetic."},
+        "duration_seconds": 1.0,
+        "speakers": 2,
+        "timing": "segment-interpolated",
+        "sources": sources,
+        "recipe": {"kind": kind, "params": params or {"audio": "audio", "transcript": "transcript",
+                                                       "segments": "segments"}},
+    }
+    sample.update(extra)
+    return sample
+
+
+def _write_manifest(tmp_path: Path, samples: list[dict]) -> Path:
+    path = tmp_path / "samples.yml"
+    path.write_text(yaml.safe_dump({"samples": samples}))
+    return path
+
+
+def _one(tmp_path: Path, sample: dict) -> stt_samples.SampleSpec:
+    return stt_samples.load_manifest(_write_manifest(tmp_path, [sample]))[0]
+
+
+def _wav_bytes(seconds: float = 1.0, rate: int = 22050, channels: int = 2) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x01" * channels * int(seconds * rate))
+    return buf.getvalue()
+
+
+def _zip_bytes(members: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, text in members.items():
+            zf.writestr(name, text)
+    return buf.getvalue()
+
+
+class _Server:
+    """Serves fixed bodies by URL path and counts the requests."""
+
+    def __init__(self, bodies: dict[str, bytes], status: int = 200, chunked: bool = False) -> None:
+        self.bodies, self.status, self.chunked, self.calls = bodies, status, chunked, []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.path)
+        body = self.bodies.get(request.url.path.lstrip("/"), b"")
+        if self.chunked:
+            return httpx.Response(self.status, content=iter([body[i:i + 7] for i in range(0, len(body), 7)]))
+        return httpx.Response(self.status, content=body)
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(transport=HandlerTransport(self.handler))
+
+
+# --- manifest -----------------------------------------------------------------------------------------------------
+
+
+def test_the_shipped_manifest_loads_and_names_only_https_sources():
+    specs = stt_samples.load_manifest()
+    assert [s.id for s in specs] == ["ami-TS3003a", "ami-ES2014a", "icsi-Bdb001-first30min", "earnings21-4366522"]
+    assert {s.recipe_kind for s in specs} == set(stt_samples.RECIPES)
+    for spec in specs:
+        assert all(src.url.startswith("https://") for src in spec.sources)
+        assert spec.licence.url.startswith("https://")
+    # The AMI annotation archive is one file that both AMI samples share.
+    ami = [next(src for src in s.sources if src.name == "annotations") for s in specs[:2]]
+    assert ami[0] == ami[1]
+
+
+def test_earnings21_sources_are_pinned_to_a_commit() -> None:
+    import re
+
+    spec = next(spec for spec in stt_samples.load_manifest() if spec.id == "earnings21-4366522")
+    for source in spec.sources:
+        assert re.fullmatch(
+            r"https://raw\.githubusercontent\.com/revdotcom/speech-datasets/[0-9a-f]{40}/earnings21/.+",
+            source.url,
+        )
+
+
+def test_a_good_manifest_gives_specs(tmp_path):
+    spec = _one(tmp_path, _sample([_source("audio", b"a"), _source("transcript", b"t"), _source("segments", b"s")]))
+    assert spec.id == "call-1"
+    assert spec.recipe_kind == "earnings21"
+    assert [s.name for s in spec.sources] == ["audio", "transcript", "segments"]
+    assert spec.download_bytes() == 3
+
+
+@pytest.mark.parametrize(
+    "change, words",
+    [
+        (lambda s: s["recipe"].update(kind="whole-corpus"), "recipe kind"),
+        (lambda s: s["sources"][0].update(url="http://samples.test/audio"), "https URL"),
+        (lambda s: s["licence"].update(url="ftp://example.test/licence"), "https URL"),
+        (lambda s: s.update(id="ami/TS3003a"), "id"),
+        (lambda s: s.update(id="..\\x"), "id"),
+        (lambda s: s.update(id=".."), "id"),
+        (lambda s: s["sources"][0].update(sha256="ABC"), "sha256"),
+        (lambda s: s["sources"][0].update(bytes=0), "bytes"),
+        (lambda s: s.update(timing="exact"), "timing"),
+        (lambda s: s.update(extra="x"), "unknown keys"),
+        (lambda s: s["recipe"]["params"].update(segments="missing"), "names no source"),
+        (lambda s: s["recipe"]["params"].pop("segments"), "missing segments"),
+        (lambda s: s["recipe"]["params"].update(word_members=["a"]), "unknown word_members"),
+    ],
+)
+def test_a_bad_sample_is_refused_with_a_sentence(tmp_path, change, words):
+    sample = _sample([_source("audio", b"a"), _source("transcript", b"t"), _source("segments", b"s")])
+    change(sample)
+    with pytest.raises(SampleError) as err:
+        stt_samples.load_manifest(_write_manifest(tmp_path, [sample]))
+    assert words in str(err.value)
+    assert str(err.value).endswith(".")
+
+
+def test_a_duplicate_sample_id_is_refused(tmp_path):
+    sample = _sample([_source("audio", b"a"), _source("transcript", b"t"), _source("segments", b"s")])
+    with pytest.raises(SampleError, match="more than once"):
+        stt_samples.load_manifest(_write_manifest(tmp_path, [sample, copy.deepcopy(sample)]))
+
+
+# --- downloads ----------------------------------------------------------------------------------------------------
+
+
+def _download_spec(tmp_path: Path, body: bytes, declared: bytes | None = None) -> stt_samples.SampleSpec:
+    """A spec with one real source ('audio', checksum of ``declared`` or ``body``) and two tiny ones."""
+    src = _source("audio", declared if declared is not None else body)
+    return _one(tmp_path, _sample([src, _source("transcript", b"t"), _source("segments", b"s")]))
+
+
+def _server(body: bytes, **kw) -> _Server:
+    return _Server({"audio": body, "transcript": b"t", "segments": b"s"}, **kw)
+
+
+def test_a_download_is_checked_cached_and_reused(tmp_path):
+    body = bytes(range(256)) * 40
+    spec = _download_spec(tmp_path, body)
+    server = _server(body)
+    seen = []
+    files = stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=server.client,
+                                      progress=lambda done, total, text: seen.append((done, total)))
+    assert files["audio"] == tmp_path / "cache" / _sha(body)
+    assert files["audio"].read_bytes() == body
+    assert sorted(server.calls) == ["/audio", "/segments", "/transcript"]
+    assert seen[-1] == (len(body) + 2, len(body) + 2)
+    assert sorted(p.name for p in (tmp_path / "cache").iterdir()) == sorted(_sha(b) for b in (body, b"t", b"s"))
+
+    again = _Server({})
+    assert stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=again.client) == files
+    assert again.calls == []
+
+
+def test_a_download_that_does_not_match_its_checksum_is_deleted(tmp_path):
+    spec = _download_spec(tmp_path, b"tampered!!", declared=b"original!!")
+    with pytest.raises(SampleError) as err:
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=_server(b"tampered!!").client)
+    assert str(err.value) == "Downloading audio of call-1 failed: the file does not match its sha256 checksum, so it was deleted."
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_a_cached_file_that_does_not_match_is_deleted_and_reported(tmp_path):
+    body = b"good audio"
+    spec = _download_spec(tmp_path, body)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / _sha(body)).write_bytes(b"bad! audio")
+    server = _server(body)
+    with pytest.raises(SampleError, match=r"did not match its sha256 checksum, so it was deleted"):
+        stt_samples.fetch_sources(spec, cache, client_factory=server.client)
+    assert not (cache / _sha(body)).exists()
+    assert server.calls == []
+    stt_samples.fetch_sources(spec, cache, client_factory=server.client)  # the next fetch downloads it again
+    assert (cache / _sha(body)).read_bytes() == body
+
+
+@pytest.mark.parametrize("chunked", [False, True], ids=["content-length", "chunked"])
+def test_a_file_larger_than_declared_is_refused(tmp_path, chunked):
+    spec = _download_spec(tmp_path, b"x" * 50, declared=b"x" * 20)
+    with pytest.raises(SampleError, match="the manifest declares"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=_server(b"x" * 50, chunked=chunked).client)
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_a_sample_over_the_byte_limit_is_refused_before_any_request(tmp_path):
+    spec = _download_spec(tmp_path, b"x" * 100)
+    server = _server(b"x" * 100)
+    with pytest.raises(SampleError, match="more than the limit of 50"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", max_bytes=50, client_factory=server.client)
+    assert server.calls == []
+
+
+def test_an_http_error_status_is_a_sentence(tmp_path):
+    spec = _download_spec(tmp_path, b"x")
+    with pytest.raises(SampleError) as err:
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=_server(b"x", status=404).client)
+    assert str(err.value) == "Downloading audio of call-1 failed: the server answered HTTP 404."
+
+
+def test_download_does_not_follow_a_redirect_even_when_the_client_would(tmp_path):
+    spec = _download_spec(tmp_path, b"x")
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://127.0.0.1:9/"})
+
+    def client() -> httpx.Client:
+        return httpx.Client(transport=HandlerTransport(handler), follow_redirects=True)
+
+    with pytest.raises(SampleError, match="HTTP 302"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=client)
+    assert len(calls) == 1
+    assert calls[0].startswith("https://")
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+def test_a_broken_connection_is_a_sentence(tmp_path):
+    spec = _download_spec(tmp_path, b"x")
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused to samples.test")
+
+    with pytest.raises(SampleError) as err:
+        stt_samples.fetch_sources(spec, tmp_path / "cache",
+                                  client_factory=lambda: httpx.Client(transport=HandlerTransport(refuse)))
+    assert str(err.value) == "Downloading audio of call-1 failed: the connection broke before the file was complete."
+
+
+def test_cancel_stops_a_download_between_chunks_and_leaves_no_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(stt_samples, "CHUNK_BYTES", 10)
+    body = b"y" * 100
+    spec = _download_spec(tmp_path, body)
+    checks, seen = [], []
+
+    def cancelled() -> bool:
+        checks.append(1)
+        return len(checks) >= 3
+
+    with pytest.raises(SampleCancelled, match="was cancelled"):
+        stt_samples.fetch_sources(spec, tmp_path / "cache", client_factory=_server(body).client, cancelled=cancelled,
+                                  progress=lambda done, total, text: seen.append(done))
+    assert seen == [10, 20]
+    assert list((tmp_path / "cache").iterdir()) == []
+
+
+# --- recipes ------------------------------------------------------------------------------------------------------
+
+AMI_A = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<nite:root nite:id="M.A.words" xmlns:nite="http://nite.sourceforge.net/">
+   <w nite:id="M.A.words0" starttime="0.10" endtime="0.40">Hello</w>
+   <w nite:id="M.A.words1" starttime="0.40" endtime="0.40" punc="true">,</w>
+   <w nite:id="M.A.words2" starttime="0.50" endtime="0.70" trunc="true">wor-</w>
+   <vocalsound nite:id="M.A.words3" starttime="0.70" endtime="0.80" type="laugh"/>
+   <w nite:id="M.A.words4" starttime="0.80" endtime="1.00">Well-known</w>
+</nite:root>"""
+AMI_B = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<nite:root nite:id="M.B.words" xmlns:nite="http://nite.sourceforge.net/">
+   <w nite:id="M.B.words0" starttime="0.20" endtime="0.30">Don't</w>
+</nite:root>"""
+ICSI_A = """<?xml version="1.0" encoding="ISO-8859-1"?>
+<nite:root nite:id="M.A.words" xmlns:nite="http://nite.sourceforge.net/">
+  <w nite:id="w0" c="W" starttime="0.1" endtime="0.3">That</w>
+  <w nite:id="w1" c="APOSS">'s</w>
+  <w nite:id="w2" c="W" starttime="0.5" endtime="0.7">right</w>
+  <w nite:id="w3" c="CM">.</w>
+  <w nite:id="w4" c="TRUNCW" starttime="0.8" endtime="0.9">wo</w>
+  <w nite:id="w5" c="W" starttime="1.0">yes</w>
+</nite:root>"""
+E21_NLP = """token|speaker|ts|endTs|punctuation|case|tags|wer_tags
+Good|0||||UC|[]|[]
+morning|0|||.|LC|[]|[]
+<inaudible>|0||||LC|[]|[]
+Thanks|1|||,|UC|[]|[]
+everyone|1||||LC|[]|[]
+"""
+E21_RTTM = """SPEAKER call 1 0.000 0.200 <NA> <NA> 0 <NA> <NA>
+SPEAKER call 1 0.300 0.200 <NA> <NA> 0 <NA> <NA>
+SPEAKER call 1 0.600 0.400 <NA> <NA> 1 <NA> <NA>
+"""
+
+
+def _recipe_case(kind: str) -> tuple[dict[str, bytes], dict, list[tuple[str, float, float]]]:
+    """Source bodies, recipe params and the expected words of a miniature input of ``kind``."""
+    if kind == "ami-words":
+        bodies = {"audio": _wav_bytes(), "annotations": _zip_bytes({"words/M.A.words.xml": AMI_A,
+                                                                      "words/M.B.words.xml": AMI_B,
+                                                                      "words/Other.A.words.xml": AMI_B})}
+        params = {"audio": "audio", "annotations": "annotations",
+                  "word_members": ["words/M.B.words.xml", "words/M.A.words.xml"]}
+        words = [("hello", 0.1, 0.4), ("don't", 0.2, 0.3), ("well", 0.8, 1.0), ("known", 0.8, 1.0)]
+    elif kind == "icsi-words":
+        bodies = {"audio": _wav_bytes(), "annotations": _zip_bytes({"ICSI/Words/M.A.words.xml": ICSI_A})}
+        params = {"audio": "audio", "annotations": "annotations", "word_members": ["ICSI/Words/M.A.words.xml"]}
+        words = [("thats", 0.1, 0.5), ("right", 0.5, 0.7), ("yes", 1.0, 1.25)]
+    else:
+        bodies = {"audio": _wav_bytes(), "transcript": E21_NLP.encode(), "segments": E21_RTTM.encode()}
+        params = {"audio": "audio", "transcript": "transcript", "segments": "segments"}
+        words = [("good", 0.0, 0.2), ("morning", 0.2, 0.5), ("thanks", 0.6, 0.8), ("everyone", 0.8, 1.0)]
+    return bodies, params, words
+
+
+def _recipe_spec(tmp_path: Path, kind: str, bodies: dict[str, bytes], params: dict) -> stt_samples.SampleSpec:
+    return _one(tmp_path, _sample([_source(n, b) for n, b in bodies.items()], kind=kind, params=params))
+
+
+def _approx(words):
+    return [(w, pytest.approx(t0), pytest.approx(t1)) for w, t0, t1 in words]
+
+
+@pytest.mark.parametrize("kind", sorted(stt_samples.RECIPES))
+def test_each_recipe_reads_its_miniature_input(tmp_path, kind):
+    bodies, params, expected = _recipe_case(kind)
+    spec = _recipe_spec(tmp_path, kind, bodies, params)
+    files = {}
+    for name, body in bodies.items():
+        files[name] = tmp_path / name
+        files[name].write_bytes(body)
+    assert stt_samples.build_reference(spec, files) == _approx(expected)
+
+
+def test_cut_seconds_keeps_only_the_words_that_end_in_time(tmp_path):
+    bodies, params, _ = _recipe_case("icsi-words")
+    spec = _recipe_spec(tmp_path, "icsi-words", bodies, {**params, "cut_seconds": 0.6})
+    (tmp_path / "annotations").write_bytes(bodies["annotations"])
+    assert stt_samples.build_reference(spec, {"annotations": tmp_path / "annotations"}) == _approx([("thats", 0.1, 0.5)])
+
+
+def test_earnings21_refuses_speaker_turns_that_do_not_match(tmp_path):
+    bodies, params, _ = _recipe_case("earnings21")
+    spec = _recipe_spec(tmp_path, "earnings21", bodies, params)
+    (tmp_path / "t").write_bytes(bodies["transcript"])
+    (tmp_path / "s").write_text(E21_RTTM.replace(" 1 <NA> <NA>\n", " 0 <NA> <NA>\n"))
+    with pytest.raises(SampleError, match="speaker turns"):
+        stt_samples.build_reference(spec, {"transcript": tmp_path / "t", "segments": tmp_path / "s"})
+
+
+def test_a_missing_archive_member_is_a_sentence(tmp_path):
+    bodies, params, _ = _recipe_case("ami-words")
+    spec = _recipe_spec(tmp_path, "ami-words", bodies, {**params, "word_members": ["words/Nope.A.words.xml"]})
+    (tmp_path / "z").write_bytes(bodies["annotations"])
+    with pytest.raises(SampleError, match="no member named words/Nope.A.words.xml"):
+        stt_samples.build_reference(spec, {"annotations": tmp_path / "z"})
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("kind", sorted(stt_samples.RECIPES))
+def test_fetch_sample_downloads_converts_and_reads_words(tmp_path, kind):
+    bodies, params, expected = _recipe_case(kind)
+    spec = _recipe_spec(tmp_path, kind, bodies, params)
+    server = _Server(bodies)
+    prepared = stt_samples.fetch_sample(spec, tmp_path / "cache", client_factory=server.client)
+    assert prepared.spec == spec
+    assert prepared.words == _approx(expected)
+    assert prepared.duration_seconds == 1.0
+    assert prepared.audio_path == tmp_path / "cache" / "prepared" / f"{spec.id}.wav"
+    with wave.open(str(prepared.audio_path), "rb") as w:
+        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2)
+        assert w.getnframes() == 16000
+
+
+@needs_ffmpeg
+def test_fetch_sample_cuts_the_audio_to_cut_seconds(tmp_path):
+    bodies, params, _ = _recipe_case("icsi-words")
+    spec = _recipe_spec(tmp_path, "icsi-words", bodies, {**params, "cut_seconds": 0.6})
+    prepared = stt_samples.fetch_sample(spec, tmp_path / "cache", client_factory=_Server(bodies).client)
+    assert prepared.duration_seconds == 0.6
+    assert [w[0] for w in prepared.words] == ["thats"]

@@ -36,7 +36,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from gateway import log_scrub
-from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms, url_binding
+from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -636,6 +636,18 @@ def _projected_engine_record(stored: Mapping[str, Any]) -> dict[str, Any]:
     return projection.project("ServiceRecord", stored).tree or {}
 
 
+def _stt_chunking_view(service_id: Any, config: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The long-audio cutting numbers in force for a transcription record; None for a record with no ``chunking``."""
+    if not isinstance(config.get("chunking"), Mapping):
+        return None
+    try:
+        execution = stt_chunking.SttExecutionConfig.from_service(
+            service_id=str(service_id or ""), service_config=config, config_directory=Path.cwd())
+    except stt_chunking.SttConfigurationError as error:
+        return {"invalid": str(error)}
+    return execution.chunking_view()
+
+
 def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: Path,
                 hop_timeout: float = 600, env: Callable[[str], str | None] = os.environ.get) -> dict[str, Any]:
     """What the record page reads. Everything a caller sees is read from the projection of the stored record
@@ -775,6 +787,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
+        "stt_chunking": _stt_chunking_view(record.get("id"), config),
         "attention": protocol_attention + ([{"code": "engine_credential_unavailable",
                         "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else [])
                       + ([{"code": "engine_credential_unavailable", "message": "The stored key is unavailable. Replace it in Connection."}]
@@ -1169,6 +1182,51 @@ class EngineService:
         view["registry_generation"] = generation
         view["revision"] = f'"os-{generation}"' if generation is not None else None
         return view
+
+    def configure_stt(self, ctx: Any, service_id: str, body: Any, *, expected_generation: int, apply_recommendation: bool = False) -> dict[str, Any]:
+        """Change only the owner's cutting fields, through the existing registry CAS/hot-reload path."""
+        from gateway.stt_measurement import SETTING_KEYS, settings_patch
+        if not _is_owner(ctx):
+            raise _owner_only("Only the owner can change long-audio settings.")
+        patch = settings_patch(body)
+        registry, generation = self.store.get_service_registry_snapshot()
+        if generation != expected_generation:
+            raise EngineRouteError(409, "generation_mismatch", "The registry changed; refresh and try again.")
+        record = registry.get("services", {}).get(service_id)
+        if record is None:
+            raise EngineRouteError(404, "service_not_found", "No engine has that id.")
+        if not {"transcriptions", "audio.transcriptions"}.intersection(record.get("capabilities", [])):
+            raise EngineRouteError(400, "not_transcription_engine", "Choose an engine that offers transcription.")
+        config = copy.deepcopy(record.get("config") or {})
+        saved_chunking = config.get("chunking")
+        chunking = {**(saved_chunking if isinstance(saved_chunking, Mapping) else {}), **patch}
+        config["chunking"] = chunking
+        try:
+            if apply_recommendation:
+                target = chunking.get("target_seconds", stt_chunking.bundled_chunking_defaults()["target_seconds"])
+                target_for_threshold = target if isinstance(target, (int, float)) and not isinstance(target, bool) else 0
+                threshold = max(
+                    chunking["max_segment_seconds"],
+                    target_for_threshold + max(1, target_for_threshold * .01),
+                )
+                chunking.update(enabled=True, threshold_seconds=threshold)
+            elif "target_seconds" in patch and "threshold_seconds" not in patch:
+                threshold = chunking.get("threshold_seconds", stt_chunking.bundled_chunking_defaults()["threshold_seconds"])
+                if isinstance(threshold, (int, float)) and patch["target_seconds"] >= threshold:
+                    # Resolve the effective maximum without saving derived defaults.
+                    # A one-second gap keeps exact-cut records (maximum == target)
+                    # valid too, without exposing floating-point epsilon values.
+                    target = patch["target_seconds"]
+                    provisional = stt_chunking.SttExecutionConfig.from_service(
+                        service_id=service_id,
+                        service_config={**config, "chunking": {**chunking, "threshold_seconds": target + max(1, target * .01)}},
+                        config_directory=self.db_path.parent)
+                    chunking["threshold_seconds"] = max(provisional.max_segment_seconds, target + 1)
+            stt_chunking.SttExecutionConfig.from_service(service_id=service_id, service_config=config, config_directory=self.db_path.parent)
+        except stt_chunking.SttConfigurationError:
+            raise EngineRouteError(400, "invalid_stt_settings", "The target must fit the hard maximum and all cutting limits must be valid.") from None
+        result = self.store.update_service(service_id=service_id, data={"chunking": chunking}, actor=ctx, expected_generation=expected_generation)
+        return {"settings": {k: chunking[k] for k in SETTING_KEYS if k in chunking}, "revision": f'"os-{result["operator_settings_generation"]}"'}
 
     async def create(self, ctx: Any, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         catalog = self.catalog()

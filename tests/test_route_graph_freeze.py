@@ -20,6 +20,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
     "/admin/api/engine-protocols": "validated installed protocol choices for the engine form; tests/test_engine_protocol_admin.py covers seed and user data",
+    "/admin/api/engines/{service_id}/stt-measurements": "owner-only long-audio measurement options and job lifecycle; tests/test_stt_measurement.py covers owner gates, bounds and durable progress",
+    "/admin/api/engines/{service_id}/stt-settings": "owner-only long-audio settings with registry compare-and-swap; tests/test_stt_measurement.py covers validation and persistence",
     "/native": "per-engine native pass-through (contract section 5): one route, off unless an "
                "engine record sets native_passthrough, outside the OpenAPI schema",
     "/admin/api/operator/host-commands": "owner-only permission for engines that run host commands "
@@ -113,4 +115,5 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # W5 adds GET /admin/api/engine-protocols for installed description metadata.
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged() -> None:
+    proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

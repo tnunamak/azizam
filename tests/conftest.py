@@ -121,6 +121,12 @@ def pytest_configure(config: pytest.Config) -> None:
     NodeManager.EXIT_TIMEOUT = max(NodeManager.EXIT_TIMEOUT, 120)
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    # xdist may signal its own workers during this hook. All tests have ended.
+    _GUARD.restore()
+
+
 def pytest_unconfigure(config: pytest.Config) -> None:
     _GUARD.restore()
 

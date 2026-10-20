@@ -1,0 +1,30 @@
+# Owner-editable trial policy, not engine limits. Trials never change saved settings.
+sample_ids: [ami-TS3003a, icsi-Bdb001-first30min, earnings21-4366522]
+lengths: [20, 30, 40, 50, 60]
+search_widths: [0, 1, 2, 5]
+max_samples: 4
+max_trial_seconds: 120
+audio_seconds_per_sample: 300
+max_download_bytes: 536870912
+deadline_seconds: 3600
+resamples: 1000
+min_trial_seconds: 1
+max_gateway_requests: 160
+max_gpu_utilization_pct: 60
+# Recommendations abstain when these evidence/uncertainty requirements are not met.
+recommendation:
+  min_length_rows: 2
+  min_length_words: 500
+  min_length_blocks: 12
+  length_block_seconds: 30
+  min_seam_pairs: 20
+  min_seam_words: 200
+  min_noise_pairs: 20
+  min_noise_words: 200
+  length_noninferiority_pp: 1.0
+  seam_noninferiority_pp: 3.0
+  target_margin: 0.75
+# Extra free memory after crediting measured resident bytes of this exact service.
+gpu_min_free_mb: 128
+# Only a confirmed upstream size refusal bounds the measured safe length.
+length_refusal_statuses: [413]
