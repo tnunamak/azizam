@@ -37,6 +37,8 @@ const options = {
       licence: "CC BY",
       audio_rights_unstated: true,
       audio_rights_note: "No separate audio licence is stated by the source.",
+      rights_unstated: true,
+      rights_note: "No separate audio licence is stated by the source.",
       download_bytes: 100,
     },
   ],
@@ -60,6 +62,18 @@ function mount(data: unknown = options) {
 }
 
 describe("Long-audio operator controls", () => {
+  it("shows unstated transcript rights beside Measure with trials collapsed", async () => {
+    mount({
+      ...options,
+      samples: [{ ...options.samples[0], audio_rights_unstated: false,
+        audio_rights_note: "", rights_note: "Transcript reuse permission is not stated." }],
+    });
+    const warning = await screen.findByRole("note");
+    expect(warning).toHaveTextContent("Transcript reuse permission is not stated.");
+    expect(warning).toBeVisible();
+    expect(warning.closest("details:not([open])")).toBeNull();
+  });
+
   it("saves exact cuts with CAS without changing native modes", async () => {
     const user = mount();
     const input = await screen.findByLabelText(
