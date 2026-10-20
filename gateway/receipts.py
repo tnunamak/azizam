@@ -790,6 +790,10 @@ async def run_receipt_write(write: Callable[..., Any], *args: Any, **kwargs: Any
             if worker.cancelled():
                 raise
             cancellation = error
+        except Exception as error:
+            if cancellation is not None:
+                raise cancellation from error
+            raise
     if cancellation is not None:
         raise cancellation
     return result
