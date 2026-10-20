@@ -1,7 +1,7 @@
 """Capture uses configured state and keeps optional evidence off the hot path."""
 import logging
 import sqlite3
-import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -73,17 +73,28 @@ def test_capture_memoizes_validated_hashed_generation_and_invalidates(capture_st
     assert first.retention_facts
 
 
-def test_request_fact_persistence_has_bounded_busy_wait(capture_stores):
+def test_request_fact_persistence_has_bounded_busy_wait(capture_stores, monkeypatch):
     _, media, registry = capture_stores
     row = RouteReceipt(protocol="test", intent="test", backend="capture-destination")
     row.capture_retention_facts(registry=registry, overrides={})
+    waits, pauses = [], []
+    real_conn = media_jobs._conn
+
+    @contextmanager
+    def observed_conn(*args, **kwargs):
+        with real_conn(*args, **kwargs) as conn:
+            waits.append(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+            yield conn
+
+    monkeypatch.setattr(media_jobs, "_conn", observed_conn)
+    monkeypatch.setattr(receipt_helpers, "sleep", pauses.append)
     with sqlite3.connect(media) as locked:
         locked.execute("BEGIN IMMEDIATE")
-        started = time.monotonic()
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             row.persist_retention_facts()
-        elapsed = time.monotonic() - started
-    assert elapsed < 0.8
+    # Check the 620 ms SQLite wait/backoff budget independently of host scheduling.
+    assert waits == [200, 200, 200]
+    assert pauses == [0.01, 0.01]
     assert row.retention_facts == []
     assert media_jobs.fact_revisions_for_source("receipt", row.request_id, path=media) == {}
 
