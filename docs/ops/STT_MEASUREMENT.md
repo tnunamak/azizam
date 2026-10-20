@@ -85,12 +85,12 @@ crosses the margin; confidently_worse means the lower CI exceeds the margin
 abstain. Reference word timing may be interpolated; reports preserve that label.
 Seam times use the gateway planner and are checked against executed attempts.
 
-References and hypotheses use one tokenizer: normalize Unicode to NFC, lowercase words, retain
-internal underscores, join apostrophes, split punctuation, and omit annotation
+References and hypotheses use one tokenizer: normalize Unicode to NFC, lowercase
+words, retain internal underscores, join apostrophes, split punctuation, and omit annotation
 tags and standalone underscores. Each split reference token keeps its source
-time interval; omitted tokens contribute no alignment position. Alignment stays
-in transcript order. A separate midpoint-sorted index selects words for half-open
-time windows, including overlapping speakers without changing reference identity.
+time interval; omitted tokens contribute no alignment position. A separate
+midpoint-sorted index selects words for half-open time windows, including
+overlapping speakers while preserving transcript order and reference identity.
 
 Each manifest source requires `audio_rights` and `transcript_rights` objects with
 `status` (`stated`, `not-stated`, or `not-applicable`) and a nonempty `note`.
@@ -101,7 +101,7 @@ plus `audio_rights_unstated` and `audio_rights_note`. The sample selector shows
 unstated audio rights before a trial starts. A sample-level `licence` label does
 not establish rights for every source.
 
-Earnings-21 remains available. Its stated CC BY-SA licence covers transcripts and
+Earnings-21 remains available with a stated CC BY-SA licence for transcripts and
 alignment files; the source states no separate audio licence. Public hosting does
 not establish audio reuse rights. The operator decides whether to retain and use
 this sample.

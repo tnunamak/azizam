@@ -1,7 +1,42 @@
 {
   "baseline_commit": "d1a12cc1",
-  "fixed_commit": "edbd18e6",
+  "fixed_commit": "2532b368",
   "fixtures": {
+    "test_a_cost_at_the_cuts_shows_as_excess_and_the_noise_floor_is_flat": {
+      "after": {
+        "noise": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 590
+        },
+        "seam": {
+          "excess_pp": 16.07,
+          "high_pp": 18.28,
+          "low_pp": 14.07,
+          "points": 59,
+          "words": 585
+        }
+      },
+      "before": {
+        "noise": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 590
+        },
+        "seam": {
+          "excess_pp": 16.07,
+          "high_pp": 18.28,
+          "low_pp": 14.07,
+          "points": 59,
+          "words": 585
+        }
+      },
+      "identical": true
+    },
     "test_default_measurement_pairs_shared_deletions_and_reports_abstention[False]": {
       "after": {
         "deletions_by_length": [
@@ -826,6 +861,412 @@
       },
       "identical": true
     },
+    "test_default_operator_grid_supports_noisy_shared_deletions_within_caps": {
+      "after": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.67,
+            "high_pct": 13.72,
+            "length": 20,
+            "low_pct": 9.22,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 45,
+            "words": 1800
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.44,
+            "high_pct": 14.62,
+            "length": 30,
+            "low_pct": 7.79,
+            "paired_deletion": {
+              "excess_pp": -0.06,
+              "high_pp": 0.73,
+              "low_pp": -0.79,
+              "points": 30,
+              "words": 1650
+            },
+            "pieces": 30,
+            "words": 1950
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.59,
+            "high_pct": 13.6,
+            "length": 40,
+            "low_pct": 9.74,
+            "paired_deletion": {
+              "excess_pp": -0.83,
+              "high_pp": -0.06,
+              "low_pp": -1.69,
+              "points": 30,
+              "words": 1680
+            },
+            "pieces": 21,
+            "words": 1890
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.92,
+            "high_pct": 12.22,
+            "length": 50,
+            "low_pct": 9.47,
+            "paired_deletion": {
+              "excess_pp": -0.76,
+              "high_pp": 0.17,
+              "low_pp": -1.46,
+              "points": 30,
+              "words": 1710
+            },
+            "pieces": 18,
+            "words": 2070
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.76,
+            "high_pct": 11.05,
+            "length": 60,
+            "low_pct": 10.43,
+            "paired_deletion": {
+              "excess_pp": -0.89,
+              "high_pp": 0.0,
+              "low_pp": -1.67,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 15,
+            "words": 2100
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 60.0,
+          "reasons": [
+            "Maximum 60 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 5 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 5.0,
+          "target_seconds": 45
+        },
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.01,
+              "high_pp": 1.8,
+              "low_pp": -1.95,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.29,
+            "high_pp": 1.69,
+            "low_pp": -0.92,
+            "noise": {
+              "excess_pp": 0.28,
+              "high_pp": 1.67,
+              "low_pp": -1.11,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 0,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": -0.87,
+              "high_pp": 1.7,
+              "low_pp": -3.65,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": -0.87,
+            "high_pp": 0.85,
+            "low_pp": -2.69,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 2.22,
+              "low_pp": -1.94,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 1,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": 0.87,
+              "high_pp": 3.22,
+              "low_pp": -1.39,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.87,
+            "high_pp": 2.39,
+            "low_pp": -0.29,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 1.67,
+              "low_pp": -1.67,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 2,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": -0.8,
+              "high_pp": 1.17,
+              "low_pp": -3.12,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.87,
+            "high_pp": 2.32,
+            "low_pp": -0.3,
+            "noise": {
+              "excess_pp": 1.67,
+              "high_pp": 3.61,
+              "low_pp": 0.28,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 5,
+            "words": 345
+          }
+        ]
+      },
+      "before": {
+        "deletions_by_length": [
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.67,
+            "high_pct": 13.72,
+            "length": 20,
+            "low_pct": 9.22,
+            "paired_deletion": {
+              "excess_pp": 0.0,
+              "high_pp": 0.0,
+              "low_pp": 0.0,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 45,
+            "words": 1800
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.44,
+            "high_pct": 14.62,
+            "length": 30,
+            "low_pct": 7.79,
+            "paired_deletion": {
+              "excess_pp": -0.06,
+              "high_pp": 0.73,
+              "low_pp": -0.79,
+              "points": 30,
+              "words": 1650
+            },
+            "pieces": 30,
+            "words": 1950
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 11.59,
+            "high_pct": 13.6,
+            "length": 40,
+            "low_pct": 9.74,
+            "paired_deletion": {
+              "excess_pp": -0.83,
+              "high_pp": -0.06,
+              "low_pp": -1.69,
+              "points": 30,
+              "words": 1680
+            },
+            "pieces": 21,
+            "words": 1890
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.92,
+            "high_pct": 12.22,
+            "length": 50,
+            "low_pct": 9.47,
+            "paired_deletion": {
+              "excess_pp": -0.76,
+              "high_pp": 0.17,
+              "low_pp": -1.46,
+              "points": 30,
+              "words": 1710
+            },
+            "pieces": 18,
+            "words": 2070
+          },
+          {
+            "baseline_length": 20,
+            "deletion_pct": 10.76,
+            "high_pct": 11.05,
+            "length": 60,
+            "low_pct": 10.43,
+            "paired_deletion": {
+              "excess_pp": -0.89,
+              "high_pp": 0.0,
+              "low_pp": -1.67,
+              "points": 30,
+              "words": 1800
+            },
+            "pieces": 15,
+            "words": 2100
+          }
+        ],
+        "recommendation": {
+          "max_segment_seconds": 60.0,
+          "reasons": [
+            "Maximum 60 s against shortest successful 20 s: Paired upper CI is within the 1 percentage-point gross-harm margin.",
+            "Gross-harm screen only; this does not prove no harm.",
+            "Search 5 s: Paired upper CI is within the 3 percentage-point gross-harm margin."
+          ],
+          "search_seconds": 5.0,
+          "target_seconds": 45
+        },
+        "seam_excess": [
+          {
+            "difference": {
+              "excess_pp": 0.01,
+              "high_pp": 1.8,
+              "low_pp": -1.95,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.29,
+            "high_pp": 1.69,
+            "low_pp": -0.92,
+            "noise": {
+              "excess_pp": 0.28,
+              "high_pp": 1.67,
+              "low_pp": -1.11,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 0,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": -0.87,
+              "high_pp": 1.7,
+              "low_pp": -3.65,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": -0.87,
+            "high_pp": 0.85,
+            "low_pp": -2.69,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 2.22,
+              "low_pp": -1.94,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 1,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": 0.87,
+              "high_pp": 3.22,
+              "low_pp": -1.39,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.87,
+            "high_pp": 2.39,
+            "low_pp": -0.29,
+            "noise": {
+              "excess_pp": 0.0,
+              "high_pp": 1.67,
+              "low_pp": -1.67,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 2,
+            "words": 345
+          },
+          {
+            "difference": {
+              "excess_pp": -0.8,
+              "high_pp": 1.17,
+              "low_pp": -3.12,
+              "points": 72,
+              "words": 705
+            },
+            "excess_pp": 0.87,
+            "high_pp": 2.32,
+            "low_pp": -0.3,
+            "noise": {
+              "excess_pp": 1.67,
+              "high_pp": 3.61,
+              "low_pp": 0.28,
+              "points": 36,
+              "words": 360
+            },
+            "points": 36,
+            "search": 5,
+            "words": 345
+          }
+        ]
+      },
+      "identical": true
+    },
+    "test_no_cost_at_the_cuts_gives_an_interval_around_zero": {
+      "after": {
+        "noise": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 590
+        },
+        "seam": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 585
+        }
+      },
+      "before": {
+        "noise": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 590
+        },
+        "seam": {
+          "excess_pp": 0.0,
+          "high_pp": 0.0,
+          "low_pp": 0.0,
+          "points": 59,
+          "words": 585
+        }
+      },
+      "identical": true
+    },
     "test_offset_scoring_has_one_shared_reference_clock_and_no_false_seam_cost[15]": {
       "after": {
         "deletions_by_length": [
@@ -1266,5 +1707,10 @@
       "after": 0.0,
       "before": 0.0
     }
+  },
+  "pure_baseline_commit": "84cd10a9",
+  "unicode_insertion_wer": {
+    "after": 50.0,
+    "before": 0.0
   }
 }

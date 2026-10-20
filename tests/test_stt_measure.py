@@ -65,6 +65,9 @@ def test_overlapping_words_use_midpoint_membership_without_reordering_alignment(
     # [.5, 1): includes the short overlapping word, excludes both words at exactly 1.
     if operation == "window":
         assert list(scored.window(.75, .25)) == [1]
+        assert scored.between(.6, 1) == [1]  # Exact lower midpoint is included.
+        assert scored.window(1.25, .25) == [0, 2]  # Equal lower midpoints keep both identities.
+        assert scored.between(1, 1) == []
     elif operation == "pairs":
         other = m.score_run(reference, m.Run(["long", "short", "edge"], [(0, 3)]))
         assert m._pairs(scored, other, [.75], .25, 0) == [(0, 0, 1)]
