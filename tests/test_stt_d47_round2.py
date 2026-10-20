@@ -58,8 +58,10 @@ def test_multitrack_decode_uses_probed_track_and_reservation(tmp_path, rates, sh
             with patch.object(stt, "run_media_command", side_effect=bounded_command):
                 outcome = await chunk(source, execution, post, resource_lease=lease)
             assert outcome.mode == "chunked"
-            assert frames * 4 == len(expected)
-            assert sent.digest() == hashlib.sha256(expected).digest()
+            # Source fallback ends on the 16 kHz planning grid; its endpoint
+            # can round down by less than one planning sample at the native rate.
+            assert 0 <= len(expected) // 4 - frames <= (0 if shared else rates[0] // 16000)
+            assert sent.digest() == hashlib.sha256(expected[:frames * 4]).digest()
         finally:
             lease.release()
         assert gate._reserved_bytes == gate.active_count == 0
