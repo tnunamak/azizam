@@ -221,12 +221,53 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
     service = {"host": "reference.fk.test", "port": 9876, "default_model": "test",
                "chunking": {"target_seconds": 0.25, "max_segment_seconds": 0.3,
                             "spool_dir": str(tmp_path / "spool")}}
+    receipt = proxy.RouteReceipt(path="/v1/audio/speech", protocol="openai.audio", intent="speech.synthesis")
     with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
          patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
         with pytest.raises(custom_voices.VoiceError, match="STT service limits"):
-            asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
+            asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source, receipt=receipt))
     assert seen == [], "a known-over-limit reference must never be posted whole"
+    assert receipt.metadata["stt"]["attempts_started"] == 0
     assert list((tmp_path / "spool").iterdir()) == []
+
+
+@pytest.mark.parametrize("result", ["success", "refusal", "timeout", "cancel"])
+def test_internal_reference_attempt_is_counted_once(tmp_path, fake_upstreams, result):
+    async def run():
+        source = wav(tmp_path / "reference.wav", 0.2)
+        entered = asyncio.Event()
+        calls = []
+
+        async def handle(request):
+            calls.append(request)
+            await request.aread()
+            entered.set()
+            if result == "timeout":
+                raise httpx.ReadTimeout("test timeout")
+            if result == "cancel":
+                await asyncio.Future()
+            return httpx.Response(400 if result == "refusal" else 200, json={"text": "words"})
+
+        fake_upstreams.router.add_transport("reference.fk.test:9876", HandlerTransport(handle))
+        service = {"host": "reference.fk.test", "port": 9876, "default_model": "test",
+                   "chunking": {"spool_dir": str(tmp_path / "spool")}}
+        receipt = proxy.RouteReceipt(path="/v1/audio/speech", protocol="openai.audio", intent="speech.synthesis")
+        with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+             patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
+            task = asyncio.create_task(proxy._reference_transcript(None, {"id": "test"}, source, receipt=receipt))
+            if result == "cancel":
+                await asyncio.wait_for(entered.wait(), 10)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            elif result in {"refusal", "timeout"}:
+                with pytest.raises(custom_voices.VoiceError):
+                    await task
+            else:
+                assert await task == "words"
+        assert len(calls) == receipt.metadata["stt"]["attempts_started"] == 1
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("envelope", ["disabled", "timestamps", "streaming", "multiple_files", "setup_failure", "sample_boundary"])
