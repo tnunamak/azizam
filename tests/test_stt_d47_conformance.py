@@ -533,7 +533,7 @@ def test_normalized_wav_decode_is_bounded_and_path_checked(tmp_path):
         source = wav(tmp_path / "long.wav", 2)
         cleanup = stt.SttCleanupOwner()
         execution = config(tmp_path, max_duration_seconds=0.3, max_decoded_bytes=32000)
-        request = SimpleNamespace(workspace=tmp_path, cleanup=cleanup, execution=execution,
+        request = SimpleNamespace(resource_lease=None, workspace=tmp_path, cleanup=cleanup, execution=execution,
             cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time()+10, on_cancel=None)
         wire = _RunWire("test", None, "unused", request)
         with source.open("rb") as handle:

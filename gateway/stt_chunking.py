@@ -372,11 +372,6 @@ class SttExecutionConfig:
             reasons=("bounded STT upload and decoded media workspace",),
         )
 
-    @property
-    def workspace_limit_bytes(self) -> int:
-        # Normalized input, shared source PCM, segment WAV and verification PCM can coexist.
-        return self.max_input_bytes + 4 * self.max_decoded_bytes
-
     def chunking_view(self) -> dict[str, Any]:
         """What the owner is shown about long-audio cutting: the numbers in force and which come from the bundled defaults."""
         saved = _thaw(self.backend_config.get("chunking")) or {}
@@ -809,8 +804,8 @@ class SttResourceGate:
             raise SttResourceLimitExceeded(
                 "Configured STT spool storage has insufficient free capacity"
             )
-        # Live free space already excludes replay bytes written to this filesystem, yet their
-        # reservations are still held in full: add those bytes back so each is counted once.
+        # Live free space excludes materialized workspace and replay files. Their
+        # reservations still include them, so credit those bytes once on this device.
         device = _device_of(config.spool_dir)
         free_bytes = live_free_bytes + sum(r.written_bytes for r in (*self._replays, *self._leases) if r.device == device)
         decision = evaluate_admission(

@@ -39,9 +39,9 @@ def test_source_trim_matches_shared_pcm_under_decode_cap(tmp_path, rate, channel
                 sent.append(audio.readframes(audio.getnframes()))
             return stt.UpstreamResponse(200, b'{"text":"piece"}', {})
         execution = config(tmp_path, target_seconds=0.4, search_seconds=0.1,
-            threshold_seconds=0.5, max_segment_seconds=0.5, max_decoded_bytes=limit, min_free_bytes=1)
+            threshold_seconds=0.5, max_segment_seconds=0.5, max_decoded_bytes=limit, min_free_bytes=1024**2 if limited_disk else 1)
         if limited_disk:
-            total = source.stat().st_size + 4 * 32000 + 2 * round(0.5 * rate) * channels * 2 + 4096
+            total = source.stat().st_size + 4 * 32000 + 2 * round(0.5 * rate) * channels * 2 + execution.min_free_bytes + 4096
             def free_bytes(_root):
                 return total - sum(path.stat().st_size for path in tmp_path.iterdir() if path.is_file())
             gate = stt.SttResourceGate()
@@ -190,7 +190,7 @@ def test_voice_contention_returns_retryable_busy_response(tmp_path):
         execution = config(tmp_path)
         leases = [gate.acquire(request_id=str(i), config=execution) for i in range(2)]
         service = {"host": "review.fk.test", "port": 9876,
-                   "chunking": {"spool_dir": str(tmp_path.parent), "max_segment_seconds": 40}}
+                   "chunking": {"spool_dir": str(tmp_path.parent), "max_segment_seconds": 40, "target_seconds": 30}}
         try:
             with patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), \
                  patch.dict(proxy.config["backends"], {"stt": service}), \
