@@ -454,7 +454,7 @@ def test_fetch_sample_cuts_the_audio_to_cut_seconds(tmp_path):
 
 
 @pytest.mark.parametrize("kind", sorted(stt_samples.RECIPES))
-def test_each_recipe_perfect_transcription_scores_zero(tmp_path, kind, record_property):
+def test_each_recipe_perfect_transcription_scores_zero(tmp_path, kind):
     from gateway import stt_measure as m
 
     bodies, params, _ = _recipe_case(kind)
@@ -467,7 +467,6 @@ def test_each_recipe_perfect_transcription_scores_zero(tmp_path, kind, record_pr
     reference = [m.RefWord(*word) for word in words]
     hypothesis = m.normalize(" ".join(word for word, _, _ in words))
     scored = m.score_run(reference, m.Run(hypothesis, [(0, 2)]))
-    record_property("perfect_wer", m.word_error_rate(scored))
     assert m.word_error_rate(scored) == 0
 
 

@@ -107,16 +107,16 @@ describe("Long-audio operator controls", () => {
 
   it("starts measurement with manifest samples and exact-cut baseline, without saving", async () => {
     const user = mount();
-    const warning = await screen.findByText(/Sample rights not stated/);
+    const warning = await screen.findByText(/Sample rights not stated for/);
     expect(warning).toHaveTextContent(options.samples[0].rights_note);
     expect(warning).toBeVisible();
     expect(warning.closest("details:not([open])")).toBeNull();
     await user.click(screen.getByText("Measurement samples and trials"));
     await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
-    expect(screen.queryByText(/Sample rights not stated/)).toBeNull();
+    expect(screen.queryByText(/Sample rights not stated for/)).toBeNull();
     await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
     await user.click(screen.getByText("Measurement samples and trials"));
-    expect(screen.getByText(/Sample rights not stated/)).toBeVisible();
+    expect(screen.getByText(/Sample rights not stated for/)).toBeVisible();
     await user.click(
       await screen.findByRole("button", {
         name: "Measure long-audio settings",
