@@ -195,3 +195,25 @@ def test_cancellation_drains_ordered_writes_before_return(monkeypatch):
                 await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_native_refusal_fact_commit_is_off_loop(monkeypatch):
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    from gateway import native_lane
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda _r: SimpleNamespace(identity=None))
+    monkeypatch.setattr(proxy, "_native_passthrough_receipt", lambda **_kw: row)
+    monkeypatch.setattr(receipt_store, "record", lambda *_a, **_kw: None)
+    threads = []
+    monkeypatch.setattr(row, "persist_retention_facts", lambda: threads.append(threading.get_ident()))
+    async def scenario():
+        loop_thread = threading.get_ident()
+        request = Request({"type": "http", "method": "POST", "path": "/native/destination/unknown", "headers": []})
+        response = await proxy._forward_provider_native(
+            request, provider_key="destination", target={}, native_path="unknown", gateway_path=request.url.path,
+            native_policy=native_lane.policy_for({}),
+        )
+        assert response.status_code == 403
+        assert threads and all(thread != loop_thread for thread in threads)
+    asyncio.run(scenario())
