@@ -60,8 +60,7 @@ def test_threshold_uses_decoded_length_and_reuses_the_decode(tmp_path):
         assert outcome.mode == "chunked"
         assert pieces[-1][1] == 190
         assert max(end-start for start,end in pieces) <= 40
-        assert decoder.await_count == 2
-        assert decoder.await_args_list[1].kwargs["sample_rate"] == 16000
+        decoder.assert_awaited_once()
     asyncio.run(run())
 
 

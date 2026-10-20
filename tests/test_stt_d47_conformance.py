@@ -599,3 +599,44 @@ def test_input_seek_preserves_planning_samples(tmp_path, extension, codec):
         assert len(whole_decodes) == 2  # planning plus shared source-rate PCM, independent of segment count
         assert not list(tmp_path.glob("extraction-*.pcm"))
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("rate", [44100, 48000])
+def test_resampled_passthrough_still_checks_one_source_sample_over_cap(tmp_path, fake_upstreams, rate):
+    async def run():
+        source = wav(tmp_path / "boundary.wav", 0.3 + 1/rate, rate)
+        cleanup = stt.SttCleanupOwner()
+        execution = config(tmp_path, target_seconds=0.25, threshold_seconds=0.3, max_segment_seconds=0.3)
+        with source.open("rb") as handle:
+            request = SttRun(op="stt.transcribe", execution=execution, fields=[], multipart_fields={},
+                uploads=[("file", SimpleNamespace(file=handle, filename="boundary.wav", content_type="audio/wav"))],
+                workspace=tmp_path, cleanup=cleanup, cancellation_waiters=(),
+                deadline_at=asyncio.get_running_loop().time()+10, on_cancel=lambda: None,
+                on_attempt_started=lambda count: None, on_outcome=lambda outcome: None)
+            try:
+                with pytest.raises(stt.SttAudioNotSplittable):
+                    await ChunkedSttAdapter()._run("http://never.fk.test:9876/v1/audio/transcriptions", httpx.Timeout(5), request)
+            finally:
+                await cleanup.aclose()
+        assert not list(tmp_path.glob("*.pcm"))
+    asyncio.run(run())
+
+
+def test_reference_guard_obeys_concurrency_admission_before_spooling(tmp_path):
+    async def run():
+        from gateway.engine_protocol.chunked_stt import SttUpload
+        execution = config(tmp_path, global_concurrency=1)
+        gate = stt.SttResourceGate()
+        lease = gate.acquire(request_id="occupied", config=execution)
+        request = SttUpload(op="stt.transcribe", execution=execution, parts={"file": ("ref.wav", b"audio", "audio/wav")})
+        try:
+            with patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), \
+                 patch.object(stt, "create_request_workspace") as create:
+                with pytest.raises(stt.SttResourceLimitExceeded):
+                    await ChunkedSttAdapter()._post_once("http://never.fk.test:9876/v1/audio/transcriptions", httpx.Timeout(5), request)
+                create.assert_not_called()
+            assert gate.active_count == 1
+        finally:
+            lease.release()
+        assert gate.active_count == gate._reserved_bytes == 0
+    asyncio.run(run())

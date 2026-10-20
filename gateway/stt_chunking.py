@@ -1296,10 +1296,11 @@ def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None, *, d
 
 def _unplanned_outcome(
     config: SttExecutionConfig, probed: ProbedAudio | None, error: SttSetupFailure, *, duration_verified: bool = False,
+    verified_duration_seconds: float | None = None,
 ) -> ChunkingOutcome:
     """The cut could not be planned: send the file whole only when the engine can take it, else refuse it."""
     if _may_send_whole(config, probed, duration_verified=duration_verified):
-        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration_seconds)
     if config.setup_failure_policy != "passthrough" or config.native_long_audio_offline:
         raise error
     if probed is None:
@@ -1338,7 +1339,7 @@ async def _execute_chunking(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
     on_attempt_started: Callable[[int], None] | None = None,
-    cleanup: "SttCleanupOwner | None" = None,
+    cleanup: "SttCleanupOwner",
 ) -> ChunkingOutcome:
     """Probe, plan, extract, and submit chunks without a whole-file replay."""
     _validate_media_paths(source_path, config, source_path.parent / "planning-16k.pcm")
@@ -1362,8 +1363,7 @@ async def _execute_chunking(
         )
         source_sample_rate = probed.sample_rate
         source_channels = probed.channels
-        if cleanup is not None:
-            cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
+        cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
         try:
             await decode_planning_pcm(
                 source_path,
@@ -1393,11 +1393,13 @@ async def _execute_chunking(
             sample_rate=source_sample_rate,
         )
         if len(segments) > 1:
-            if cleanup is not None:
-                cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
-            await decode_planning_pcm(source_path, extraction_source, config=config,
-                cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
-                sample_rate=source_sample_rate, channels=source_channels)
+            cleanup.add("extraction_pcm", lambda: _unlink_chunk_path(extraction_source))
+            if source_sample_rate == _PLANNING_SAMPLE_RATE and source_channels == 1:
+                pcm_path.replace(extraction_source)
+            else:
+                await decode_planning_pcm(source_path, extraction_source, config=config,
+                    cancellation_waiters=cancellation_waiters, deadline_at=deadline_at, on_cancel=on_cancel,
+                    sample_rate=source_sample_rate, channels=source_channels)
             planning_duration = extraction_source.stat().st_size / (source_sample_rate * source_channels * 2)
             verified_duration = planning_duration
             probed = ProbedAudio(planning_duration, source_sample_rate, source_channels)
@@ -1412,15 +1414,12 @@ async def _execute_chunking(
     ):
         raise
     except SttSetupFailure as error:
-        return _unplanned_outcome(config, probed, error, duration_verified=planning_duration is not None)
+        return _unplanned_outcome(config, probed, error, duration_verified=planning_duration is not None, verified_duration_seconds=verified_duration)
     except OSError:
         return _unplanned_outcome(config, probed, SttSetupFailure("STT planning could not read the decoded audio"),
-                                  duration_verified=planning_duration is not None)
+                                  duration_verified=planning_duration is not None, verified_duration_seconds=verified_duration)
     finally:
-        if cleanup is None:
-            _unlink_chunk_path(pcm_path)
-        else:
-            await cleanup.release("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
+        await cleanup.release("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
 
     if config.max_segment_declared and planning_duration > config.max_segment_seconds and (
         not segments or len(segments) <= 1 or any(
@@ -1442,15 +1441,14 @@ async def _execute_chunking(
         run_response_pipeline(response_transforms, {"text": ""})
     except (KeyError, TypeError, ValueError) as error:
         if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
-            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
         raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
         _validate_media_paths(source_path, config, chunk_path)
-        if cleanup is not None:
-            cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
+        cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
         try:
             try:
                 await extract_segment(
@@ -1470,7 +1468,7 @@ async def _execute_chunking(
                 # never silently replay the original audio.
                 if attempts_started == 0:
                     if _may_send_whole(config, probed, duration_verified=planning_duration is not None):
-                        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+                        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt", verified_duration_seconds=verified_duration)
                     if config.setup_failure_policy == "passthrough":
                         raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds) from error
                 raise SttChunkAttemptError("STT segment extraction failed after chunk progress") from error
@@ -1498,10 +1496,7 @@ async def _execute_chunking(
                 )
             payloads.append(_parse_mergeable_chunk_payload(response.body, response_transforms))
         finally:
-            if cleanup is None:
-                _unlink_chunk_path(chunk_path)
-            else:
-                await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
+            await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
 
     return ChunkingOutcome(
         "chunked",
