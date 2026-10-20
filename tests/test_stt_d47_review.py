@@ -175,7 +175,7 @@ def test_voice_contention_returns_retryable_busy_response(tmp_path):
         execution = config(tmp_path)
         leases = [gate.acquire(request_id=str(i), config=execution) for i in range(2)]
         service = {"host": "review.fk.test", "port": 9876,
-                   "chunking": {"spool_dir": str(tmp_path.parent)}}
+                   "chunking": {"spool_dir": str(tmp_path.parent), "max_segment_seconds": 40}}
         try:
             with patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), \
                  patch.dict(proxy.config["backends"], {"stt": service}), \
