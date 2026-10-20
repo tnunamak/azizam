@@ -225,3 +225,28 @@ def test_native_refusal_fact_commit_is_off_loop(monkeypatch):
         assert response.status_code == 403
         assert threads and all(thread != loop_thread for thread in threads)
     asyncio.run(scenario())
+
+
+def test_fact_writer_retries_transient_busy_store(tmp_path, monkeypatch):
+    path = tmp_path / "facts.db"
+    media_jobs.init_db(path)
+    monkeypatch.setattr(media_jobs, "DB_PATH", path)
+    row = RouteReceipt(protocol="test", intent="test", backend="destination")
+    row._retention_fact_snapshot = ("destination", None, media_jobs.prepare_fact_snapshot([
+        {"id": "destination", "facts": []},
+    ]))
+    save = media_jobs.save_fact_snapshot
+    attempts = []
+
+    def transient_busy(*a, **kw):
+        attempts.append(1)
+        if len(attempts) == 1:
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise error
+        return save(*a, **kw)
+
+    monkeypatch.setattr(media_jobs, "save_fact_snapshot", transient_busy)
+    row.persist_retention_facts()
+    assert len(attempts) == 2
+    assert "destination" in media_jobs.fact_destinations_for_source("receipt", row.request_id, path=path)
