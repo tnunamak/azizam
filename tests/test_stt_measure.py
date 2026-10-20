@@ -44,6 +44,56 @@ def test_alignment_labels_a_dropped_a_changed_and_an_added_word() -> None:
 def test_normalize_drops_punctuation_and_listed_fillers() -> None:
     assert m.normalize("Well, it's -- uh -- fine!", frozenset({"uh"})) == ["well", "its", "fine"]
     assert m.normalize("That’s what you’re") == m.normalize("thats what youre")
+    scored = m.score_run([m.RefWord("one", 0, 1), m.RefWord("two", 1, 2)],
+                         m.Run(m.normalize("one 東京 two"), [(0, 3)]))
+    assert m.word_error_rate(scored) == 50  # Dropping a non-ASCII insertion would understate WER.
+    assert m.normalize("Café") == m.normalize("Cafe\u0301")
+    tokens = m.normalize("Don’t Café under_score well-known _ <inaudible>")
+    assert m.normalize(" ".join(tokens)) == tokens
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("हिन्दी", ["हिन्दी"]),
+    ("สวัสดี", ["สวัสดี"]),
+    ("عَرَبِيّ", ["عَرَبِيّ"]),
+    ("שָׁלוֹם", ["שָׁלוֹם"]),
+    ("Straße STRASSE", ["strasse", "strasse"]),
+    ("İSTANBUL", ["i\u0307stanbul"]),
+    ("can‘t", ["cant"]),
+    ("can’t", ["cant"]),
+    ("can`t", ["cant"]),
+    ("<noise>one</noise> two", ["one", "two"]),
+    ("1,000 12,345,678 1000 1,2", ["1000", "12345678", "1000", "1", "2"]),
+])
+def test_normalize_adversarial_unicode_and_numbers(text, expected):
+    assert m.normalize(text) == expected
+    assert m.normalize(" ".join(expected)) == expected
+
+
+@pytest.mark.parametrize("operation", ["window", "pairs", "pieces", "interior", "buckets"])
+def test_overlapping_words_use_midpoint_membership_without_reordering_alignment(operation):
+    reference = [m.RefWord("before", -2, -1), m.RefWord("long", 0, 2),
+                 m.RefWord("short", .5, .7), m.RefWord("edge", 1, 1)]
+    scored = m.score_run(reference, m.Run(["short", "edge"], [(0, 1.5)]))
+    assert scored.reference_indexes == [1, 2, 3]
+    assert scored.alignment.status == [m.DELETED, m.OK, m.OK]
+    # [.5, 1): includes the short overlapping word, excludes both words at exactly 1.
+    if operation == "window":
+        assert list(scored.window(.75, .25)) == [1]
+        assert scored.between(.6, 1) == [1]  # Exact lower midpoint is included.
+        assert scored.window(1.25, .25) == [0, 2]  # Equal lower midpoints keep both identities.
+        assert scored.between(1, 1) == []
+    elif operation == "pairs":
+        other = m.score_run(reference, m.Run(["long", "short", "edge"], [(0, 3)]))
+        assert m._pairs(scored, other, [.75], .25, 0) == [(0, 0, 1)]
+    elif operation == "pieces":
+        assert m.piece_counts(scored, trim=.5) == [(1, 0, 1.5)]
+    elif operation == "interior":
+        # These are local alignment indexes, used by the length runner to map to the recording.
+        assert m.interior_deletions(scored, trim=.5) == {1: 0}
+    else:
+        row = m.deletion_by_length([(reference, scored)], [2], trim=.5)[0]
+        assert (row["words"], row["deletion_pct"]) == (1, 0)
 
 
 def _recording(seconds=900.0, step=0.4):
@@ -226,12 +276,12 @@ def test_default_operator_grid_supports_noisy_shared_deletions_within_caps():
     data = yaml.safe_load((Path(__file__).resolve().parents[1] / "registry/stt_measurement.yml").read_text())
     specs = {s.id: s for s in stt_samples.load_manifest()}
     selected = [specs[sid] for sid in data["sample_ids"]]
-    assert {s.corpus for s in selected} == {"ami", "icsi", "earnings21"}
+    assert {s.corpus for s in selected} == {"ami", "icsi"}
     assert sum(s.download_bytes() for s in selected) <= data["max_download_bytes"]
     seconds = data["audio_seconds_per_sample"]
     assert all(s.duration_seconds >= seconds for s in selected)
     requests = len(selected) * (sum(int(seconds // length) for length in data["lengths"]) + 2 * len(data["search_widths"]))
-    assert requests == 153 and requests <= data["max_gateway_requests"]
+    assert requests == 102 and requests <= data["max_gateway_requests"]
     reference = _recording(seconds, step=.4)
     # 10% shared deletions, clustered in alternate 30s blocks, plus 1.5%
     # independent loss per run (about 3% disagreement between runs).

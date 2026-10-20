@@ -503,7 +503,7 @@ export async function buildOracle(port: number, stateRoot: string, outFile: stri
       const probe = await request.newContext();
       try {
         for (;;) {
-          const response = await probe.get(`${origin}/health`, { timeout: 2000 }).catch(() => undefined);
+          const response = await probe.get(`${origin}/health`, { timeout: 15000 }).catch(() => undefined);
           if (response?.ok() && existsSync(manifestPath)) return;
           await new Promise((resolve) => setTimeout(resolve, 250));
         }

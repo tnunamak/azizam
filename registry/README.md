@@ -48,8 +48,18 @@ It refuses a file that is larger than declared or does not match its
 checksum, and deletes it. It then writes a 16 kHz mono PCM16 WAV with
 ffmpeg and builds the word list `[(word, t0, t1), ...]`. To add a sample
 from a corpus that a recipe already reads, add a row; a new corpus format
-needs a new recipe function. Read each licence note before you use a
-sample: the Earnings-21 audio is for private local evaluation only.
+needs a new recipe function. Each source requires `audio_rights` and
+`transcript_rights` objects, with `status` (`stated`, `not-stated`, or
+`not-applicable`) and a nonempty `note`. The recipe's audio source cannot use
+`not-applicable` for audio rights. A `not-stated` status for either kind of
+rights raises the sample caveat. Sources also require nonempty `provenance`
+and `human_transcribed_evidence` strings. These fields record source claims
+and evidence; they do not independently verify rights or authorship.
+
+Read the source notes before using a sample. Earnings-21 states CC BY-SA
+rights for transcripts and alignment files, but no separate audio licence.
+Public hosting does not establish reuse rights. Its audio is excluded from
+the default measurement selection and requires an explicit sample choice.
 
 ## Retention
 

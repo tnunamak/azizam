@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, Mapping, Sequence
@@ -69,6 +70,8 @@ class SttUpload(CanonicalRequest):
     """
 
     parts: Mapping[str, tuple[str, bytes, str]]
+    execution: stt_chunking.SttExecutionConfig
+    on_whole_file_attempt: Callable[[], None] | None = None
 
 
 @dataclass(kw_only=True)
@@ -299,11 +302,28 @@ class ChunkedSttAdapter:
 
     @staticmethod
     async def _post_once(url: str, timeout: httpx.Timeout, request: SttUpload) -> Reply:
+        execution = request.execution
+        workspace = stt_chunking.create_request_workspace(execution)
         try:
+            paths = []
+            total_bytes = 0
+            for index, (_filename, content, _media_type) in enumerate(request.parts.values()):
+                total_bytes += len(content)
+                if total_bytes > execution.max_input_bytes:
+                    raise stt_chunking.SttResourceLimitExceeded("Uploaded audio exceeds the configured STT limit")
+                path = workspace / f"upload-{index}.part"
+                path.write_bytes(content)
+                paths.append(path)
+            await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
+                deadline_at=time.monotonic() + execution.deadline_seconds, on_cancel=None)
             async with httpx.AsyncClient(timeout=timeout) as client:
+                if request.on_whole_file_attempt is not None:
+                    request.on_whole_file_attempt()
                 resp = await client.post(url, files=request.parts, data=request.body)
         except httpx.HTTPError as error:
             raise failure(error) from error
+        finally:
+            stt_chunking.remove_request_workspace(workspace)
         return reply_from(resp)
 
     async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun) -> TranscriptReply | StreamReply:
@@ -336,12 +356,14 @@ class ChunkedSttAdapter:
             return TranscriptReply(200, {}, body=outcome.merged_payload, mode="chunked")
         if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
             return _transcript(outcome.upstream_response, "upstream_error")
-        if outcome.fallback_reason in {"ineligible_envelope", "multiple_files"}:
-            await stt_chunking.guard_uncut_uploads(
-                [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
-                config=execution, cancellation_waiters=run.cancellation_waiters,
-                deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
-            )
+        # All whole-file fallbacks share the same final limit check, including
+        # setup failures and short/single-segment plans. Native-per-mode policy
+        # is resolved by the guard, never by the envelope's fallback label.
+        await stt_chunking.guard_uncut_uploads(
+            [prepared_source or stt_chunking.source_path(upload) for _name, upload in uploads],
+            config=execution, cancellation_waiters=run.cancellation_waiters,
+            deadline_at=run.deadline_at, on_cancel=run.on_cancel, streaming=run.stream,
+        )
         if run.on_whole_file_attempt is not None:
             run.on_whole_file_attempt()
         if run.stream and len(uploads) == 1:

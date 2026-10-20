@@ -50,6 +50,8 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 
+from gateway.stt_samples import RIGHTS_CAVEAT
+
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -272,7 +274,7 @@ TOOLS: list[dict[str, Any]] = [
 
 TOOLS.append({
     "name": "stt_measurement", "title": "Long-audio operator settings and measurement",
-    "description": "Owner only (MCP OAuth). Configure saved cutting settings independently, or fetch public human-transcribed samples and measure through the gateway. Start returns a durable job id; status reports progress, deletions by piece length, seam excess versus noise and a recommendation. Cancel stops work. Apply is an explicit separate action; configure/apply require the current registry revision from options.",
+    "description": "Owner only (MCP OAuth). Configure saved cutting settings independently, or fetch public human-transcribed samples and measure through the gateway. Start returns a durable job id; status reports progress, deletions by piece length, seam excess versus noise and a recommendation. Cancel stops work. Apply is an explicit separate action; configure/apply require the current registry revision from options. " + RIGHTS_CAVEAT,
     "inputSchema": {"type": "object", "properties": {
         "service_id": {"type": "string"}, "action": {"type": "string", "enum": ["options", "configure", "start", "status", "cancel", "apply"]},
         "job_id": {"type": "string"}, "revision": {"type": "string"},

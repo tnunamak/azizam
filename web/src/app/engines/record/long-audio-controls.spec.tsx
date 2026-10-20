@@ -35,6 +35,10 @@ const options = {
       speakers: 4,
       timing: "word",
       licence: "CC BY",
+      audio_rights_unstated: true,
+      audio_rights_note: "No separate audio licence is stated by the source.",
+      rights_unstated: true,
+      rights_note: "No separate audio licence is stated by the source.",
       download_bytes: 100,
     },
   ],
@@ -58,6 +62,18 @@ function mount(data: unknown = options) {
 }
 
 describe("Long-audio operator controls", () => {
+  it("shows unstated transcript rights beside Measure with trials collapsed", async () => {
+    mount({
+      ...options,
+      samples: [{ ...options.samples[0], audio_rights_unstated: false,
+        audio_rights_note: "", rights_note: "Transcript reuse permission is not stated." }],
+    });
+    const warning = await screen.findByRole("note");
+    expect(warning).toHaveTextContent("Transcript reuse permission is not stated.");
+    expect(warning).toBeVisible();
+    expect(warning.closest("details:not([open])")).toBeNull();
+  });
+
   it("saves exact cuts with CAS without changing native modes", async () => {
     const user = mount();
     const input = await screen.findByLabelText(
@@ -91,6 +107,16 @@ describe("Long-audio operator controls", () => {
 
   it("starts measurement with manifest samples and exact-cut baseline, without saving", async () => {
     const user = mount();
+    const warning = await screen.findByText(/Sample rights not stated for/);
+    expect(warning).toHaveTextContent(options.samples[0].rights_note);
+    expect(warning).toBeVisible();
+    expect(warning.closest("details:not([open])")).toBeNull();
+    await user.click(screen.getByText("Measurement samples and trials"));
+    await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
+    expect(screen.queryByText(/Sample rights not stated for/)).toBeNull();
+    await user.click(screen.getByRole("checkbox", { name: /Meeting/ }));
+    await user.click(screen.getByText("Measurement samples and trials"));
+    expect(screen.getByText(/Sample rights not stated for/)).toBeVisible();
     await user.click(
       await screen.findByRole("button", {
         name: "Measure long-audio settings",
