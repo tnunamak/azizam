@@ -38,7 +38,11 @@
 # current-loaded chat trace. Hermetic --collect-only measured 14992.
 # Vitest list --json remeasured 3050; the existing ledger case now also
 # verifies the former-destination label and historical-evidence status.
-pytest = 14992
+# Slice 6 round 2: 30 direct regression cases (damaged-store expiry,
+# headless auth, configured capture, fact integrity and source-age migration)
+# plus three generated management-route probes. Hermetic collection measured
+# 15025; Vitest list --json remeasured 3050 with no UI cases added.
+pytest = 15025
 vitest = 3050  # No new cases in the ledger display corrections.
 playwright = 492
 
