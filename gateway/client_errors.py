@@ -139,7 +139,7 @@ GATEWAY_CODES = frozenset({
     "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
     "invalid_shots", "invalid_source", "invalid_stt_chunk_response", "invalid_stt_stream_response", "invalid_workflow_extension",
     "generation_mismatch", "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
-    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_job_outputs_missing", "media_payload_capacity", "measurement_engine_offline", "method_not_allowed",
+    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_job_outputs_missing", "media_job_outputs_unavailable", "media_payload_capacity", "measurement_engine_offline", "method_not_allowed",
     "missing_file", "missing_required_image", "model_policy_schema_unavailable", "model_switch_deferred", "native_ambiguous_path",
     "native_credential_origin_mismatch", "native_credential_unavailable", "native_destination_blocked", "native_not_allowed",
     "native_not_enabled", "native_owner_only", "native_remote_forbidden", "native_request_too_large", "no_access",

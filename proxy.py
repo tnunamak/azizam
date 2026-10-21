@@ -20977,7 +20977,9 @@ def _prune_orphaned_media_job_payloads() -> int:
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
             job_id = path.name.lstrip(".").split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if path.name.endswith(".tmp") or (job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES):
+            if (path.name.startswith(".") and path.name.endswith(".tmp")) or (
+                job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES
+            ):
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed

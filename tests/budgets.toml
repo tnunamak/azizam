@@ -99,7 +99,8 @@
 # Data hygiene followups: +14 orphan/symlink/identity/output cases and
 # +3 activity compaction/replay log cases. Collection before the latter: 15401.
 # Vitest list remains 3051; Playwright lists 471 + 3 + 18; offline Node runs 5 + 82.
-pytest = 15404
+# Full run collected 15404; the integration fix adds one absent-history stage case.
+pytest = 15405
 vitest = 3051
 playwright = 492
 

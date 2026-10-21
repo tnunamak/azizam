@@ -13,10 +13,10 @@ from gateway import media_jobs, private_io, prompt_metadata_migration, output_av
 from tests.test_image_media_jobs import authenticated, _StubJsonRequest
 
 
-@pytest.mark.parametrize("sweep", ["delete", "purge", "prune"])
+@pytest.mark.parametrize("sweep", ["delete", "purge", "prune", "prune_missing_history"])
 def test_new_style_job_stages_are_swept(tmp_path, monkeypatch, sweep):
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path)
-    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: {"status": "succeeded"})
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: None if sweep == "prune_missing_history" else {"status": "succeeded"})
     orphan = tmp_path / ".mj_fixture.json.random.tmp"
     orphan.write_text("fixture")
     if sweep == "delete":
