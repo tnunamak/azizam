@@ -19,6 +19,7 @@ def test_new_style_job_stages_are_swept(tmp_path, monkeypatch, sweep):
     monkeypatch.setattr(media_jobs, "get", lambda *a, **k: None if sweep == "prune_missing_history" else {"status": "succeeded"})
     orphan = tmp_path / ".mj_fixture.json.random.tmp"
     orphan.write_text("fixture")
+    os.utime(orphan, (1, 1))
     if sweep == "delete":
         proxy._delete_image_media_job_payload("mj_fixture")
     elif sweep == "purge":
@@ -43,6 +44,7 @@ def test_firehose_compaction_sweeps_killed_writer_stage(tmp_path):
     target.write_text("")
     orphan = tmp_path / ".key_activity.jsonl.random.tmp"
     orphan.write_text("fixture")
+    os.utime(orphan, (1, 1))
     firehose_metrics.compact_log(path=target)
     assert not orphan.exists()
 
@@ -73,6 +75,8 @@ def test_private_directory_refuses_symlinked_leaf(tmp_path, dangling):
 
 
 @pytest.mark.parametrize("error,status,state", [(errno.ENOENT, 410, "missing"),
+                                                 (errno.ENOTDIR, 410, "missing"),
+                                                 (errno.ENAMETOOLONG, 410, "missing"),
                                                  (errno.EACCES, 503, "unavailable"),
                                                  (errno.EIO, 503, "unavailable")])
 def test_output_content_distinguishes_missing_and_retryable(tmp_path, monkeypatch, error, status, state):
@@ -114,7 +118,95 @@ def test_stored_identity_extras_remove_prompt_echoes_only():
                       {"code": "pose_rewritten", "param": "prompt", "message": "Choose a clearer pose."}]
     stored = identity_api.stored_scene_extras(scene, identity_scene.SceneRequest(photos=[], prompt="PRIVATE_PROMPT_FIXTURE"))
     assert "PRIVATE_PROMPT_FIXTURE" not in json.dumps(stored)
-    assert stored["people"] == [{"photo": 0, "reason": "age-match"}]
+    assert stored["people"] == [{"person_index": 0, "photo": 0, "reason": "age-match"}]
     assert stored["warnings"][1]["message"] == "Choose a clearer pose."
     assert stored["likeness"] == scene.report
-    assert stored["refinements"] == scene.refinements
+    assert stored["refinements"] == [{"person": 1, "accepted": True}]
+
+
+def test_stored_identity_labels_use_indexes_without_changing_maker_response():
+    from tests.test_identity_jobs import result
+    from gateway import identity_api, identity_scene
+    scene = result()
+    label = "PRIVATE_LABEL_FIXTURE"
+    scene.people = [{"label": label, "photo": 0}]
+    scene.report["people"] = [{"label": label, "match": {"score": 0.8}}]
+    scene.attempts = [{"scores": {label: 0.8}}]
+    scene.refinements = [{"person": label, "others_before": {label: 0.7}, "others_after": {label: 0.8}}]
+    scene.warnings = [{"param": label, "message": f"photo 1 was not used for {label}"}]
+    immediate = json.dumps(identity_api.scene_extras(scene))
+    stored = identity_api.stored_scene_extras(scene, identity_scene.SceneRequest(photos=[], prompt="scene"))
+    assert label not in json.dumps(stored)
+    assert stored["attempts"][0]["scores"] == {"0": 0.8}
+    assert stored["refinements"][0]["person"] == 0
+    assert stored["refinements"][0]["others_before"] == {"0": 0.7}
+    assert stored["refinements"][0]["others_after"] == {"0": 0.8}
+    assert stored["likeness"]["people"][0]["person_index"] == 0
+    assert json.dumps(identity_api.scene_extras(scene)) == immediate
+    assert label in immediate
+
+
+@pytest.mark.parametrize("short", ["a", "in", "the"])
+def test_short_identity_descriptions_do_not_erase_warnings(short):
+    from tests.test_identity_jobs import result
+    from gateway import identity_api, identity_scene
+    scene = result()
+    scene.warnings = [{"code": "pose", "message": "Choose another angle in the image."}]
+    req = identity_scene.SceneRequest(photos=[], prompt="scene", people=[identity_scene.PersonSpec(description=short)])
+    assert identity_api.stored_scene_extras(scene, req)["warnings"] == scene.warnings
+
+
+@pytest.mark.parametrize("sweep", ["delete", "purge", "prune"])
+def test_young_payload_stage_survives_sweep(tmp_path, monkeypatch, sweep):
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path)
+    monkeypatch.setattr(media_jobs, "get", lambda *a, **k: {"status": "succeeded"})
+    stage = tmp_path / ".mj_fixture.json.random.tmp"
+    stage.write_text("fixture")
+    if sweep == "delete":
+        proxy._delete_image_media_job_payload("mj_fixture")
+    elif sweep == "purge":
+        proxy._purge_prompt_payload_files()
+    else:
+        proxy._prune_orphaned_media_job_payloads()
+    assert stage.exists()
+
+
+def test_young_compaction_stage_survives_sweep(tmp_path, capsys):
+    target = tmp_path / "key_activity.jsonl"
+    target.write_text("")
+    stage = tmp_path / ".key_activity.jsonl.random.tmp"
+    stage.write_text("fixture")
+    firehose_metrics.compact_log(path=target)
+    assert stage.exists()
+    assert " startup_replay_skipped=" in capsys.readouterr().out
+
+
+def test_compaction_log_names_startup_replay_count(tmp_path, capsys):
+    firehose_metrics.compact_log(path=tmp_path / "absent.jsonl")
+    log = capsys.readouterr().out
+    assert " startup_replay_skipped=" in log
+    assert " replay_skipped=" not in log
+
+
+def test_metadata_stage_killed_mid_replace_is_aged_then_swept(tmp_path, monkeypatch):
+    import signal
+    import subprocess
+    import sys
+    child = subprocess.run([sys.executable, "-c", """
+import os, signal, sys
+from pathlib import Path
+import proxy
+proxy.IMAGE_CACHE_DIR = Path(sys.argv[1])
+def killed_replace(*args):
+    os.kill(os.getpid(), signal.SIGKILL)
+os.replace = killed_replace
+proxy._write_asset_metadata('img_' + 'a' * 64, {'fixture': True})
+""", str(tmp_path)], capture_output=True, timeout=30)
+    assert child.returncode == -signal.SIGKILL
+    stages = list(tmp_path.glob(".*.meta.json.*.tmp"))
+    assert len(stages) == 1
+    prompt_metadata_migration.strip_cached_assets(tmp_path, tmp_path / "migration.db")
+    assert stages[0].exists()
+    os.utime(stages[0], (1, 1))
+    prompt_metadata_migration.strip_cached_assets(tmp_path, tmp_path / "migration.db")
+    assert not stages[0].exists()

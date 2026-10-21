@@ -343,13 +343,17 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
     dropped = {"malformed": 0, "future": 0, "expired": 0}
 
     def drop_summary() -> str:
-        return " ".join(f"dropped_{reason}={count}" for reason, count in dropped.items()) + f" replay_skipped={_LAST_REPLAY_SKIPPED}"
+        return " ".join(f"dropped_{reason}={count}" for reason, count in dropped.items()) + f" startup_replay_skipped={_LAST_REPLAY_SKIPPED}"
 
     try:
+        # Single-process lock: a draining old gateway during restart is a second process.
         with _LOG_LOCK:
-            # No live replacement can exist while its writer lock is held.
             for orphan in target.parent.glob(f".{target.name}.*.tmp"):
-                orphan.unlink(missing_ok=True)
+                try:
+                    if now - orphan.stat().st_mtime >= 600:
+                        orphan.unlink(missing_ok=True)
+                except FileNotFoundError:
+                    pass
             if not target.is_file():
                 print(f"[firehose] compaction kept=0 {drop_summary()}", flush=True)
                 return 0

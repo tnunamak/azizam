@@ -202,13 +202,13 @@ def test_compaction_logs_drop_reasons_without_row_content(tmp_path, monkeypatch,
     assert fm.compact_log(window_s=100, path=path) == 2
     output = capsys.readouterr().out
     assert output.splitlines() == [
-        "[firehose] compaction kept=2 dropped_malformed=3 dropped_future=1 dropped_expired=1 replay_skipped=7"
+        "[firehose] compaction kept=2 dropped_malformed=3 dropped_future=1 dropped_expired=1 startup_replay_skipped=7"
     ]
     assert "private-" not in output
     assert [json.loads(line)["ts"] for line in path.read_text().splitlines()] == [900, 1300]
     assert fm.compact_log(window_s=100, path=path) == 2
     assert capsys.readouterr().out.splitlines() == [
-        "[firehose] compaction kept=2 dropped_malformed=0 dropped_future=0 dropped_expired=0 replay_skipped=7"
+        "[firehose] compaction kept=2 dropped_malformed=0 dropped_future=0 dropped_expired=0 startup_replay_skipped=7"
     ]
 
 
@@ -232,7 +232,7 @@ def test_replay_logs_skipped_with_totals_without_row_content(tmp_path, monkeypat
     ]
     assert fm.compact_log(window_s=100, path=path) == 1
     assert capsys.readouterr().out.splitlines() == [
-        "[firehose] compaction kept=1 dropped_malformed=1 dropped_future=1 dropped_expired=0 replay_skipped=2"
+        "[firehose] compaction kept=1 dropped_malformed=1 dropped_future=1 dropped_expired=0 startup_replay_skipped=2"
     ]
 
 
@@ -240,5 +240,5 @@ def test_missing_log_compaction_reports_zero_counts(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(fm, "_LAST_REPLAY_SKIPPED", 0)
     assert fm.compact_log(path=tmp_path / "missing.jsonl") == 0
     assert capsys.readouterr().out.splitlines() == [
-        "[firehose] compaction kept=0 dropped_malformed=0 dropped_future=0 dropped_expired=0 replay_skipped=0"
+        "[firehose] compaction kept=0 dropped_malformed=0 dropped_future=0 dropped_expired=0 startup_replay_skipped=0"
     ]

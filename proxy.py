@@ -20603,6 +20603,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
     def spared(payload: Mapping[str, Any] | None) -> bool:
         return before is not None and int((payload or {}).get("created_at") or 0) > before
 
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         # Move active jobs to memory so they can finish without a durable prompt.
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -20629,7 +20630,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
             # A partial spool cannot be resumed or reliably attributed.
             for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
                          *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
-                if person_id is None and (before is None or int(path.stat().st_mtime) <= before):
+                if person_id is None and not _young_media_payload_stage(path) and (before is None or int(path.stat().st_mtime) <= before):
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
             if not isinstance(payload.get("body"), dict) or spared(payload):
@@ -20949,13 +20950,25 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
         return data if isinstance(data, dict) else None
 
 
+def _young_media_payload_stage(path: Path) -> bool:
+    if not path.name.endswith(".tmp"):
+        return False
+    try:
+        return time.time() - path.stat().st_mtime < 600
+    except FileNotFoundError:
+        return False
+
+
 def _delete_image_media_job_payload(job_id: str) -> None:
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
                      _image_media_job_payload_path(job_id).with_suffix(".json.tmp"),
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(f".{job_id}.json.*.tmp")):
             try:
+                if _young_media_payload_stage(path):
+                    continue
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
@@ -20963,6 +20976,7 @@ def _delete_image_media_job_payload(job_id: str) -> None:
 
 def _prune_orphaned_media_job_payloads() -> int:
     """Remove terminal-job spools; absent history may be in quarantine."""
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         removed = 0
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
@@ -20975,6 +20989,8 @@ def _prune_orphaned_media_job_payloads() -> int:
         for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+            if _young_media_payload_stage(path):
+                continue
             job_id = path.name.lstrip(".").split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
             if (path.name.startswith(".") and path.name.endswith(".tmp")) or (

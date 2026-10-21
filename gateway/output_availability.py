@@ -1,6 +1,7 @@
 """Read-time output availability; historical execution status stays intact."""
 from __future__ import annotations
 
+import errno
 import stat
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -22,10 +23,9 @@ def project(job: Mapping[str, Any], resolver: AssetPathResolver | None) -> dict[
             path = resolver(asset_id) if isinstance(asset_id, str) else None
             available = path is not None and stat.S_ISREG(path.stat().st_mode)
             state = "available" if available else "missing"
-        except FileNotFoundError:
-            available, state = False, "missing"
-        except OSError:
-            available, state = False, "unavailable"
+        except OSError as exc:
+            available = False
+            state = "missing" if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG} else "unavailable"
         if not available:
             asset.update(available=False, availability=state)
             for field in ("url", "asset_url", "content_url", "download_url", "thumbnail_url", "workflow_download_url"):

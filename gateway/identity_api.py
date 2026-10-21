@@ -528,26 +528,44 @@ def scene_extras(result: ids.SceneResult) -> dict[str, Any]:
 
 
 def stored_scene_extras(result: ids.SceneResult, request: SceneRequest) -> dict[str, Any]:
-    """Keep async diagnostics, removing prompt echoes from person and warning text."""
+    """Keep async diagnostics with stable person indexes instead of private labels."""
     prompt_texts = [request.prompt, result.prompt_used,
                     *(person.description for person in request.people)]
-    prompt_texts = [text for text in prompt_texts if text]
+    prompt_texts = [text for text in prompt_texts if text and len(text) >= 4]
+    labels: dict[str, int] = {}
+    for person in [*result.people, *result.report.get("people", [])]:
+        label = person.get("label")
+        if isinstance(label, str) and label not in labels:
+            labels[label] = len(labels)
+    for refinement in result.refinements:
+        label = refinement.get("person")
+        if isinstance(label, str) and label not in labels:
+            labels[label] = len(labels)
 
-    def without_echoes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {key: value for key, value in row.items()
-             if not (key in {"label", "reason", "message", "param"}
-                     and isinstance(value, str)
-                     and any(text in value for text in prompt_texts)
-                     and not (key == "param" and value in {"prompt", "people", "image"}))}
-            for row in rows
-        ]
+    def private_diagnostics(value: Any) -> Any:
+        if isinstance(value, list):
+            return [private_diagnostics(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        clean = {}
+        for key, item in value.items():
+            if key in {"label", "person"}:
+                if item in labels:
+                    clean["person_index" if key == "label" else key] = labels[item]
+                continue
+            if key in {"scores", "others_before", "others_after"} and isinstance(item, dict):
+                clean[key] = {str(labels[label]): score for label, score in item.items() if label in labels}
+                continue
+            if key in {"reason", "message", "param"} and isinstance(item, str):
+                if any(label in item for label in labels) or any(text in item for text in prompt_texts):
+                    if not (key == "param" and item in {"prompt", "people", "image"}):
+                        continue
+            clean[key] = private_diagnostics(item)
+        return clean
 
     extras = scene_extras(result)
     extras.pop("prompt_used")
-    extras["people"] = without_echoes(result.people)
-    extras["warnings"] = without_echoes(result.warnings)
-    return extras
+    return private_diagnostics(extras)
 
 
 def scene_payload(result: ids.SceneResult, item: Mapping[str, Any]) -> dict[str, Any]:
