@@ -851,6 +851,9 @@
                     "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
                   },
                   {
+                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                  },
+                  {
                     "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
                   },
                   {
@@ -858,6 +861,12 @@
                   },
                   {
                     "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
                   },
                   {
                     "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
@@ -2550,6 +2559,57 @@
         "type": "object",
         "x-azizam-workflow-id": "video.generate.ltx-2.5-i2v"
       },
+      "WorkflowInputs_video_generate_ltx_2_5_keyframes": {
+        "additionalProperties": false,
+        "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+        "properties": {
+          "image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "image_strength": {
+            "default": 0.7,
+            "description": "Adjust how strongly the starting picture shapes the video.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "negative_prompt": {
+            "description": "Describe anything you want left out.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Describe the scene, action, and mood.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "image",
+          "last_frame"
+        ],
+        "title": "LTX 2.5 Distilled Keyframes",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes"
+      },
       "WorkflowInputs_video_generate_ltx_2_5_long": {
         "additionalProperties": false,
         "description": "Make a longer video from a description.",
@@ -2642,6 +2702,92 @@
         "title": "MiniMax H3 I2V",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.minimax-h3-i2v"
+      },
+      "WorkflowInputs_video_generate_minimax_h3_keyframes": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+        "properties": {
+          "image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "prompt": {
+            "description": "Describe the scene, action, and mood.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "image",
+          "last_frame"
+        ],
+        "title": "MiniMax H3 Keyframes",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes"
+      },
+      "WorkflowInputs_video_generate_minimax_h3_keyframes_mid": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+        "properties": {
+          "image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "middle_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture the video passes through halfway, at half its frame count.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "prompt": {
+            "description": "Describe the scene, action, and mood.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "image",
+          "last_frame",
+          "middle_frame"
+        ],
+        "title": "MiniMax H3 Keyframes + Middle",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes-mid"
       },
       "WorkflowInputs_video_generate_minimax_h3_long": {
         "additionalProperties": false,
@@ -21402,6 +21548,9 @@
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
                           },
                           {
@@ -21409,6 +21558,12 @@
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
@@ -28319,6 +28474,9 @@
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
                           },
                           {
@@ -28326,6 +28484,12 @@
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
@@ -34287,6 +34451,116 @@
       "typical_seconds": 56.0
     },
     {
+      "aliases": [],
+      "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+      "display_name": "LTX 2.5 Distilled Keyframes",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "DELETE",
+            "path": "/v1/videos/{video_id}"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}/content"
+          },
+          "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "image": {
+              "field": "input_reference",
+              "in": "body"
+            },
+            "image_strength": {
+              "field": "image_strength",
+              "in": "body"
+            },
+            "last_frame": {
+              "field": "last_frame",
+              "in": "extension"
+            },
+            "last_frame_strength": {
+              "field": "last_frame_strength",
+              "in": "extension"
+            },
+            "negative_prompt": {
+              "field": "negative_prompt",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "body"
+            }
+          },
+          "kind": "video",
+          "poll": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}"
+          },
+          "statuses": [
+            "queued",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "submit": {
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "video-ltx-2.5-keyframes",
+            "path": "/v1/videos"
+          },
+          "terminal": [
+            "completed",
+            "failed"
+          ]
+        },
+        "recommended": "async",
+        "sync": null
+      },
+      "id": "video.generate.ltx-2.5-keyframes",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+      },
+      "intent": "video.generate",
+      "limits": {
+        "default_size": "960x512",
+        "frame_rate": 24,
+        "max_seconds": 10,
+        "max_size": "1280x704",
+        "min_seconds": 1
+      },
+      "outputs": [
+        {
+          "media_type": "video/mp4",
+          "name": "video"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "ltx-2.5-keyframes",
+      "typical_seconds": 56.0
+    },
+    {
       "aliases": [
         "video-long"
       ],
@@ -34584,6 +34858,208 @@
         }
       ],
       "short_id": "minimax-h3-i2v",
+      "typical_seconds": 135.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+      "display_name": "MiniMax H3 Keyframes",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "DELETE",
+            "path": "/v1/videos/{video_id}"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}/content"
+          },
+          "fields": {
+            "image": {
+              "field": "input_reference",
+              "in": "body"
+            },
+            "last_frame": {
+              "field": "last_frame",
+              "in": "extension"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "body"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            }
+          },
+          "kind": "video",
+          "poll": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}"
+          },
+          "statuses": [
+            "queued",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "submit": {
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "video-minimax-h3-keyframes",
+            "path": "/v1/videos"
+          },
+          "terminal": [
+            "completed",
+            "failed"
+          ]
+        },
+        "recommended": "async",
+        "sync": null
+      },
+      "id": "video.generate.minimax-h3-keyframes",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+      },
+      "intent": "video.generate",
+      "limits": {
+        "default_size": "960x544",
+        "frame_rate": 24,
+        "max_seconds": 10,
+        "max_size": "1344x768",
+        "min_seconds": 2
+      },
+      "outputs": [
+        {
+          "media_type": "video/mp4",
+          "name": "video"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "minimax-h3-keyframes",
+      "typical_seconds": 135.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+      "display_name": "MiniMax H3 Keyframes + Middle",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "DELETE",
+            "path": "/v1/videos/{video_id}"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}/content"
+          },
+          "fields": {
+            "image": {
+              "field": "input_reference",
+              "in": "body"
+            },
+            "last_frame": {
+              "field": "last_frame",
+              "in": "extension"
+            },
+            "middle_frame": {
+              "field": "middle_frame",
+              "in": "extension"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "body"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            }
+          },
+          "kind": "video",
+          "poll": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}"
+          },
+          "statuses": [
+            "queued",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "submit": {
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "video-minimax-h3-keyframes-mid",
+            "path": "/v1/videos"
+          },
+          "terminal": [
+            "completed",
+            "failed"
+          ]
+        },
+        "recommended": "async",
+        "sync": null
+      },
+      "id": "video.generate.minimax-h3-keyframes-mid",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
+      },
+      "intent": "video.generate",
+      "limits": {
+        "default_size": "960x544",
+        "frame_rate": 24,
+        "max_seconds": 10,
+        "max_size": "1344x768",
+        "min_seconds": 2
+      },
+      "outputs": [
+        {
+          "media_type": "video/mp4",
+          "name": "video"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "minimax-h3-keyframes-mid",
       "typical_seconds": 135.0
     },
     {
