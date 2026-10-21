@@ -18,6 +18,7 @@ from gateway import (
     video_job_records, voice_audio,
 )
 from gateway.stt_samples import Licence, Rights, SampleSpec, Source
+from tests.support.fake_upstream import HandlerTransport
 
 
 @pytest.fixture
@@ -193,7 +194,7 @@ def test_stt_sample_download_and_conversion_outputs_are_private(monkeypatch, tmp
         id="sample", corpus="fixture", title="fixture", licence=Licence("test", "", "", ""),
         duration_seconds=1, speakers=1, timing="word", sources=(source,), recipe_kind="ami-words", recipe_params={},
     )
-    client = httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=content)))
+    client = httpx.Client(transport=HandlerTransport(lambda _request: httpx.Response(200, content=content)))
     cached = stt_samples.fetch_sources(spec, tmp_path / "sample-cache", client_factory=lambda: client)
     cached_file = cached["audio"]
     assert mode(cached_file.parent) == 0o700
@@ -218,7 +219,7 @@ def test_stt_sample_download_and_conversion_outputs_are_private(monkeypatch, tmp
     assert mode(target) == 0o600
 
 
-def test_chunked_stt_upload_spool_is_private(monkeypatch, tmp_path, permissive_umask):
+def test_chunked_stt_upload_spool_is_private(monkeypatch, tmp_path, permissive_umask, fake_upstreams):
     from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter, SttUpload
     from tests.test_engine_protocol_adapter import _stt_execution
 
@@ -233,25 +234,19 @@ def test_chunked_stt_upload_spool_is_private(monkeypatch, tmp_path, permissive_u
         def release():
             pass
 
-    class Client:
-        async def __aenter__(self):
-            return self
+    def reply(_request):
+        path = workspace / "upload-0.part"
+        seen["file_mode"] = mode(path)
+        seen["dir_mode"] = mode(path.parent)
+        return httpx.Response(200, json={"text": "ok"})
 
-        async def __aexit__(self, *_args):
-            return None
-
-        async def post(self, *_args, **_kwargs):
-            path = workspace / "upload-0.part"
-            seen["file_mode"] = mode(path)
-            seen["dir_mode"] = mode(path.parent)
-            return httpx.Response(200, json={"text": "ok"})
+    fake_upstreams.router.add_transport("unused", HandlerTransport(reply))
 
     monkeypatch.setattr("gateway.engine_protocol.chunked_stt.stt_chunking.uncut_upload_needs_decode", lambda _config: True)
     monkeypatch.setattr("gateway.engine_protocol.chunked_stt.stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire", lambda **_kwargs: Lease())
     monkeypatch.setattr("gateway.engine_protocol.chunked_stt.stt_chunking.create_request_workspace", lambda _config: workspace)
     monkeypatch.setattr("gateway.engine_protocol.chunked_stt.stt_chunking.guard_uncut_uploads", lambda *_args, **_kwargs: asyncio.sleep(0))
     monkeypatch.setattr("gateway.engine_protocol.chunked_stt.stt_chunking.remove_request_workspace", lambda _path: None)
-    monkeypatch.setattr("gateway.engine_protocol.chunked_stt.httpx.AsyncClient", lambda **_kwargs: Client())
     result = SttUpload(
         op="stt.transcribe", body={}, parts={"file": ("clip.wav", b"private audio", "audio/wav")},
         execution=_stt_execution(spool_dir=str(workspace.parent)),
