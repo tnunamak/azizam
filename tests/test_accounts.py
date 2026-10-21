@@ -762,6 +762,40 @@ def test_an_active_person_on_the_plan_blocks_deletion_through_a_same_as_person_a
     assert accounts.access(person["id"], path=path)["plan_id"] == plan["id"]
 
 
+def test_an_enabled_app_pinned_to_the_plan_alone_blocks_deletion(account_db):
+    path, plan = account_db
+    broad = store_plan("Broad plan", path=path, models=["test-model", "other-model"])
+    person = admin_store.upsert_oidc_user("https://identity.example", "other-plan", email="other-plan@example.test", path=path)
+    accounts.change_person(person["id"], "owner", plan_id=broad["id"], path=path)
+    active = admin_store.create_app("Pinned active", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    session_app = admin_store.ensure_session_app_for_user(person["id"], name="Browser", path=path)
+    admin_store.set_app_access_plan(session_app["id"], plan["id"], path=path)
+    admin_store.disable_app(session_app["id"], path=path)
+    disabled = admin_store.create_app("Pinned disabled", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    admin_store.disable_app(disabled["id"], path=path)
+    ids = [active["id"], session_app["id"], disabled["id"]]
+    before = {i: (a["access_plan"], a["disabled_at"]) for i in ids for a in [admin_store.get_app(i, path=path)]}
+    assert before[active["id"]] == (plan["id"], None)
+    assert before[session_app["id"]][1] is not None and before[disabled["id"]][1] is not None
+    with pytest.raises(ValueError) as error:
+        admin_store.delete_access_plan(plan["id"], path=path)
+    message = str(error.value)
+    assert "1 app (Pinned active)" in message
+    assert "person" not in message and "invitation" not in message and "sign-in rule" not in message
+    assert admin_store.get_access_plan(plan["id"], path=path) is not None
+    after = {i: (a["access_plan"], a["disabled_at"]) for i in ids for a in [admin_store.get_app(i, path=path)]}
+    assert after == before
+
+
+def test_a_sign_in_rule_naming_the_plan_alone_blocks_deletion(account_db):
+    path, plan = account_db
+    admin_store.put_operator_setting("signin_rules", {"fallback": "closed", "rules": [
+        {"id": "rule_1", "field": "group", "values": ["/Family"], "admit": True, "admin": False, "plan": plan["id"]}]}, path=path)
+    with pytest.raises(ValueError, match="1 sign-in rule. Choose another plan in the rule first"):
+        admin_store.delete_access_plan(plan["id"], path=path)
+    assert admin_store.get_access_plan(plan["id"], path=path) is not None
+
+
 def test_deleting_a_plan_clears_it_from_removed_people(account_db):
     path, plan = account_db
     person = admin_store.upsert_oidc_user("https://identity.example", "gone", email="gone@example.test", path=path)
