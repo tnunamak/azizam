@@ -154,6 +154,49 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(response.json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertTrue(self._asset_path(asset("A")).exists())
 
+    def test_a_removal_that_would_delete_only_a_job_the_caller_was_not_shown_is_refused(self) -> None:
+        """An already hidden asset leaves no Library item, but its job entry still goes: the plan says so."""
+        self._write_asset(asset("B"), ["sha256:alice"], prompt="prompt B")
+        prompt_memory.put(asset("A"), self.alice["id"], "prompt A", kept_until=None, path=self.prompt_db)
+        self._receipt(self.app_a["id"], "req_a")
+        self._job("req_a", asset("A"))
+        with sqlite3.connect(self.jobs_db) as conn:
+            media_jobs.hide_assets_in(conn, self.alice["id"], [(asset("A"), self.job_ids("req_a")[0])])
+        self.assertEqual(
+            self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()["removal_plan"],
+            {"missing_items": 1},
+            "the job entry the removal deletes is part of what the caller sees",
+        )
+        response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 0})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["message"], CHANGED)
+        self.assertEqual(len(self.job_ids("req_a")), 1)
+        self.assertIn(asset("A"), set(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)))
+        removed = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 1})
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(removed.json(), {"removed_assets": 0, "removed_jobs": 1})
+        self.assertEqual(self.job_ids("req_a"), [])
+
+    def test_an_id_of_64_characters_that_is_not_hex_is_never_removed(self) -> None:
+        """Only 64 hex characters are a digest, so a 64-character id that is not hex cannot be called gone."""
+        self.seed()
+        odd = asset("z")
+        self.assertEqual(len(odd.split("_", 1)[1]), 64)
+        prompt_memory.put(odd, self.alice["id"], "prompt odd", kept_until=None, path=self.prompt_db)
+        self._receipt(self.app_a["id"], "req_odd")
+        self._job("req_odd", odd)
+        self.assertEqual(
+            self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()["removal_plan"],
+            {"missing_items": 2},
+            "an id that cannot be checked is neither counted nor removed",
+        )
+        response = self.remove_missing()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(len(self.job_ids("req_odd")), 1)
+        self.assertIn(odd, {a["asset_id"] for job in media_jobs.recent(500, path=self.jobs_db) for a in job["assets"]})
+        self.assertIn(odd, set(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)))
+
     def test_confirm_refuses_folder_swapped_after_the_read(self) -> None:
         self.seed()
         self.unconfirm_folder()
