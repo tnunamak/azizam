@@ -145,8 +145,8 @@
 # full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
 # Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
 # Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
-# Account switcher A4: 22 session-bound URL/cache regressions; hermetic collection measured 15819.
-pytest = 15819
+# Account switcher A4 round 3: 20 lifetime, persistent epoch, Try binding and range regressions; hermetic collection measured 15839.
+pytest = 15839
 vitest = 3068
 playwright = 502
 
