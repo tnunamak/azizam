@@ -116,3 +116,18 @@ def test_viewer_preserves_legacy_hash_only_content_scopes():
     assert viewer.person_id is viewer.app_id is viewer.credential_id is None
     assert not viewer.privacy_permission
     assert isinstance(decide(viewer, ReceiptRecord(frozenset({"synthetic-owner"})), "read"), Own)
+
+
+def test_asset_and_video_lists_build_one_viewer_per_request():
+    from gateway import content_access, request_connections
+    from gateway.runtime_auth import RuntimeIdentity
+    auth = AuthContext(identity=RuntimeIdentity(name="synthetic", key_hash="synthetic-owner"))
+    with patch.object(proxy, "_asset_read_owner_keys", return_value=("synthetic-owner",)), \
+            patch.object(proxy, "_read_asset_metadata", return_value={"owner_key_hashes": ["synthetic-owner"]}), \
+            patch.object(proxy, "_video_job_records", {"job": {"owner_key_hash": "synthetic-owner"}}), \
+            patch.object(content_access, "viewer_from_auth", wraps=content_access.viewer_from_auth) as build:
+        with request_connections.request_scope():
+            for _ in range(100):
+                assert proxy._asset_access_allowed("synthetic-asset", auth)
+                assert proxy._video_job_access_allowed("job", auth)
+        assert build.call_count == 1
