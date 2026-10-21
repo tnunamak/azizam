@@ -177,6 +177,8 @@ prove that every current route enforces them. Existing route graph and headless
 access tests remain separate behavior gates.
 
 Principal-only resources use decide_own with the Viewer's pre-stripped key set.
+Asset and video lists memoize the auth-derived Viewer for one read request;
+Library and receipt/job scopes retain their cached principal Viewers.
 The auth builder accepts either RuntimeIdentity or AuthContext; authentication
 boundaries populate auth_kind and credential_id for sessions, App and service
 keys, MCP grants and trusted addresses. Existing scopes may supply their already

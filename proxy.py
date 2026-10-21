@@ -6904,6 +6904,16 @@ def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
             current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
+def _asset_content_viewer(auth_context: AuthContext | None):
+    """Normalize the caller once for every asset/job in this read request."""
+    from gateway.content_access import viewer_from_auth
+    # Hold the context with the Viewer so a reused object id cannot match it.
+    return request_connections.memo(
+        ("asset-content-viewer", id(auth_context)),
+        lambda: (auth_context, viewer_from_auth(
+            auth_context, owner_keys=_asset_read_owner_keys(auth_context))))[1]
+
+
 async def _warm_video_owner_keys(auth_context: AuthContext | None) -> None:
     """Resolve the caller's owner keys (SQLite) off the loop, once per request.
 
@@ -6974,8 +6984,8 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
         # Fail closed for authenticated callers when metadata is absent. Auth-
         # disabled local runs have no identity and keep the old cache behavior.
         return _asset_owner_key(auth_context) is None
-    from gateway.content_access import decide_own, viewer_from_auth
-    return decide_own(viewer_from_auth(auth_context, owner_keys=_asset_read_owner_keys(auth_context)), owners)
+    from gateway.content_access import decide_own
+    return decide_own(_asset_content_viewer(auth_context), owners)
 
 
 _CURRENT_MAKER = object()
@@ -9386,8 +9396,8 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
     if not owner:
         # OWNER_VISIBILITY_STEP3: delete the no-identity video-job exception.
         return _asset_owner_key(auth_context) is None
-    from gateway.content_access import decide_own, viewer_from_auth
-    return decide_own(viewer_from_auth(auth_context, owner_keys=_asset_read_owner_keys(auth_context)), (owner,))
+    from gateway.content_access import decide_own
+    return decide_own(_asset_content_viewer(auth_context), (owner,))
 
 
 def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
