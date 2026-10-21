@@ -233,7 +233,7 @@ describe("the prompt in the viewer", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
     (await screen.findByRole("combobox", { name: "Person" })).focus();
     await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "Everyone", exact: true }));
+    await user.click(await screen.findByRole("option", { name: "Everyone" }));
     const dialog = await openOnly(user);
     expect(dialog.textContent ?? "").not.toMatch(/prompt|with details/i);
   });
