@@ -9527,6 +9527,7 @@ def _tracked_video_fields(prompt_id: str, auth_context: AuthContext | None = Non
     if person_id != record.get("person_id"):
         person_id = None
     prompt_asset_id = str(record.get("asset_id") or f"video_{prompt_id}")
+    # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
     saved = prompt_memory.get(prompt_asset_id, person_id) if person_id else None
     fields["prompt"] = saved["prompt_text"] if saved else None
     return fields
@@ -12144,6 +12145,7 @@ async def proxy_graph_video_content(
             record = _video_job_records.get(prompt_id) or {}
             person_id = record.get("person_id")
             saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
+            # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
             saved_prompt = await asyncio.to_thread(prompt_memory.get, saved_prompt_id, person_id) if person_id else None
             household = await asyncio.to_thread(prompt_memory.household_settings, admin_path=ADMIN_STORE.path)
             if metadata_mode == provenance.METADATA_FULL and (
@@ -23770,6 +23772,7 @@ def _signed_asset_content_response(
             # session can supply one, but never override a real credential.
             session = _oidc_session_from_request(request)
             person_id = str(session.subject) if session is not None else None
+        # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)

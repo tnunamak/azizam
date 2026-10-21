@@ -258,6 +258,29 @@
         "canceled",
         "cancel_requested"
       ]
+    },
+    {
+      "path": "gateway/media_jobs.py",
+      "function": "append_event",
+      "source_sha256": "ce3b4079468f0778b8aa3dd44b90703c5720cc556e4c8dedec35bace9d1a3136",
+      "call": "sql-insert",
+      "event": "event_type",
+      "resolved_types": [
+        "attempt",
+        "cancel_requested",
+        "canceled",
+        "completed",
+        "failed",
+        "note",
+        "progress",
+        "queued",
+        "retry",
+        "started",
+        "submitted",
+        "succeeded"
+      ],
+      "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
+      "access": "content:job:read"
     }
   ],
   "mcp_fields": {
@@ -305,13 +328,17 @@
         "target",
         "wait_seconds"
       ],
-      "access": "content:creation:reuse+content:voice:reuse+content:creation:link",
+      "access": "own-account+content:creation:reuse+content:voice:reuse+content:creation:link+content:job:read",
       "operations": {
         "workflow-auto": "content:creation:reuse+content:creation:link",
         "workflow-sync": "content:creation:reuse+content:creation:link",
         "workflow-async": "content:creation:reuse+content:job:read",
-        "speech": "content:voice:reuse+content:creation:link"
-      }
+        "speech": "content:voice:reuse+content:creation:link",
+        "alias-auto": "content:creation:reuse+content:creation:link",
+        "alias-sync": "content:creation:reuse+content:creation:link",
+        "alias-async": "content:creation:reuse+content:job:read"
+      },
+      "note": "Fresh generation is own-account; supplied assets/voices and result links have separate content checks."
     },
     {
       "actions": [],
@@ -1292,7 +1319,8 @@
       "handler": "gateway.mcp_server.register_mcp_routes.<locals>.mcp_post",
       "method": "POST",
       "path": "/mcp",
-      "access": "none"
+      "access": "own-account+operational+content:creation:reuse+content:creation:link+content:job:read+content:job:cancel+content:voice:read+content:voice:reuse+content:receipt:read",
+      "note": "Composite dispatcher; tool and callback suboperations are classified separately."
     },
     {
       "handler": "gateway.mcp_server.register_mcp_routes.<locals>.protected_resource",
@@ -1358,13 +1386,13 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.confirm_media_folder",
       "method": "POST",
       "path": "/me/api/media/confirm-folder",
-      "access": "own-account"
+      "access": "operational"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.delete_media",
       "method": "DELETE",
       "path": "/me/api/media/{asset_id}",
-      "access": "content:creation:delete"
+      "access": "content:creation:delete+content:prompt:delete"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.job_detail",
@@ -1382,25 +1410,28 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.list_media",
       "method": "GET",
       "path": "/me/api/media",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:creation:link+content:prompt:read",
+      "note": "Prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_detail",
       "method": "GET",
       "path": "/me/api/media/{asset_id}",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:creation:link+content:prompt:read",
+      "note": "Prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_download",
       "method": "GET",
       "path": "/me/api/media/{asset_id}/download",
-      "access": "content:creation:link"
+      "access": "content:creation:link+content:prompt:read",
+      "note": "metadata=full additionally requires the viewer's saved prompt."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.remove_missing_media",
       "method": "POST",
       "path": "/me/api/media/remove-missing",
-      "access": "own-account"
+      "access": "content:creation:delete+content:prompt:delete"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.usage_summary",
@@ -1976,13 +2007,15 @@
       "handler": "proxy.assets_content",
       "method": "GET",
       "path": "/openai/v1/assets/{asset_id}/content",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:prompt:read",
+      "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.assets_content",
       "method": "GET",
       "path": "/v1/assets/{asset_id}/content",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:prompt:read",
+      "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.assets_thumbnail",
@@ -2018,13 +2051,13 @@
       "handler": "proxy.audio_speech",
       "method": "POST",
       "path": "/openai/v1/audio/speech",
-      "access": "own-account"
+      "access": "own-account+content:voice:reuse"
     },
     {
       "handler": "proxy.audio_speech",
       "method": "POST",
       "path": "/v1/audio/speech",
-      "access": "own-account"
+      "access": "own-account+content:voice:reuse"
     },
     {
       "handler": "proxy.audio_transcriptions",
@@ -2176,13 +2209,15 @@
       "handler": "proxy.images_content",
       "method": "GET",
       "path": "/openai/v1/images/{image_id}/content",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:prompt:read",
+      "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.images_content",
       "method": "GET",
       "path": "/v1/images/{image_id}/content",
-      "access": "content:creation:read"
+      "access": "content:creation:read+content:prompt:read",
+      "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.images_edits",
@@ -2862,7 +2897,7 @@
       "handler": "proxy.run_video_manifest_workflow",
       "method": "POST",
       "path": "/gateway/v1/workflows/{workflow_id}/run",
-      "access": "own-account"
+      "access": "own-account+content:creation:reuse+content:creation:link+content:voice:reuse"
     },
     {
       "handler": "proxy.setup_claim_admin_key",
@@ -3162,5 +3197,11 @@
     "started": "content:job:read",
     "submitted": "content:job:read",
     "succeeded": "content:job:read"
+  },
+  "mcp_dispatch": {
+    "_job_paths": "7c5795ab8594aadbbbf6f357064596c572702cd82aab0b35c4b45e5c94a36465",
+    "Tools": "7be10b7c1a00897ed30cf61ad5f09796c41a6c038d1d0fbee95543e5c6842fb1",
+    "call_tool": "abd0ca98c708e34effb9d7c763f0d953dc70471ef6e57ff97b2e0cd2e85c039d",
+    "handle_message": "955ccc6efd06b31fafd01f36d62ba64ea1c3c8e12885d539e7d1632f06d6b7be"
   }
 }

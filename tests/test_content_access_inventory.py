@@ -30,6 +30,9 @@ def _event_writers():
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 function = node.name
                 source = hashlib.sha256(ast.dump(node).encode()).hexdigest()
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and "INSERT INTO media_job_events" in node.value:
+                writers.append({"path": str(path.relative_to(ROOT)), "function": function,
+                                "source_sha256": source, "call": "sql-insert", "event": "event_type"})
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
                 if name in {"append_event", "append_client_event"} or (path.name == "me_make.py" and name == "_event"):
@@ -52,7 +55,11 @@ def _observed():
         properties = tool["inputSchema"].get("properties", {})
         tools.append({"name": tool["name"], "parameters": sorted(properties),
                       "actions": properties.get("action", {}).get("enum", [])})
-    return {"routes": routes, "mcp_fields": sorted(field.name for field in fields(mcp_server.McpDeps)),
+    tree = ast.parse(Path(mcp_server.__file__).read_text())
+    dispatch = {node.name: hashlib.sha256(ast.dump(node).encode()).hexdigest()
+                for node in ast.walk(tree) if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name in {"Tools", "_Tools", "call_tool", "handle_message", "_job_paths"}}
+    return {"mcp_dispatch": dispatch, "routes": routes, "mcp_fields": sorted(field.name for field in fields(mcp_server.McpDeps)),
             "mcp_tools": tools, "event_writers": _event_writers()}
 
 
@@ -63,14 +70,12 @@ def _frozen():
 def test_every_route_callback_tool_and_event_writer_is_classified():
     observed = _observed()
     frozen = _frozen()
-    # A complete diagnostic is also a safe local way to prepare the first
-    # snapshot inside the hermetic namespace. It grants no update mode in CI.
-    print("CONTENT_ACCESS_OBSERVED=" + json.dumps(observed, sort_keys=True))
     for surface in ("routes", "mcp_tools", "event_writers"):
         expected = [{key: value for key, value in row.items() if key not in {"access", "operations", "note", "resolved_types"}}
                     for row in frozen.get(surface, [])]
         assert Counter(json.dumps(row, sort_keys=True) for row in observed[surface]) == Counter(
             json.dumps(row, sort_keys=True) for row in expected), surface
+    assert observed["mcp_dispatch"] == frozen["mcp_dispatch"]
     assert set(observed["mcp_fields"]) == set(frozen["mcp_fields"])
     for surface in ("routes", "mcp_tools", "event_writers"):
         for row in frozen[surface]:

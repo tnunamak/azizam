@@ -27,7 +27,8 @@ def seeded_record():
         "usage": {"images": 2, "input_tokens": 9, "unexpected": MARKER},
         "cost": {"amount_usd": 0.5, "quality": "measured", "source": "provider", "reconciled": True, "secret": MARKER},
         "resource_decision": {"reasons": [{"code": "queue_full", "effect": "delay", "resource_class": "queue", "rule": MARKER, "observed_at": 3, "secret": MARKER}]},
-        "retention": [{"kind": "library_prompt", "decision": "kept", "reason": MARKER, "secret": MARKER}],
+        "retention": [{"kind": "library_prompt", "decision": "kept", "reason": MARKER, "secret": MARKER},
+                      {"kind": "conversation", "decision": "failed", "reason": MARKER}],
         **{key: MARKER for key in ("path", "requested_model", "accepted_inputs", "rejected_inputs", "ignored_inputs",
                                    "warnings", "fallback_reasons", "client_hint", "source_label", "request_shape", "litellm",
                                    "error", "assets", "seed", "input_hash", "metadata", "client_address", "api_key_name", "future_field")},
@@ -45,7 +46,7 @@ def test_recursive_projection_drops_content_and_uses_submission_person():
     assert shown["model"] == {"catalog_id": "model:a", "name": "Image model"}
     assert shown["cost"] == {"amount_usd": 0.5, "quality": "measured", "source": "provider", "reconciled": True}
     assert shown["resource_decision"] == [{"code": "queue_full", "effect": "delay", "resource_class": "queue"}]
-    assert shown["retention"] == [{"kind": "library_prompt", "decision": "kept"}]
+    assert shown["retention"] == [{"kind": "library_prompt", "decision": "kept"}, {"kind": "conversation", "decision": "failed"}]
     assert set(shown["usage"]) == {"input_tokens", "output_tokens", "images", "audio_seconds", "video_seconds", "characters"}
 
 

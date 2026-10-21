@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from gateway.capability_ids import INTENT_CAPABILITIES
 from gateway.discovery_metadata import PUBLIC_PROTOCOLS
 from gateway.resource_decisions import CALLER_REASONS
+from gateway.receipts import RETENTION_KINDS, RETENTION_DECISIONS, REFUSAL_CODES
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 Count = Annotated[int, Field(ge=0)]
@@ -25,6 +26,9 @@ Status = Literal["queued", "running", "succeeded", "failed", "canceled", "unknow
 Terminal = Literal["cancelled", "completed", "connect_error", "disconnected", "failed", "idle_timeout", "internal_error", "read_error", "unknown"]
 _PROTOCOL_VALUES = frozenset({record["id"] for record in PUBLIC_PROTOCOLS} | {"mcp", "gateway", "unknown"})
 Protocol = Enum("Protocol", {value: value for value in sorted(_PROTOCOL_VALUES)}, type=str)
+RetentionKind = Enum("RetentionKind", {value: value for value in sorted(RETENTION_KINDS)}, type=str)
+RetentionDecision = Enum("RetentionDecision", {value: value for value in sorted(RETENTION_DECISIONS)}, type=str)
+RefusalCode = Enum("RefusalCode", {value: value for value in sorted(REFUSAL_CODES | {"none", "unknown"})}, type=str)
 ResourceCode = Enum("ResourceCode", {code: code for code in sorted(CALLER_REASONS)}, type=str)
 
 
@@ -59,7 +63,7 @@ class Cost(Schema):
 
 
 class Refusal(Schema):
-    code: Literal["none", "plan_denied", "resource_denied", "rate_limited", "unknown"] = "none"
+    code: RefusalCode = RefusalCode("none")
 
 
 class Policy(Schema):
@@ -74,8 +78,8 @@ class ResourceDecision(Schema):
 
 
 class Retention(Schema):
-    kind: Literal["library_prompt", "conversation", "request_history", "debug_capture"]
-    decision: Literal["kept", "not_kept", "deleted", "expired", "not_requested", "disabled", "unknown"]
+    kind: RetentionKind
+    decision: RetentionDecision
 
 
 class ReceiptView(Schema):
@@ -255,10 +259,10 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
     retention = record.get("retention")
     for item in retention if isinstance(retention, (list, tuple)) else ():
         item = _mapping(item)
-        rkind = _enum(item.get("kind"), {"library_prompt", "conversation", "request_history", "debug_capture"})
-        decision = _enum(item.get("decision"), {"kept", "not_kept", "deleted", "expired", "not_requested", "disabled", "unknown"})
+        rkind = _enum(item.get("kind"), RETENTION_KINDS)
+        decision = _enum(item.get("decision"), RETENTION_DECISIONS)
         if rkind and decision:
-            retained.append(Retention(kind=rkind, decision=decision))
+            retained.append(Retention(kind=RetentionKind(rkind), decision=RetentionDecision(decision)))
     policy_decision = _enum(policy.get("decision"), {"allow", "deny"})
     policy_reason = _enum(policy.get("reason"), {"allowed", "person_disabled", "app_disabled", "plan_denied", "capability_denied", "provider_denied", "spend_limit"}, "unknown")
     return ReceiptView(request_id=record.get("request_id"), job_id=record.get("job_id"), **common,
@@ -274,7 +278,7 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
                        cost=Cost(amount_usd=_number(cost.get("amount_usd")),
                                  quality=_enum(cost.get("quality"), {"measured", "estimated"}, "unknown"),
                                  source=_enum(cost.get("source"), {"provider", "price_table"}, "none"), reconciled=cost.get("reconciled") is True),
-                       refusal=Refusal(code=_enum(_mapping(record.get("refusal")).get("code"), {"none", "plan_denied", "resource_denied", "rate_limited"}, "unknown")),
+                       refusal=Refusal(code=RefusalCode(_enum(_mapping(record.get("refusal")).get("code"), REFUSAL_CODES | {"none"}, "unknown"))),
                        policy=Policy(decision=policy_decision, reason=policy_reason) if policy_decision else None,
                        resource_decision=tuple(decisions), retention=tuple(retained))
 
