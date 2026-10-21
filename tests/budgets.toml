@@ -187,8 +187,11 @@
 # Media-folder round 6: full hermetic collection measured 15814 (+2: listing
 # skips evidence/plan work; same-folder evidence drift refuses confirmation).
 # Full Vitest list measured 3086 (+2: filter reuse; click snapshot across refetch).
-pytest = 15804
-vitest = 3068
+# Train r90: merged r89, A1, A4, keyframes and media-folder fixes, plus one
+# warm asset-family memo regression for A1/A4. Hermetic --collect-only -q
+# measured 15952; npx vitest list measured 3091 (2026-10-21).
+pytest = 15952
+vitest = 3091
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
