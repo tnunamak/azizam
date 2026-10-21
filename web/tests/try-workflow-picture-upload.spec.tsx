@@ -1,5 +1,6 @@
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
@@ -301,6 +302,40 @@ describe("a workflow with repeated image[] parts", () => {
       }
     }
   });
+
+  it("quotes punctuation, quotes and backslashes in filenames in every example", async () => {
+    await open();
+    const name = String.raw`ghost, over; floor "quoted" \ living.png`;
+    await upload(/Main picture/, new File(["main"], name, { type: "image/png" }));
+    await upload(/Second picture/);
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    fireEvent.click(screen.getByText("Technical details"));
+    fireEvent.click(screen.getByText("Copy request as"));
+    const curl = screen.getByRole("tabpanel", { name: "curl" }).querySelector("code")!.textContent!;
+    expect(curl).toContain(String.raw`-F 'image[]=@"ghost, over; floor \"quoted\" \\ living.png";type=image/png'`);
+    for (const language of ["JavaScript", "Python"]) {
+      await userEvent.click(screen.getByRole("tab", { name: language }));
+      const code = screen.getByRole("tabpanel", { name: language }).querySelector("code")!.textContent!;
+      const path = code.match(language === "JavaScript"
+        ? /fs\.readFile\(("(?:[^"\\]|\\.)*")\)/
+        : /open\(("(?:[^"\\]|\\.)*"), "rb"\)/)![1];
+      expect(JSON.parse(path)).toBe(name);
+    }
+  });
+
+  it("keeps manifest part order after removing and re-adding the first picture", async () => {
+    await open();
+    await upload(/Main picture/);
+    await upload(/Second picture/, new File(["second"], "second.png", { type: "image/png" }));
+    const main = screen.getByRole("group", { name: /Main picture/ });
+    await userEvent.click(within(main).getByRole("button", { name: /Remove picture/ }));
+    await upload(/Main picture/, new File(["replacement"], "replacement.png", { type: "image/png" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((posts()[0][1].body as FormData).getAll("image[]").map((file) => (file as File).name))
+      .toEqual(["replacement.png", "second.png"]);
+  });
 });
 
 // The gateway's own catalog row, not a hand-built one: whatever the gateway
@@ -346,5 +381,74 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     expect(form.has("reference_image_2")).toBe(false);
     const extensions = JSON.parse(String(form.get("extensions")));
     expect(extensions["com.azizam.workflow"]).not.toHaveProperty("reference_image_2");
+  });
+
+  it("clears old pictures on a model switch and keeps the new model's part order", async () => {
+    activeCatalog = { workflows: [...multirefCatalog.workflows, ...catalog.workflows] };
+    await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
+    const upload = async (name: RegExp, filename: string) => {
+      await userEvent.upload(screen.getByRole("group", { name })
+        .querySelector<HTMLInputElement>("input[data-media-file-input]")!,
+      new File([filename], filename, { type: "image/png" }));
+    };
+    const switchTo = async (name: string) => {
+      await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+      await userEvent.click(await screen.findByRole("option", { name: new RegExp(name) }));
+    };
+    await upload(/main picture/i, "old.png");
+    await switchTo("Flux2 Klein 4B Edit");
+    expect(screen.queryByText("old.png")).toBeNull();
+    await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
+    expect(screen.queryByText("old.png")).toBeNull();
+    await upload(/second picture/i, "new-second.png");
+    await upload(/main picture/i, "new-main.png");
+    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture/ }), {
+      target: { value: "Blend the new pictures" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((posts()[0][1].body as FormData).getAll("image[]").map((file) => (file as File).name))
+      .toEqual(["new-main.png", "new-second.png"]);
+  });
+
+  it("discards a Library download that finishes after a model switch", async () => {
+    activeCatalog = { workflows: [...multirefCatalog.workflows, ...catalog.workflows] };
+    const normalFetch = fetchMock.getMockImplementation()!;
+    const assetId = `img_${"b".repeat(64)}`;
+    let finishDownload!: (response: Response) => void;
+    let downloadSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/me/api/media?")) return json({ assets: [{
+        asset_id: assetId, kind: "image", media_type: "image/png",
+        prompt: "Old model picture", available: true,
+      }] });
+      if (url.includes(`/media/${assetId}/download`))
+        return json({ download_url: "https://media.example.test/old.png" });
+      if (url === "https://media.example.test/old.png") {
+        downloadSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve) => { finishDownload = resolve; });
+      }
+      return normalFetch(url, init);
+    });
+    await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
+    const main = screen.getByRole("group", { name: /main picture/i });
+    await userEvent.click(within(main).getByRole("button", { name: "Choose from Library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Old model picture" }));
+    await waitFor(() => expect(downloadSignal).toBeDefined());
+    await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    await userEvent.click(await screen.findByRole("option", { name: /Flux2 Klein 4B Edit/ }));
+    expect(downloadSignal!.aborted).toBe(true);
+    await act(async () => {
+      finishDownload(new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
+        headers: { "content-type": "image/png" },
+      }));
+    });
+    expect(screen.queryByText("From your Library")).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture/ }), {
+      target: { value: "New model needs a fresh picture" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    expect(await screen.findByText("Choose every picture this workflow needs first.")).toBeVisible();
+    expect(posts()).toHaveLength(0);
   });
 });

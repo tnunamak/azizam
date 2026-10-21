@@ -681,7 +681,7 @@ function codeSnippets(request: RequestInfo) {
     );
     const curlFiles = files.map(
       (file) =>
-        `  -F ${shellQuote(`${file.field}=@${file.examplePath}${file.type ? `;type=${file.type}` : ""}`)}`,
+        `  -F ${shellQuote(`${file.field}=@"${file.examplePath.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"${file.type ? `;type=${file.type}` : ""}`)}`,
     );
     const pythonFiles = files
       .map(
