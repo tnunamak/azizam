@@ -1376,7 +1376,6 @@ def _record_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope, *, jo
     if record is None:
         return False
     from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
-    readable = frozenset(f"app:{app_id}" for app_id in scope.app_ids) | (scope.owner_keys or frozenset())
     if record.get("app_id"):
         principals = frozenset({f"app:{record['app_id']}"})
         # The existing Library scope treats an explicit App as authoritative.

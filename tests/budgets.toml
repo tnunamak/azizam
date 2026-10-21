@@ -92,7 +92,10 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-pytest = 15319
+# Owner visibility step 1: +55 pure matrix cases (48 kind/action cells + 7
+# identity/share/denial cases), +12 projection cases, +3 registration inventory cases.
+# Hermetic collection remeasured: 15389; Vitest 3051; Playwright 471 + 3 + 18 = 492.
+pytest = 15389
 vitest = 3051
 playwright = 492
 

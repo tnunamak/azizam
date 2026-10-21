@@ -7,7 +7,6 @@ records without trusted App/key attribution fail closed for scoped callers.
 from collections.abc import Mapping
 from typing import Any
 
-
 from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
 
 

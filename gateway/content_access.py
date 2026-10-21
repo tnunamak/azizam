@@ -6,10 +6,14 @@ Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 from gateway.public_failure import PublicFailure
+
+if TYPE_CHECKING:
+    from gateway.owner_projection import JobView, ProjectionNames, ReceiptView, StorageView
 
 Kind = Literal["creation", "prompt", "chat", "voice", "receipt", "job", "request_history", "debug_capture"]
 Action = Literal["read", "delete", "reuse", "share", "link", "cancel"]
@@ -200,7 +204,10 @@ def operational(viewer: Viewer) -> bool:
     return viewer.is_owner
 
 
-def project(kind, record, *, names=None):
+def project(
+    kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any], *,
+    names: ProjectionNames | None = None,
+) -> ReceiptView | JobView | StorageView:
     """Unserved operational projection; content access and serialization are separate."""
     from gateway.owner_projection import ProjectionNames, project as project_record
     return project_record(kind, record, names=names if names is not None else ProjectionNames())

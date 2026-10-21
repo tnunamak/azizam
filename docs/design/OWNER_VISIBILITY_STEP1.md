@@ -35,7 +35,7 @@ Denied even if a stale share exists. A prompt share selects its maker's row only
 | Source | Current main authority | Viewer identity and principal set | Privacy permission |
 |---|---|---|---|
 | Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | True |
-| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_credential`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Explicit credential permission |
+| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Explicit credential permission |
 | Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Chat continuation also requires the same non-null person | Explicit credential permission |
 | Trusted address | `admin_runtime.runtime_identity_for_trusted_address` (2457-2482 on main) | `app:<id>`, no person; never the shared network as a person | False; cannot satisfy Self |
 | MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Explicit connection permission; session-like identity does not confer permission |
@@ -54,7 +54,7 @@ Search production code for `OWNER_VISIBILITY_STEP3`. These markers name the
 exceptions rather than moving them into the matrix:
 
 1. `me_media._media_scope` still accepts Everyone and other-person selectors;
-   `_record_in_scope` still accepts `app_ids=None`. `user_runtime.get_user_activity`
+   `_record_in_scope` still accepts `app_ids=None`. `user_runtime.build_user_activity_snapshot`
    still requests all Apps for owners. Receipt detail retains its owner bypass.
 2. `proxy._asset_access_allowed` and `_video_job_access_allowed` still permit
    absent ownership for a caller with no identity. The video exception was also
@@ -81,7 +81,7 @@ line references here name current-main symbols rather than stale v3 offsets.
 | Area | Current main | Consequence for step 3 / later steps |
 |---|---|---|
 | Library scope | `_media_scope` moved from 461-480 to 737-759; `_member_media_scope` starts at 761; receipt/job filters moved to 1370/1381 before this branch | Remove the actual Everyone, person and local-network branches; do not edit the old line ranges |
-| Activity scope | `user_runtime.get_user_activity` uses `app_ids=None if owner else owned` at 311 and still returns `scope=instance` at 320 | Owner feed and scope label still need removal |
+| Activity scope | `user_runtime.build_user_activity_snapshot` uses `app_ids=None if owner else owned` at 311 and still returns `scope=instance` at 320 | Owner feed and scope label still need removal |
 | Asset/video checks | `_asset_access_allowed` moved to 6969; `_video_job_access_allowed` to 9374 | Preserve signed-delivery checks and both no-identity exceptions until the switch |
 | Responses | `_responses_row_visible` at 25886 delegates to `retention.conversation_row_visible` at 472 | There is already one shared Responses retention/access predicate; change that predicate, not a duplicate in proxy. Null-person equality is a separate legacy exception |
 | Receipt/job ownership | `record_ownership.owns_record` uses immutable App attribution first and then the stored key hash; plans, names, parent receipt ids and output asset references are not authority | Preserve explicit-App precedence and historical aliases. Do not let an owned parent vouch for a foreign output |
