@@ -51,7 +51,8 @@ def config_problem(config: Mapping[str, Any]) -> str | None:
 def child_environment(base: Mapping[str, str], *, declared: set[str]) -> dict[str, str]:
     basics = {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DATABASE_URL",
               "LITELLM_MASTER_KEY", "AZIZAM_INTERNAL_LITELLM_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
-              "LITELLM_LOCAL_MODEL_COST_MAP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE"}
+              "LITELLM_LOCAL_MODEL_COST_MAP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "no_proxy", "all_proxy", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"}
     # Never let a record turn a runtime control back on through an env reference.
     blocked = {"STORE_MODEL_IN_DB", "STORE_PROMPTS_IN_SPEND_LOGS", "DEBUG", "DETAILED_DEBUG"}
     allowed = basics | {name for name in declared if name not in blocked and not name.startswith(("LITELLM_", "OTEL_", "LANGFUSE_"))}

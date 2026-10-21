@@ -46,7 +46,8 @@ def install_no_content_shim() -> None:
 
 def require_single_process(argv, env) -> None:
     """Spawned interpreters would import the unpatched upstream application."""
-    workers = [env.get("NUM_WORKERS", "1")]
+    # LiteLLM also reads DEFAULT_NUM_WORKERS_LITELLM_PROXY as the --num_workers default.
+    workers = [env.get("NUM_WORKERS", "1"), env.get("DEFAULT_NUM_WORKERS_LITELLM_PROXY", "1")]
     for index, arg in enumerate(argv):
         if arg == "--reload" or arg.startswith("--reload="):
             raise ValueError("single_process_required: remove --reload and set NUM_WORKERS/--num_workers to 1")
