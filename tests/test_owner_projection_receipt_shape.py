@@ -3,6 +3,8 @@
 The checked-in fixture contains field names only, never receipt values/content.
 """
 import json
+
+import pytest
 from pathlib import Path
 
 import gateway.accounts  # initialize the same import order as the gateway
@@ -18,7 +20,25 @@ def _stored_fixture(db):
     receipt_store.init_db(db)
     record = RouteReceipt(protocol="openai.images", intent="image.generate", path="/v1/images/generations",
                           request_id="req_" + "a" * 32, job_id="mj_" + "b" * 32, app_id="app:a",
-                          source_kind="app", resolved_model="model:a", status="cancelled", policy_decision="allowed",
+                          source_kind="app", source_label="Synthetic App", client_hint="synthetic",
+                          maker_person_id="person:a", connection_id="connection:a", api_key_name="synthetic",
+                          client_address="192.0.2.1", owner_key_hash="synthetic-owner", app_profile="plan:a",
+                          requested_model="requested:a", resolved_model="model:a", requested_workflow="flow:a",
+                          resolved_workflow="flow:a", backend="provider:a", remote=True, stream=True,
+                          manifest_id="manifest:a", manifest_version="1", manifest_hash="synthetic",
+                          parent_request_id="req_" + "c" * 32, visibility="full",
+                          policy_sources=["synthetic"], policy_reasons=["allowed"],
+                          accepted_inputs=["model"], rejected_inputs={"synthetic": "unsupported"},
+                          ignored_inputs={"synthetic": "ignored"}, fallback_reasons=["synthetic"], warnings=["synthetic"],
+                          effective_output_limit=100, attempt_number=1, latency_ms=4.0,
+                          usage={"images": 1, "input_tokens": 2, "output_tokens": 3, "characters": 4,
+                                 "audio_seconds": 1.0, "video_seconds": 2.0},
+                          cost={"amount_usd": 0.5, "quality": "measured", "source": "provider", "reconciled": True},
+                          refusal={"code": "budget_exceeded", "limit": {"period": "daily", "scope": "app"}},
+                          resource_decision={"reasons": [{"code": "queue_full", "effect": "delay", "resource_class": "queue"}]},
+                          retention=[{"kind": "conversation", "decision": "not_kept", "reason": "request_forget"}],
+                          retention_facts=["fact:a"], metadata={"terminal_reason": "completed", "status_code": 200},
+                          status="succeeded", policy_decision="allowed",
                           accepted_at_ms=1_700_000_000_000, updated_at_ms=1_700_000_000_050,
                           queued_at_ms=1_700_000_000_001, started_at_ms=1_700_000_000_002,
                           first_output_at_ms=1_700_000_000_003, finished_at_ms=1_700_000_000_004)
@@ -46,3 +66,47 @@ def test_job_seconds_and_canceled_spelling_match_the_job_store():
     shown = project("job", raw).model_dump(mode="json")
     for key in ("job_id", "status", "created_at", "updated_at"):
         assert shown[key] == raw[key]
+
+
+def test_projection_derives_fields_from_real_receipt_writer(tmp_path):
+    stored = _stored_fixture(tmp_path / "receipts.db")
+    names = ProjectionNames(people={"person:a": "Synthetic person"}, providers=frozenset({"provider:a"}))
+    shown = project("receipt", stored, names=names)
+    assert shown.route == "provider"
+    assert shown.provider == "provider:a"
+    assert (shown.queue_ms, shown.execution_ms, shown.first_output_ms) == (1, 2, 1)
+    assert (shown.terminal_reason, shown.status_code) == ("completed", 200)
+    # maker_person_id exists in the writer's internal blob, but no audience
+    # carries it. Step 3 must supply trusted maker attribution separately.
+    assert shown.person is None
+    for audience in ("client", "admin", "internal"):
+        row = receipt_store.get(stored["request_id"], audience=audience, path=tmp_path / "receipts.db")
+        assert "maker_person_id" not in row
+        projected = project("receipt", row, names=names)
+        assert projected.person is None
+        assert (projected.terminal_reason, projected.status_code) == (("unknown", None) if audience == "client" else ("completed", 200))
+
+
+@pytest.mark.parametrize("changes,route,provider", [
+    ({"remote": False}, "local", None),
+    ({"path": "/gateway/v1/providers/provider:a/native", "remote": False}, "provider", "provider:a"),
+    ({"path": "", "protocol": "provider-native", "remote": False}, "provider", "provider:a"),
+    ({"backend": "unknown-provider"}, "provider", None),
+])
+def test_receipt_route_uses_stored_path_protocol_and_remote(tmp_path, changes, route, provider):
+    row = _stored_fixture(tmp_path / "receipts.db") | changes
+    shown = project("receipt", row, names=ProjectionNames(providers=frozenset({"provider:a"})))
+    assert (shown.route, shown.provider) == (route, provider)
+
+
+@pytest.mark.parametrize("phases", [
+    {"started_at_ms": None}, {"finished_at_ms": 0}, {"first_output_at_ms": True},
+])
+def test_phase_durations_never_invent_missing_or_negative_time(tmp_path, phases):
+    shown = project("receipt", _stored_fixture(tmp_path / "receipts.db") | phases)
+    if "started_at_ms" in phases:
+        assert shown.queue_ms is shown.execution_ms is shown.first_output_ms is None
+    elif "finished_at_ms" in phases:
+        assert shown.execution_ms is None
+    else:
+        assert shown.first_output_ms is None

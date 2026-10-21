@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import proxy
 from gateway import accounts, admin_runtime, admin_store, me_media, ownership
-from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
+from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide, viewer_from_auth
 from gateway.runtime_auth import hash_api_key
 from proxy import AuthContext
 from starlette.requests import Request
@@ -27,21 +27,29 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
     cred = admin_store.create_credential_hash(subject_kind="app", subject_id=personal["id"], hash=credential_hash,
                                                prefix="synthetic", created_by=person, path=db)
     identity = admin_runtime.runtime_identity_for_app_credential_hash(credential_hash, path=db)
-    key = Viewer(identity.person_id, identity.app_id, auth_kind="app_key", credential_id=cred["id"],
-                 owner_keys=frozenset(ownership.readable_owner_keys(AuthContext(identity=identity), path=db)))
+    key = viewer_from_auth(AuthContext(identity=identity), path=db)
+    assert key.auth_kind == "app_key"
     assert (key.person_id, key.app_id, key.credential_id) == (person, personal["id"], cred["id"])
     assert f"app:{service['id']}" not in key.owner_keys
+    service_hash = hash_api_key("synthetic-service-viewer-key")
+    service_cred = admin_store.create_credential_hash(subject_kind="app", subject_id=service["id"], hash=service_hash,
+                                                     prefix="synthetic", created_by=person, path=db)
+    service_identity = admin_runtime.runtime_identity_for_app_credential_hash(service_hash, path=db)
+    service_viewer = viewer_from_auth(AuthContext(identity=service_identity), path=db)
+    assert (service_viewer.auth_kind, service_viewer.credential_id, service_viewer.person_id) == ("service_key", service_cred["id"], None)
+    assert service_viewer.app_id == service["id"]
+    assert isinstance(decide(service_viewer, ChatRecord(None, service["id"]), "read"), Own)
     browser_identity = admin_runtime.runtime_identity_for_session_app(session_app["id"], person, path=db)
     scope = me_media._member_media_scope(browser_identity.person_id, db)
-    browser = Viewer(browser_identity.person_id, browser_identity.app_id, auth_kind="session", owner_keys=scope.owner_keys)
+    browser = viewer_from_auth(browser_identity, path=db, owner_keys=scope.owner_keys)
+    assert browser.auth_kind == "session"
     for app in (personal, service, session_app):
         assert f"app:{app['id']}" in browser.owner_keys
     for app, address in ((service, "192.0.2.7"), (personal, "192.0.2.8")):
         admin_store.add_trusted_address(app["id"], address, max_entries=32, path=db)
         trusted_identity = admin_runtime.runtime_identity_for_trusted_address(ip_address(address), path=db)
-        trusted = Viewer(trusted_identity.person_id, trusted_identity.app_id, auth_kind="trusted_address",
-                         trusted_address=trusted_identity.trusted_address,
-                         owner_keys=frozenset(ownership.readable_owner_keys(AuthContext(identity=trusted_identity), path=db)))
+        trusted = viewer_from_auth(trusted_identity, path=db)
+        assert trusted.auth_kind == "trusted_address"
         assert (trusted.person_id, trusted.trusted_address, trusted.key_hash, trusted.credential_id) == (None, address, None, None)
         assert isinstance(decide(trusted, ChatRecord(None, app["id"]), "read"), Own)
         assert isinstance(decide(browser, ChatRecord(None, app["id"]), "read"), Deny)
@@ -71,9 +79,28 @@ def test_viewer_from_real_mcp_oauth_grant_auth(tmp_path):
     assert isinstance(authenticated, AuthContext)
     identity = authenticated.identity
     scope = me_media._member_media_scope(identity.person_id, world.db)
-    viewer = Viewer(identity.person_id, identity.app_id, auth_kind="mcp_grant", connection_id=identity.connection_id,
-                    owner_keys=scope.owner_keys)
+    viewer = viewer_from_auth(authenticated, path=world.db, owner_keys=scope.owner_keys)
+    assert viewer.auth_kind == "mcp_grant"
     assert (viewer.person_id, viewer.app_id, viewer.connection_id) == (person, app["id"], grant.grant_id)
     row = ChatRecord(person, app["id"], origin=ContentOrigin("mcp_grant", connection_id=grant.grant_id))
     assert isinstance(decide(viewer, row, "read"), Own)
     assert isinstance(decide(viewer, ChatRecord(person, app["id"], origin=ContentOrigin("session")), "read"), Deny)
+
+
+def test_viewer_authentication_invariants():
+    import pytest
+    for kind in ("trusted_address", "service_key"):
+        with pytest.raises(ValueError, match="person"):
+            Viewer(person_id="person:a", auth_kind=kind)
+    for connection in (None, ""):
+        with pytest.raises(ValueError, match="connection_id"):
+            Viewer(auth_kind="mcp_grant", connection_id=connection)
+
+
+def test_principal_fast_path_strips_empty_keys_once():
+    from gateway.content_access import decide_own
+    viewer = Viewer(auth_kind="app_key", owner_keys=frozenset({"", "app:a"}))
+    assert viewer.owner_keys == frozenset({"app:a"})
+    assert decide_own(viewer, ("app:a",))
+    assert not decide_own(viewer, ("",))
+    assert not decide_own(viewer, ())

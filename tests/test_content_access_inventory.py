@@ -177,3 +177,34 @@ def test_continuation_and_full_metadata_have_their_distinct_actions():
             assert row["access"] == "content:chat:read"
         if "metadata=full" in row.get("note", ""):
             assert "content:prompt:reuse" in row["access"]
+
+
+def test_usage_and_library_owner_exceptions_are_marked():
+    import inspect
+    from gateway import me_media
+    assert 'OWNER_VISIBILITY_STEP3' in inspect.getsource(me_media._media_scope).split('return _member_media_scope(person,')[0].split('audit_everyone=True)')[-1]
+    assert 'OWNER_VISIBILITY_STEP3' in inspect.getsource(me_media._usage_app_scope)
+    summary = inspect.getsource(me_media._usage_summary)
+    assert 'OWNER_VISIBILITY_STEP3' in summary.split('sources = _usage_sources')[0][-220:]
+    assert 'OWNER_VISIBILITY_STEP3' in summary.split('"people":')[0][-220:]
+    row = next(row for row in _frozen()['routes'] if row['method'] == 'GET' and row['path'] == '/me/api/usage/summary')
+    assert row['access'] == 'content:receipt:read'
+    assert 'owner exception' in row['note'].lower()
+
+
+def test_token_count_route_has_no_content_access():
+    rows = [row for row in _frozen()['routes'] if row['method'] == 'POST' and row['path'].endswith('/responses/input_tokens')]
+    assert rows
+    assert all(row['access'] == 'none' for row in rows)
+
+
+def test_indirect_event_writers_are_detected():
+    sources = {
+        'getattr': ('def writer(job_id):\n    fn = getattr(media_jobs, "append_event")\n    return fn(job_id, "indirect", {})\n', "'indirect'"),
+        'callback': ('def writer(job_id):\n    return helper(job_id, emit=media_jobs.append_event)\n', '<indirect>'),
+        'partial': ('def writer(job_id):\n    return functools.partial(media_jobs.append_event, job_id)("indirect", {})\n', '<indirect>'),
+    }
+    for form, (source, event) in sources.items():
+        rows = _writers_in_source(source, 'test_writer.py')
+        assert rows, form
+        assert any(row['call'] == 'append_event' and row['event'] == event for row in rows), (form, rows)
