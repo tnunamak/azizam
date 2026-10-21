@@ -273,11 +273,12 @@ function buildMediaPath(filters: {
     );
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
-  // The API defaults to the caller's own work for every role.
+  // Default and Mine are the same view; send the scope explicitly.
   if (filters.owner === "everyone")
     params.set("scope", "everyone");
-  else if (filters.owner === "mine") params.set("scope", "me");
-  else if (filters.owner !== "default") params.set("person", filters.owner);
+  else if (filters.owner === "mine" || filters.owner === "default")
+    params.set("scope", "me");
+  else params.set("person", filters.owner);
   if (filters.source !== "all") params.set("source", filters.source);
   return `/me/api/media?${params.toString()}`;
 }
@@ -295,7 +296,7 @@ function hasActiveFilters(filters: {
     filters.model !== "all" ||
     filters.date !== "all" ||
     filters.search.trim() !== "" ||
-    filters.owner !== "default" ||
+    (filters.owner !== "default" && filters.owner !== "mine") ||
     filters.source !== "all"
   );
 }
@@ -2477,7 +2478,7 @@ export default function LibraryPage() {
     enabled: Boolean(deepLinkedAssetId) && !listedDeepLinkedAsset,
     queryFn: () =>
       mediaRequest<{ asset: MediaAsset }>(
-        `/me/api/media/${encodeURIComponent(deepLinkedAssetId)}${instanceView ? "?scope=everyone" : ""}`,
+        `/me/api/media/${encodeURIComponent(deepLinkedAssetId)}?scope=${instanceView ? "everyone" : "me"}`,
       ),
     retry: false,
   });
@@ -2990,7 +2991,7 @@ export default function LibraryPage() {
             instanceView={instanceView}
             nameModel={nameModel}
             phoneExtras={canChooseOwner ? personPicker("sheet") : undefined}
-            phoneActive={owner !== "default" ? 1 : 0}
+            phoneActive={instanceView ? 1 : 0}
             onClear={activeFilters ? clearFilters : undefined}
           />
           {activeFilters ? (

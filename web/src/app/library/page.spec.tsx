@@ -408,7 +408,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
     ).toBeVisible();
-    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1", {
+    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1?scope=me", {
       credentials: "same-origin",
     });
   });
@@ -870,10 +870,102 @@ describe("Library honesty and access", () => {
       });
       const view = renderLibrary();
       await waitFor(() => expect(paths.length).toBeGreaterThan(0));
-      expect(paths[0]).not.toMatch(/[?&](scope|person)=/);
+      expect(new URL(paths[0], "https://test.invalid").searchParams.get("scope")).toBe("me");
+      expect(new URL(paths[0], "https://test.invalid").searchParams.has("person")).toBe(false);
       if (role === "owner") expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Mine");
       view.unmount();
     }
+  });
+
+  test.each(["first load", "remount", "clear filters", "Mine", "deep link"])(
+    "owner requests only their own assets after %s",
+    async (lifecycle) => {
+      session.viewer = { role: "owner", name: "Alex", id: "alex" };
+      session.home = { receipts: [], user: { id: "alex" }, apps: [] };
+      const ownSource = { id: "app:alex", kind: "app", label: "Alex app", app_id: "alex" };
+      const own = picture("alex-image", "Alex image", {
+        owner_name: "Alex", source: ownSource, thumbnail_url: "/signed/alex-thumb",
+      });
+      const detail = picture("alex-detail", "Alex detail", { owner_name: "Alex", source: ownSource });
+      const other = picture("sam-image", "Sam image", { owner_name: "Sam", source: { id: "app:sam", kind: "app", label: "Sam app", app_id: "sam" } });
+      const paths: string[] = [];
+      routeFetch((path) => {
+        if (!path.startsWith("/me/api/media")) {
+          if (path === "/signed/alex-detail") return new Response("png", { headers: { "content-type": "image/png" } });
+          return undefined;
+        }
+        paths.push(path);
+        const url = new URL(path, "https://test.invalid");
+        if (url.pathname === "/me/api/media") return list(url.searchParams.get("scope") === "me" ? [own, {
+          ...picture("alex-video", "Alex video"), kind: "video", source: ownSource, poster_asset_id: "alex-poster",
+        }] : [other]);
+        if (url.pathname.endsWith("/download")) {
+          const id = url.pathname.split("/")[4];
+          return Response.json({ download_url: `/signed/${id}` });
+        }
+        return Response.json({ asset: detail });
+      });
+      const share = vi.fn(async () => undefined);
+      Object.assign(navigator, { share, canShare: () => true });
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+      try {
+        if (lifecycle === "deep link") navigation.searchParams.set("asset", "alex-detail");
+        let view = renderLibrary();
+        await screen.findByRole("button", { name: /^Open Alex image,/ });
+        if (lifecycle === "remount") {
+          view.unmount();
+          paths.length = 0;
+          view = renderLibrary();
+          await screen.findByRole("button", { name: /^Open Alex image,/ });
+        }
+        if (lifecycle === "clear filters" || lifecycle === "Mine") {
+          await choosePerson("Everyone");
+          await screen.findByRole("button", { name: /^Open Sam image,/ });
+          paths.length = 0;
+          if (lifecycle === "Mine") await choosePerson("Mine");
+          else fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+          await screen.findByRole("button", { name: /^Open Alex image,/ });
+        }
+        expect(screen.queryByRole("button", { name: /^Open Sam image,/ })).toBeNull();
+        expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
+        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download?"))).toBe(true));
+        if (lifecycle !== "deep link") {
+          navigation.searchParams.set("asset", "alex-detail");
+          view.rerender(<QueryClientProvider client={view.queryClient}><LibraryPage /></QueryClientProvider>);
+        }
+        const dialog = await screen.findByRole("dialog", { name: "Alex detail" });
+        fireEvent.click(await within(dialog).findByRole("button", { name: "Download" }));
+        await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+        fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
+        await waitFor(() => expect(share).toHaveBeenCalledOnce());
+        expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media")).toBe(true);
+        expect(paths.some((path) => path.includes("/alex-detail?"))).toBe(true);
+        expect(paths.filter((path) => path.includes("/alex-detail/download?")).length).toBeGreaterThanOrEqual(3);
+        for (const path of paths) {
+          const params = new URL(path, "https://test.invalid").searchParams;
+          expect(params.getAll("scope"), path).toEqual(["me"]);
+          expect(params.has("person"), path).toBe(false);
+        }
+        view.queryClient.clear();
+      } finally {
+        anchorClick.mockRestore();
+        Reflect.deleteProperty(navigator, "share");
+        Reflect.deleteProperty(navigator, "canShare");
+      }
+    },
+  );
+
+  test("empty Everyone to Mine is the unfiltered empty Library", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([]) : undefined);
+    renderLibrary();
+    await choosePerson("Everyone");
+    await screen.findByRole("region", { name: "No matching creations" });
+    await choosePerson("Mine");
+    const empty = await screen.findByRole("region", { name: "No creations yet" });
+    expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Filters/ })).not.toHaveTextContent("1");
   });
 
   test("9a never leaves another person's results openable after the person filter changes", async () => {

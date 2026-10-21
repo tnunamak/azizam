@@ -95,8 +95,11 @@
 # Library Mine default: remeasured 2026-10-20, Vitest 3051;
 # Playwright 471 + 3 + 18 = 492. Existing cases updated, no added cases.
 pytest = 15319
-vitest = 3051
-playwright = 492
+# Library explicit Mine scope: +5 owner lifecycle cases and +1 empty Everyone-to-Mine
+# case in each UI suite. Remeasured 2026-10-20: Vitest 3057;
+# Playwright 477 + 3 + 18 = 498 across all gate configs.
+vitest = 3057
+playwright = 498
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
