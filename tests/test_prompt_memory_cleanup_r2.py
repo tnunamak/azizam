@@ -525,7 +525,7 @@ def test_delayed_off_callback_preserves_new_prompt_chat_and_spool(hh, monkeypatc
 
 def test_household_spool_retry_removes_old_partial_files_only(hh):
     import os
-    cutoff = int(time.time()) - 20
+    cutoff = int(time.time()) - 700
     directory = proxy.IMAGE_MEDIA_JOB_PAYLOAD_DIR
     directory.mkdir()
     old = directory / "mj_old.json.tmp"

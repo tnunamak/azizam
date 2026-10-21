@@ -4,6 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
+UMask=0077
+LimitCORE=0
 WorkingDirectory=%h/applications/azizam
 ExecStart=%h/applications/azizam/start.sh
 Restart=on-failure

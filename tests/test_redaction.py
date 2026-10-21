@@ -109,6 +109,14 @@ class TestRedactionModule(unittest.TestCase):
         self.assertFalse(redaction.is_forbidden_key("prompt_id"))
         self.assertFalse(redaction.is_forbidden_key("auth_scope"))
 
+    def test_prompt_semantic_aliases_are_forbidden_but_structural_ids_and_counts_are_safe(self) -> None:
+        for key in ("promptUsed", "prompt_used", "prompt-used", "promptText", "prompt_text", "prompt-text"):
+            with self.subTest(key=key):
+                self.assertTrue(redaction.is_forbidden_key(key))
+        for key in ("prompt_id", "promptId", "prompt-id", "token_count", "tokenCount", "tokens_in"):
+            with self.subTest(key=key):
+                self.assertFalse(redaction.is_forbidden_key(key))
+
     def test_find_forbidden_keys_returns_sorted_unique(self) -> None:
         found = redaction.find_forbidden_keys({"prompt": "x", "PROMPT": "y", "token": 1, "safe": True})
         self.assertEqual(found, ["prompt", "token"])

@@ -572,6 +572,7 @@ def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
     db_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
     backup = access_plans_backup_path(db_file)
     if not backup.exists():
+        secure_state_path(backup)
         target = sqlite3.connect(str(backup))
         try:
             conn.backup(target)
@@ -764,13 +765,14 @@ def secure_state_path(path: Path) -> None:
     database avoids a process-wide umask change in this multithreaded gateway.
     """
     check_quarantine_pending(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         pass
     else:
+        os.fchmod(fd, 0o600)
         os.close(fd)
     for state_file in (path, Path(f"{path}-wal"), Path(f"{path}-shm"), Path(f"{path}-journal")):
         try:

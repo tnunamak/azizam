@@ -47,7 +47,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, M
 
 import httpx
 
-from gateway import stt_chunking
+from gateway import private_io, stt_chunking
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.description import ProtocolDescription
 from gateway.engine_protocol.errors import UnknownOperation, UnsupportedByAdapter
@@ -226,6 +226,7 @@ class _RunWire:
         run = self._run
         destination = run.workspace / "normalized-16k.wav"
         stt_chunking._validate_media_paths(stt_chunking.source_path(upload), run.execution, destination)
+        private_io.create_private_file(destination)
         run.cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
         pcm_limit = min(run.execution.max_decoded_bytes, int(run.execution.max_duration_seconds * 16000) * 2)
         trial_limit = pcm_limit + 2
@@ -341,6 +342,7 @@ class ChunkedSttAdapter:
                 paths = []
                 for index, (_filename, content, _media_type) in enumerate(request.parts.values()):
                     path = workspace / f"upload-{index}.part"
+                    private_io.create_private_file(path)
                     path.write_bytes(content)
                     paths.append(path)
                 await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),

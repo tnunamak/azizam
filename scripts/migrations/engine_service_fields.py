@@ -30,6 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from retire_legacy_names import read_connection, require_stopped, snapshot_signature  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from gateway import private_io  # noqa: E402
 SETTING = "service_registry"
 UPDATED_BY = "migration:engine-service-fields"
 
@@ -159,8 +161,7 @@ def apply_changes(path: Path, *, allow_running: bool) -> tuple[list[str], Path |
                 return [], None
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
             backup = path.with_name(path.name + ".bak.engine-service-fields." + stamp)
-            with backup.open("xb"):
-                backup.chmod(0o600)
+            private_io.create_private_file(backup)
             with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
                 with closing(sqlite3.connect(backup)) as target:
                     source.backup(target)

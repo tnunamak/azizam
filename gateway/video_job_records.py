@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from gateway import media_jobs
+from gateway import media_jobs, private_io
 from gateway.ownership import stored_owner_key
 from gateway.sqlite_startup import connect
 
@@ -61,7 +61,7 @@ def migrate(conn: sqlite3.Connection) -> bool:
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path) if path else Path(media_jobs.DB_PATH)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(target.parent)
     conn = connect(target, timeout=5.0)
     try:
         media_jobs._apply_pragmas(conn)

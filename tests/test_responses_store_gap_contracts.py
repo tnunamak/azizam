@@ -18,6 +18,23 @@ def save(path, response_id, previous=None, marker="hello",
             owner_key_hash="synthetic-owner-marker", path=path)
 
 
+def test_save_requires_stable_attribution_before_replacing_a_response(tmp_path):
+    path = tmp_path / "responses.db"
+    rs.init_db(path)
+    save(path, "kept")
+    original = rs.get("kept", path)
+    for identity in ({}, {"person_id": "person-only"},
+                     {"person_id": "", "app_id": " ", "owner_key_hash": ""}):
+        with pytest.raises(ValueError, match="stable App or credential scope"):
+            rs.save("kept", created_at=11, model="test", previous_response_id=None,
+                    request_json={}, response_json={}, path=path, **identity)
+        assert rs.get("kept", path) == original
+    for identity in ({"app_id": "app"}, {"owner_key_hash": "sha256:fixture"}):
+        rs.save("scoped", created_at=11, model="test", previous_response_id=None,
+                request_json={}, response_json={}, path=path, **identity)
+        assert rs.get("scoped", path)[next(iter(identity))] == next(iter(identity.values()))
+
+
 # S1: kills missing cycle detection, reversed/missing reversal, wrong depth
 # comparison, starting at parent instead of supplied ID, and dangling failure.
 @pytest.mark.parametrize("edges,start,depth,expected", [

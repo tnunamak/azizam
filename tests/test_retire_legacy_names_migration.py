@@ -161,7 +161,7 @@ class RetireLegacyNamesMigrationTests(unittest.TestCase):
                 migration.require_stopped()
 
     def test_backup_failure_leaves_registry_and_generation_unchanged(self):
-        with patch.object(migration.Path, "open", side_effect=OSError("backup unavailable")):
+        with patch.object(migration.private_io, "create_private_file", side_effect=OSError("backup unavailable")):
             with self.assertRaises(OSError):
                 migration.apply_changes(self.db, allow_running=True)
         self.assertEqual(self.registry_from(self.db), self.registry)

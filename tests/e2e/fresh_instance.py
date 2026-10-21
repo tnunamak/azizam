@@ -225,6 +225,7 @@ def run(compose):
         env = {"PATH": os.defpath, "HOME": str(root), "LANG": "C.UTF-8",
                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1"}
+        env["AZIZAM_KEY_ACTIVITY_LOG"] = str(root / "key_activity.jsonl")
         env["AZIZAM_CONFIG_PATH"] = str(source / "first-run.yml")
         env["AZIZAM_LITELLM_API_KEY"] = "sk-fresh-instance-test"
         env["LITELLM_MASTER_KEY"] = env["AZIZAM_LITELLM_API_KEY"]

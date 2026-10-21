@@ -16087,6 +16087,34 @@
               }
             },
             "description": "Job not finished yet (`media_job_not_ready`)."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Output files are missing (`media_job_outputs_missing`)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Output storage is temporarily unavailable (`media_job_outputs_unavailable`); retry later.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "summary": "Gateway Media Job Content"

@@ -393,6 +393,11 @@ def retry_after_copies_in(trees) -> set[str]:
             for value in values:
                 if isinstance(value, ast.Constant) or (isinstance(value, ast.Name) and value.id in clean):
                     continue
+                # OpenAPI describes a header with a schema object, not a wire value.
+                if isinstance(value, ast.Dict) and any(
+                    isinstance(key, ast.Constant) and key.value == "schema" for key in value.keys
+                ):
+                    continue
                 found.add(f"{relative}::{function.name}")
     return found
 
@@ -444,6 +449,8 @@ async def fixed_retry(error):
     out = {}
     out["Retry-After"] = "10"
     return out
+def schema_retry():
+    return {"headers": {"Retry-After": {"description": "Seconds before retrying.", "schema": {"type": "integer"}}}}
 '''
     trees = [("x.py", ast.parse(source))]
     assert status_relays_in(trees) == {"x.py::relay_by_name", "x.py::relay_by_attribute"}

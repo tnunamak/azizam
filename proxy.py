@@ -103,7 +103,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
-from gateway import video_subject, thumbnails
+from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
@@ -4804,7 +4804,8 @@ class _ReplayableBody:
     """
 
     def __init__(self, request: Request, spool_dir: Path, limit: int, replay: stt_chunking.SttReplayReservation) -> None:
-        spool_dir.mkdir(parents=True, exist_ok=True)
+        from gateway import private_io
+        private_io.ensure_private_dir(spool_dir)
         self._limit = limit
         self._scope = request.scope
         self._receive = request.receive
@@ -6833,6 +6834,7 @@ def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -
 
 def _image_signing_secret() -> bytes:
     """Resolve (and lazily generate) the HMAC secret used for signed image URLs."""
+    from gateway import private_io
     global _image_url_signing_secret
     if _image_url_signing_secret is not None:
         return _image_url_signing_secret
@@ -6849,11 +6851,10 @@ def _image_signing_secret() -> bytes:
         except Exception:
             pass
     # Generate and persist.
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     secret = secrets.token_urlsafe(48).encode("utf-8")
     try:
-        secret_path.write_bytes(secret)
-        os.chmod(secret_path, 0o600)
+        private_io.atomic_write_bytes(secret_path, secret)
     except Exception as e:
         print(f"[proxy] Could not persist image URL signing secret: {e}", flush=True)
     _image_url_signing_secret = secret
@@ -6934,14 +6935,14 @@ def _read_asset_metadata(asset_id: str) -> dict[str, Any]:
 
 
 def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
+    from gateway import private_io
     path = _asset_metadata_path(asset_id)
     if path is None:
         return
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     tmp = path.with_name(f"{path.name}.tmp")
     try:
-        tmp.write_text(json.dumps(dict(metadata), sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        private_io.atomic_write_text(path, json.dumps(dict(metadata), sort_keys=True))
     except Exception as e:
         print(f"[proxy] Could not persist asset metadata for {asset_id}: {e}", flush=True)
         try:
@@ -7072,6 +7073,7 @@ def _store_asset_bytes(
     maker_person_id: str | None | object = _CURRENT_MAKER,
 ) -> str:
     """Store clean media; any retained prompt lives only in asset_prompts."""
+    from gateway import private_io
     kind = str(kind).strip().lower()
     if kind not in {"img", "aud", "vid"}:
         raise ValueError("asset kind must be one of img, aud, vid")
@@ -7094,16 +7096,11 @@ def _store_asset_bytes(
     content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     target = IMAGE_CACHE_DIR / f"{digest}{suffix}"
     with prompt_metadata_migration.CACHE_MUTATION_LOCK:
         if not target.exists():
-            tmp = target.with_suffix(f"{suffix}.tmp")
-            try:
-                tmp.write_bytes(content)
-                tmp.replace(target)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_bytes(target, content)
         _record_asset_owner(asset_id, owner_key_hash)
         person_id = (getattr(delivery, "person_id", None) or getattr(decision, "person_id", None)) if maker_person_id is _CURRENT_MAKER else maker_person_id
         metadata_sidecar = _read_asset_metadata(asset_id)
@@ -14318,6 +14315,7 @@ app.include_router(
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
+        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
@@ -15227,7 +15225,7 @@ async def _run_identity_job(
                 _ADMISSION_WORKER.reset(worker_token)
             item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
-            asset.update(identity_api.scene_extras(result))
+            asset.update(identity_api.stored_scene_extras(result, req))
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_SUCCEEDED, progress=100, add_assets=[asset],
                 metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
@@ -15239,7 +15237,20 @@ async def _run_identity_job(
         except identity_api.IdentityUnavailable:
             _identity_job_failed(job_id, "The face service could not be started.")
         except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
-            _identity_job_failed(job_id, str(exc))
+            # Exception text can quote the request's person labels or descriptions.
+            message = {
+                "no_face": "no face was found in a reference photo; choose a clearer photo.",
+                "same_face": "Two people point at the same face; give each person a different box.",
+                "face_too_small": "A reference face is too small; choose a closer photo.",
+                "ambiguous_faces": "Reference faces could not be matched; give each person a face box.",
+            }.get(getattr(exc, "code", None), "The identity request could not be completed; check its photos and settings.")
+            # These validation errors contain only fixed copy and numeric limits.
+            if getattr(exc, "code", None) == "invalid_request" and (
+                re.fullmatch(r"people\[\]\.image \d+ has no matching photo", str(exc))
+                or re.fullmatch(r"at most \d+ people are supported", str(exc))
+            ):
+                message = str(exc)
+            _identity_job_failed(job_id, message)
         except asyncio.CancelledError:
             _identity_job_failed(job_id, "The gateway stopped before the job finished.")
             raise
@@ -20465,8 +20476,9 @@ _PROMPT_PURGE_DRAIN_LOCK = threading.Lock()
 @contextlib.contextmanager
 def _prompt_purge_queue() -> Iterable[Any]:
     import sqlite3
+    from gateway import private_io
     path = _prompt_migration_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.prepare_private_database(path)
     with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
         # The write lock serializes the schema upgrade across threads and processes.
         conn.execute("BEGIN IMMEDIATE")
@@ -20601,6 +20613,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
     def spared(payload: Mapping[str, Any] | None) -> bool:
         return before is not None and int((payload or {}).get("created_at") or 0) > before
 
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         # Move active jobs to memory so they can finish without a durable prompt.
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -20625,8 +20638,9 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                         )
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
-            for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
-                if person_id is None and (before is None or int(path.stat().st_mtime) <= before):
+            for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                         *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+                if person_id is None and not _young_media_payload_stage(path) and (before is None or int(path.stat().st_mtime) <= before):
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
             if not isinstance(payload.get("body"), dict) or spared(payload):
@@ -20926,16 +20940,9 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
                 _store_ephemeral_media_job_payload(job_id, payload)
                 return
             _release_ephemeral_media_job_payload(job_id)
-            IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            from gateway import private_io
             path = _image_media_job_payload_path(job_id)
-            tmp = path.with_suffix(".json.tmp")
-            try:
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, sort_keys=True)
-                tmp.replace(path)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_text(path, json.dumps(payload, sort_keys=True))
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
@@ -20953,12 +20960,25 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
         return data if isinstance(data, dict) else None
 
 
+def _young_media_payload_stage(path: Path) -> bool:
+    if not path.name.endswith(".tmp"):
+        return False
+    try:
+        return time.time() - path.stat().st_mtime < 600
+    except FileNotFoundError:
+        return False
+
+
 def _delete_image_media_job_payload(job_id: str) -> None:
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
-                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
+                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(f".{job_id}.json.*.tmp")):
             try:
+                if _young_media_payload_stage(path):
+                    continue
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
@@ -20966,6 +20986,7 @@ def _delete_image_media_job_payload(job_id: str) -> None:
 
 def _prune_orphaned_media_job_payloads() -> int:
     """Remove terminal-job spools; absent history may be in quarantine."""
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         removed = 0
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
@@ -20976,10 +20997,15 @@ def _prune_orphaned_media_job_payloads() -> int:
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             return removed
         for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
-                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
-            job_id = path.name.split(".json", 1)[0]
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+            if _young_media_payload_stage(path):
+                continue
+            job_id = path.name.lstrip(".").split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if (path.name.startswith(".") and path.name.endswith(".tmp")) or (
+                job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES
+            ):
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed
@@ -21254,8 +21280,8 @@ def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, An
             continue
         item = {
             key: asset[key]
-            for key in ("asset_id", "asset_url", "url", "media_type")
-            if isinstance(asset.get(key), str) and asset.get(key)
+            for key in ("asset_id", "asset_url", "url", "media_type", "available", "availability")
+            if asset.get(key) is not None
         }
         if item:
             data.append(item)
@@ -21290,15 +21316,16 @@ def _media_job_asset_items(
         parsed = _parse_asset_id(asset_id)
         if parsed is None or parsed[0] != kind:
             continue
-        signed_url = build_signed_asset_url(request, asset_id)
         item = {
             key: asset[key]
-            for key in ("asset_id", "media_type", "size_bytes", "index")
+            for key in ("asset_id", "media_type", "size_bytes", "index", "available", "availability")
             if asset.get(key) is not None
         }
-        item["url"] = signed_url
-        item["asset_url"] = signed_url
-        item["content_url"] = signed_url
+        if asset.get("available") is not False:
+            signed_url = build_signed_asset_url(request, asset_id)
+            item["url"] = signed_url
+            item["asset_url"] = signed_url
+            item["content_url"] = signed_url
         items.append(item)
     return items
 
@@ -23455,6 +23482,16 @@ async def gateway_media_job_content(job_id: str, request: Request):
             status_code=409,
             media_type="application/json",
         )
+    job = output_availability.project(job, asset_cache_path)
+    if job.get("output_state") in {"missing", "unavailable"}:
+        retryable = job["output_state"] == "unavailable"
+        return JSONResponse({
+            "error": {"type": "server_error",
+                      "code": "media_job_outputs_unavailable" if retryable else "media_job_outputs_missing",
+                      "message": "The job's output files are unavailable."},
+            "output_state": job["output_state"], "assets": job["assets"],
+        }, status_code=503 if retryable else 410,
+           headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
@@ -24230,9 +24267,10 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
         return data
     try:
         with tempfile.TemporaryDirectory() as tmp:
+            from gateway import private_io
             src = Path(tmp) / f"in{suffix}"
             dst = Path(tmp) / f"out{suffix}"
-            src.write_bytes(data)
+            private_io.atomic_write_bytes(src, data)
             detect = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True, text=True, timeout=60,
@@ -24244,6 +24282,7 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
             gain_db = target_db - peak_db
             if peak_db < -70.0 or abs(gain_db) < 0.5 or gain_db > 50.0:
                 return data
+            private_io.create_private_file(dst)
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
                  "-af", f"volume={gain_db:.2f}dB", str(dst)],
@@ -25850,6 +25889,12 @@ async def _start_receipts_maintenance(stop_event: asyncio.Event) -> asyncio.Task
     """Schedule retries before the first cleanup, including when startup cleanup fails."""
     task = asyncio.create_task(_receipts_maintenance_loop(stop_event), name="receipt-maintenance")
     try:
+        retained = await asyncio.to_thread(firehose_metrics.compact_log)
+        if retained is not None:
+            print(f"[proxy] firehose startup compaction retained {retained} records", flush=True)
+    except Exception as exc:
+        print(f"[proxy] firehose startup compaction failed: {type(exc).__name__}", flush=True)
+    try:
         pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
         print(f"[proxy] receipt startup maintenance pruned {pruned} receipts", flush=True)
     except Exception as exc:
@@ -25868,6 +25913,12 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
                                         fact_store_path=media_jobs.DB_PATH)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
+            try:
+                retained = await asyncio.to_thread(firehose_metrics.compact_log)
+                if retained is not None:
+                    print(f"[proxy] firehose hourly compaction retained {retained} records", flush=True)
+            except Exception as exc:
+                print(f"[proxy] firehose hourly compaction failed: {type(exc).__name__}", flush=True)
 
 
 def _responses_error(

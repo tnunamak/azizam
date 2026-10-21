@@ -76,6 +76,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 def init_db(path: Path = DB_PATH) -> None:
     """Check existing data safely, then initialize the schema."""
     with store_startup(path):
+        from gateway import private_io
+        private_io.prepare_private_database(path)
         conn = sqlite3.connect(str(path), timeout=5.0)
         try:
             _apply_pragmas(conn)
@@ -109,6 +111,10 @@ def save(
     path: Path = DB_PATH,
 ) -> None:
     """Persist a response. INSERT OR REPLACE so retries are idempotent."""
+    encoded_request = json.dumps(request_json, ensure_ascii=False)
+    encoded_response = json.dumps(response_json, ensure_ascii=False)
+    if not any(isinstance(value, str) and value.strip() for value in (app_id, owner_key_hash)):
+        raise ValueError("Saved responses require a stable App or credential scope")
     with _conn(path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO responses "
@@ -119,8 +125,8 @@ def save(
                 int(created_at),
                 model,
                 previous_response_id,
-                json.dumps(request_json, ensure_ascii=False),
-                json.dumps(response_json, ensure_ascii=False),
+                encoded_request,
+                encoded_response,
                 api_key_name,
                 person_id,
                 app_id,

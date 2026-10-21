@@ -8,7 +8,6 @@ import mimetypes
 import math
 import os
 import random
-import shutil
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -365,7 +364,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 "engines": {"tts-1": {"service": "household-voice", "model": "tts-1"}},
             },
         }
-        config_path.write_text(yaml.safe_dump(document))
+        from gateway import private_io
+        private_io.atomic_write_text(config_path, yaml.safe_dump(document))
     reg = registry(port + 1, scenario)
     admin_store.write_service_registry(
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]
@@ -887,11 +887,11 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         + len(assets)
         + ctx.get("extra_requests", 0),
     }
-    (state / "household-manifest.json").write_text(json.dumps(manifest))
+    from gateway import private_io
+    private_io.atomic_write_text(state / "household-manifest.json", json.dumps(manifest))
     target = os.environ.get("UI_HOUSEHOLD_MANIFEST_PATH")
     if target:
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        Path(target).write_text(json.dumps(manifest))
+        private_io.atomic_write_text(target, json.dumps(manifest))
     return manifest
 
 
@@ -1177,11 +1177,12 @@ PROMPT_NOT_KEPT = frozenset({4, 13})
 
 def _media(state, paths, apps, hashes, now, rng, people):
     from gateway import media_jobs, prompt_memory, prompt_metadata_migration, receipt_store
+    from gateway import private_io
     from gateway.receipts import RouteReceipt
 
     entries = json.loads((FIXTURES / "manifest.json").read_text())
     cache = state / "images"
-    cache.mkdir(exist_ok=True)
+    private_io.ensure_private_dir(cache)
     assets = []
     ts = now - rng.randint(20 * 60, 5 * 3600)
     for index, entry in enumerate(entries):
@@ -1190,7 +1191,7 @@ def _media(state, paths, apps, hashes, now, rng, people):
         kind = entry["kind"]
         prefix = {"image": "img", "audio": "aud", "video": "vid"}[kind]
         asset_id = f"{prefix}_{digest}"
-        shutil.copyfile(source, cache / f"{digest}{source.suffix}")
+        private_io.atomic_copy_file(source, cache / f"{digest}{source.suffix}")
         owner = entry["owner"]
         if index:
             # Creations come in bursts and long gaps, not on a fixed grid.
@@ -1202,16 +1203,14 @@ def _media(state, paths, apps, hashes, now, rng, people):
         # The cache ages files by mtime; match it to the asset's own creation time.
         os.utime(cache / f"{digest}{source.suffix}", (ts, ts))
         maker = people[owner]["id"]
-        (cache / f"{digest}.meta.json").write_text(
-            json.dumps(
+        private_io.atomic_write_text(cache / f"{digest}.meta.json", json.dumps(
                 {
                     "asset_id": asset_id,
                     "owner_key_hashes": [hashes[owner]],
                     "maker_person_ids": [maker],
                     "updated_at": ts,
                 }
-            )
-        )
+            ))
         # The prompt lives only in the maker's prompt record (PROMPT_MEMORY.md),
         # through the same write path, settings and lock as a real request.
         prompt_kept = index not in PROMPT_NOT_KEPT and prompt_memory.put(
@@ -1224,18 +1223,16 @@ def _media(state, paths, apps, hashes, now, rng, people):
             poster_source = FIXTURES / entry["poster"]
             poster_digest = hashlib.sha256(poster_source.read_bytes()).hexdigest()
             poster_asset_id = f"img_{poster_digest}"
-            shutil.copyfile(poster_source, cache / f"{poster_digest}{poster_source.suffix}")
+            private_io.atomic_copy_file(poster_source, cache / f"{poster_digest}{poster_source.suffix}")
             os.utime(cache / f"{poster_digest}{poster_source.suffix}", (ts, ts))
-            (cache / f"{poster_digest}.meta.json").write_text(
-                json.dumps(
+            private_io.atomic_write_text(cache / f"{poster_digest}.meta.json", json.dumps(
                     {
                         "asset_id": poster_asset_id,
                         "owner_key_hashes": [hashes[owner]],
                         "maker_person_ids": [maker],
                         "updated_at": ts,
                     }
-                )
-            )
+                ))
         intent = {
             "image": "image.generate",
             "audio": "audio.speech",

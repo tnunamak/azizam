@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Report or repair modes below private data roots without listing filenames."""
+from __future__ import annotations
+
+import argparse
+import os
+import stat
+from pathlib import Path
+
+
+def inspect(root: Path, *, fix: bool) -> tuple[int, int, int, int]:
+    """Return counts; operate on directory descriptors so path swaps cannot follow links."""
+    files = directories = violations = errors = 0
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return files, directories, violations, errors
+    except OSError:
+        return files, directories, violations + 1, errors + 1
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        root_fd = os.open(root, flags)
+    except OSError:
+        return files, directories, violations + 1, errors + 1
+    stack = [root_fd]
+    while stack:
+        fd = stack.pop()
+        try:
+            directories += 1
+            if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700:
+                violations += 1
+                if fix:
+                    try:
+                        os.fchmod(fd, 0o700)
+                    except OSError:
+                        errors += 1
+            try:
+                with os.scandir(fd) as entries:
+                    names = [entry.name for entry in entries]
+            except OSError:
+                errors += 1
+                violations += 1
+                continue
+            for name in names:
+                try:
+                    child_info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                except OSError:
+                    errors += 1
+                    violations += 1
+                    continue
+                if stat.S_ISLNK(child_info.st_mode):
+                    errors += 1
+                    violations += 1
+                elif stat.S_ISDIR(child_info.st_mode):
+                    try:
+                        stack.append(os.open(name, flags, dir_fd=fd))
+                    except OSError:
+                        errors += 1
+                        violations += 1
+                elif stat.S_ISREG(child_info.st_mode):
+                    files += 1
+                    if stat.S_IMODE(child_info.st_mode) != 0o600:
+                        violations += 1
+                        if fix:
+                            try:
+                                os.chmod(name, 0o600, dir_fd=fd, follow_symlinks=False)
+                            except OSError:
+                                errors += 1
+        finally:
+            os.close(fd)
+    return files, directories, violations, errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--fix", action="store_true", help="set regular files to 0600 and directories to 0700")
+    args = parser.parse_args(argv)
+
+    failed = False
+    for label in ("data", "cache"):
+        target = args.root / label
+        files, directories, violations, errors = inspect(target, fix=args.fix)
+        if not (files or directories or violations or errors):
+            continue
+        action = "repaired" if args.fix else "need repair"
+        print(f"{label}: {files} files, {directories} directories, {violations} mode issues, errors={errors} ({action})")
+        failed |= errors > 0 or (violations > 0 and not args.fix)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

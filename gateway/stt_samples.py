@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 import httpx
 import yaml
 
+from gateway import private_io
 from gateway.stt_measure import normalize as norm_token
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "registry" / "stt_samples.yml"
@@ -276,8 +277,9 @@ def convert_audio(source: Path, target: Path, *, cut_seconds: float | None = Non
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise SampleError("ffmpeg is needed to convert sample audio and was not found on PATH.")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(target.parent)
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".convert-", suffix=".wav")
+    os.fchmod(fd, 0o600)
     os.close(fd)
     cut = ["-t", str(cut_seconds)] if cut_seconds else []
     cmd = [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(source), *cut,
@@ -452,7 +454,9 @@ def _download(client: httpx.Client, spec: SampleSpec, src: Source, target: Path,
               progress: Progress | None, cancelled: Callable[[], bool] | None) -> int:
     """Stream ``src`` to ``target`` through a temporary file, checking size and sha256. Returns the new done count."""
     label = f"Downloading {src.name} of {spec.id}"
+    private_io.ensure_private_dir(target.parent)
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{src.sha256[:16]}-", suffix=".part")
+    os.fchmod(fd, 0o600)
     h = hashlib.sha256()
     got = 0
     try:
@@ -497,7 +501,7 @@ def fetch_sources(spec: SampleSpec, cache_dir: Path | str, *, progress: Progress
     A cached file whose sha256 matches is reused. A cached file that does not match is deleted and reported.
     """
     cache = Path(cache_dir)
-    cache.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(cache)
     total = spec.download_bytes()
     if total > max_bytes:
         raise SampleError(f"Sample {spec.id} needs {total} bytes of downloads, more than the limit of {max_bytes}.")

@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Collection, Iterable
 
+from gateway import private_io
+
 VOICE_ID_RE = re.compile(r"^voice_[0-9a-f]{24}$")
 CONSENT_ID_RE = re.compile(r"^cons_[0-9a-f]{24}$")
 LOCAL_OWNER = "local"
@@ -95,9 +97,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    private_io.atomic_write_text(path, json.dumps(data, sort_keys=True))
 
 
 def _dir_bytes(path: Path) -> int:
@@ -190,13 +190,15 @@ class VoiceStore:
         return records[:limit], len(records) > limit
 
     def _commit(self, base: Path, record_id: str, files: dict[str, bytes], meta: dict[str, Any]) -> None:
-        base.mkdir(parents=True, exist_ok=True)
+        private_io.ensure_private_dir(self.root)
+        private_io.ensure_private_dir(base.parent)
+        private_io.ensure_private_dir(base)
         staging = base / f".{record_id}.new"
         shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir()
+        private_io.ensure_private_dir(staging)
         try:
             for name, content in files.items():
-                (staging / name).write_bytes(content)
+                private_io.atomic_write_bytes(staging / name, content)
             _write_json(staging / "meta.json", meta)
             staging.rename(base / record_id)
         except BaseException:

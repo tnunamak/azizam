@@ -17,6 +17,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from gateway import private_io
+
 THUMB_EDGE = 480
 THUMB_MODE = "thumb"  # signing mode of a thumbnail URL; no content URL can carry it
 THUMB_MEDIA_TYPE = "image/webp"
@@ -84,11 +86,13 @@ def _make(source: Path, target: Path) -> Path | None:
             image.thumbnail((THUMB_EDGE, THUMB_EDGE))  # shrinks only
             if image.mode not in ("RGB", "RGBA"):
                 image = image.convert("RGBA" if "transparency" in image.info or image.mode in ("LA", "PA") else "RGB")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            private_io.ensure_private_dir(target.parent)
             fd, tmp_name = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+            os.fchmod(fd, 0o600)
             os.close(fd)
             try:
                 image.save(tmp_name, "WEBP", quality=78, method=4)
+                os.chmod(tmp_name, 0o600)
                 os.replace(tmp_name, target)
             finally:
                 Path(tmp_name).unlink(missing_ok=True)

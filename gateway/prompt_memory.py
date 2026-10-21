@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import os
 
-from gateway import admin_store, directory_index, media_jobs, media_metadata, request_connections, retention
+from gateway import admin_store, directory_index, media_jobs, media_metadata, private_io, request_connections, retention
 from gateway.sqlite_startup import connect, connect_readonly
 from gateway.public_failure import PublicFailure
 
@@ -181,7 +181,7 @@ def effective(member: Mapping[str, Any] | None, household: Mapping[str, Any] | N
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path or media_jobs.DB_PATH)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(target.parent)
     conn = connect(target, timeout=5)
     conn.row_factory = sqlite3.Row
     media_jobs._apply_pragmas(conn)
@@ -752,12 +752,14 @@ def _write_media_marker(folder: Path, *, replace: bool) -> dict[str, Any]:
     failed write leaves no marker behind.
     """
     marker = {"volume_id": uuid.uuid4().hex, "created_at": int(time.time())}
+    private_io.ensure_private_dir(folder)
     path = folder / MEDIA_FOLDER_MARKER
     payload = json.dumps(marker).encode("utf-8")
     if replace:
         scratch = folder / (MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp")
         try:
-            with scratch.open("xb") as stream:
+            private_io.create_private_file(scratch)
+            with scratch.open("wb") as stream:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -766,8 +768,9 @@ def _write_media_marker(folder: Path, *, replace: bool) -> dict[str, Any]:
             scratch.unlink(missing_ok=True)
         return marker
     # Raises FileExistsError when a marker appeared after the absence check; nothing is touched then.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
+        os.fchmod(fd, 0o600)
         os.write(fd, payload)
         os.fsync(fd)
     except BaseException:

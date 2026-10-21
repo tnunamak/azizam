@@ -22,6 +22,8 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from gateway import private_io  # noqa: E402
 OLD_SELF = "openai-proxy"
 NEW_SELF = "azizam"
 ENV_PATTERN = re.compile(r"\b(?:AI_GATEWAY_|OPENAI_PROXY_|VIVID_|AGW_)[A-Z0-9_]+\b")
@@ -165,8 +167,7 @@ def apply_changes(path: Path, *, allow_running: bool) -> tuple[list[Change], boo
             # SQLite backup. It includes unrelated settings but never logs them.
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
             backup = path.with_name(path.name + ".bak.retire-legacy-names." + stamp)
-            with backup.open("xb"):
-                backup.chmod(0o600)
+            private_io.create_private_file(backup)
             with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
                 with closing(sqlite3.connect(backup)) as target:
                     source.backup(target)

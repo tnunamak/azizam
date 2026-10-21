@@ -29,6 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from scripts import scratch_owner  # noqa: E402
+from gateway import private_io  # noqa: E402
 
 OWNER_EMAIL = "owner-live-data@example.test"
 MEMBER_EMAIL = "member-live-data@example.test"
@@ -40,7 +41,7 @@ PNG_1X1 = base64.b64decode(
 
 def _write_config(state: Path, port: int, engine_port: int) -> Path:
     config = state / "config.yml"
-    config.write_text(
+    private_io.atomic_write_text(config,
         f"""proxy:
   host: 127.0.0.1
   port: {port}
@@ -71,7 +72,7 @@ images:
 
 def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, str]:
     home = state / "home"
-    home.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(home)
     env = {
         "PATH": os.defpath,
         "HOME": str(home),
@@ -95,6 +96,7 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "AZIZAM_RESPONSES_DB": "responses.db",
         "AZIZAM_RECEIPTS_DB": "receipts.db",
         "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
+        "AZIZAM_KEY_ACTIVITY_LOG": "key_activity.jsonl",
     }.items():
         env[name] = str(state / filename)
     return env
@@ -111,10 +113,11 @@ def _sha_asset(cache: Path, content: bytes, suffix: str, owner_hashes: list[str]
     digest = hashlib.sha256(content).hexdigest()
     kind = "aud" if suffix == ".wav" else "img"
     asset_id = f"{kind}_{digest}"
-    (cache / f"{digest}{suffix}").write_bytes(content)
-    (cache / f"{digest}.meta.json").write_text(
+    private_io.ensure_private_dir(cache)
+    private_io.atomic_write_bytes(cache / f"{digest}{suffix}", content)
+    private_io.atomic_write_text(
+        cache / f"{digest}.meta.json",
         json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": int(time.time())}),
-        encoding="utf-8",
     )
     return asset_id
 
@@ -147,8 +150,8 @@ def _wav_bytes(seconds: float = 3.0, rate: int = 8000) -> bytes:
 
 
 def seed(state: Path, port: int) -> dict[str, object]:
-    state.mkdir(parents=True, exist_ok=True)
-    (state / "images").mkdir(exist_ok=True)
+    private_io.ensure_private_dir(state)
+    private_io.ensure_private_dir(state / "images")
     engine_port = port + 1
     _write_config(state, port, engine_port)
 
@@ -226,12 +229,11 @@ def seed(state: Path, port: int) -> dict[str, object]:
         "service_app_id": service_app["id"],
         "member_app_id": member_app["id"],
     }
-    (state / "live-data-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    private_io.atomic_write_text(state / "live-data-manifest.json", json.dumps(manifest))
     manifest_path = os.environ.get("LIVE_DATA_MANIFEST_PATH")
     if manifest_path:
         target = Path(manifest_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(manifest), encoding="utf-8")
+        private_io.atomic_write_text(target, json.dumps(manifest))
     return manifest
 
 
@@ -323,7 +325,7 @@ def main() -> None:
     args = parser.parse_args()
     if not 18000 <= args.port < 18998:
         raise SystemExit("port must be between 18000 and 18998")
-    args.state_root.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(args.state_root)
     if args.copy_from is not None and not args.serve:
         raise SystemExit("--copy-from needs --serve")
     if args.serve:

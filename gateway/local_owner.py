@@ -120,7 +120,8 @@ def load_or_create_signing_key(path: Path) -> bytes:
             return raw
         # Too short to be safe — fall through and regenerate.
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     try:
         os.chmod(path.parent, 0o700)
     except OSError:

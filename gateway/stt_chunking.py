@@ -47,7 +47,7 @@ from starlette.formparsers import (
 )
 from starlette.requests import ClientDisconnect
 
-from gateway import private_tmp
+from gateway import private_io, private_tmp
 from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
@@ -584,7 +584,7 @@ async def parse_bounded_multipart(
     if workspace is not None:
         workspace = _validated_workspace(workspace, config)
     try:
-        config.spool_dir.mkdir(parents=True, exist_ok=True)
+        private_io.ensure_private_dir(config.spool_dir)
     except OSError as error:
         raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
     owns_workspace = workspace is None
@@ -642,7 +642,7 @@ def _validate_media_paths(source: Path, config: SttExecutionConfig, destination:
 def create_request_workspace(config: SttExecutionConfig) -> Path:
     """Allocate one private disk-backed directory beneath the configured spool root."""
     try:
-        config.spool_dir.mkdir(parents=True, exist_ok=True)
+        private_io.ensure_private_dir(config.spool_dir)
         return Path(tempfile.mkdtemp(prefix="request-", dir=config.spool_dir))
     except OSError as error:
         raise SttStorageUnavailable("Configured STT spool storage is unavailable") from error
@@ -816,7 +816,7 @@ class SttResourceGate:
         written_bytes: int = 0,
     ) -> AdmissionDecision:
         try:
-            config.spool_dir.mkdir(parents=True, exist_ok=True)
+            private_io.ensure_private_dir(config.spool_dir)
         except OSError as error:
             raise SttStorageUnavailable(
                 "Configured STT spool storage is unavailable"
