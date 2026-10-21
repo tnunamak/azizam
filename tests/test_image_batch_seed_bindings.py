@@ -115,22 +115,25 @@ def test_legacy_submitted_graph_bytes_unchanged(batch, manifest):
     assert [json.dumps(graph).encode() for graph in submitted] == expected
 
 
-MANIFESTLESS = ["flux-dev", "flux2-klein", "flux2-klein-edit", "ideogram4-fp8",
-                "ideogram4-fp8-nocfg", "ideogram4-int8", "ideogram4-nvfp4",
-                "ideogram4-nvfp4-split", "ideogram4-gguf-kijai", "ideogram4-gguf-q8"]
+# An operator can drop a workflow JSON into the workflows directory without writing a
+# manifest. These copies of the Klein graphs stand in for such operator-authored files.
+MANIFESTLESS = {"operator-klein": "flux2-klein", "operator-klein-edit": "flux2-klein-edit"}
 
 
 @pytest.mark.parametrize("name", MANIFESTLESS)
 @pytest.mark.parametrize("fixed_seed", [41, None])
-def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypatch, name, fixed_seed):
+def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypatch, tmp_path, name, fixed_seed):
     operation = "image_edits" if name.endswith("-edit") else "images"
     intent = "image.edit" if name.endswith("-edit") else "image.generate"
+    source = ROOT / "workflows/images" / f"{MANIFESTLESS[name]}.json"
+    (tmp_path / f"{name}.json").write_bytes(source.read_bytes())
+    monkeypatch.setattr(proxy, "COMFY_WORKFLOWS_DIR", tmp_path)
     assert proxy.load_graph_workflow(name) is not None
     assert proxy._find_image_manifest(intent, name) is None
     assert proxy.resolve_model_for_operation(operation, name).effective_model == name
     if intent == "image.edit":
         assert proxy._select_edit_workflow(name, image_count=1, has_mask=False) == name
-    graph = json.loads((ROOT / "workflows/images" / f"{name}.json").read_text())
+    graph = json.loads(source.read_text())
     meta = graph.pop("_meta")
     field = "noise_seed" if name.endswith("-edit") else "seed"
     delivery = SimpleNamespace(seeds=[])

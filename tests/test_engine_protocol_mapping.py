@@ -460,14 +460,15 @@ def test_each_stops_growth_early_without_serializing_accumulating_list(monkeypat
     monkeypatch.setattr(mapping, "_json_size", sized)
     rules = [_each([{"set": {"to": "/v", "value": "x" * 20}}])]
     program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS,
-                            budgets=Budgets(max_request_bytes=100))
+                            budgets=Budgets(max_request_bytes=100, mapping_s=30))
     with pytest.raises(BudgetExceeded) as raised:
         program.apply({"body": {"models": list(range(100))}})
     assert raised.value.budget == "max_request_bytes"
     assert len(calls) <= 4
     assert all(type(value) is dict and "v" in value for value in calls)
     calls.clear()
-    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS)
+    # This case counts size checks, not time: a wide time limit keeps a busy host out of it.
+    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=30))
     assert len(program.apply({"body": {"models": list(range(100))}})["data"]) == 100
     assert len(calls) == 101  # each element once, then the finished output once
 
