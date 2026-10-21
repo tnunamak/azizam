@@ -196,6 +196,14 @@ def test_content_sqlite_stores_create_private_databases(tmp_path, permissive_uma
     assert mode(db.parent.parent) == 0o700
 
 
+def test_existing_sqlite_database_mode_is_left_for_operator_migration(tmp_path, permissive_umask) -> None:
+    db = tmp_path / "existing" / "media_jobs.db"
+    media_jobs.init_db(db)
+    os.chmod(db, 0o644)
+    media_jobs.init_db(db)
+    assert mode(db) == 0o644
+
+
 def test_prompt_metadata_migration_database_is_private(tmp_path, permissive_umask) -> None:
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -299,3 +307,37 @@ def test_mode_report_contains_directory_errors_without_names(tmp_path, monkeypat
     assert "data" in report and "errors=1" in report
     assert "sensitive-dir" not in report
     assert "Traceback" not in report
+
+
+def test_mode_report_handles_directory_replaced_by_symlink(tmp_path, monkeypatch, capsys) -> None:
+    script = ROOT / "scripts" / "check-private-modes"
+    spec = importlib.util.spec_from_file_location("check_private_modes_race", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / "fixture"
+    swapped = root / "cache" / "private-name"
+    moved = root / "cache" / "moved"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    exposed = outside / "outside-name.bin"
+    exposed.write_bytes(b"keep mode")
+    os.chmod(exposed, 0o666)
+    swapped.mkdir(parents=True)
+    original_open = os.open
+    replaced = False
+
+    def replace_before_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if Path(path) == swapped and not replaced:
+            replaced = True
+            swapped.rename(moved)
+            swapped.symlink_to(outside, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", replace_before_open)
+    assert module.main(["--root", str(root), "--fix"]) == 1
+    assert replaced
+    report = capsys.readouterr().out
+    assert "cache" in report and "errors=1" in report
+    assert "private-name" not in report and "outside-name" not in report
+    assert mode(exposed) == 0o666
