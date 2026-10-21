@@ -159,3 +159,36 @@ def test_require_has_the_same_not_found_for_unavailable_and_foreign():
 def test_only_operational_reads_owner_role():
     assert operational(Viewer(is_owner=True))
     assert not operational(Viewer())
+
+
+@pytest.mark.parametrize("kind", ("prompt", "chat", "request_history", "debug_capture"))
+def test_mcp_own_outputs_require_creating_connection_not_shared_session_app(kind):
+    grant = Viewer("a", "a", delegation="mcp_grant", connection_id="connection:a")
+    row = records()[kind]
+    for origin, expected in (("connection:a", Own), ("connection:b", Deny), (None, Deny), ("", Deny)):
+        content = replace(row, connection_id=origin)
+        for action in ("read", "delete", "reuse"):
+            denied_action = kind == "debug_capture" and action == "reuse"
+            assert isinstance(decide(grant, content, action), Deny if denied_action else expected)
+            assert isinstance(decide(replace(grant, privacy_permission=True), content, action), Deny if denied_action else Own)
+        # A connection belongs to its person; matching origin cannot vouch for
+        # another person's row, including when the privacy flag is granted.
+        assert isinstance(decide(replace(grant, person_id="b", privacy_permission=True), content, "read"), Deny)
+    own_connection = replace(row, app_id="other", connection_id="connection:a")
+    assert isinstance(decide(grant, own_connection, "read"), Own)
+    # App keys share App-level authority, regardless of which key or connection
+    # submitted the row. Sessions keep their person's cross-origin access.
+    for origin in (None, "connection:a", "connection:b"):
+        content = replace(row, connection_id=origin)
+        assert isinstance(decide(Viewer("a", "a", delegation="app_key"), content, "read"), Own)
+        assert isinstance(decide(Viewer("a", "other"), content, "read"), Own)
+
+
+def test_mcp_missing_connection_never_inherits_app_key_exemption():
+    for connection in (None, ""):
+        grant = Viewer("a", "a", delegation="mcp_grant", connection_id=connection)
+        for kind in ("prompt", "chat", "request_history", "debug_capture"):
+            for origin in (None, "", "connection:a"):
+                content = replace(records()[kind], connection_id=origin)
+                assert isinstance(decide(grant, content, "read"), Deny)
+                assert isinstance(decide(replace(grant, privacy_permission=True), content, "read"), Own)
