@@ -1,0 +1,138 @@
+{
+  "_meta": {
+    "name": "fibo-2-edit-turbo",
+    "description": "Single-image instruction edit via Bria FIBO 2.0 Edit Turbo (int8_convrot repack from Comfy-Org/Fibo-2.0) with the Qwen3-VL-4B text encoder and the FLUX.2 VAE, all on ComfyUI core nodes (no custom node, no diffusers). Four steps, no classifier-free guidance. Output size follows the source image's aspect ratio at about 1 megapixel (the size the model was trained at). Licence: CC BY-NC 4.0, non-commercial.",
+    "prompt_node": "6",
+    "image_node": "4",
+    "seed_node": "7",
+    "background_removal": {
+      "save_node": "10",
+      "plain_image": [
+        "9",
+        0
+      ],
+      "transparent_image": [
+        "11",
+        0
+      ],
+      "rmbg_node": "11"
+    }
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "fibo2_edit_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_4b_int8_convrot.safetensors",
+      "type": "fibo2",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.png"
+    }
+  },
+  "6": {
+    "class_type": "TextEncodeFibo2",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "prompt": "edit the image",
+      "negative_prompt": "",
+      "vae": [
+        "3",
+        0
+      ],
+      "images.image_1": [
+        "4",
+        0
+      ],
+      "width": 0,
+      "height": 0,
+      "batch_size": 1
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "6",
+        1
+      ],
+      "latent_image": [
+        "6",
+        2
+      ],
+      "denoise": 1.0
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "7",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "fibo-2-edit-turbo"
+    }
+  },
+  "11": {
+    "class_type": "RMBG",
+    "inputs": {
+      "image": [
+        "9",
+        0
+      ],
+      "model": "RMBG-2.0",
+      "sensitivity": 1.0,
+      "process_res": 1024,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#00000000"
+    }
+  }
+}
