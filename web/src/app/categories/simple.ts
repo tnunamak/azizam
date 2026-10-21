@@ -33,7 +33,7 @@ export function visibilityText(category: Category, planName: (id: string) => str
   const kind = visibilityOf(category);
   if (kind === "everyone") return "Everyone who can use the gateway";
   if (kind === "owner") return "Only you";
-  return "You, and people and apps on " + (category.visible_to ?? []).map(planName).join(", ");
+  return "You; allowed plans: " + (category.visible_to ?? []).map(planName).join(", ");
 }
 
 function closure(service: Service): Service[] {

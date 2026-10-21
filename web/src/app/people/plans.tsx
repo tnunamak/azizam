@@ -651,8 +651,9 @@ export function CheckAccess({
         <DialogHeader>
           <DialogTitle>Check access · {plan.name}</DialogTitle>
           <DialogDescription>
-            See what this plan allows without making a model request or
-            incurring provider charges.
+            Previewing {plan.name} for both the person and the app. This does
+            not assign the plan or change Try. No model request is made and
+            no provider charges are incurred.
           </DialogDescription>
         </DialogHeader>
         {isPending ? (

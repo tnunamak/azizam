@@ -496,3 +496,39 @@ describe("Try keys stay in page memory", () => {
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
 });
+
+
+it("announces access refresh completion and preserves Refresh focus while loading", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  account.viewer = { authenticated: true, serviceAdmin: false, admin: false };
+  Object.assign(account, { promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }) });
+  let finish: (() => void) | undefined;
+  let hold = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (hold && url.includes("models/catalog")) await new Promise<void>((resolve) => { finish = resolve; });
+    return json(url.includes("workflows") ? { workflows: [] } : { ...catalog, access_plan: { id: "family", name: "Family" } });
+  }));
+  try {
+    render(<TryPage />);
+    const status = await screen.findByText("Your access plan: Family.");
+    expect(status).toHaveAttribute("role", "status");
+    const user = userEvent.setup();
+    const refresh = screen.getByRole("button", { name: "Refresh access" });
+    hold = true;
+    await user.click(refresh);
+    expect(refresh).toHaveFocus();
+    expect(refresh).not.toBeDisabled();
+    expect(refresh).toHaveAttribute("aria-disabled", "true");
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(status).toHaveTextContent("Checking your access plan…");
+    await user.click(refresh);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("models/catalog"))).toHaveLength(2);
+    await act(async () => { finish!(); });
+    await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+    expect(refresh).toHaveFocus();
+    expect(status).toHaveTextContent("Your access plan: Family.");
+    expect(status).toHaveTextContent("Access refresh complete.");
+  } finally {
+    account.viewer.serviceAdmin = true;
+  }
+});

@@ -99,9 +99,16 @@
 # Library explicit Mine scope: +5 owner lifecycle cases and +1 empty Everyone-to-Mine
 # case in each UI suite. Remeasured 2026-10-20: Vitest 3057;
 # Playwright 477 + 3 + 18 = 498 across all gate configs.
+# Plan visibility: +1 real-session catalog/key reassignment regression,
+# +3 Try plan-context cases, +2 category assignment-count cases,
+# +2 phone/desktop assignment journeys.
+# Plan visibility review followups: +4 Python holder/state cases, +3 Vitest
+# pending/count-parity/refresh cases, +2 browser refresh viewport cases.
+# Remeasured with full hermetic collection, Vitest list and all three Playwright configs.
 pytest = 15327
 vitest = 3054
 playwright = 492
+
 
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

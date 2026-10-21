@@ -9,11 +9,13 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import TryPage from "./page";
+import { ViewerContext } from "@/components/shell/session";
 const mocks = vi.hoisted(() => ({
   params: new URLSearchParams(),
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
+  promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => mocks.params }));
 vi.mock("@/lib/account-api", () => ({
@@ -21,6 +23,7 @@ vi.mock("@/lib/account-api", () => ({
     session: mocks.session,
     tryKey: mocks.tryKey,
     revokeKey: mocks.revokeKey,
+    promptMemory: mocks.promptMemory,
   },
 }));
 const response = (body: unknown, ok = true) =>
@@ -52,6 +55,7 @@ beforeEach(() => {
     value: () => {},
   });
   mocks.params = new URLSearchParams();
+  mocks.promptMemory.mockResolvedValue({ prompt_memory: null });
   vi.stubGlobal("fetch", fetchMock);
   fetchMock
     .mockReset()
@@ -79,6 +83,44 @@ test("names the page with exactly one level-one heading", async () => {
   render(<TryPage />);
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   expect(screen.getByRole("heading", { level: 1, name: "Try" })).toBeVisible();
+});
+
+test("Try names the signed-in account's plan, ignores a plan in the URL, and refreshes access", async () => {
+  mocks.params = new URLSearchParams("plan=plan-other");
+  let planName = "Family";
+  fetchMock.mockImplementation(async (url: string) => response(
+    url.includes("workflows") ? workflows : {
+      ...models, access_plan: { id: "plan-account", name: planName },
+    },
+  ));
+  render(
+    <ViewerContext.Provider value={{ authenticated: true, name: "River", email: null, role: "owner", admin: true }}>
+      <TryPage />
+    </ViewerContext.Provider>,
+  );
+  expect(await screen.findByText("Your access plan: Family.")).toBeVisible();
+  expect(screen.getByText("Signed in as River.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people?tab=plans");
+  expect(screen.getByText(/Checking another plan does not change your access here/)).toBeVisible();
+  planName = "Everything and categories";
+  fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
+  expect(await screen.findByText("Your access plan: Everything and categories.")).toBeVisible();
+  expect(mocks.tryKey).not.toHaveBeenCalled();
+});
+
+test.each([null, undefined])("Try distinguishes no assigned plan from an unconfirmed plan (%s)", async (plan) => {
+  fetchMock.mockImplementation(async (url: string) => response(
+    url.includes("workflows") ? workflows : { ...models, ...(plan === null ? { access_plan: null } : {}) },
+  ));
+  render(
+    <ViewerContext.Provider value={{ authenticated: true, name: "River", email: null, role: "member", admin: false }}>
+      <TryPage />
+    </ViewerContext.Provider>,
+  );
+  expect(await screen.findByText(plan === null
+    ? "No access plan is assigned to your account. Ask the owner."
+    : "Your access plan could not be confirmed.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Check another plan" })).toBeNull();
 });
 
 test.each([false, true])(

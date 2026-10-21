@@ -197,7 +197,7 @@ export interface AccessPlan {
   updated_at: number;
   plan: AccessPlanDocument;
   summary: string | null;
-  used_by?: { people: string[]; apps: string[]; invites: number };
+  used_by?: { people: string[]; apps: string[]; invites: number; signin_rules?: number };
 }
 
 /** A plan as pickers show it. */

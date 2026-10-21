@@ -1241,6 +1241,11 @@ export default function TryPage() {
   const [catalogState, setCatalogState] = useState<
     Record<CatalogSection, CatalogState>
   >({ models: "idle", workflows: "idle" });
+  const [catalogPlan, setCatalogPlan] = useState<
+    { id: string; name: string } | null | undefined
+  >(undefined);
+  const [accessRefresh, setAccessRefresh] = useState<"idle" | "loading" | "complete">("idle");
+  const catalogLoading = Object.values(catalogState).some((state) => state === "loading");
   const [unknownModelCount, setUnknownModelCount] = useState(0);
   const speechChoices = catalog.speech?.find((option) => option.id === model.speech)?.speechVoices;
   const voice = selectedVoice(speechChoices, voicesByModel[model.speech]);
@@ -1610,6 +1615,7 @@ export default function TryPage() {
       mounted.current &&
       !controller.signal.aborted &&
       catalogRequests.current[section] === controller;
+    if (section === "models") setCatalogPlan(undefined);
     setCatalogState((states) => ({ ...states, [section]: "loading" }));
     try {
       const response = await fetch(
@@ -1621,11 +1627,18 @@ export default function TryPage() {
       );
       let grouped: CatalogGroups;
       let unknownCount = 0;
+      let accountPlan: typeof catalogPlan = undefined;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
         grouped = { workflow: groupWorkflows(await response.json()) };
       } else if (response.ok) {
-        grouped = groupCatalog(await response.json());
+        const payload = await response.json();
+        grouped = groupCatalog(payload);
+        const plan = payload.access_plan;
+        accountPlan = plan === null ? null
+          : plan && typeof plan.id === "string" && typeof plan.name === "string"
+            ? { id: plan.id, name: plan.name }
+            : undefined;
       } else if (secret) {
         const fallback = await fetch("/openai/v1/models", {
           headers: { authorization: `Bearer ${secret}` },
@@ -1653,7 +1666,10 @@ export default function TryPage() {
           : { ...grouped, workflow: catalogRef.current.workflow };
       catalogRef.current = merged;
       setCatalog(merged);
-      if (section === "models") setUnknownModelCount(unknownCount);
+      if (section === "models") {
+        setUnknownModelCount(unknownCount);
+        setCatalogPlan(accountPlan);
+      }
       setModel((selected) => nextModelForCatalog(merged, selected));
       const hasOptions = Object.values(grouped).some(
         (options) => options?.length,
@@ -2356,6 +2372,44 @@ export default function TryPage() {
       <PageHeader title="Try" />
 
       <section className="text-muted-foreground text-sm">
+        {personViewer && (
+          <div className="mb-3 space-y-1" role="group" aria-label="Try access">
+            <p>Signed in as {viewer.name}.</p>
+            <p role="status">
+              {catalogPlan ? `Your access plan: ${catalogPlan.name}.`
+                : ["idle", "loading"].includes(catalogState.models)
+                  ? "Checking your access plan…"
+                  : catalogPlan === null
+                    ? "No access plan is assigned to your account. Ask the owner."
+                    : "Your access plan could not be confirmed."}
+              {accessRefresh === "complete" && " Access refresh complete."}
+            </p>
+            {viewer.admin && (
+              <p>
+                Checking another plan does not change your access here.{" "}
+                <Link prefetch={false} href="/people/?tab=plans" className="text-foreground underline underline-offset-4">
+                  Check another plan
+                </Link>
+                .
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-disabled={catalogLoading || accessRefresh === "loading"}
+              aria-busy={catalogLoading || accessRefresh === "loading"}
+              onClick={async () => {
+                if (catalogLoading || accessRefresh === "loading") return;
+                setAccessRefresh("loading");
+                await loadCatalog(key?.secret);
+                if (mounted.current) setAccessRefresh("complete");
+              }}
+            >
+              Refresh access
+            </Button>
+          </div>
+        )}
         {keyError && (
           <div className="mb-3">
             <ErrorState
