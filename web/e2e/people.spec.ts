@@ -375,8 +375,13 @@ test(`an unused plan leads to assigning a person at ${width}px`, async ({ page }
     await fulfilJson(route, { ok: true });
   });
   await page.goto("/people/?tab=plans");
-  await expect(page.getByText("No one is on this plan yet", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Assign people", exact: true }).click();
+  await expect(page.getByText(/No one is on this plan yet/)).toBeVisible();
+  if (width === 390) {
+    await page.getByRole("button", { name: `Actions for ${unused.name}` }).click();
+    await page.getByRole("menuitem", { name: "Assign people", exact: true }).click();
+  } else {
+    await page.getByRole("button", { name: "Assign people", exact: true }).click();
+  }
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Change access plan" }).click();
   await page.getByRole("combobox", { name: "Access plan", exact: true }).click();

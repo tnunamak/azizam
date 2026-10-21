@@ -715,14 +715,14 @@ export default function PeoplePage() {
                   titleAs="h2"
                   // One line: what the plan allows and its counts; with the
                   // description, in full on hover and in the plan editor.
-                  meta={[plan.summary, usedByLabel(plan)]}
-                  metaTitle={[plan.summary, usedByLabel(plan)]
+                  meta={[usedByLabel(plan), plan.summary]}
+                  metaTitle={[usedByLabel(plan), plan.summary]
                     .filter(Boolean)
                     .join(" · ")}
                   trailing={
                     <>
                       {owner && plan.used_by && !plan.used_by.people.length && !plan.used_by.apps.length && (
-                        <Button variant="outline" onClick={() => setTab("people")}>
+                        <Button variant="outline" className="max-sm:hidden" onClick={() => setTab("people")}>
                           Assign people
                         </Button>
                       )}
@@ -753,6 +753,11 @@ export default function PeoplePage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {owner && plan.used_by && !plan.used_by.people.length && !plan.used_by.apps.length && (
+                            <DropdownMenuItem onSelect={() => setTab("people")}>
+                              Assign people
+                            </DropdownMenuItem>
+                          )}
                           {owner && (
                             <DropdownMenuItem onSelect={() => setEditor(plan)}>
                               Edit access plan
