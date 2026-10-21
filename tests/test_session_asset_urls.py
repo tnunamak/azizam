@@ -443,7 +443,9 @@ def test_resumed_try_image_job_keeps_binding_without_the_original_request(media,
     auth = proxy.AuthContext(identity=admin_runtime.runtime_identity_for_app_credential_hash(
         proxy.hash_api_key(key), path=media.path))
     request = Request({"type": "http", "method": "POST", "scheme": "https", "server": ("ai.example", 443),
-                       "headers": [(b"host", b"ai.example")], "path": "/gateway/v1/media/jobs", "query_string": b"",
+                       "headers": [(b"host", b"ai.example"), (b"authorization", ("Bearer " + key).encode()),
+                                   (b"cookie", ("opx_admin_session=" + client.cookies.get("opx_admin_session")).encode())],
+                       "path": "/gateway/v1/media/jobs", "query_string": b"",
                        "auth_context": auth})
     jobs = tmp_path / "resumed-jobs.db"
     media_jobs.init_db(jobs)
@@ -457,6 +459,7 @@ def test_resumed_try_image_job_keeps_binding_without_the_original_request(media,
     # Recreate only the serialized payload, as after a process restart: no scope, raw key or cookie.
     payload = json.loads(json.dumps(proxy._load_image_media_job_payload(job.job_id)))
     assert key not in json.dumps(payload)
+    assert client.cookies.get("opx_admin_session") not in json.dumps(payload)
     monkeypatch.setattr(proxy, "_load_image_media_job_payload", lambda _: payload)
     async def backend(shim, _auth, **kwargs):
         return JSONResponse({"data": [{"asset_id": ASSET, "asset_url": proxy.build_signed_asset_url(shim, ASSET),

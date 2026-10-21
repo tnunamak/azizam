@@ -23946,7 +23946,7 @@ def _signed_asset_content_response(
             media_type="application/json",
         )
 
-    stat = cache_path.stat()
+    stat = cache_path.stat() if "family" in request.query_params else None
     metadata_identity = ""
     if md_raw == provenance.METADATA_FULL:
         person_id: str | None = None
@@ -23973,7 +23973,7 @@ def _signed_asset_content_response(
     headers = _session_asset_cache_headers(
         request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:"
         f"{metadata_identity}:{stat.st_mtime_ns}:{stat.st_size}:{media_delivery.encoder_revision()}",
-    )
+    ) if stat is not None else {}
     if headers and _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
     data = cache_path.read_bytes()
