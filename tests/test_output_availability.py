@@ -31,7 +31,7 @@ def test_job_api_reports_missing_outputs_and_does_not_issue_broken_links(tmp_pat
     for view in (detail, listed):
         assert view["status"] == "succeeded"
         assert view["output_state"] == "partial"
-        assert view["assets"][0]["available"] is True
+        assert view["assets"][0] == job["assets"][0]
         missing = view["assets"][1]
         assert missing["available"] is False and missing["availability"] == "missing"
         assert not any(missing.get(key) for key in ("url", "asset_url", "content_url"))

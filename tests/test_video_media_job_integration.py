@@ -52,6 +52,7 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.patches = [
             patch.object(media_jobs, "DB_PATH", self.db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", self.root / "images"),
             patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.payload_dir),
             authenticated(),
             patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0),
@@ -300,6 +301,8 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_content_route_returns_signed_video_asset_payload(self) -> None:
         asset_id = "vid_" + "d" * 64
+        proxy.IMAGE_CACHE_DIR.mkdir(exist_ok=True)
+        (proxy.IMAGE_CACHE_DIR / ("d" * 64 + ".mp4")).write_bytes(b"fixture media")
         job = media_jobs.MediaJob(
             app_id="app_test",  # the App the test key belongs to
             intent="video.generate",

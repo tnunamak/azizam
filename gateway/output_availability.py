@@ -23,13 +23,13 @@ def project(job: Mapping[str, Any], resolver: AssetPathResolver | None) -> dict[
             state = "available" if available else "missing"
         except OSError:
             available, state = False, "unavailable"
-        asset.update(available=available, availability=state)
         if not available:
+            asset.update(available=False, availability=state)
             for field in ("url", "asset_url", "content_url", "download_url", "thumbnail_url", "workflow_download_url"):
                 asset.pop(field, None)
         assets.append(asset)
     view["assets"] = assets
-    states = {asset["availability"] for asset in assets}
-    if states:
+    states = {asset.get("availability", "available") for asset in assets}
+    if states - {"available"}:
         view["output_state"] = next(iter(states)) if len(states) == 1 else "partial"
     return view

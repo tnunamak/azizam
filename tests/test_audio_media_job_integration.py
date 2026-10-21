@@ -52,6 +52,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.patches = [
             patch.object(media_jobs, "DB_PATH", self.db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", self.root / "images"),
             patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.payload_dir),
             authenticated(),
         ]
@@ -273,6 +274,8 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         from urllib.parse import parse_qs, urlsplit
 
         asset_id = "aud_" + "b" * 64
+        proxy.IMAGE_CACHE_DIR.mkdir(exist_ok=True)
+        (proxy.IMAGE_CACHE_DIR / ("b" * 64 + ".mp3")).write_bytes(b"fixture media")
         job = media_jobs.MediaJob(
             app_id="app_test",  # the App the test key belongs to
             intent="music.generate",

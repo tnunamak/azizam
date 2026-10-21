@@ -571,6 +571,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json(), payload)
 
     def test_audio_profile_allows_audio_media_job_content(self) -> None:
+        self.cache_dir.mkdir(exist_ok=True)
+        (self.cache_dir / ("a" * 64 + ".mp3")).write_bytes(b"fixture audio")
         audio_profile = plan_for("audio", caps=('speech', 'transcribe', 'music', 'sfx', 'audio'))
         job = {
             "job_id": "job_audio_policy",
