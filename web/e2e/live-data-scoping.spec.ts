@@ -79,6 +79,9 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
+  // App filtering is available in the explicit Everyone view.
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page.getByRole("option", { name: "Everyone", exact: true }).click();
   // Model, date and app live in the "Filters" popover since D1.
   await page.getByRole("button", { name: /^Filters/ }).click();
   await page.getByRole("combobox", { name: "App", exact: true }).click();
@@ -91,9 +94,9 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
     page.getByRole("dialog").getByText("Daisy", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  // The owner filter is "Person"; the viewer's own option is "<name> (you)".
+  // Returning to Mine clears the App filter and includes their accountable Apps.
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: /\(you\)$|^You$/ }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   // Daisy is a service app the owner answers for (ACCESS_PLANS.md §2.4), so
   // "you" covers its media as well as the owner's own; never a member's.
   await expect(page.locator("article")).toHaveCount(2);
