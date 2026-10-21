@@ -239,8 +239,9 @@ def test_provider_migration_backup_is_private_under_permissive_umask(tmp_path, p
 
 
 def test_migration_and_ui_sqlite_backups_are_private_under_permissive_umask(tmp_path, permissive_umask) -> None:
-    from scripts.migrations.ownership_to_principal import backup_sqlite
+    from scripts.migrations.ownership_to_principal import backup_sqlite, create_backup
     from scripts.ui.live_data_copy import _backup
+    from types import SimpleNamespace
 
     source = tmp_path / "source.db"
     with sqlite3.connect(source) as conn:
@@ -252,6 +253,9 @@ def test_migration_and_ui_sqlite_backups_are_private_under_permissive_umask(tmp_
     _backup(source, ui_copy)
     assert mode(migration_copy) == mode(ui_copy) == 0o600
     assert mode(migration_copy.parent) == mode(ui_copy.parent) == 0o700
+    plan = SimpleNamespace(db_changes=[], voice_sources={}, voice_destinations=set(), meta_changes=[])
+    backup = create_backup(plan, tmp_path / "snapshots")
+    assert mode(backup) == mode(backup.parent) == mode(backup.parent.parent) == 0o700
 
 
 def test_mode_report_groups_paths_and_fix_only_changes_fixture_tree(tmp_path, permissive_umask) -> None:
