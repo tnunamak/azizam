@@ -388,7 +388,10 @@ test(`an unused plan leads to assigning a person at ${width}px`, async ({ page }
   await page.getByRole("option", { name: unused.name, exact: true }).click();
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByText(unused.name, { exact: true })).toBeVisible();
+  const personRow = page.getByRole("listitem").filter({
+    has: page.getByRole("button", { name: "Actions for Morgan Rivera" }),
+  });
+  await expect(personRow).toContainText(unused.name);
   await page.getByRole("tab", { name: "Access plans", exact: true }).click();
   await expect(page.getByText(/Used by 1 person/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Assign people", exact: true })).toHaveCount(0);
