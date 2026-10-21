@@ -93,7 +93,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    # Freeze the original catalog separately from the data-only additions: three MOSS and two FLUX.2 Klein workflows.
+    # Freeze the original catalog separately from the MOSS, FLUX.2 Klein and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
         "moss-image": ("image", text_to_image),
