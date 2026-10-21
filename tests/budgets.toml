@@ -92,9 +92,9 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-# Retention slice 3: +35 profile, canary, restart, refusal and tool-name disclosure cases.
-# Full hermetic collection measured 15354 on 2026-10-21.
-pytest = 15354
+# Retention slice 3: +39 profile, canary, restart, refusal and pinned-shim cases.
+# Full hermetic collection measured 15358 on 2026-10-21.
+pytest = 15358
 vitest = 3051
 playwright = 492
 

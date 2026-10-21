@@ -132,7 +132,7 @@ leaves the shim off and must persist the name, proving that its sink is exercise
 positive control enables spend/error logging and uses the default log level;
 it must expose content to both the database scanner and output scanner.
 
-Measured ceilings on 2026-10-21: pytest 15,354 (full hermetic collection),
+Measured ceilings on 2026-10-21: pytest 15,358 (full hermetic collection),
 Vitest 3,051 (`vitest list --json`), Playwright 492 (471 + 3 + 18 across the
 three gate configurations), Node 87 (82 Pi cases and 5 compatibility cases).
 The Node count run had one unrelated Pi read-only-directory failure: the Pi
