@@ -1,6 +1,7 @@
 """Browser media is usable only during its sign-in; App links keep their contract."""
 import hashlib
 import importlib.util
+import json
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -429,3 +430,81 @@ def test_browser_etag_changes_after_an_in_place_asset_rewrite(media):
     assert changed.status_code == 200 and changed.content != response.content
     assert changed.headers["etag"] != response.headers["etag"]
     assert client.get(url, headers={"range": "bytes=0-9", "if-range": response.headers["etag"]}).status_code == 200
+
+
+
+def test_resumed_try_image_job_keeps_binding_without_the_original_request(media, monkeypatch, tmp_path):
+    import asyncio
+    from gateway import admin_runtime, media_jobs, prompt_memory
+    from starlette.responses import JSONResponse
+    client = owner_client(media)
+    session = cookie_session(client)
+    key = user_runtime.ensure_try_session_key(session, path=media.path)["api_key"]
+    auth = proxy.AuthContext(identity=admin_runtime.runtime_identity_for_app_credential_hash(
+        proxy.hash_api_key(key), path=media.path))
+    request = Request({"type": "http", "method": "POST", "scheme": "https", "server": ("ai.example", 443),
+                       "headers": [(b"host", b"ai.example")], "path": "/gateway/v1/media/jobs", "query_string": b"",
+                       "auth_context": auth})
+    jobs = tmp_path / "resumed-jobs.db"
+    media_jobs.init_db(jobs)
+    monkeypatch.setattr(media_jobs, "DB_PATH", jobs)
+    monkeypatch.setattr(prompt_memory, "DB_PATH", jobs)
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)
+    job = media_jobs.MediaJob(intent="image.generate", workflow="test", backend="test", request_id="try-resume")
+    media_jobs.create(job, path=jobs)
+    proxy._persist_image_media_job_payload(job.job_id, body={"prompt": "a fox"}, request=request, auth_context=auth)
+    # Recreate only the serialized payload, as after a process restart: no scope, raw key or cookie.
+    payload = json.loads(json.dumps(proxy._load_image_media_job_payload(job.job_id)))
+    assert key not in json.dumps(payload)
+    monkeypatch.setattr(proxy, "_load_image_media_job_payload", lambda _: payload)
+    async def backend(shim, _auth, **kwargs):
+        return JSONResponse({"data": [{"asset_id": ASSET, "asset_url": proxy.build_signed_asset_url(shim, ASSET),
+                                        "url": proxy.build_signed_image_url(shim, ASSET)}]})
+    monkeypatch.setattr(proxy, "proxy_image_request", backend)
+    asyncio.run(proxy._run_image_media_job(job.job_id))
+    finished = media_jobs.get(job.job_id, audience="client", path=jobs)
+    assert finished["status"] == media_jobs.STATUS_SUCCEEDED, finished.get("error")
+    url = finished["assets"][0]["asset_url"]
+    assert parse_qs(urlsplit(url).query)["family"] == [session.family_id]
+    assert media.client().get(url).status_code == 200
+    browser_sessions.end(session, path=media.path)
+    assert media.client().get(url).status_code == 403
+
+
+def test_deleting_a_try_credential_in_flight_cannot_drop_its_asset_binding(media):
+    from gateway import admin_runtime
+    client = owner_client(media)
+    session = cookie_session(client)
+    key = user_runtime.ensure_try_session_key(session, path=media.path)
+    auth = proxy.AuthContext(identity=admin_runtime.runtime_identity_for_app_credential_hash(
+        proxy.hash_api_key(key["api_key"]), path=media.path))
+    shim = proxy._JsonBodyRequestShim(body={}, headers={"host": "ai.example"}, scheme="https", netloc="ai.example",
+                                      scope={"auth_context": auth})
+    browser_sessions.end(session, path=media.path)
+    with accounts.connection(media.path) as conn:
+        conn.execute("DELETE FROM credentials WHERE id=?", (key["id"],))
+    url = proxy.build_signed_asset_url(shim, ASSET)
+    assert parse_qs(urlsplit(url).query)["family"] == [session.family_id]
+    assert media.client().get(url).status_code == 403
+
+
+def test_full_metadata_etag_changes_with_metadata_and_is_separate_from_clean_delivery(media, monkeypatch, tmp_path):
+    from gateway import prompt_memory
+    client = owner_client(media)
+    session = cookie_session(client)
+    monkeypatch.setattr(prompt_memory, "DB_PATH", tmp_path / "prompts.db")
+    def keep(text):
+        assert prompt_memory.put(ASSET, session.subject, text, kept_until=None, metadata={"prompt": text},
+                                 admin_path=media.path)
+    keep("red fox")
+    full_url, clean_url = mint(client, "full"), mint(client)
+    first = client.get(full_url)
+    clean = client.get(clean_url)
+    assert first.status_code == 200 and clean.status_code == 200
+    assert first.content != clean.content and first.headers["etag"] != clean.headers["etag"]
+    keep("blue fox")
+    changed = client.get(full_url, headers={"if-none-match": first.headers["etag"]})
+    assert changed.status_code == 200 and changed.content != first.content
+    assert changed.headers["etag"] != first.headers["etag"]
+    assert client.get(clean_url).headers["etag"] == clean.headers["etag"]
