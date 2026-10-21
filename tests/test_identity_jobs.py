@@ -124,6 +124,18 @@ class IdentityJobTests(unittest.TestCase):
         self.assertEqual(media_jobs.get(job.job_id, audience="internal", path=self.db)["status"], "failed")
         self.assertEqual(media_jobs.get(other.job_id, audience="internal", path=self.db)["status"], "queued")
 
+    def test_failed_identity_diagnostics_do_not_store_person_or_prompt_words(self) -> None:
+        marker = "PRIVATE_IDENTITY_REFERENCE_LABEL_7f2a"
+
+        async def fail(auth, req):
+            raise ids.IdentityError(f"{marker} and another person point at the same face", code="same_face")
+
+        _, submitted = self.run_job(fail)
+        job = media_jobs.get(submitted["id"], audience="internal", path=self.db)
+        self.assertEqual(job["status"], "failed")
+        self.assertNotIn(marker, json.dumps(job))
+        self.assertIn("same face", job["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
