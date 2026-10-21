@@ -172,6 +172,9 @@ interface MediaResponse {
   next_cursor?: string | null;
   models?: string[];
   sources?: MediaSource[];
+}
+
+interface RemovalResponse {
   media_folder?: MediaFolderView | null;
   removal_plan?: { missing_items: number } | null;
 }
@@ -369,13 +372,14 @@ function validPayload(path: string, value: unknown): boolean {
     return typeof value.download_url === "string" && !!value.download_url.trim();
   if (route === "/me/api/session")
     return typeof value.csrf_token === "string" && !!value.csrf_token;
+  if (route === "/me/api/media" && new URLSearchParams(path.split("?")[1]).get("folder_state") === "1")
+    return (value.media_folder == null || validMediaFolder(value.media_folder)) &&
+      (value.removal_plan == null || (record(value.removal_plan) &&
+        Number.isInteger(value.removal_plan.missing_items) &&
+        (value.removal_plan.missing_items as number) >= 0));
   if (route === "/me/api/media")
     return Array.isArray(value.assets) && value.assets.every(validAsset) &&
       (value.next_cursor == null || typeof value.next_cursor === "string") &&
-      (value.media_folder == null || validMediaFolder(value.media_folder)) &&
-      (value.removal_plan == null || (record(value.removal_plan) &&
-        Number.isInteger(value.removal_plan.missing_items) &&
-        (value.removal_plan.missing_items as number) >= 0)) &&
       (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
       (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
         record(source) && typeof source.id === "string" && typeof source.label === "string")));
@@ -2437,6 +2441,14 @@ export default function LibraryPage() {
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
+  const { data: removalState } = useQuery({
+    queryKey: ["library", "removal"],
+    queryFn: ({ signal }) => mediaRequest<RemovalResponse>(
+      "/me/api/media?folder_state=1&removal_plan=1", { signal },
+    ),
+    staleTime: 30_000,
+    retry: false,
+  });
   const deepLinkedAssetId = searchParams?.get("asset") ?? "";
   function clearFilters() {
     setKind("all");
@@ -2492,7 +2504,7 @@ export default function LibraryPage() {
         mediaPath +
           (pageParam
             ? `&cursor=${encodeURIComponent(String(pageParam))}`
-            : "&removal_plan=1"),
+            : ""),
         { signal },
       ),
     getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
@@ -2606,7 +2618,7 @@ export default function LibraryPage() {
     [assets],
   );
   // The folder's state comes with the first page of the Library, which every read starts with.
-  const folder = mediaPages[0]?.media_folder ?? null;
+  const folder = removalState?.media_folder ?? null;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -2716,7 +2728,7 @@ export default function LibraryPage() {
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
   // Remove missing items clears the viewer's own entries, whoever is shown.
-  const missingItemCount = mediaPages[0]?.removal_plan?.missing_items ?? 0;
+  const missingItemCount = removalState?.removal_plan?.missing_items ?? 0;
   const removal = removalDialog(folder, missingItemCount);
   function returnFocus(assetId: string) {
     // After a delete, the confirmation still holds focus; the page returns
@@ -2767,7 +2779,7 @@ export default function LibraryPage() {
     onError: (error) => toast.error(failureCopy(error)),
   });
   const removeMissingMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (expectedMissing: number) => {
       const session = await mediaRequest<{ csrf_token: string }>(
         "/me/api/session",
       );
@@ -2780,7 +2792,7 @@ export default function LibraryPage() {
             "x-azizam-user-action": "1",
             "x-azizam-csrf": session.csrf_token,
           },
-          body: JSON.stringify({ expected_missing: missingItemCount }),
+          body: JSON.stringify({ expected_missing: expectedMissing }),
         },
         "delete",
       );
@@ -2792,13 +2804,13 @@ export default function LibraryPage() {
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => {
-      // The folder's state is on the Library read, and this removal may have just recorded the folder.
+      // The removal may have just recorded the folder; refresh both queries.
       void queryClient.invalidateQueries({ queryKey: ["library"] });
       toast.error(failureCopy(error));
     },
   });
   const confirmFolderMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (evidence: MediaFolderView) => {
       const session = await mediaRequest<{ csrf_token: string }>("/me/api/session");
       return mediaRequest<{ confirmed: boolean }>(CONFIRM_FOLDER_PATH, {
         method: "POST",
@@ -2808,8 +2820,8 @@ export default function LibraryPage() {
           "x-azizam-csrf": session.csrf_token,
         },
         body: JSON.stringify({
-          items_here: folder?.items_here,
-          library_items: folder?.library_items,
+          items_here: evidence.items_here,
+          library_items: evidence.library_items,
         }),
       }, "folder");
     },
@@ -3178,7 +3190,7 @@ export default function LibraryPage() {
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <p className="text-meta" role="status">
-              {goneAssets.length === 0
+              {missingItemCount > 0
                 ? `${itemCount(missingItemCount)} missing across your Library.`
                 : goneAssets.length === 1
                 ? goneConfirmed
@@ -3329,10 +3341,12 @@ export default function LibraryPage() {
         cancelLabel={removal.blocked ? "Close" : "Cancel"}
         confirmDisabled={removal.blocked}
         onConfirm={async () => {
+          const expectedMissing = missingItemCount;
+          const folderEvidence = folderToConfirm(folder);
           setDeleteAnnouncement("");
           // An unconfirmed folder is recorded by this same choice, then the removal runs.
-          if (folderToConfirm(folder)) await confirmFolderMutation.mutateAsync();
-          await removeMissingMutation.mutateAsync();
+          if (folderEvidence) await confirmFolderMutation.mutateAsync({ ...folderEvidence });
+          await removeMissingMutation.mutateAsync(expectedMissing);
         }}
       />
       <ConfirmDialog

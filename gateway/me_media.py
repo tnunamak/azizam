@@ -179,10 +179,18 @@ def create_me_media_router(
             scope = _media_scope(request, actor, admin_path)
             if request.query_params.get("folder_state") == "1":
                 storage = asset_storage_provider() if asset_storage_provider is not None else None
-                return _json({"media_folder": _media_folder_view(
+                result = {"media_folder": _media_folder_view(
                     actor, storage, admin_path=admin_path, jobs_path=jobs_path,
                     receipts_path=receipt_path, prompt_path=prompt_path,
-                )})
+                )}
+                if request.query_params.get("removal_plan") == "1":
+                    result["removal_plan"] = (
+                        {"missing_items": len(_viewer_removal(
+                            actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
+                            receipts_path=receipt_path,
+                        ).gone_assets)} if storage is not None else None
+                    )
+                return _json(result)
             result = _list_media(
                 request,
                 scope=scope,
@@ -195,22 +203,6 @@ def create_me_media_router(
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
-            )
-            # The folder is listed and counted once per Library, on the first page; later pages carry no state.
-            storage = asset_storage_provider() if asset_storage_provider is not None else None
-            result["media_folder"] = (
-                _media_folder_view(actor, storage, admin_path=admin_path, jobs_path=jobs_path,
-                                   receipts_path=receipt_path, prompt_path=prompt_path)
-                if not request.query_params.get("cursor") else None
-            )
-            # Viewer-wide, regardless of the listing's search, filters or owner scope.
-            result["removal_plan"] = (
-                {"missing_items": len(_viewer_removal(
-                    actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
-                    receipts_path=receipt_path,
-                ).gone_assets)}
-                if storage is not None and request.query_params.get("removal_plan") == "1"
-                and not request.query_params.get("cursor") else None
             )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)

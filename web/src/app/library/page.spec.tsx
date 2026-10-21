@@ -700,6 +700,7 @@ function routeFetch(route: Route) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: null });
       return (
         (await route(path)) ??
         (path.includes("/download?") ? Response.json({ download_url: "/renewed-media" }) : undefined) ??
@@ -1767,7 +1768,7 @@ describe("Library response and media boundaries", () => {
     expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(120);
     expect(within(grid).getByRole("button", { name: (name) => name.startsWith("Open First 0, ") })).toBeVisible();
     expect(requests.map((params) => params.get("cursor"))).toEqual([null, "next/+ &="]);
-    expect(requests.map((params) => params.get("removal_plan"))).toEqual(["1", null]);
+    expect(requests.map((params) => params.get("removal_plan"))).toEqual([null, null]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
@@ -2332,7 +2333,8 @@ describe("Library items whose files are gone", () => {
           remaining = remaining.filter((asset) => asset.asset_id === "kept");
           return Response.json({ removed_assets: 2, removed_jobs: 1 });
         }
-        if (path.startsWith("/me/api/media?")) return list(remaining, { removal_plan: { missing_items: remaining.length === 3 ? 2 : 0 } });
+        if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: { missing_items: remaining.length === 3 ? 2 : 0 } });
+        if (path.startsWith("/me/api/media?")) return list(remaining);
         return Response.json({ assets: [], models: [], next_cursor: null });
       }),
     );
@@ -2393,7 +2395,7 @@ describe("Library items whose files are gone", () => {
     role: "owner" | "member",
     folder: Record<string, unknown> | null,
     assets: unknown[],
-    handlers: { confirm?: () => Response; remove?: () => Response; plan?: number } = {},
+    handlers: { confirm?: () => Response | Promise<Response>; remove?: () => Response; plan?: number; folder?: () => Record<string, unknown> | null } = {},
   ) {
     session.viewer = { role, name: "Alex", id: "me" };
     session.home = { receipts: [], user: { id: "me" }, apps: [{ id: "my-app" }] };
@@ -2420,20 +2422,53 @@ describe("Library items whose files are gone", () => {
       }
       if (path.startsWith("/me/api/media?")) {
         seen.mediaPaths.push(path);
-        return list(assets, { media_folder: folder,
-        removal_plan: { missing_items: handlers.plan ?? assets.filter((asset) => (asset as { available?: boolean }).available === false).length },
-      });
+        return path.includes("folder_state=1") ? Response.json({ media_folder: handlers.folder?.() ?? folder,
+          removal_plan: { missing_items: handlers.plan ?? assets.filter((asset) => (asset as { available?: boolean }).available === false).length },
+        }) : list(assets);
       }
       return Response.json({ assets: [], models: [], next_cursor: null });
     }));
-    renderLibrary();
-    return { calls, seen };
+    const { queryClient } = renderLibrary();
+    return { calls, seen, queryClient };
   }
   const noFolderQuestion = () => {
     expect(screen.queryByRole("region", { name: "Media folder" })).toBeNull();
     expect(screen.queryByText(/confirm which folder holds the media/)).toBeNull();
     expect(screen.queryByRole("button", { name: /right media folder/ })).toBeNull();
   };
+
+  test("changing kind then search reuses the viewer-wide removal query", async () => {
+    const { seen } = folderLibrary("owner", folderState(), [gone("a")]);
+    await screen.findByRole("button", { name: "Remove missing items" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("kind=image"))).toBe(true));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "lost" } });
+    await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("q=lost"))).toBe(true));
+    expect(seen.mediaPaths.filter((path) => /removal_plan|folder_state/.test(path))).toEqual([
+      "/me/api/media?folder_state=1&removal_plan=1",
+    ]);
+  });
+
+  test("a refetch during folder confirmation keeps the clicked removal count", async () => {
+    let finish!: (response: Response) => void;
+    const handlers = {
+      plan: 1,
+      folder: () => folderState({ items_here: handlers.plan === 1 ? 602 : 600 }),
+      confirm: () => new Promise<Response>((resolve) => { finish = resolve; }),
+    };
+    const { calls, seen, queryClient } = folderLibrary("owner", folderState(), [gone("a")], handlers);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(calls).toEqual(["confirm"]));
+    handlers.plan = 3;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["library"] }); });
+    expect(await within(screen.getByRole("dialog")).findByText("Remove 3 missing items?")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText(/245 of 845 checked items are missing/)).toBeVisible();
+    await act(async () => { finish(Response.json({ confirmed: true })); });
+    await waitFor(() => expect(calls).toEqual(["confirm", "remove"]));
+    expect(seen.confirmBody).toEqual({ items_here: 602, library_items: 845 });
+    expect(seen.removeBody).toEqual({ expected_missing: 1 });
+  });
 
   test("a search showing one missing item uses the viewer-wide plan and the removal's actual toast count", async () => {
     navigation.searchParams = new URLSearchParams("q=lost");
@@ -2442,6 +2477,7 @@ describe("Library items whose files are gone", () => {
     });
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     const dialog = await screen.findByRole("dialog");
+    expect(screen.getByText("3 items missing across your Library.")).toBeVisible();
     expect(within(dialog).getByText("Remove 3 missing items?")).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove 3 items" }));
     expect(await screen.findByText("Removed 2 missing items from your Library.")).toBeVisible();
@@ -2456,7 +2492,7 @@ describe("Library items whose files are gone", () => {
       "Across the whole Library, 3 of 4 checked items are missing from cache/images, so only do this if your media disk is connected and cache/images is where your photos, videos and audio are kept.",
     )).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Remove 1 item" })).toBeEnabled();
-    expect(seen.mediaPaths[0]).toContain("removal_plan=1");
+    expect(seen.mediaPaths.filter((path) => path.includes("removal_plan=1"))).toHaveLength(1);
   });
 
   test("a positive plan offers removal even when filters show no missing tiles", async () => {
@@ -2575,16 +2611,19 @@ describe("Library items whose files are gone", () => {
     expect(calls).toEqual([]);
   });
 
-  test("a confirmation the gateway refuses says why and does not remove anything", async () => {
+  test("a confirmation refusal refetches and updates the open dialog evidence", async () => {
+    let changed = false;
     const { calls, seen } = folderLibrary("owner", folderState(), [gone("a")], {
-      confirm: () => Response.json({ error: { code: "media_folder_changed", message: STALE } }, { status: 409 }),
+      folder: () => folderState({ items_here: changed ? 601 : 602 }),
+      confirm: () => { changed = true; return Response.json({ error: { code: "media_folder_changed", message: STALE } }, { status: 409 }); },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 item" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(STALE));
     expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
     expect(calls).toEqual(["confirm"]);
-    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(await within(screen.getByRole("dialog")).findByText(/244 of 845 checked items are missing/)).toBeVisible();
+    expect(within(screen.getByRole("dialog")).queryByText(/243 of 845 checked items are missing/)).toBeNull();
     await waitFor(() => expect(seen.mediaPaths.length).toBeGreaterThan(1));
   });
 

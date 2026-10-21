@@ -72,13 +72,15 @@ afterEach(() => {
 });
 
 describe("owner's Confirm the media folder action", () => {
-  it("uses checked-total agreement and omits zero missing evidence", () => {
+  it("uses missing-count agreement and omits zero missing evidence", () => {
     expect(libraryEvidenceSentence("cache/images", 1, 0)).toContain(
       "1 of 1 checked item is missing",
     );
     expect(libraryEvidenceSentence("cache/images", 2, 1)).toContain(
-      "1 of 2 checked items are missing",
+      "1 of 2 checked items is missing",
     );
+    expect(libraryEvidenceSentence("cache/images", 5, 4)).toContain("1 of 5 checked items is missing");
+    expect(libraryEvidenceSentence("cache/images", 5, 3)).toContain("2 of 5 checked items are missing");
     expect(libraryEvidenceSentence("cache/images", 4, 4)).toBeNull();
   });
 
