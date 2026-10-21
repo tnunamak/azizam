@@ -102,3 +102,19 @@ def test_projection_treats_stat_permission_error_as_retryable(tmp_path, monkeypa
     monkeypatch.setattr(Path, "stat", denied)
     result = output_availability.project({"assets": [{"asset_id": "img_fixture"}]}, lambda _: target)
     assert result["output_state"] == "unavailable"
+
+
+def test_stored_identity_extras_remove_prompt_echoes_only():
+    from tests.test_identity_jobs import result
+    from gateway import identity_api, identity_scene
+    scene = result()
+    scene.prompt_used = "PRIVATE_PROMPT_FIXTURE"
+    scene.people = [{"label": "PRIVATE_PROMPT_FIXTURE", "photo": 0, "reason": "age-match"}]
+    scene.warnings = [{"code": "profile_result", "message": "echo PRIVATE_PROMPT_FIXTURE"},
+                      {"code": "pose_rewritten", "param": "prompt", "message": "Choose a clearer pose."}]
+    stored = identity_api.stored_scene_extras(scene, identity_scene.SceneRequest(prompt="PRIVATE_PROMPT_FIXTURE"))
+    assert "PRIVATE_PROMPT_FIXTURE" not in json.dumps(stored)
+    assert stored["people"] == [{"photo": 0, "reason": "age-match"}]
+    assert stored["warnings"][1]["message"] == "Choose a clearer pose."
+    assert stored["likeness"] == scene.report
+    assert stored["refinements"] == scene.refinements

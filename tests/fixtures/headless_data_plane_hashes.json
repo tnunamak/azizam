@@ -35,7 +35,7 @@
     "/gateway/v1/media/jobs/image-generations": "cb5259b4d441df612e27d07ffc8cd4fde6c74b40d0bd4064e57b1674e7d85def",
     "/gateway/v1/media/jobs/{job_id}": "3b7a0e5775f86bcde1e767c19ae5773c00f561999b2cb146c088605db7dd4f6f",
     "/gateway/v1/media/jobs/{job_id}/cancel": "a5ba9eaac9f66a205339322767db19ea93301fdfecbed1a23e9ca96b4cd22cc6",
-    "/gateway/v1/media/jobs/{job_id}/content": "0b36e06d7a141b365e1bd68b67166d09436b5e5a6d7c19747569429f8fcede6f",
+    "/gateway/v1/media/jobs/{job_id}/content": "9a61f25721ac18760654d42246c7945c4080c79e88ca432f51a877683688853d",
     "/gateway/v1/media/jobs/{job_id}/events": "3c3c12a0f231ab58d0fd98de1d2cfd4457bed8f1844e1a5e29eac6cbbeb25589",
     "/gateway/v1/models/{model}/capabilities": "206ca0ee36a4d6f944738014a277b68229ecea456e75652fec1f341b009e8dab",
     "/gateway/v1/providers": "7a8fb87124d2239368ca9085df5e5ad1271b023e8f04c8a1060a1c4712957bfe",
