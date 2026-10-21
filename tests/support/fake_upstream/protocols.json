@@ -56,7 +56,8 @@
       "/model/info",
       "/v1/model/info",
       "/health/liveliness",
-      "/health/readiness"
+      "/health/readiness",
+      "/health/readiness/details"
     ],
     "framing": "none"
   },

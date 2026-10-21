@@ -202,3 +202,15 @@ def test_provider_record_facts_override_the_bundled_seed() -> None:
         "remote_provider": True, "preset_id": "openai", "retention_facts": [],
     }}}}
     assert ledger(registry)["destinations"][-1]["facts"] == []
+
+
+def test_remaining_cost_metadata_is_disclosed_in_ledger_and_never_save():
+    view = ledger({'services': {}}, kinds={}, now=date(2026, 10, 21))
+    destination = next(item for item in view['destinations'] if item['id'] == 'litellm')
+    fact = next(item for item in destination['facts'] if item['id'] == 'litellm-spend-cost-metadata')
+    assert fact['default'] == 'on'
+    assert 'accounting tables' in fact['where']
+    assert 'virtual-key budgets' in fact['condition']
+    assert 'purge' in fact['control']
+    assert 'aggregate cost and usage metadata' in view['never_save_text']
+    assert 'suppresses unused tool discovery' in view['never_save_text']

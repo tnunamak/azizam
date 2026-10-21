@@ -584,6 +584,18 @@ contract. Temporary extension review clones use the private process temp directo
 
 ### 5.2 LiteLLM keeps no content
 
+**Owner clarification, 2026-10-20 (slice 3).** LiteLLM is the pinned
+execution substrate, not an engine under the knowledge boundary. Its unused
+tool-name inventory has no disable switch in 1.86.2. The substrate-owned
+launcher therefore suppresses only `_enqueue_tool_registry_upsert`, after
+checking the exact package version and function-source fingerprint. A mismatch
+fails startup closed and requires re-verification; it never patches the venv.
+The canary requires tool names, arguments, descriptions, schemas and results
+to appear in no table, write queue, spend index or stdout. Numeric budget
+counters and aggregate cost metadata remain and are disclosed by the
+`litellm-spend-cost-metadata` retention fact in the ledger and "never save"
+text. See [source evidence and the canary](../verification/RETENTION_S3.md).
+
 LiteLLM is Azizam's own execution layer (`PRODUCT_STRATEGY.md:197`). Its
 sinks are Azizam's sinks ([handoff] F1 and I4; [research] GW-L9). The policy
 runs in the gateway before the request reaches LiteLLM. LiteLLM itself must
@@ -1707,7 +1719,7 @@ live 5000 or 15000 services.
 |---|---|---|---|
 | 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
 | 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
-| 3 | **LiteLLM keeps nothing.** See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
+| 3 | **LiteLLM keeps no content.** The pinned launcher also suppresses unused tool discovery. See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
 | 4 | **Temporary files.** A gateway-private `TMPDIR` with a lifetime lock; relative STT and video scratch inside it, cancellation-safe conversion workers and deterministic multipart cleanup. Retained-media thumbnails stage beside the retained asset for atomic replacement. | Moves request scratch; operator removes old `data/stt-spool/` uploads by hand with the old gateway stopped, once at deploy | the 16.2 multipart, STT, video and conversion canaries; retained traceback on disconnect/cancellation; cross-process lock and exec checks; directory-swap and path-escape regressions; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
 | 6 | **Facts and ledger — implemented and corrected after review.** Dated schema and data seeds; cached catalogs; pre-dispatch snapshots for all receipt paths; atomic revision snapshots and independent receipt expiry; admin REST and OAuth MCP ledger; maker-only reason/deadline; assembled paragraph disclosure and human destination names. Fact edit audit/CAS and the UI editor remain for a later slice. | Adds views; no inference failure when facts are unavailable | 16.1.14; real gateway audience/App-key regressions; real local/paid router and audio/video worker snapshots; receipt expiry with corrupt fact stores and batched orphan recovery; adapter traces including chat; schema/date validation; removed/empty facts; no-network reads; retention-ledger Vitest and desktop/mobile Playwright specs. Live check 5 remains for a scratch deployment. |

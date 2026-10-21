@@ -93,7 +93,12 @@ class LiteLLMKeyAdminClient:
         Returns the raw sidecar response, which includes the secret ``key`` —
         the ONLY time the key material is available (reveal-once).
         """
+        from gateway.litellm_content import gate
+
+        if await gate.check(self._config.base_url, force=True):
+            raise LiteLLMAdminError(503, "litellm_content_unverified", gate.status(self._config.base_url)["detail"])
         payload = await self._request("POST", "key/generate", body=dict(spec))
+        await gate.check(self._config.base_url, force=True)
         if not isinstance(payload, Mapping) or not payload.get("key"):
             raise LiteLLMAdminError(
                 502,
@@ -128,6 +133,9 @@ class LiteLLMKeyAdminClient:
                 "delete requires at least one key or key_alias.",
             )
         payload = await self._request("POST", "key/delete", body=body)
+        from gateway.litellm_content import gate
+
+        await gate.check(self._config.base_url, force=True)
         return dict(payload) if isinstance(payload, Mapping) else {}
 
     # -- transport -----------------------------------------------------------

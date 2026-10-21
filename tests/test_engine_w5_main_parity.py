@@ -25,7 +25,13 @@ MAIN_PROBES = json.loads((FIXTURES / 'main-probes.json').read_text())
 def test_unedited_registry_compiles_to_the_main_bytes(shape):
     registry = LIVE if shape == 'live' else service_registry.build_service_registry_seed(
         yaml.safe_load((Path(__file__).parents[1] / 'proxy_config.yml').read_text()))
-    actual = (json.dumps(compile_litellm_config_from_registry(registry), indent=2) + '\n').encode()
+    compiled = compile_litellm_config_from_registry(registry)
+    from gateway.litellm_content import profile
+    assert compiled.pop('router_settings') == profile()['router_settings']
+    for section in ('general_settings', 'litellm_settings'):
+        for key, value in profile()[section].items():
+            assert compiled[section].pop(key) == value
+    actual = (json.dumps(compiled, indent=2) + '\n').encode()
     assert actual == (FIXTURES / f'{shape}.main-compiled.json').read_bytes()
 
 

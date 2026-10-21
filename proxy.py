@@ -12979,6 +12979,9 @@ async def lifespan(app: FastAPI):
     # Saved /v1/responses conversations survive until explicit deletion.
     print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
 
+    from gateway.litellm_content import gate as content_gate
+
+    await content_gate.check(_litellm_runtime_config().base_url)
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = await _start_receipts_maintenance(receipts_maintenance_stop)
 
@@ -14068,6 +14071,10 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
         print(f"[proxy] retention fact lookup unavailable: {type(error).__name__}", flush=True)
         view = retention_facts.ledger({"services": {}}, kinds=retention.bundled().data["kinds"])
         view["fact_basis"] = "Today's facts. Some destination facts are unavailable."
+    from gateway.litellm_content import deployment_status
+
+    view["execution_substrate"] = deployment_status(registry)
+    view["never_save_text"] += "\n\n" + view["execution_substrate"]["detail"]
     if receipt:
         view["request_id"] = request_id
         view["observed"] = {key: receipt[key] for key in ("backend", "resolved_model", "requested_model", "accepted_at_ms", "sent_at_ms") if receipt.get(key) is not None}
@@ -25909,6 +25916,9 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
         except asyncio.TimeoutError:
             try:
+                from gateway.litellm_content import gate as content_gate
+
+                await content_gate.check(_litellm_runtime_config().base_url, force=True)
                 await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path,
                                         fact_store_path=media_jobs.DB_PATH)
             except Exception as exc:
@@ -29016,6 +29026,11 @@ async def _forward_litellm_proxy_request(
     if engine_reply_timeout is not None:
         # The router gives up at the engine's own reply time; wait a little longer for its answer.
         read_timeout = max(read_timeout, engine_reply_timeout + 5.0)
+    from gateway.litellm_content import execution_refusal
+
+    refusal = await execution_refusal(runtime.base_url)
+    if refusal is not None:
+        return refusal
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=litellm_url(

@@ -148,9 +148,24 @@ def build_sidecar_env(
 ) -> dict[str, str]:
     """Return a child environment with decrypted provider secrets injected."""
 
-    child_env = dict(os.environ if base_env is None else base_env)
+    from gateway.litellm_content import child_environment
+
+    source_env = os.environ if base_env is None else base_env
     registry = (_read_service_registry(db_path) or {}) if registry is None else registry
     resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
+    from gateway.litellm_substrate import compile_litellm_config_from_registry
+
+    def env_refs(value):
+        if isinstance(value, str) and value.startswith("os.environ/"):
+            return {value.removeprefix("os.environ/")}
+        if isinstance(value, dict):
+            return set().union(*(env_refs(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(env_refs(item) for item in value))
+        return set()
+
+    declared = env_refs(compile_litellm_config_from_registry(registry)) | set(resolved_map)
+    child_env = child_environment(source_env, declared=declared)
     origin_map = provider_secret_origin_map_from_registry(registry)
     for env_name, secret_id in resolved_map.items():
         try:
@@ -204,6 +219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("run requires a command after --")
     if args.runtime_hash_file is not None and args.launch_config is None:
         parser.error("--runtime-hash-file requires --launch-config")
+    from gateway.litellm_launcher import require_single_process
+    require_single_process(exec_args[1:], os.environ)
     # Regenerate before exec: a retained artifact may refer to a retired env name.
     # Both the YAML and child env must come from this one registry snapshot.
     # Share SQLite's writer lock with registry edits. A newer generation cannot
@@ -236,7 +253,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 private_io.atomic_write_text(receipt, runtime_hash + "\n")
         finally:
             conn.rollback()
-    os.execvpe(exec_args[0], exec_args, child_env)
+    if any(arg in {"--debug", "--detailed_debug"} for arg in exec_args):
+        raise ValueError("LiteLLM debug logging is incompatible with no-content mode")
+    pid_path = Path(os.environ.get("AZIZAM_LITELLM_PID_FILE", str(path.parent / "litellm.pid")))
+    # exec discards Python patches: apply the shim inside the replacement
+    # interpreter, then acknowledge its checked profile before starting the CLI.
+    launcher = Path(__file__).resolve().with_name("litellm_launcher.py")
+    os.execvpe(sys.executable, [sys.executable, str(launcher),
+        "--content-proof", str(pid_path) + ".retention.json", *exec_args[1:]], child_env)
     raise AssertionError("unreachable after exec")
 
 
