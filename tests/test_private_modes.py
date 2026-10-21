@@ -15,9 +15,10 @@ import importlib.util
 import pytest
 
 from gateway import (
-    admin_store, category_store, custom_voices, media_jobs, metrics_store,
+    admin_store, category_store, custom_voices, media_jobs,
     private_io, prompt_metadata_migration, providers, receipt_store, thumbnails,
 )
+import metrics_store
 import responses_store
 from gateway.engine_protocol import node_info
 
