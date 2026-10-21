@@ -89,14 +89,16 @@ class IdentityJobTests(unittest.TestCase):
         job = media_jobs.get(body["id"], audience="internal", path=self.db)
         self.assertEqual(job["status"], "succeeded")
         self.assertEqual(job["progress"], 100)
-        self.assertEqual(
-            set(job["assets"][0]) & set(proxy.identity_api.EXTRA_KEYS),
-            set(),
-            "identity diagnostics must not be persisted in durable job assets",
-        )
         payload = proxy._identity_payload_from_media_job(job)
         self.assertEqual(payload["data"][0]["asset_id"], "img_1")
         self.assertNotIn("prompt_used", payload)
+        self.assertEqual(payload["likeness"], result().report)
+        self.assertEqual(payload["attempts"], result().attempts)
+        self.assertEqual(payload["seconds"], 1.5)
+        self.assertEqual(payload["warnings"], [{"code": "pose_rewritten", "param": "prompt"}])
+        self.assertEqual(payload["refinements"], [{"accepted": True}])
+        self.assertNotIn("people", payload)
+
         events = media_jobs.events(body["id"], audience="internal", path=self.db)
         self.assertIn("progress", [e.get("event_type") or e.get("type") or e.get("event") for e in events])
 
@@ -114,6 +116,14 @@ class IdentityJobTests(unittest.TestCase):
 
         _, body = self.run_job(crash)
         self.assertIn("RuntimeError", media_jobs.get(body["id"], audience="internal", path=self.db)["error"])
+
+    def test_actionable_validation_errors_survive_async_storage(self) -> None:
+        for message in ("people[].image 2 has no matching photo", "at most 4 people are supported"):
+            async def fail(auth, req):
+                raise ids.IdentityError(message, param="people")
+            _, submitted = self.run_job(fail)
+            job = media_jobs.get(submitted["id"], audience="internal", path=self.db)
+            self.assertEqual(job["error"], message)
 
     def test_orphaned_jobs_fail_after_restart(self) -> None:
         job = media_jobs.MediaJob(intent="image.identity", request_id="r1")
