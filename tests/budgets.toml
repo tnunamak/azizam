@@ -150,6 +150,8 @@
 # Manifest prompt binding: +17 full-catalog graph differentials, +6 mapping/fallback
 # cases and +2 FIBO template/public-route signature checks.
 # Full hermetic --collect-only -q on 2026-10-21 measured 15825.
+# Prompt-binding followups: replace 17 graph hashes with 17 manifest lint cases.
+# Full hermetic --collect-only -q measured 15825 on 2026-10-21.
 pytest = 15825
 vitest = 3068
 playwright = 502
