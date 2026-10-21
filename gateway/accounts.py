@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from gateway import admin_store, request_connections, session_guard, sqlite_startup
-from gateway.admin_runtime import generate_app_api_key, is_human_user_record
+# A module import: admin_runtime imports this module through browser_sessions.
+from gateway import admin_runtime
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
 
@@ -615,7 +616,7 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
         raise AccountError("invalid_name", "Enter your name (up to 120 characters).")
     inspect_invite(token, path=path)
     verifier = hash_password(password) if oidc_user_id is None else None
-    api_key, ts = generate_app_api_key(), int(time.time())
+    api_key, ts = admin_runtime.generate_app_api_key(), int(time.time())
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         link = _usable_link(conn, token, "invite", ts)
@@ -688,7 +689,7 @@ def people(*, path: Path) -> list[dict]:
                             "WHERE a.removed_at IS NULL ORDER BY u.created_at").fetchall()
         people = []
         for row in rows:
-            if not is_human_user_record(dict(row)):
+            if not admin_runtime.is_human_user_record(dict(row)):
                 continue
             roles = conn.execute("SELECT role,provenance,scope_app_id FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? AND revoked_at IS NULL", (row["id"],)).fetchall()
             person = {key: value for key, value in dict(row).items() if key not in {"issuer", "subject"}}
