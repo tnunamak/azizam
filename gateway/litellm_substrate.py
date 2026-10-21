@@ -99,13 +99,18 @@ def compile_litellm_substrate_config(
     entries.extend(_current_loaded_entries(service_records))
     _validate_no_local_remote_model_name_collisions(entries)
 
+    from gateway.litellm_content import profile
+
     return {
         "model_list": entries,
+        "router_settings": dict(profile()["router_settings"]),
         "litellm_settings": {
             "drop_params": True,
+            **profile()["litellm_settings"],
         },
         "general_settings": {
             "litellm_key_header_name": DEFAULT_LITELLM_KEY_HEADER,
+            **profile()["general_settings"],
             # Forwards the gateway's cancellation-correlation header
             # (X-Azizam-Request-Id) through to the internal gateway hop
             # behind LiteLLM. LiteLLM does not propagate a cancel signal of

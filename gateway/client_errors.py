@@ -126,6 +126,7 @@ CODE_REASONS: dict[str, str] = {
 # Codes the gateway's own routes put in an error. A reply that crosses the gateway again (a protocol frontend reading the
 # chat route, the router behind it) keeps them; an engine that echoes one gains nothing, because each is a fixed word.
 GATEWAY_CODES = frozenset({
+    "litellm_content_unverified",
     "access_plan_editor_unavailable", "account_disabled", "adapter_not_registered", "adapter_required", "adapter_version_mismatch",
     "address_invalid", "admin_action_header_required", "admin_csrf_required", "admin_forbidden", "alias_policy_unavailable",
     "ambiguous_faces", "asset_missing", "backend_error", "backend_not_found", "backend_recovery_failed", "both_methods_off",

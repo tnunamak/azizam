@@ -552,6 +552,12 @@ async def execute_paid_litellm(
                 owner.report(status="failed", reason="failed")
                 return prepared
             _, payload_bytes = prepared
+            from gateway.litellm_content import execution_refusal
+
+            refusal = await execution_refusal(runtime.base_url)
+            if refusal is not None:
+                owner.report(status="failed", reason="failed")
+                return refusal
             execution = sanitize_litellm_execution_request(
                 LlmExecutionRequest(
                     method=request.method,

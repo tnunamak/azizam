@@ -909,6 +909,10 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
           the configured/enabled/role reduction.
     """
     items: list[dict[str, Any]] = []
+    content = snapshot.get("litellm_content")
+    if isinstance(content, Mapping) and content.get("status") == "litellm_content_unverified":
+        items.append(_attention_item(kind="status", severity="problem",
+            title="LiteLLM content settings need attention", detail=str(content["detail"])))
     for issue in snapshot.get("protocol_issues", []):
         label = issue.get("file") or issue.get("engine_id") or "Engine protocol"
         items.append(_attention_item(kind="service", severity="problem",
@@ -1859,7 +1863,10 @@ def create_admin_router(
         from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
         await asyncio.to_thread(protocol_descriptions.load_registry)
         protocol_issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
+        from gateway.litellm_content import deployment_status
+
         attention = derive_admin_attention({
+            "litellm_content": deployment_status(),
             "registry_problem": registry_apply,
             "registry_excluded": registry_excluded,
             "unsent_inject_rules": _unsent_inject_rules(registry),

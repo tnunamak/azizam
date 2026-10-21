@@ -148,9 +148,24 @@ def build_sidecar_env(
 ) -> dict[str, str]:
     """Return a child environment with decrypted provider secrets injected."""
 
-    child_env = dict(os.environ if base_env is None else base_env)
+    from gateway.litellm_content import child_environment
+
+    source_env = os.environ if base_env is None else base_env
     registry = (_read_service_registry(db_path) or {}) if registry is None else registry
     resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
+    from gateway.litellm_substrate import compile_litellm_config_from_registry
+
+    def env_refs(value):
+        if isinstance(value, str) and value.startswith("os.environ/"):
+            return {value.removeprefix("os.environ/")}
+        if isinstance(value, dict):
+            return set().union(*(env_refs(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(env_refs(item) for item in value))
+        return set()
+
+    declared = env_refs(compile_litellm_config_from_registry(registry)) | set(resolved_map)
+    child_env = child_environment(source_env, declared=declared)
     origin_map = provider_secret_origin_map_from_registry(registry)
     for env_name, secret_id in resolved_map.items():
         try:
@@ -237,6 +252,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 tmp.replace(receipt)
         finally:
             conn.rollback()
+    from gateway.litellm_content import write_launch_proof
+
+    if any(arg in {"--debug", "--detailed_debug"} for arg in exec_args):
+        raise ValueError("LiteLLM debug logging is incompatible with no-content mode")
+    pid_path = Path(os.environ.get("AZIZAM_LITELLM_PID_FILE", str(path.parent / "litellm.pid")))
+    write_launch_proof(Path(str(pid_path) + ".retention.json"), path, child_env)
     os.execvpe(exec_args[0], exec_args, child_env)
     raise AssertionError("unreachable after exec")
 
