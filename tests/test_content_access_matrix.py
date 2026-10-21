@@ -120,14 +120,16 @@ def test_every_kind_action_basis_cell(kind, action):
 def test_authentication_kind_is_required_and_duplicate_actors_are_distinct():
     with pytest.raises(TypeError):
         Viewer("a", "x")
+    with pytest.raises(ValueError, match="authentication kind"):
+        Viewer("a", "x", auth_kind=None)
     actors = [ACTORS[n] for n in ("trusted-address", "service-app-key", "personless-personal-key", "replacement-key-old-alias")]
     assert len(set(actors)) == 4
 
 
 def test_h1_h2_debug_never_uses_own_output_or_app_only_authority():
     for name in ("maker-key", "mcp-grant-same-app", "service-app-key", "trusted-address"):
-        for person in ("a", None):
-            row = DebugCaptureRecord(person, "a", origin=ORIGINS[2])
+        for person, origin in product(("a", None), (ORIGINS[2], ORIGINS[5])):
+            row = DebugCaptureRecord(person, "a", origin=origin)
             assert isinstance(decide(ACTORS[name], row, "read"), Deny)
 
 

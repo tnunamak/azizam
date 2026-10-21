@@ -32,6 +32,10 @@ class Viewer:
     trusted_address: str | None = None
     connection_id: str | None = None  # trusted MCP grant, never the shared session App
 
+    def __post_init__(self):
+        if self.auth_kind not in {"session", "app_key", "mcp_grant", "trusted_address", "service_key"}:
+            raise ValueError("unknown authentication kind")
+
 
 @dataclass(frozen=True)
 class ContentOrigin:
