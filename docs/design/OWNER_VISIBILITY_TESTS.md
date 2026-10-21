@@ -1,21 +1,24 @@
-# Authorization test design: Owner visibility (adopted as the test section of OWNER_VISIBILITY v3)
+# Authorization test design: Owner visibility v4
 
-> **Adoption note (v3).** This file is the dot test-design pass of v2 (`azizam-testdesign-owner-visibility-81ce320`), copied unchanged except where a line starts with **[v3]**. Those lines were rewritten because OWNER_VISIBILITY v3 changed the behaviour they test: one App-ownership rule instead of Own plus Accountable (OV §2.4 O6, §3.1), NULL-safe triggers and the ownership cut-over (OV §3.5, §8.1), deletion releases a claim (OV §6.3), the absolute disk reserve with leases (OV §6.4), and no two-store restore guard (OV §8.3). Where this file and OV v3 disagree, OV v3 wins and the disagreement is a defect to fix here. Line references below are to the original v2 file, offset by the three lines of this note.
-
-Repository: tnunamak/azizam
-Exact reviewed commit: 81ce3204c454658383e0b82d8e42920ff6d885d3
-Assignment: azizam-testdesign-owner-visibility-81ce320-r0
-Deliverable status: TEST DESIGN COMPLETE; implementation and validation NOT performed.
-
-Evidence boundary: only docs/design/OWNER_VISIBILITY.md, gateway/me_media.py, gateway/mcp_server.py, gateway/ownership.py, gateway/admin_runtime.py, gateway/media_jobs.py, and gateway/receipt_store.py were inspected through GitHub at this commit. No bridge workspace was read. No tests, probes, provider requests, edits, publication, Work/Codex tasks, or model API calls were performed. This report contains proposed tests and assertions, not test results. Source links use https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/<path>#L<n>. Routes or handlers outside these seven files are UNVERIFIED even when the design document cites them.
+Adopted from the v2 test-design pass and revised through v3 and round 3.
+`[v3]` marks an earlier revision; `[v4]` marks a round-3 requirement.
+OV means `docs/design/OWNER_VISIBILITY.md`; its §2 policy is unchanged.
+Code evidence throughout this file is `origin/main` at
+`52408b268215585dab40299f2ebc2bd920ab6bff` (2026-10-20).
+The source map in §10 replaces all old file:line offsets and source links.
+D46-D51 were read in `~/Documents/azizam/engine-contract/DECISIONS.md`.
+This file specifies future tests. No implementation tests were run and no
+notice readiness is claimed. Historical `CURRENT VERIFIED` labels below
+mean source-inspected behavior, never an executed pass. Sections 1-9 give
+target assertions; §10 identifies current-main adapters and limitations.
 
 ## 1. Blocking conclusions and test-oracle authority
 
-The design file explicitly says v2 is not built. Source-confirmed current behavior must not become the privacy oracle:
+The v4 design is not built. Source-confirmed current behavior must not become the privacy oracle:
 - Library owner/superadmin broadening remains, including a local-network detail/download bypass. Regression tests must require the target denial rather than bless this behavior.
 - MCP has direct asset read/store callbacks in addition to REST dispatch. Route authorization tests alone cannot cover input reuse, returned bytes, signed-link minting, or discovery content.
 - Receipt storage forbids sensitive key names but not sensitive values. Whole-envelope recursive typed projection, not the existing structural guard, is the target owner boundary.
-[v3] - Service-App accountable identity is a prerequisite for the visibility switch. Current create_app converts a supplied owner_user_id to personal kind. v3 makes the ownership cut-over (OV §8.1) a hard prerequisite with its own preview, apply and verify; tests must run the real cut-over, and a fake service+human-owner fixture must not conceal a missing production migration.
+[v4] - AP v4's accountable-person schema is already on main. Step 2 still enforces O2/O3/O4 on keys AND trusted addresses. Test the real schema-v6→current upgrade before post-migration trigger installation, current→enforced and fresh initialization; do not treat AP being present as verify-only completion. See §10 current-main evidence.
 [v3] - RESOLVED in v3 (OV §3.1): a session Viewer intentionally includes every App the person is accountable for, of both kinds (OV §2.4 O6). There is no Accountable basis. Test that the production Viewer builder includes service Apps for the session and only its own App for a key; prompts and chats stay Self and Self+App.
 - Trigger SQL, migration machinery, content_access, share storage/serialization, signed delivery, metadata stripping, route registry, full log pipeline, actual export handlers and storage admission implementation are UNVERIFIED under this allow-list.
 [v3] - RESOLVED in v3 (OV §6.4): the disk pause is an absolute byte rule, free_bytes - leased_bytes >= reserve_bytes, with reserve_bytes defaulting to W_max + 2 GiB and in-process per-job leases. Percent is display only.
@@ -28,12 +31,13 @@ No notice may ship because these tests were designed. Notice gate requires imple
 
 Parameterize every applicable PathSpec over every actor below and every state below, plus kind/action. Do not sample only representative actors. The policy function below defines every resulting cell; a transport applicability adapter distinguishes an unsupported protocol from a content denial. State labels alone never grant authority: compute the independently seeded record fields and grants.
 
-Actors:
+Actors (identity rows step 1; binding enforcement step 2):
 A: member A session, plus A personal owner-created key as a companion transport.
 B: member B session/key, with no relationship to A.
 O: owner person session/control-plane credential. Also seed O's genuine own records; owner role never changes a content result.
 D: admin-not-owner person session/control-plane credential. Also seed D's genuine own records; admin role never changes a content result.
 [v3] S: active service-App key for app S; person_id=None; canonical principal app:S plus its historical key aliases. This is Own for S records, never Self.
+[v4] T: trusted-address request with canonical app:T, person_id=None, trusted address from runtime auth, no credential hash. Test personal and service Apps; no caller-supplied forwarding/body identity may add a person. Address creator provenance controls issuance, never Self.
 N: active personless personal-App key (created_by is another person, NULL, or empty string), and active appless/service-account credential variants. Before migration, its same-App creation Own behavior is explicit; after switch the bad-provenance personal key must no longer authenticate. An unrelated control-plane principal owns no member content.
 Rk: revoked key, with the exact same principal and historical resource as a live replacement key.
 Rs: revoked/expired session for each person, and disabled person with stale session.
@@ -55,7 +59,7 @@ unattributed: (a) legacy hash resolvable to an App, (b) maker metadata plus reso
 
 [v3] For each state seed fresh independent DB/file fixtures. A share to Q must not accidentally also put A's App principal in Q.owner_keys. Own+Shared collisions are a separate precedence test: decide returns Own, the own serializer is used, and prompt reads stay a separate prompt decision. After a share stops, independently held Own authority remains. Do not assert that stopping a share revokes unrelated ownership.
 
-Resource/action oracle, generated exhaustively for all six kinds x all six actions:
+Resource/action oracle, generated exhaustively for all eight kinds x all six actions (step 1; enforcement step 3):
 [v3] creation read = Own OR active Shared for that exact asset/poster.
 [v3] creation delete = Own.
 creation reuse = Own only.
@@ -178,7 +182,7 @@ P18 Storage:
 
 P19 Key issuance and service binding:
 POST /admin/api/apps/{id}/keys and /me/api/apps/{id}/keys: only App accountable person, for personal and service Apps; unrelated A/B/O/D -> exactly 403 not_your_app, no credential row/token/audit of issued secret. Allowed issuance gets the established success shape and exactly the intended App principal; never grants another App. /me/api/try-key, invite acceptance and both /setup/first-app branches must obey own-App binding; exact router bodies and setup's nonperson branch UNVERIFIED. Control-plane /admin/api/admin-keys and generate-admin-key retain operational roles but service_account principal grants no member content. Old bad-provenance keys must fail auth after switch even if caller is owner. App names/profile collisions confer nothing. Trigger and migration tests are prerequisite, not a substitute for each issuance path.
-Only admin_runtime credential/App primitives were read; HTTP issuance endpoints and actual store constraints UNVERIFIED.
+[v4] POST /admin/api/apps/{id}/trusted-addresses and the own-App /me adapter: same accountable-only add rule as keys; O cannot add on A's App, even on a personal App. SQL INSERT refuses foreign/NULL/empty created_by. No denied add mutates bindings or records a secret. Removal may narrow access; re-add requires the accountable person. Trusted-address identity T owns only its matched App; after removal its next request/reconnect cannot authenticate through the old address.
 
 P20 Job event writes and idempotency:
 [v3] Event append is NOT one of the six content_access actions in v2. Keep Own-only existing write authority as a proposed extension requiring explicit inventory classification; Own read/cancel of a job never implicitly grants event append. Client note/progress source and bounded payload validation must be enforced even for owner/admin; lifecycle event types or phase/status claims rejected before mutation. For same request_id, a different owner_scope may not replay or replace another job. Same canonical principal with rotated live key may replay only exact input digest; missing legacy scope/digest cannot prove replay. No denied request allocates seq/event row, mutates progress, consumes reservation or dispatches work. Actual event HTTP routes are UNVERIFIED; storage behavior is confirmed in media_jobs.
@@ -210,19 +214,21 @@ Full proxy/provider/runner/LiteLLM/Traefik sinks are outside scope and UNVERIFIE
 
 ## 7. Identity, migration, trigger and storage budget regressions
 
-B1 service identity prerequisite:
-[v3] Seed legacy service App owned by service_account, plus existing personal Apps, known principal hashes, histories and submission-spend attribution. Migration preview must independently identify missing human accountable binding, not invent it from receipt history. Apply explicit mapping to actual service App without converting kind to personal or changing canonical app principal, preserves personless historical creators, preserves record owners and spend subject, and gives the accountable person Own for that App only (OV §2.4 O6). Unresolved mapping prevents notice/switch verification. Active keys with created_by IS NOT the accountable person including NULL/empty are listed and revoked exactly; replacement owner-created credentials map to same App. Both pre-migration denied and post-migration Own positive tests use actual migration APIs; a direct SQL seed alone is only a core fixture.
-Verify no wrong keys revoked; revoked keys fail authentication; live replacement reads historical alias-owned records. No current service-account owner can be mistaken for person. AP migration implementation UNVERIFIED.
+[v4] B1/B2 binding prerequisite (step 2; identity fixtures step 1):
+Start from schema v6 with a service-account-owned App, personal Apps, aliases and spend rows. Run the actual AP migration: service App remains service, now accountable to the gateway owner, explicit plan assignment retained. Then run OV Unit 1. Current-main fixture starts with NOT NULL/FK owner_user_id and no owner_service_account_id. Fresh fixture also installs enforcement only after all migrations. No new person-approval row or Q5 exists; a personal App created by someone else still has a keep-personal/correct-to-service row.
+Seed live/expired/revoked keys and trusted addresses with accountable, foreign, NULL and empty created_by. Preview and apply exactly revoke bad keys and delete bad addresses, without a final back-fill or inference from receipts. Preserve matching bindings and historical alias reads. A recently used App losing every binding blocks apply, including an App used only by address; unknown address-use provenance blocks rather than counting unused. A replacement from the accountable person or explicit stop approval clears it. Verify repeat-run idempotence and version checks.
+Create "No person recorded" only for proven-unbound records with kind=service, gateway owner and access_plan="person"; no key/address is silently added. Unresolved/service_account principals stay ungranted. Historical spend is unchanged. Do not mock away the actual migration.
 
 M1 session provenance:
 [v3] C session owns personal App P and is accountable for service S. v3 policy (OV §2.4 O6): the session Viewer includes both P and S principals. Assert decide(C_session,S_asset,read|delete|reuse|link)=Own, share=Deny (no maker); decide(C_session,S_prompt or chat)=Deny; decide(C_personal_key,S_asset,*)=Deny; decide(S_key,S_asset,reuse)=Own. Repeat with App name collisions. (Transfer cases are deferred until a transfer route exists; v1 has none, OV §2.4 O3.)
 
-M2 NULL-safe binding:
-[v3] Against real schema trigger installation (OV §3.5), parameterize old/new kind and owner including same value, different value, NULL, empty string, valid A/B and service-account legacy IDs. Any write that leaves owner_user_id NULL or owner_service_account_id non-NULL aborts (insert and update), so A->NULL->B is impossible. Kind change aborts (IS NOT). Personal owner change aborts. Service owner change aborts while any credential with revoked_at IS NULL exists (expired-but-unrevoked counts as live). Credential insert aborts unless created_by IS the App's owner_user_id (NULL created_by aborts). Credential subject_kind/subject_id/app_id/created_by updates abort. Same-value updates are no-ops and pass. The only first assignment is the cut-over, which runs before the triggers exist.
-[v3] Assert transaction abort, original row/keys unchanged, no transfer leaked on rollback. Deferred until a transfer route exists (v1 has none): zero active keys permits a service transfer only through the transfer operation (revoke all keys, then change owner, in one transaction); afterward old C loses Own, new C gains; past spend remains old subject. In v1, test only that the triggers refuse every owner change with a live key, and that BEFORE DELETE ON apps aborts; a fresh database has the triggers and ownership_version=1 from its base schema. Revoked historical aliases are not live auth. Triggers are installed with DROP then CREATE; verify compares sqlite_master SQL text.
+[v4] M2/M6 NULL-safe binding and upgrade order (step 2):
+Against real installed triggers, test same/different/NULL/empty/foreign owners and kinds. NOT NULL/FK enforce O1; O2 refuses kind and personal-owner changes after cut-over. O3 refuses service-owner change with any unrevoked App key (including expired) OR any trusted address. With zero bindings, SQL satisfies the transfer precondition; no v1 public transfer route exists. App deletion aborts.
+O4 refuses credential/address INSERT unless created_by IS accountable person. App-key subject/App/creator updates abort only for OLD.subject_kind='app'; control-plane adoption through signin_admin.adopt_admin_keys_in must succeed. Reject promotion of a control-plane row to App authority without the same provenance/session checks. Address App/address/creator updates abort; replacement must be delete plus new authenticated add. App-key revocation is final: revoked_at cannot be cleared or changed, and revoked aliases never authenticate. Test atomic insert versus transfer, same-value no-ops, rollback with original rows intact and trigger replacement with SQL comparison.
+Run schema v6→AP→current→OV with actual production migration APIs: AP's owner updates must succeed before O2/O3/O4 installation. Remove both startup back-fill call and implementation; restarting cannot repair or rewrite unproven creators. Fresh initialization follows the same final installation order. Savepoint self-tests exercise forbidden transitions and permitted control-plane adoption before verification.
 
 Switch/restore:
-[v3] Preview/apply/verify every crash boundary of both units (ownership cut-over, then visibility switch) under the AP 4.2 protocol; unaccepted marker refuses start; missing ownership_version or visibility_version refuses start for a release that needs it; auth-disabled config after switch refuses start; unknown/partial state never sets notice-ready. Superadmin mapping leaves no alias; removed params reject. Ownership cut-over: an App owned by a service account with no approved person blocks apply; no App becomes personal because it has a person; only personal->service kind changes are offered; an App used in the last 30 days that would lose all keys blocks apply; the verify self-test aborts every forbidden write inside a rolled-back savepoint. Restore: the two-store revision guard is removed (OV §8.3); test that a share write is one transaction, and that the ops-note SQL stops every active share so old g=s URLs return 403.
+[v3] Preview/apply/verify every crash boundary of both units (ownership cut-over, then visibility switch) under the AP 4.2 protocol; unaccepted marker refuses start; missing ownership_version or visibility_version refuses start for a release that needs it; auth-disabled config after switch refuses start; unknown/partial state never sets notice-ready. Superadmin mapping leaves no alias; removed params reject. Ownership cut-over: AP already assigns service Apps; only approved personal->service corrections precede triggers; an App used in the last 30 days that would lose all bindings blocks apply; the verify self-test aborts every forbidden write inside a rolled-back savepoint. Restore: the two-store revision guard is removed (OV §8.3); test that a share write is one transaction, and that the ops-note SQL stops every active share so old g=s URLs return 403.
 
 [v3] M3 absolute reserve (OV §6.4, the selected contract):
 [v3] Per filesystem d: admit a storage-writing job only if free_bytes(d) - leased(d) >= reserve_bytes, checked before any upload body is read and before engine/provider calls. reserve_bytes defaults to W_max + 2 GiB; setting it below W_max returns 400 reserve_below_largest_job. Each admitted job leases its peak_bytes until it ends; a resumed job re-leases before running. Paused when the rule fails; resume at reserve_bytes + resume_margin_bytes; Low below reserve_bytes + warn_margin_bytes. Every storage-writing kind declares peak_bytes; an undeclared kind fails the inventory test.
@@ -298,10 +304,10 @@ Execution order for future implementer: independent core oracle; production iden
 ## 9. Unresolved/UNVERIFIED register and required completion evidence
 
 U1 content_access, actual route inventory, proxy asset delivery/mint callbacks, prompt/chat/voice/export transport code: outside read scope; must be inspected and implemented before proof.
-U2 service-App human accountable migration/AP integration and trust provenance: blocker B1; direct mocked post-migration fixture insufficient.
+[v4] U2 AP schema is source-confirmed on main; binding provenance enforcement remains a step-2 implementation gate. Real v6 upgrade, trusted addresses and trigger order must be executed, not replaced by a mock.
 [v3] U3 RESOLVED (OV §2.4 O6): one App-ownership rule; no Accountable basis.
 [v3] U4 RESOLVED: job events follow job read (Own); share refusal precedence locked (404 before 409). In-flight revocation boundary: per request (OV §2.4 Linearization); a live event stream or MCP wait re-authenticates on each poll or reconnect, and a stream already open finishes its current response.
-[v3] U5 RESOLVED (OV §3.5): NULL refused on every App write; first assignment only in the reviewed cut-over before triggers exist; issuance checked inside the INSERT.
+[v4] U5 target specified (OV §3.5): AP NOT NULL/FK already enforce O1; O2/O3/O4 still need post-migration installation, accountable-only binding INSERT, App-scoped immutability and final revocation.
 [v3] U6 RESOLVED (OV §6.4): absolute byte rule with per-job leases; W_max per filesystem remains UNVERIFIED until the build measures it.
 U7 all serializers/migration/triggers/storage APIs not present in reviewed evidence; claimed contract remains intended.
 U8 exact authentication errors, unsupported MCP errors, cancellation success status, content-partial-output handling and repeated share-delete semantics: transport contract unverified; do not infer a test pass from generic 2xx or 4xx.
@@ -311,62 +317,52 @@ U11 host filesystem and owner-issued reset remain explicitly disclosed trust lim
 
 Required future evidence: executed tests tied to implementation SHA, generated actor/state/path case manifest with no missing classified entry, mutation snapshots and sink assertions, signed-grant container/range results, migration/trigger/restore receipts, concurrency-budget evidence, and deployment log checks. No execution count or pass count is asserted in this report.
 
-## 10. Source-grounded implementation map and concrete adapters
+## 10. Current-main evidence and concrete adapters
 
-These are static observations at the reviewed SHA, not executed evidence. They distinguish the target matrix from current behavior and identify where to bind future tests.
+Every anchor below is against `origin/main` `52408b26`, not the original
+v2 evidence revision. Source inspection proves the current mechanism only.
+New core, migration, projection and storage tests remain implementation work.
 
-### me_media.py
-Source: https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/me_media.py
-- Routes are under /me/api (L95): list_jobs L122-147; job_detail L149-160; list_media L162-188; media_detail L190-219; delete_media L221-269; media_download L271-307; usage_summary L309-327.
-- Current denied/missing job detail uses 404 job_not_found. Current media lookup uses 404 asset_not_found; unavailable file is 404 asset_unavailable. Current download metadata=full without own workflow URL is 403 prompt_not_accessible; invalid metadata value is 400 invalid_metadata. These are CURRENT compatibility facts, not v2's normalized 404 not_found target. Tests for new contract must choose the documented new envelope deliberately rather than mix old and new errors.
-- Owner flag includes superadmin at L75-77; role refresh L358-365/L440-450. Scope broadening L461-480 and truthy-parameter test L483-485 are current bypass surfaces. List-only local-network filtering L520/L535-536 does not constrain direct detail/download.
-- receipt/job scope helpers L925-942 treat app_ids=None as unrestricted. Restricted scope gives truthy app_id priority over owner hash. Job-backed media L644-723 uses first existing request_id/parent_request_id receipt before job ownership; cache branch L724-788 uses owner-key intersection plus receipt scope if present. maker_person_ids only relabels source at L691-694. Thus mixed attribution fixtures must include contradictory job, receipt and sidecar ownership and must not silently accept the current precedence as final typed-core contract.
-- owned_library_asset L562-594 is member-scoped and wired to make routes L98-120. It is a critical independent reuse boundary if list/detail gains Shared. Delete remains member-scoped, and conservative_asset_deleter L397-426 only physically removes sole-owner/sole-maker files. Per-person deletion history L861-877 must be preserved.
-- Scope credential expansion L819-837 includes returned credential hashes without local revoked filtering. ownership.py independently confirms historical alias expansion; do not confuse this with auth.
-- Usage SQL and final filtering L1253-1279, counts L1328-1373, client receipt feed L1374-1385, coverage L1389-1409 and returned data L1413-1414 require separate assertions. Even owner default-own usage currently calls _usage_sources with app_ids=None at L1242 and returns people; own-account envelope needs target scoping, not merely filtered receipt items.
-- Router unit fixture: mount create_me_media_router in a FastAPI app; inject session_provider, mutation_validator, signed URL recorder, metadata reader, resolver/deleter and catalog. Stubbing me_make wiring is acceptable for narrow route units only; actual owned_library_asset wiring must have integration coverage. For SQL aggregation, use real temporary SQLite or explicitly label a fake-connect test as mock-only. Use valid img_/vid_/aud_ plus unique 64-hex IDs and stable UTC month/time. Avoid real ffprobe by stubbing embedded provenance in adapter unit tests; metadata-container integration is separate.
+| Adapter | Current-main evidence | Consequence for the test |
+|---|---|---|
+| Library routes | `gateway/me_media.py:127-278`, `gateway/me_media.py:386-443` | Mount the real router with actor, mutation, metadata, resolver and signer dependencies; separately integrate actual reuse wiring |
+| Broad owner scope and parameter presence | `gateway/me_media.py:737-758` | Delete owner-everyone scope in step 3; reject even empty removed keys before lookup |
+| Batched job/cache listing | `gateway/me_media.py:979-1095` | Seed contradictory receipt/job/sidecar attribution, hidden rows and cache-only items; test each authority before serialization |
+| Own item serializers and titles | `gateway/me_media.py:1098-1225`, `gateway/me_media.py:1658-1667` | Shared view has its own field schema and runs before prompt-derived title/search |
+| Delete and audit hiding | `gateway/me_media.py:233-278`, `gateway/me_media.py:676-705`, `gateway/me_media.py:1299-1322` | Step 4 releases claims, stops permanent tombstone hiding, preserves other owners and tests re-generation of identical bytes |
+| Session principal expansion | `gateway/me_media.py:1257-1275`, `gateway/admin_store.py:2144-2152` | Sessions own both App kinds, but pre-v3 tombstone release removes only the actor's personal-App aliases and user principal |
+| Usage and envelopes | `gateway/me_media.py:1700-1926`, `gateway/receipt_context.py:20-55` | Use actual temporary SQLite, not fake SQL success; project labels/groups and immutable submission person |
+| McpDeps and production binding | `gateway/mcp_server.py:109-141`, `proxy.py:14777-14800` | Every callback/config field classified, including visibility gates, OAuth, retention, rename and STT measurement |
+| MCP data and job paths | `gateway/mcp_server.py:301-347`, `gateway/mcp_server.py:558-609`, `proxy.py:14653-14669` | Actual direct asset reader/writer plus recording deps; test inline/base64/URL results and independent cancel result |
+| MCP tools and errors | `gateway/mcp_server.py:652-690` | Scan content, structuredContent and links; test CallError and generic exceptions, including raw exception print at present |
+| MCP OAuth identity | `proxy.py:2425-2453` | Grant Viewer acts like session person/App with that person's Apps, plus privacy permission for history/debug |
+| MCP rename | `proxy.py:14618-14643` | Own-account mutation; grant scope required; label change grants no content |
+| Ledger REST and provider | `gateway/api.py:954-974`, `proxy.py:14047-14076` | Current admin gate lacks request ownership and observed contains requested_model; maker route and owner projection need distinct tests |
+| Ledger MCP | `gateway/mcp_server.py:291-299`, `gateway/mcp_server.py:654-669`, `proxy.py:14006-14010` | Requests without id = none; with id = content:receipt:read or owner projection, never admin bypass |
+| Ledger regressions to rewrite | `tests/test_retention_ledger_headless.py:43-73`, `tests/test_retention_ledger_headless.py:78-95` | Replace admin access expectations with maker success, masked owner and forbidden/missing equivalence |
+| Receipt structural guard and source envelope | `gateway/receipt_store.py:213-233`, `gateway/receipt_store.py:401-427`, `gateway/receipt_context.py:20-55` | Audience serialization is not ownership; scalar canaries and empty-vs-unscoped selectors must be tested |
+| Receipt retention vocabulary | `gateway/receipts.py:72-107` | Add request_history/debug_capture enums with RR; owner gets kind/decision only, never reason/deadline/client_address/api_key_name |
+| Principal aliases | `gateway/ownership.py:17-102` | Revoked hashes remain readable aliases; they do not authenticate or reassign resources |
+| AP schema and migration | `gateway/admin_store.py:143-154`, `gateway/access_plan_migration.py:13-19`, `gateway/access_plan_migration.py:527-531` | Use real v6 upgrade; accountable people already exist; triggers install after AP owner writes |
+| App creation and key issuance | `gateway/admin_runtime.py:358-401`, `gateway/admin_runtime.py:620-634` | Service default already exists; remove binding issuer owner exception; reject automation provenance substitution |
+| Key/runtime identity | `gateway/admin_runtime.py:2312-2322`, `gateway/admin_runtime.py:2403-2433`, `gateway/admin_store.py:2463-2485` | Single SELECT resolves current key/App; only personal accountable-created keys have a person |
+| Session and trusted-address identity | `gateway/admin_runtime.py:2436-2482` | Trusted address has App-only Own; never inherit a person merely because App is personal |
+| Trusted-address issuance | `gateway/admin_api.py:2096-2117`, `gateway/admin_store.py:2065-2098` | Test accountable add through admin and /me adapters, direct store INSERT trigger, session-App refusal and zero-binding transfer |
+| Startup creator recovery | `gateway/admin_store.py:550`, `gateway/admin_store.py:612-655` | Delete rather than rerun recovery before revocation; test restart and unknown creators |
+| Control-plane key adoption | `gateway/signin_admin.py:485-499`, `gateway/signin_admin.py:549` | OLD App-key scope cannot abort legitimate adoption |
+| Try and incognito state | `gateway/user_runtime.py:472`, `gateway/user_runtime.py:499-536`, `web/src/app/try/page.tsx:1325`, `web/src/app/try/page.tsx:1413-1414` | Try is personal; extend its existing sessionStorage forget state to the single D50 incognito control |
+| Reset lifetime/issuer | `gateway/accounts_api.py:72-73`, `gateway/accounts.py:473-475`, `gateway/accounts.py:503-506` | Route default 1 hour versus helper 7 days; Security event joins recorded issuer, never invents redeemer identity |
+| STT admission | `gateway/stt_chunking.py:762-868`, `gateway/stt_chunking.py:369` | Replace independent byte counter with shared locked per-device leases; keep concurrency separate; test replay/top-up/finally |
+| Scratch filesystems | `gateway/stt_chunking.py:318-333`, `gateway/private_tmp.py:35-42`, `Dockerfile:26-27` | Bare-metal data default and Docker image scratch may differ; test resolved devices, including absolute STT spool |
+| Existing conversation reader | `proxy.py:25886-25888`, `gateway/retention.py:472-484` | Consolidate into one core; current scope behavior is characterization, not an owner-role grant or permission to widen D51 |
+| RR contract to integrate | `docs/design/REQUEST_RETENTION.md:126-131`, `docs/design/REQUEST_RETENTION.md:427-504`, `docs/design/REQUEST_RETENTION.md:1712` | Slice 5 uses core decisions, narrowing-only retention policy and atomic Library/history cascade |
 
-### mcp_server.py
-Source: https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/mcp_server.py
-- McpDeps L89-103 includes authenticate, call, read_asset, store_asset. Direct asset callbacks receive request AND auth; actual implementations are outside scope.
-- POST /mcp L605-646 authenticates before parsing/dispatch; batch entries share that request auth. handle_message L563-602 dispatches tools/list, capabilities, run, job. Test supported modern/legacy forms and mixed batches; no response/callback may pick up another concurrent request's auth.
-- capabilities/resolve/_describe L289-359 call zero-argument catalog/aliases; unknown targets can expose suggestions. Speech detail also GETs /v1/audio/voices. tools/list is static TOOLS. Test capability list, query, intent, full/short target, alias, speech alias, unknown-target suggestions; no private schema defaults or examples. Fixed catalog mocks prove only plumbing, not real catalog safety.
-- run L373-411 passes read_asset/request/auth into build_request for sync and async. Test actual bound reader directly AND through build_request; read permission is insufficient for reuse. Supported asset reference syntax/build_request schema is outside read scope, so adapter schema setup remains UNVERIFIED until implementation inspection.
-- _speech L413-422 and _send L424-435 dispatch caller-preserving core calls. _assets_from_response L214-243 stores binary/data[].b64_json using request/auth, but forwards existing url/content_url without local ownership validation and wraps generic JSON. Output tests must exercise binary, base64, URL, content_url and generic result separately.
-- Concrete job call adapters: video IDs GET /v1/videos/{id}, GET /v1/videos/{id}/content, DELETE /v1/videos/{id}; nonvideo GET /gateway/v1/media/jobs/{id}, GET /gateway/v1/media/jobs/{id}/content, POST /gateway/v1/media/jobs/{id}/cancel. _poll/_await/_job_assets/job L454-503 can automatically retrieve content after successful poll, including post-cancel. Poll denied must stop content; content denied must not emit any asset link; cancel denied stops later calls; allowed cancel does not waive independent poll/content auth.
-- _normalize_job L264-273 and _await L479 propagate errors. tool_result L506-519 repeats output as JSON text, structuredContent and resource_link.uri. Scan all three. call_tool L522-531 forwards CallError message/details, while generic exception at L530 prints raw str(exc). Test both failure branches and exception-producing dependencies, previous_attempts/progress fields, not only provider HTTP error.
-- Auth unit fixture may make authenticate return explicit 401/403 responses and assert zero catalog/core/read/store calls; production revoked-auth exact status remains to be pinned. Verify resource-metadata challenge header only on 401 according to this adapter's supported auth response contract.
-- A recording McpDeps plus real-bound-deps fixture are both necessary. Recorder asserts exact request/auth objects, verb/path/body and ordering; real-bound tests establish policy. Mocking read_asset to deny does NOT test the production reader.
-
-### receipt_store.py
-Source: https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/receipt_store.py
-- _IMMUTABLE_ACCEPTED_FIELDS L65-73 and finalize L287-340 preserve accepted attribution/source fields; _coerce_to_internal_dict L177-188 normalizes owner key; _assert_safe L191-204 says its structural guard is not complete sanitization.
-- _filter_for_audience/_with_source L343-368 passes source_label, api_key_name, client_hint to imported serializer. get has no actor ACL parameter. recent L515 onward combines App/hash matches with OR; explicit empty filters return no rows unless include_null_app_id is requested; both omitted are unscoped. These primitives need authorized adapter inputs, not assumed audience-based ACL.
-- record L392-428 uses INSERT OR REPLACE, distinct from begin/finalize immutability. Test public callers cannot replace B's request_id with A attribution; scope authorization must precede record replacement.
-- Test record, begin/finalize, update_cost, get/recent plus all intended audience serializers. Separate private value leak assertions from acceptance/rejection of structurally forbidden keys. The full internal storage schema may legitimately hold approved internal fields; the absolute no-canary contract in this report is owner/admin operational responses and logs, not a claim that arbitrary safe internal diagnostic fields are already sanitized by this file.
-- Empty scope [],[] must never turn into unfiltered None,None. Colliding profile/api_key_name must not create ownership. Accepted person/App/source values do not rebind on finalize; terminal duplicate writes and submission-time attribution are checked separately from owner projection.
-
-### ownership.py and admin_runtime.py
-Sources:
-https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/ownership.py
-https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/admin_runtime.py
-- ownership principal kinds app/user/service_account L17-28; read-only credential lookup without revocation filter L31-43; stored_owner_key L46-55 gives explicit App precedence and keeps unmapped hashes opaque; runtime app identity L58-82; readable aliases L85-102 expands one principal plus historical hashes, NOT a human's owned service Apps.
-- admin_runtime create_app L333-367 coerces owner_user_id to personal; update_app L381-417 changes only name/profile. Therefore B1 is a real model/migration prerequisite.
-- credential activity checks L1595-1614 and runtime identity L1632-1687 reject inactive/non-App/session-App credentials; personal owner-created key alone gains person. Valid auth may update last-used L1654-1667.
-- session identity L1690-1721 requires matching person plus session App and returns that App's identity. M1 is prospective design expansion risk, not demonstrated present implementation in these allowed files.
-- revocation callback L1313-1337 actual binding effects remain UNVERIFIED. Keep resources/history after revoke and verify inactive authentication separately.
-- Add test_owner_read_does_not_initialize_or_mutate_store (missing file remains absent), test_alias_set_includes_revoked_hash_not_other_app, test_unmapped_hash_no_role_reassignment, test_session_rejects_foreign_non_session_app. Trigger upgrade must replace an old unsafe definition on existing DB, not merely CREATE TRIGGER IF NOT EXISTS. No App ownership trigger body was inspected.
-
-### media_jobs.py
-Source: https://github.com/tnunamak/azizam/blob/81ce3204c454658383e0b82d8e42920ff6d885d3/gateway/media_jobs.py
-- get/get_by_request_id/recent L731-843 are actor-agnostic; recent optional App/hash scopes union. update_status/request_cancel L851-957 likewise depend on calling authorization.
-- Queued cancel settles canceled; running cancel records cancel_requested_at while retaining running state; terminal cancel raises. Test exact current internal state transitions, while public response statuses remain UNVERIFIED.
-- events L1066-1136 may repair and commit missing per-job sequences at L1105-1112. Deny BEFORE store call, not after serializing or filtering.
-- audience fields L109-144/L269-287 are serialization, not authorization; client event projection L1142-1167 removes global id and allows progress/step/total/phase/status. Target removes admin event/job audience bypass.
-- append validation L1048-1063 permits client note/progress but denies lifecycle types/top-level phase/status. Add invalid payload/client source/lifecycle tests independent of actor role.
-- event sequence trigger L376-382 already uses NEW.sequence IS NULL. M2 does NOT allege that this particular trigger is defective; the App ownership trigger remains uninspected.
-- Idempotent job creation L563-566 cannot prove replay with missing legacy scope/digest. Different owner_scope/input must conflict without leaking or replacing existing job; same canonical live replacement principal/exact digest may replay.
-[v3] - MediaJob has app_id/owner_key_hash/owner_scope but no person_id. Service-App fixtures need no person: Own comes from the App principal. Self-based fixtures must supply person_id through an authoritative resolver, not invent a constructor field.
+For media fixtures use real `img_`/`vid_`/`aud_` plus unique 64-hex IDs.
+Use synthetic databases/files and an isolated test server. No live ports,
+provider calls, secret files or deployed state are needed for this design.
+Fixed mocks prove plumbing only; bound-reader and actual migration cases
+must establish authority. Future tests must pin the actual implementation
+SHA and record executed evidence before any privacy notice ships.
 
 ### Suggested attribution conflict fixture expansion
 Use job-backed and cache-only items with: own receipt/foreign job; foreign receipt/own job; missing request receipt/present parent receipt; conflicting first and parent receipt; embedded cache receipt contradicting sidecar; maker-only metadata; no ownership fields; resolvable revoked alias; orphan unmapped hash; shared exact parent and separate poster; multi-owner same bytes; physically retained but logically deleted-by-A. Assert final policy comes from each typed resource's documented authority and never broad owner scope. Unresolved attribution conflicts fail closed rather than selecting whichever identifier benefits the caller.
