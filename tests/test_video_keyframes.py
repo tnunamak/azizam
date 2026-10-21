@@ -583,5 +583,63 @@ class KeyframeCatalogTests(unittest.TestCase):
             self.assertIsNotNone(proxy._resolve_video_workflow(model)[1], model)
 
 
+class KeyframeMcpTests(unittest.TestCase):
+    """The MCP `run` tool builds the keyframe request from the real catalog, with no model-specific code."""
+
+    def _server(self, sent: list):
+        from types import SimpleNamespace
+
+        import httpx
+        from fastapi import FastAPI
+        from gateway import mcp_server
+
+        async def core_call(_request, method, path, **kwargs):
+            sent.append((method, path, kwargs))
+            if method == "POST":
+                return httpx.Response(200, json={"id": NEW_ID, "object": "video", "status": "queued", "progress": 0})
+            return httpx.Response(200, json={"id": NEW_ID, "object": "video", "status": "in_progress", "progress": 10})
+
+        deps = mcp_server.McpDeps(
+            authenticate=lambda _request, _path: SimpleNamespace(identity="k"), call=core_call,
+            catalog=proxy._mcp_catalog, aliases=lambda: proxy._gateway_aliases_provider(),
+            store_asset=None, read_asset=lambda *_a: None, public_base_url=lambda _r: "https://gw.test",
+            poll_interval=0.0, allowed_origins=lambda _r: ["https://gw.test"])
+        app = FastAPI()
+        mcp_server.register_mcp_routes(app, deps)
+        return TestClient(app)
+
+    def _rpc(self, client, method: str, params: dict) -> dict:
+        response = client.post(
+            "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            headers={"mcp-protocol-version": "2025-11-25"})
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["result"]
+
+    def test_run_sends_first_picture_as_input_reference_and_the_rest_as_extensions(self) -> None:
+        sent: list = []
+        client = self._server(sent)
+        arguments = {"target": "video-ltx-2.5-keyframes", "mode": "async", "wait_seconds": 0, "inputs": {
+            "prompt": "a lighthouse", "image": _uri(PNG_FIRST), "last_frame": _uri(PNG_LAST),
+            "last_frame_strength": 0.6, "image_strength": 0.8}}
+        result = self._rpc(client, "tools/call", {"name": "run", "arguments": arguments})
+        self.assertFalse(result.get("isError"), result)
+        submits = [kwargs for method, path, kwargs in sent if method == "POST"]
+        self.assertEqual(len(submits), 1)
+        body = submits[0]["json"]
+        request = body.get("request", body)  # the gateway wraps the request for a media job
+        self.assertEqual(request["input_reference"], _uri(PNG_FIRST))
+        self.assertEqual(request["image_strength"], 0.8)
+        self.assertEqual(request["extensions"], {NS: {"last_frame": _uri(PNG_LAST), "last_frame_strength": 0.6}})
+        self.assertEqual(request["model"], "video-ltx-2.5-keyframes")
+
+    def test_run_refuses_a_missing_last_picture_before_calling_the_core(self) -> None:
+        sent: list = []
+        result = self._rpc(self._server(sent), "tools/call", {"name": "run", "arguments": {
+            "target": "video-minimax-h3-keyframes", "inputs": {"prompt": "x", "image": _uri(PNG_FIRST)}}})
+        self.assertTrue(result["isError"])
+        self.assertIn("last_frame", json.dumps(result))
+        self.assertEqual([call for call in sent if call[0] == "POST"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
