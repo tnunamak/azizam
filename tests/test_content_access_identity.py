@@ -106,3 +106,13 @@ def test_principal_fast_path_strips_empty_keys_once():
     assert decide_own(viewer, ("app:a",))
     assert not decide_own(viewer, ("",))
     assert not decide_own(viewer, ())
+
+
+def test_viewer_preserves_legacy_hash_only_content_scopes():
+    from types import SimpleNamespace
+    from gateway.content_access import ReceiptRecord, viewer_from_auth
+    auth = AuthContext(identity=SimpleNamespace(key_hash="synthetic-owner"))
+    viewer = viewer_from_auth(auth, owner_keys=("synthetic-owner",))
+    assert viewer.person_id is viewer.app_id is viewer.credential_id is None
+    assert not viewer.privacy_permission
+    assert isinstance(decide(viewer, ReceiptRecord(frozenset({"synthetic-owner"})), "read"), Own)
