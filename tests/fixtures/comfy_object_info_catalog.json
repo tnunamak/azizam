@@ -2851,6 +2851,114 @@
   "python_module": "comfy_extras.nodes_custom_sampler",
   "search_aliases": null
  },
+ "LTXVAddGuide": {
+  "api_node": false,
+  "category": "model/conditioning/ltxv",
+  "deprecated": false,
+  "description": "",
+  "dev_only": false,
+  "display_name": null,
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "optional": {
+    "attention_mask": [
+     "MASK",
+     {
+      "tooltip": "Optional pixel-space spatial mask. Controls per-region conditioning influence via self-attention, multiplied by strength."
+     }
+    ],
+    "iclora_parameters": [
+     "IC_LORA_PARAMETERS",
+     {
+      "tooltip": "Optional IC-LoRA parameters from a Get IC-LoRA Parameters node. Used for adjusting guide processing as required by certain IC-LoRAs (eg. those with a reference_downscale_factor > 1). When chained, each LTXVAddGuide uses only the parameters connected to it."
+     }
+    ]
+   },
+   "required": {
+    "frame_idx": [
+     "INT",
+     {
+      "default": 0,
+      "max": 9999,
+      "min": -9999,
+      "tooltip": "Frame index to start the conditioning at. For single-frame images or videos with 1-8 frames, any frame_idx value is acceptable. For videos with 9+ frames, frame_idx must be divisible by 8, otherwise it will be rounded down to the nearest multiple of 8. Negative values are counted from the end of the video."
+     }
+    ],
+    "image": [
+     "IMAGE",
+     {
+      "tooltip": "Image or video to condition the latent video on. Must be 8*n + 1 frames. If the video is not 8*n + 1 frames, it will be cropped to the nearest 8*n + 1 frames."
+     }
+    ],
+    "latent": [
+     "LATENT",
+     {}
+    ],
+    "negative": [
+     "CONDITIONING",
+     {}
+    ],
+    "positive": [
+     "CONDITIONING",
+     {}
+    ],
+    "strength": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "max": 10.0,
+      "min": 0.0,
+      "step": 0.01
+     }
+    ],
+    "vae": [
+     "VAE",
+     {}
+    ]
+   }
+  },
+  "input_order": {
+   "optional": [
+    "attention_mask",
+    "iclora_parameters"
+   ],
+   "required": [
+    "positive",
+    "negative",
+    "vae",
+    "latent"
+   ]
+  },
+  "is_input_list": false,
+  "name": "LTXVAddGuide",
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ],
+  "output_is_list": [
+   false,
+   false,
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "positive",
+   "negative",
+   "latent"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null,
+   null,
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_lt",
+  "search_aliases": null
+ },
  "LTXVAudioVAEDecode": {
   "api_node": false,
   "category": "model/latent/ltxv",
@@ -3007,6 +3115,67 @@
   ],
   "output_node": false,
   "output_tooltips": [
+   null,
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_lt",
+  "search_aliases": null
+ },
+ "LTXVCropGuides": {
+  "api_node": false,
+  "category": "model/conditioning/ltxv",
+  "deprecated": false,
+  "description": "",
+  "dev_only": false,
+  "display_name": null,
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "required": {
+    "latent": [
+     "LATENT",
+     {}
+    ],
+    "negative": [
+     "CONDITIONING",
+     {}
+    ],
+    "positive": [
+     "CONDITIONING",
+     {}
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "positive",
+    "negative",
+    "latent"
+   ]
+  },
+  "is_input_list": false,
+  "name": "LTXVCropGuides",
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ],
+  "output_is_list": [
+   false,
+   false,
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "positive",
+   "negative",
+   "latent"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null,
    null,
    null
   ],
@@ -3941,6 +4110,96 @@
    "custom noise schedule",
    "define sigmas"
   ]
+ },
+ "MiniMaxH3AddGuide": {
+  "api_node": false,
+  "category": "model/conditioning/minimax",
+  "deprecated": false,
+  "description": "Anchor an image, a short clip, audio, or a clip with its soundtrack at any frame of a MiniMax H3 video. Chain several nodes to anchor several frames.",
+  "dev_only": false,
+  "display_name": "Add Guide for MiniMax H3",
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "optional": {
+    "audio": [
+     "AUDIO",
+     {
+      "tooltip": "Soundtrack to anchor starting at the same frame index, cropped to the video's remaining duration."
+     }
+    ],
+    "audio_vae": [
+     "VAE",
+     {
+      "tooltip": "Audio VAE, needed when an audio is connected."
+     }
+    ],
+    "image": [
+     "IMAGE",
+     {
+      "tooltip": "Image or video frames to anchor. Multi-frame batches are anchored as a clip and cropped down to the model's valid clip lengths: 5, 22, 39... (17k + 5) frames. Batches shorter than 5 frames use only the first image."
+     }
+    ],
+    "vae": [
+     "VAE",
+     {
+      "tooltip": "Video VAE, needed when an image is connected."
+     }
+    ]
+   },
+   "required": {
+    "frame_idx": [
+     "INT",
+     {
+      "default": 0,
+      "max": 9999,
+      "min": -9999,
+      "tooltip": "Frame index to anchor the image or the clip's first frame at. Negative values are counted from the end of the video."
+     }
+    ],
+    "latent": [
+     "LATENT",
+     {}
+    ],
+    "positive": [
+     "CONDITIONING",
+     {}
+    ]
+   }
+  },
+  "input_order": {
+   "optional": [
+    "vae",
+    "audio_vae",
+    "image",
+    "audio"
+   ],
+   "required": [
+    "positive",
+    "latent",
+    "frame_idx"
+   ]
+  },
+  "is_input_list": false,
+  "name": "MiniMaxH3AddGuide",
+  "output": [
+   "CONDITIONING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "positive"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_minimax_h3",
+  "search_aliases": null
  },
  "MiniMaxH3ImageToVideo": {
   "api_node": false,
