@@ -40,7 +40,7 @@ def test_projection_matches_a_real_stored_receipts_structure(tmp_path):
 
 def test_job_seconds_and_canceled_spelling_match_the_job_store():
     from gateway.media_jobs import MediaJob, STATUS_CANCELED
-    job = MediaJob(request_id="req_" + "a" * 32, status=STATUS_CANCELED,
+    job = MediaJob(request_id="req_" + "a" * 32, intent="image.generate", status=STATUS_CANCELED,
                    created_at=1_700_000_000, updated_at=1_700_000_001)
     raw = job.to_dict()
     shown = project("job", raw).model_dump(mode="json")

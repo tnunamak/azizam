@@ -52,7 +52,7 @@ def test_recursive_projection_drops_content_and_uses_submission_person():
 
 def test_unknown_catalog_and_free_text_values_never_fall_back():
     record = seeded_record()
-    for key in ("resolved_model", "resolved_workflow", "provider", "person_id", "app_id", "source_kind", "protocol", "status", "terminal_reason", "intent", "route"):
+    for key in ("request_id", "job_id", "resolved_model", "resolved_workflow", "provider", "person_id", "app_id", "source_kind", "protocol", "status", "terminal_reason", "intent", "route"):
         record[key] = MARKER
     record["resource_decision"] = {"reasons": [{"code": MARKER, "effect": MARKER, "resource_class": MARKER}]}
     record["retention"] = [{"kind": MARKER, "decision": MARKER}]

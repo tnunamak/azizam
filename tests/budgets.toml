@@ -92,11 +92,14 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-# Owner visibility step 1: +60 pure matrix cases (48 kind/action cells + 12
-# identity/share/denial cases), +12 projection cases, +3 registration inventory cases.
-# Creating-connection regression cases add five; hermetic collection: 15394.
-# Vitest 3051; Playwright 471 + 3 + 18 = 492.
-pytest = 15394
+# Owner visibility step 1, remeasured after the v4.2 corrections:
+# 58 matrix cases, 48 independent TD-oracle cells, 2 real-auth identity cases,
+# 1 HTTP differential, 6 inventory cases, 38 projection cases and 2 stored-shape
+# cases. These are 155 cases total over the 15319 baseline; origin cases are
+# included in the matrix count, not added a second time.
+# Hermetic pytest collection: 15474; Vitest list: 3051.
+# Playwright lists: 471 + 3 + 18 = 492.
+pytest = 15474
 vitest = 3051
 playwright = 492
 
