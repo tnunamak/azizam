@@ -74,10 +74,13 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                 results = []
                 for with_manifest in (False, True):
                     body = {"model": "flux2-klein", "prompt": "a red barn", "size": "768x512", "n": 2}
-                    if seed is not None:
+                    # Without a manifest the gateway rejects extensions, so the old path
+                    # can only draw seeds; make it draw the seeds the new path is given.
+                    if seed is not None and with_manifest:
                         body["extensions"] = {NAMESPACE: {"seed": seed}}
                     request = SimpleNamespace(json=AsyncMock(return_value=body))
-                    with patch.object(proxy.random, "randint", side_effect=[101, 102]):
+                    draws = [seed, seed + 1] if seed is not None else [101, 102]
+                    with patch.object(proxy.random, "randint", side_effect=draws):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_request, request, with_manifest=with_manifest))
                 self.assertEqual(results[0], results[1])
@@ -96,9 +99,10 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                         ("size", "768x512"),
                         ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
                     ]
-                    if seed is not None:
+                    if seed is not None and with_manifest:
                         items.append(("extensions", json.dumps({NAMESPACE: {"seed": seed}})))
-                    with patch.object(proxy.random, "randint", side_effect=[101, 102]):
+                    draws = [seed, seed + 1] if seed is not None else [101, 102]
+                    with patch.object(proxy.random, "randint", side_effect=draws):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_edit_request, _MultipartRequest(items),
                             with_manifest=with_manifest))
