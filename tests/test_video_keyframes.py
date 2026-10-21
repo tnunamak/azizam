@@ -27,9 +27,10 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import media_ingestion, media_jobs  # noqa: E402
-from gateway.workflow_openapi import ROOT_EXTENSION  # noqa: E402
+from gateway.workflow_openapi import ROOT_EXTENSION, schema_name  # noqa: E402
 from gateway.manifests import load_workflow_manifest  # noqa: E402
 from tests.support.access import access_context, authenticated  # noqa: E402
+from tests.media_test_bytes import mp4_bytes  # noqa: E402
 from _fake_comfy_video import NEW_PROMPT_ID, FakeComfy, succeeded_history  # noqa: E402
 
 NS = "com.azizam.workflow"
@@ -452,7 +453,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         expected = self._expected("video-ltx-2.5-i2v", {
             "5": {"text": "p"}, "20": {"value": 1280}, "21": {"value": 704}, "22": {"value": 121},
             "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
-            "70": {"image": "up1_input_reference.png"}, "79": {"value": 1.0},
+            "70": {"image": "up1_input_reference.png"}, "79": {"value": 0.7},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
@@ -519,7 +520,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         import anyio
 
         self._create()
-        mp4 = b"\x00\x00\x00\x18ftypmp42" + b"kf" * 16
+        mp4 = mp4_bytes()
         self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4")
         self.comfy.view_bytes["kf_00001_.mp4"] = mp4
 
@@ -545,7 +546,8 @@ class KeyframeCatalogTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         response = TestClient(proxy.app).get("/openapi.json")
         assert response.status_code == 200, response.text
-        cls.catalog = {w["id"]: w for w in response.json()[ROOT_EXTENSION]}
+        cls.spec = response.json()
+        cls.catalog = {w["id"]: w for w in cls.spec[ROOT_EXTENSION]}
 
     def entry(self, model: str) -> dict:
         return self.catalog["video.generate." + model.removeprefix("video-")]
@@ -565,12 +567,14 @@ class KeyframeCatalogTests(unittest.TestCase):
         self.assertEqual(fields["last_frame_strength"], {"in": "extension", "field": "last_frame_strength"})
         self.assertEqual(fields["image_strength"], {"in": "body", "field": "image_strength"})
 
-    def test_catalog_marks_the_pictures_as_required_assets(self) -> None:
+    def test_input_schema_marks_the_pictures_as_required_assets(self) -> None:
         for model, (_parent, pictures) in KEYFRAME_MODELS.items():
-            inputs = {item["name"]: item for item in self.entry(model)["inputs"]}
-            for name in ("image", *pictures):
-                self.assertEqual(inputs[name]["type"], "asset", (model, name))
-                self.assertTrue(inputs[name]["required"], (model, name))
+            wid = self.entry(model)["id"]
+            schema = self.spec["components"]["schemas"][schema_name(wid)]
+            for name in pictures:
+                self.assertTrue(schema["properties"][name]["x-azizam-asset"], (model, name))
+                self.assertIn(name, schema["required"], (model, name))
+            self.assertNotIn("image", schema["properties"], "the first picture is the route's input_reference")
 
     def test_models_are_listed_for_video_generate(self) -> None:
         by_id = {e["id"]: e for e in proxy._build_workflow_model_entries()}
