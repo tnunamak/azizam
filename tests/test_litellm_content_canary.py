@@ -11,7 +11,7 @@ import pytest
 
 from gateway.litellm_content import child_environment
 from gateway.log_scrub import forms
-from tests.support.litellm_content_canary import MARKER
+from tests.support.litellm_content_canary import CONTENT_MARKERS, TOOL_NAME
 
 
 @pytest.mark.parametrize('positive', [False, True], ids=['no-content-profile', 'leaky-positive-control'])
@@ -30,11 +30,13 @@ def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, positive):
     assert result.returncode == 0, (result.stdout + result.stderr).decode(errors='replace')[-7000:]
     scans = {'stdout': result.stdout, 'stderr': result.stderr}
     scans.update({str(path.relative_to(private)): path.read_bytes() for path in private.rglob('*') if path.is_file()})
-    markers = [item.encode() for item in forms(MARKER)]
+    markers = [item.encode() for value in CONTENT_MARKERS.values() for item in forms(value)]
     matches = {name for name, data in scans.items() if any(marker in data for marker in markers)}
     tables = json.loads((private / 'database.json').read_text())
     budget = json.loads((private / 'budget.json').read_text())
     assert budget['budget_refused'] is True
+    assert TOOL_NAME in json.dumps(tables['LiteLLM_ToolTable'])
+    assert tables['LiteLLM_SpendLogGuardrailIndex'] == []
     assert {'key', 'user', 'team'} <= {row['entity_type'] for row in budget['updates']}
     if positive:
         assert matches & {'stdout', 'stderr'}, matches

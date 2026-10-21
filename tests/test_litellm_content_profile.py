@@ -231,3 +231,39 @@ def test_unexpected_profile_sections_cannot_load_callbacks():
     config = compile_litellm_substrate_config({})
     config['environment_variables'] = {'STORE_MODEL_IN_DB': 'true'}
     assert content.config_problem(config) == 'unexpected_section'
+
+
+def test_compose_checks_authenticated_effective_diagnostics(monkeypatch, fake_upstreams):
+    from tests.support.fake_upstream import scenario_from_data
+    fake = fake_upstreams.asgi(scenario_from_data({'protocol': 'litellm-admin', 'name': 'no-content-readiness',
+        'provenance': {'source': 'hand-written', 'reference': 'LiteLLM 1.86.2 readiness/details'},
+        'exchanges': [{'id': 'readiness', 'match': {'method': 'GET', 'path': '/health/readiness/details'},
+            'response': {'json': {'db': 'Not connected', 'log_level': 'CRITICAL', 'cache': None, 'success_callbacks': []}}}]}),
+        host='readiness.fk.test')
+    assert asyncio.run(content.compose_database_unseen(fake.base_url)) is False
+
+
+def test_real_gateway_refuses_and_recovers_without_dispatching_content(monkeypatch, tmp_path, fake_upstreams):
+    from tests.support.fake_upstream import load_scenario
+    from tests.support.gateway import gateway_client, register_litellm, use_admin_db
+    fake = fake_upstreams.asgi(load_scenario('openai-compatible/chat-text', model='fk-model', content='ok'), host='retention.fk.test')
+    register_litellm(monkeypatch, use_admin_db(monkeypatch, tmp_path), fake.base_url)
+    gate = content.ContentGate()
+    monkeypatch.setattr(content, 'gate', gate)
+    monkeypatch.setattr(gate, 'mode', lambda _: 'managed')
+    monkeypatch.setattr(gate, 'generation', lambda _: ('fixture-generation',))
+    problem = ['database_team_unsafe']
+    async def check(_): return problem[0]
+    monkeypatch.setattr(content, 'database_problem', check)
+    async def run():
+        async with gateway_client() as client:
+            body = {'model': 'fk-model', 'messages': [{'role': 'user', 'content': 'private-test-content'}]}
+            refused = await client.post('/v1/chat/completions', json=body)
+            assert refused.status_code == 503
+            assert refused.json()['error']['code'] == 'litellm_content_unverified'
+            assert fake.requests == []
+            problem[0] = None
+            await gate.check(fake.base_url, force=True)
+            accepted = await client.post('/v1/chat/completions', json=body)
+            assert accepted.status_code == 200
+    asyncio.run(run())

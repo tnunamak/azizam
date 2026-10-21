@@ -202,3 +202,15 @@ def test_provider_record_facts_override_the_bundled_seed() -> None:
         "remote_provider": True, "preset_id": "openai", "retention_facts": [],
     }}}}
     assert ledger(registry)["destinations"][-1]["facts"] == []
+
+
+def test_tool_name_metadata_is_disclosed_in_ledger_and_never_save():
+    view = ledger({'services': {}}, kinds={}, now=date(2026, 10, 21))
+    destination = next(item for item in view['destinations'] if item['id'] == 'litellm')
+    fact = next(item for item in destination['facts'] if item['id'] == 'litellm-tool-names')
+    assert fact['default'] == 'on'
+    assert 'LiteLLM_ToolTable' in fact['where']
+    assert 'Azizam does not read' in fact['condition']
+    assert 'delete' in fact['control']
+    assert 'LiteLLM_ToolTable' in view['never_save_text']
+    assert 'never tool arguments, descriptions, schemas or results' in view['never_save_text']

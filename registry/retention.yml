@@ -49,6 +49,17 @@ system_facts:
   litellm:
     name: LiteLLM
     facts:
+      - id: litellm-tool-names
+        holds: tool names and operational attribution, never tool arguments, descriptions, schemas or results
+        where: LiteLLM_ToolTable in LiteLLM's database
+        how_long: until the owner deletes the rows; no automatic expiry was found in LiteLLM 1.86.2
+        default: 'on'
+        condition: LiteLLM auto-discovers names for its tool registry and policy lookup; Azizam does not read this inventory
+        reach: LiteLLM administrators and anyone with access to its database
+        control: stop chat, back up the database and delete the unwanted rows from LiteLLM_ToolTable using the owner's database tools; later tool calls can recreate names; there is no disable switch in LiteLLM 1.86.2
+        evidence_url: https://github.com/tnunamak/azizam/blob/feat/retention-s3/docs/verification/RETENTION_S3.md
+        checked: '2026-10-21'
+        confidence: documented
       - id: litellm-spend-content
         holds: request and response content if spend-content storage is enabled
         where: LiteLLM spend rows

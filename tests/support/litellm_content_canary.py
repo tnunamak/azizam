@@ -9,6 +9,7 @@ import asyncio
 import importlib.metadata
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,14 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from tests.support.fake_upstream import FakeUpstream, VirtualClock, scenario_from_data
 
 MARKER = 'RETENTION_CANARY_8bf972_nested_prompt'
+TOOL_NAME = 'retention_canary_tool'
+CONTENT_MARKERS = {
+    'prompt': MARKER,
+    'arguments': 'RETENTION_CANARY_8bf972_tool_arguments',
+    'description': 'RETENTION_CANARY_8bf972_tool_description',
+    'schema': 'RETENTION_CANARY_8bf972_tool_schema',
+    'result': 'RETENTION_CANARY_8bf972_tool_result',
+}
 
 
 async def run() -> None:
@@ -55,7 +64,7 @@ async def run() -> None:
         'exchanges': [
             {'id': 'success', 'match': {'method': 'POST', 'path': '/v1/chat/completions'}, 'response': {'status': 200,
                 'json': {'id': 'canary-response', 'object': 'chat.completion', 'created': 1, 'model': 'canary',
-                    'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': MARKER}, 'finish_reason': 'stop'}],
+                    'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': MARKER, 'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': TOOL_NAME, 'arguments': json.dumps({'argument': CONTENT_MARKERS['arguments']})}}]}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}}}},
             {'id': 'error', 'repeat': True, 'match': {'method': 'POST', 'path': '/v1/chat/completions'},
              'response': {'status': 400, 'json': {'error': {'message': 'echo: ' + MARKER, 'type': 'invalid_request_error'}}}},
@@ -72,12 +81,19 @@ async def run() -> None:
             return await original_send(self, request, **kwargs)
         raise AssertionError('unexpected outbound HTTP host')
     httpx.AsyncClient.send = route
-    tables: dict[str, list] = {}
+    schema = (Path(litellm.__file__).parent / 'proxy/schema.prisma').read_text()
+    table_names = {name.lower(): name for name in re.findall(r'^model (\w+)', schema, re.M)}
+    tables: dict[str, list] = {name: [] for name in table_names.values()}
     updates = []
     class Table:
-        def __init__(self, name): self.name = name
+        def __init__(self, name): self.name = table_names[name]
         async def create(self, **kwargs): tables.setdefault(self.name, []).append(kwargs)
-        async def create_many(self, **kwargs): tables.setdefault(self.name, []).append(kwargs)
+        async def create_many(self, **kwargs):
+            tables[self.name].append(kwargs)
+            return len(kwargs.get('data', []))
+        async def upsert(self, **kwargs):
+            tables[self.name].append(kwargs)
+            return SimpleNamespace(**kwargs.get('data', {}).get('create', {}))
         async def find_unique(self, **kwargs): return None
         async def find_first(self, **kwargs): return None
     class Database:
@@ -85,6 +101,7 @@ async def run() -> None:
     prisma = SimpleNamespace(db=Database(), spend_log_transactions=[], _spend_log_transactions_lock=asyncio.Lock())
     from litellm.proxy.utils import PrismaClient
     prisma.get_request_status = lambda payload: PrismaClient.get_request_status(prisma, payload)
+    prisma.jsonify_object = lambda data: PrismaClient.jsonify_object(prisma, data)
     ps.prisma_client = prisma
     writer = ps.proxy_logging_obj.db_spend_update_writer
     for name, queue in vars(writer).items():
@@ -94,6 +111,12 @@ async def run() -> None:
                 tables.setdefault(table, []).append(update.model_dump() if hasattr(update, 'model_dump') else dict(update))
                 await original(update=update)
             queue.add_update = record_daily
+    batch_done = asyncio.Event()
+    original_batch = writer._batch_database_updates
+    async def batch(**kwargs):
+        await original_batch(**kwargs)
+        batch_done.set()
+    writer._batch_database_updates = batch
     original_queue = writer.spend_update_queue.add_update
     async def record_update(*, update):
         recorded = dict(update)
@@ -109,7 +132,15 @@ async def run() -> None:
     logger = _ProxyDBLogger()
     litellm.callbacks.append(logger)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=ps.app), base_url='http://proxy.test') as client:
-        payload = {'model': 'canary', 'messages': [{'role': 'user', 'content': MARKER}]}
+        payload = {'model': 'canary', 'tools': [{'type': 'function', 'function': {
+            'name': TOOL_NAME, 'description': CONTENT_MARKERS['description'],
+            'parameters': {'type': 'object', 'properties': {'argument': {'type': 'string',
+                'description': CONTENT_MARKERS['schema']}}, 'required': ['argument']}}}],
+            'messages': [{'role': 'user', 'content': MARKER},
+                {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'prior-call', 'type': 'function',
+                    'function': {'name': TOOL_NAME, 'arguments': json.dumps({'argument': CONTENT_MARKERS['arguments']})}}]},
+                {'role': 'tool', 'tool_call_id': 'prior-call', 'content': CONTENT_MARKERS['result']}]}
+
         success = await client.post('/v1/chat/completions', json=payload)
         assert success.status_code == 200, success.text
         assert success.json()['choices'][0]['message']['content'] == MARKER
@@ -119,11 +150,7 @@ async def run() -> None:
     # normal proxy error route invokes it too; this pins its DB opt-out seam.
     await logger.async_post_call_failure_hook(request_data={'model': 'canary', 'messages': payload['messages']},
         original_exception=ValueError(MARKER), user_api_key_dict=token, traceback_str=MARKER)
-    # Wait for LiteLLM's asynchronous success logging without sleeping a fixed interval.
-    for _ in range(500):
-        if {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}:
-            break
-        await asyncio.sleep(0.01)
+    await asyncio.wait_for(batch_done.wait(), timeout=5)
     assert {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}, updates
     assert all(item['response_cost'] >= 0 for item in updates), updates
     assert sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key') == 0.015
@@ -138,16 +165,25 @@ async def run() -> None:
     else:
         budget_refused = False
     assert budget_refused
-    tables['LiteLLM_SpendLogs'] = prisma.spend_log_transactions
+    # Drain the real tool writer and spend/index job. Every table method is a
+    # recording fake; this observes persistence arguments before serialization.
+    await writer._flush_tool_discovery_queue(prisma_client=prisma)
+    from litellm.proxy.utils import update_spend_logs_job
+    await update_spend_logs_job(prisma_client=prisma, db_writer_client=None, proxy_logging_obj=ps.proxy_logging_obj)
+    assert prisma.spend_log_transactions == []
+    assert TOOL_NAME in json.dumps(tables['LiteLLM_ToolTable'], default=str)
+    if not positive:
+        assert not tables['LiteLLM_SpendLogToolIndex']
+    assert not tables['LiteLLM_SpendLogGuardrailIndex']
     # Persist only what reached a database write/queue, never the responses.
     Path('database.json').write_text(json.dumps(tables, default=str))
     Path('budget.json').write_text(json.dumps({'updates': updates, 'budget_refused': budget_refused}, default=str))
     assert len(fake.requests) >= 2
-    assert all(MARKER.encode() in item.body for item in fake.requests)
+    assert all(all(value.encode() in item.body for value in CONTENT_MARKERS.values()) for item in fake.requests)
     assert not fake.violations
     await engine_client.aclose()
     httpx.AsyncClient.send = original_send
-    print(json.dumps({'canary': 'complete', 'requests': len(fake.requests), 'spend_rows': len(prisma.spend_log_transactions),
+    print(json.dumps({'canary': 'complete', 'requests': len(fake.requests), 'spend_rows': len(tables['LiteLLM_SpendLogs']),
                       'error_rows': sum(len(rows) for name, rows in tables.items() if 'error' in name.lower()),
                       'budget_refused': budget_refused}))
 
