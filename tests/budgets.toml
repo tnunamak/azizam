@@ -147,7 +147,10 @@
 # Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
 # FIBO 2 Edit Turbo: one data-only workflow adds three cases (catalog UI graph, submit payload, legacy seed-binding graph bytes).
 # Full hermetic --collect-only -q on 2026-10-21 measured 15800.
-pytest = 15800
+# Manifest prompt binding: +17 full-catalog graph differentials, +6 mapping/fallback
+# cases and +2 FIBO template/public-route signature checks.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15825.
+pytest = 15825
 vitest = 3068
 playwright = 502
 
