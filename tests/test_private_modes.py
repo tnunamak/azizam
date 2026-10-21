@@ -280,6 +280,10 @@ def test_mode_report_groups_paths_and_fix_only_changes_fixture_tree(tmp_path, pe
     assert mode(images / "sensitive-name.bin") == 0o600
     assert mode(node_info) == 0o700
     assert mode(node_info / "private-node-name.json") == 0o600
+    recheck = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    assert recheck.returncode == 0
+    assert "0 mode issues, errors=0 (ok)" in recheck.stdout
+    assert "need repair" not in recheck.stdout
 
 
 def test_mode_fixer_does_not_follow_symlink_directories(tmp_path, permissive_umask) -> None:
