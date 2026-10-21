@@ -167,7 +167,7 @@ def test_try_catalog_names_the_current_person_plan_and_applies_category_grants(b
     from unittest.mock import AsyncMock
 
     import proxy
-    from gateway import category_enforcement
+    from gateway import category_enforcement, receipt_store
     from gateway.capabilities import Capability
     from gateway.runtime_auth import evaluate_and_apply, make_policy_request
     from tests.support.access import store_plan
@@ -175,6 +175,9 @@ def test_try_catalog_names_the_current_person_plan_and_applies_category_grants(b
 
     old = store_plan("Everything", path=member.db)
     new = store_plan("Everything and categories", path=member.db)
+    receipts = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
     path = tmp_path / "categories.db"
     activate(path, rules(experimental_visible_to=[new["id"]]))
     category_enforcement.configure(path)
@@ -193,9 +196,6 @@ def test_try_catalog_names_the_current_person_plan_and_applies_category_grants(b
         for plan, expected in [(None, set()), (old, {"plain"}), (new, {"plain", "exp-flow"})]:
             accounts.change_person(member.user["id"], "test", plan_id=plan["id"] if plan else None, path=member.db)
             response = browser.client.get("/me/api/models/catalog")
-            if response.status_code != 200:
-                import asyncio
-                asyncio.run(proxy._user_models_catalog_payload(object()))
             assert response.status_code == 200, response.text
             catalog = response.json()
             assert (catalog["access_plan"]["id"] if catalog["access_plan"] else None) == (plan["id"] if plan else None)
