@@ -2442,7 +2442,7 @@ describe("Library items whose files are gone", () => {
   };
 
   test("changing kind then search reuses the viewer-wide removal query", async () => {
-    const { seen } = folderLibrary("owner", folderState(), [gone("a")]);
+    const { seen } = folderLibrary("owner", folderState(), [gone("a")], { plan: 3 });
     await screen.findByRole("button", { name: "Remove missing items" });
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
     await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("kind=image"))).toBe(true));
@@ -2451,6 +2451,9 @@ describe("Library items whose files are gone", () => {
     expect(seen.mediaPaths.filter((path) => /removal_plan|folder_state/.test(path))).toEqual([
       "/me/api/media?folder_state=1&removal_plan=1",
     ]);
+    expect(screen.getByText("3 items missing across your Library.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Remove missing items" }));
+    expect(within(await screen.findByRole("dialog")).getByText("Remove 3 missing items?")).toBeVisible();
   });
 
   test("a refetch during folder confirmation keeps the clicked removal count", async () => {

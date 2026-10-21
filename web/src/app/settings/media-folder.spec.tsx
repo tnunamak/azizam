@@ -87,6 +87,7 @@ describe("owner's Confirm the media folder action", () => {
   it("explains with whole-Library counts and confirms through the owner route", async () => {
     serve(folder());
     const queryClient = renderSection();
+    queryClient.setQueryData(["library", "removal"], { media_folder: folder(), removal_plan: { missing_items: 3 } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const button = await screen.findByRole("button", { name: "Confirm the media folder" });
     expect(
@@ -104,6 +105,7 @@ describe("owner's Confirm the media folder action", () => {
     });
     expect(JSON.parse(String(confirmInit?.body))).toEqual({ items_here: 602, library_items: 845 });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["library"] });
+    expect(queryClient.getQueryState(["library", "removal"])?.isInvalidated).toBe(true);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings", "media-folder"] });
     expect(calls).toContain(
       'confirm {"content-type":"application/json","x-azizam-user-action":"1","x-azizam-csrf":"csrf-1"}',
