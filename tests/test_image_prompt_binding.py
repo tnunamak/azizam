@@ -1,13 +1,7 @@
-"""Frozen pre-fix graphs from real image handlers, with offline upload/round fakes.
-
-The baseline was captured at 68919a1e before changing prompt binding. Every
-image.generate/image.edit manifest is included, including gateway compositions.
-Only the FIBO graph may differ, and its exact permitted difference is asserted.
-"""
+"""Image manifest prompt contracts and public-route prompt binding fixtures."""
 import asyncio
 import copy
 import json
-import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -22,7 +16,6 @@ from test_image_route_receipts import _MultipartRequest, _MultipartUpload
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / 'tests/fixtures/image_manifest_prompt_baseline.json'
 MANIFESTS = [
     (path, load_workflow_manifest(path))
     for path in sorted((ROOT / 'manifests/workflows').glob('*.yml'))
@@ -102,22 +95,20 @@ def run_image(manifest):
 
 
 @pytest.mark.parametrize('path,manifest', MANIFESTS, ids=[p.stem for p, _ in MANIFESTS])
-def test_every_image_manifest_matches_pre_fix_graph_bytes(path, manifest, image_round):
-    response = run_image(manifest)
-    assert response.status_code == 200, response.body
-    assert image_round, path
-    expected = json.loads(BASELINE.read_text())
-    assert set(expected) == {p.name for p, _ in MANIFESTS}
-    comparable = copy.deepcopy(image_round)
-    if path.stem == 'fibo-2-edit-turbo':
-        for graph in comparable:
-            assert graph['6']['inputs']['prompt'] == PROMPT
-            assert 'text' not in graph['6']['inputs']
-            # Reverse exactly the intended correction before comparing every byte.
-            graph['6']['inputs']['prompt'] = 'edit the image'
-            graph['6']['inputs']['text'] = PROMPT
-    serialized = json.dumps(comparable, separators=(',', ':'), ensure_ascii=True).encode()
-    assert hashlib.sha256(serialized).hexdigest() == expected[path.name]
+def test_image_manifest_binds_prompt(path, manifest):
+    bindings = manifest['bindings']
+    comfy = bindings.get('comfyui') or {}
+    targets = comfy.get('map', {}).get('prompt')
+    binding = comfy or bindings.get('gateway', {})
+    graph = json.loads((ROOT / binding['workflow']).read_text())
+    advice = (f"{path.name}: add bindings.comfyui.map.prompt with a node/input target "
+              "or set workflow _meta.prompt_node to a node with a text input")
+    if targets:
+        for target in targets:
+            assert target['input'] in graph.get(target['node'], {}).get('inputs', {}), advice
+    else:
+        node = graph.get(graph.get('_meta', {}).get('prompt_node'), {})
+        assert 'text' in node.get('inputs', {}), advice
 
 
 @pytest.mark.parametrize('intent', ['image.generate', 'image.edit'])

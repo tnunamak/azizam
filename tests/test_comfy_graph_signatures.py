@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from test_klein_9b_manifest_parity import image_round  # noqa: F401
+from test_image_prompt_binding import image_round  # noqa: F401
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401
 
 from gateway import video_extend as ve, video_extend_h3 as h3, video_subject as vs  # noqa: E402
@@ -179,10 +179,6 @@ class CheckerTests(unittest.TestCase):
         self.assertIn("unknown input extra", text)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def test_fibo_template_passes_source_signatures():
     graph = json.loads((ROOT / 'workflows/images/fibo-2-edit-turbo.json').read_text())
     graph.pop('_meta')
@@ -194,7 +190,7 @@ def test_public_fibo_edit_submits_valid_graph(monkeypatch, image_round):
     import asyncio
     from types import SimpleNamespace
     import proxy
-    from test_klein_9b_manifest_parity import PROMPT
+    from test_image_prompt_binding import PROMPT
     from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
 
     monkeypatch.setattr(proxy, 'authenticate_request', lambda *args: proxy.NO_AUTH_CONTEXT)
@@ -211,3 +207,7 @@ def test_public_fibo_edit_submits_valid_graph(monkeypatch, image_round):
     assert graph['6']['inputs']['prompt'] == PROMPT
     assert 'text' not in graph['6']['inputs']
     assert check_graph(graph) == []
+
+
+if __name__ == "__main__":
+    unittest.main()
