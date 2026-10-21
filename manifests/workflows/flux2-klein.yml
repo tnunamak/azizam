@@ -8,7 +8,7 @@ purpose: Detailed images from a prompt
 description: Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.
 source: local
 trusted: true
-typical_seconds: 6
+typical_seconds: 20  # measured 2026-10-21 through the gateway on an empty queue: 20 s warm, 37 s with a model load
 inputs:
   prompt:
     label: description
