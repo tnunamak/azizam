@@ -156,3 +156,9 @@ def confirmed(session: AdminSession, policy: SessionPolicy, now: float) -> Admin
 
 def is_recently_authenticated(session: AdminSession, policy: SessionPolicy, now: float) -> bool:
     return now - session.last_authenticated <= policy.step_up_seconds
+
+
+def lifetime_claims(session: AdminSession) -> dict[str, float | None]:
+    """The cookie facts needed to apply the current lifetime policy to a derived credential."""
+    return {"issued_at": session.issued_at, "renewed_at": session.last_renewed,
+            "expires_at": session.expires_at, "absolute_expires_at": session.absolute_expires_at}

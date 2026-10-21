@@ -167,6 +167,7 @@ from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN,
     KEY_CLAIM_EMAIL,
     AdminRole,
+    AdminSession,
     IDTokenClaimsError,
     OIDCConfigError,
     PKCEPair,
@@ -6867,12 +6868,14 @@ def _sign_image_token(image_id: str, expires: int) -> str:
 
 
 def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None,
-                      family: str | None = None, subject: str | None = None) -> str:
+                      family: str | None = None, subject: str | None = None, timing: str | None = None) -> str:
     # ``metadata_mode`` is part of the signed message so a client cannot flip a
     # ``none`` URL to ``full`` (the signature covers it).
     suffix = f":md={metadata_mode}" if metadata_mode else ""
     if family is not None or subject is not None:
         suffix += ":session=" + json.dumps([family, subject], separators=(",", ":"))
+    if timing is not None:
+        suffix += ":lifetime=" + timing
     msg = f"{asset_id}:{expires}{suffix}".encode("utf-8")
     return hmac.new(_image_signing_secret(), msg, hashlib.sha256).hexdigest()
 
@@ -6883,50 +6886,74 @@ def verify_image_signature(image_id: str, expires: int, sig: str) -> bool:
 
 
 def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None,
-                           family: str | None = None, subject: str | None = None) -> bool:
+                           family: str | None = None, subject: str | None = None, timing: str | None = None) -> bool:
     """Constant-time HMAC verification for signed asset URLs."""
     if expires < int(time.time()):
         return False
-    expected = _sign_asset_token(asset_id, expires, metadata_mode, family, subject)
+    expected = _sign_asset_token(asset_id, expires, metadata_mode, family, subject, timing)
     return hmac.compare_digest(expected, str(sig or ""))
 
 
 def _asset_url_session(request: Request):
-    # Credentials take precedence over a coincidentally present browser cookie.
-    # Background job shims carry no cookies. List routes resolve once, not per tile.
-    if not getattr(request, "cookies", None) or _resolve_client_api_key(request):
-        return None
+    # App credentials take precedence over a coincidentally present cookie.
+    # Try credentials retain their family even without cookies (e.g. job shims).
     def binding():
-        raw = request.cookies.get(_browser_admin_cookie_config().name)
+        api_key = _resolve_client_api_key(request)
+        credential = (admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
+                      if api_key else None)
+        family = credential.get("session_id") if credential else None
+        if api_key and not family:
+            return None
+        raw = getattr(request, "cookies", {}).get(_browser_admin_cookie_config().name)
         key = _browser_admin_session_signing_key()
-        if not raw or not key:
-            return None
-        try:
-            # Verify the signature even if the sign-in ended during this request.
-            # Dropping its binding would mint a transferable URL after sign-out.
-            # The URL's expiry is capped below, and serving checks server validity.
-            return decode_session_cookie(raw, signing_key=key, now=0)
-        except SessionError:
-            return None
+        if raw and key:
+            try:
+                # Never drop a binding when sign-out races the mint.
+                session = decode_session_cookie(raw, signing_key=key, now=0)
+                if not family or (session.family_id == family and session.subject == credential.get("created_by")):
+                    return session
+            except SessionError:
+                pass
+        if family:
+            # Pre-upgrade Try keys have no timing facts: their derived URLs fail
+            # closed until a matching cookie supplies them or a new key is minted.
+            timing = json.loads(credential.get("session_timing_json") or
+                                '{"issued_at":0,"renewed_at":0,"expires_at":0}')
+            return AdminSession(subject=credential.get("created_by") or "", email="", role="none",
+                                session_id=family, **timing)
+        return None
     return request_connections.memo(("asset-url-session", id(request)), binding)
 
 
 def _signed_asset_request_allowed(asset_id: str, expires: int, request: Request, mode: str | None) -> bool:
+    from gateway import session_policy
     family, subject = request.query_params.get("family"), request.query_params.get("subject")
-    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), mode, family, subject):
+    timing = request.query_params.get("session")
+    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), mode, family, subject, timing):
         return False
-    if family is None and subject is None:
+    if family is None and subject is None and timing is None:
         return True
-    if expires <= time.time():
+    if not family or not subject or not timing or expires <= time.time():
         return False
-    return bool(family and subject and accounts.asset_family_allowed(subject, family, path=ADMIN_STORE.path))
+    try:
+        session = AdminSession(subject=subject, email="", role="none", session_id=family, **json.loads(timing))
+        if not session_policy.is_usable(session, session_policy.load_policy(ADMIN_STORE.path), time.time()):
+            return False
+    except (ValueError, TypeError):
+        return False
+    return accounts.asset_family_allowed(subject, family, path=ADMIN_STORE.path)
 
 
-def _session_asset_cache_headers(request: Request, data: bytes) -> dict[str, str]:
-    """Hash the delivered representation, after metadata preparation, for a strong validator."""
+def _session_asset_cache_headers(request: Request, asset_id: str, *, variant: str) -> dict[str, str]:
+    """The stored content digest and delivery recipe identify a representation.
+
+    Bump the recipe version when an encoder/metadata transform changes its bytes.
+    No media-sized hashing belongs on this per-request path.
+    """
     if "family" not in request.query_params:
         return {}
-    return {"Cache-Control": "private, no-cache", "ETag": f'"{hashlib.sha256(data).hexdigest()}"'}
+    identity = f"asset-delivery-v1:{asset_id}:{variant}".encode()
+    return {"Cache-Control": "private, no-cache", "ETag": f'"{hashlib.sha256(identity).hexdigest()}"'}
 
 
 def _asset_not_modified(request: Request, etag: str) -> bool:
@@ -7325,20 +7352,22 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
     session = _asset_url_session(request)
     family, subject = (session.family_id, session.subject) if session else (None, None)
-    binding = "&" + urlencode({"family": family, "subject": subject}) if session else ""
+    from gateway import session_policy
+    timing = json.dumps(session_policy.lifetime_claims(session), separators=(",", ":")) if session else None
+    binding = "&" + urlencode({"family": family, "subject": subject, "session": timing}) if session else ""
     if mode == thumbnails.THUMB_MODE:
         # The expiry steps once per TTL, so the URL is the same all window long
         # and the browser can keep the preview between visits.
         expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
         if session:
             expires = min(expires, int(session.expires_at), int(session.latest_expiry))
-        sig = (_sign_asset_token(asset_id, expires, mode, family, subject) if session
+        sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
                else _sign_asset_token(asset_id, expires, mode))
         return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
     if session:
         expires = min(expires, int(session.expires_at), int(session.latest_expiry))
-    sig = (_sign_asset_token(asset_id, expires, mode, family, subject) if session
+    sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
            else _sign_asset_token(asset_id, expires, mode))
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
 
@@ -23819,15 +23848,15 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     made = thumbnails.thumbnail_for(source)
     if made is None:
         return refuse(404, "No preview for this asset")
-    data = made.read_bytes() if "family" in request.query_params else None
     stat = made.stat()
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
     headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
-    if data is not None:
-        headers.update(_session_asset_cache_headers(request, data))
+    headers.update(_session_asset_cache_headers(
+        request, asset_id, variant=f"thumb:{thumbnails.THUMB_EDGE}:{thumbnails.THUMB_MEDIA_TYPE}:q78:m4:md=none",
+    ))
     if _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
-    return Response(content=data if data is not None else made.read_bytes(),
+    return Response(content=made.read_bytes(),
                     media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
 
 
@@ -23910,6 +23939,7 @@ def _signed_asset_content_response(
         )
 
     data = cache_path.read_bytes()
+    metadata_identity = ""
     if md_raw == provenance.METADATA_FULL:
         person_id: str | None = None
         if auth_context is None:
@@ -23929,6 +23959,8 @@ def _signed_asset_content_response(
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+        # Full delivery also depends on the separately stored metadata, not only the asset digest.
+        metadata_identity = hashlib.sha256(json.dumps(record["metadata"], sort_keys=True).encode()).hexdigest()
         data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
     try:
         data = media_delivery.deliver_bytes(
@@ -23941,7 +23973,9 @@ def _signed_asset_content_response(
             status_code=502,
             media_type="application/json",
         )
-    headers = _session_asset_cache_headers(request, data)
+    headers = _session_asset_cache_headers(
+        request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:{metadata_identity}",
+    )
     if headers and _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
     response = media_delivery.ranged_delivery_response(
@@ -23949,6 +23983,7 @@ def _signed_asset_content_response(
         data,
         media_type=asset_media_type(asset_id, cache_path),
         cache_control=headers.get("Cache-Control", "private, max-age=3600"),
+        etag=headers.get("ETag"),
     )
     response.headers.update(headers)
     return response
