@@ -16,7 +16,6 @@ side). It never imports ``proxy``.
 from __future__ import annotations
 
 import contextvars
-import functools
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +23,8 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request
 from fastapi.responses import Response
+
+from PIL import __version__ as PILLOW_VERSION, features
 
 from gateway import media_metadata, provenance
 
@@ -193,18 +194,14 @@ def deliver_bytes(
     )
 
 
-@functools.lru_cache(maxsize=1)
 def encoder_revision() -> str:
-    """Identify the installed lossless remuxer without launching it per fetch.
-
-    The cached file identity changes across upgrades/restarts. Content stripping
-    itself uses container-level rewrites for images, not a Pillow re-encode.
-    """
+    """Identify delivery tools without launching a subprocess or reading media bytes."""
     executable = shutil.which("ffmpeg")
-    if not executable:
-        return "no-remuxer"
-    stat = Path(executable).stat()
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    remuxer = "absent"
+    if executable:
+        stat = Path(executable).stat()
+        remuxer = f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"pillow={PILLOW_VERSION}:jpeg={features.version('jpg')}:webp={features.version('webp')}:remuxer={remuxer}"
 
 
 def ranged_delivery_response(
