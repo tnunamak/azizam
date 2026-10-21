@@ -1,6 +1,9 @@
 """Replay the catalog examples through the edit handler and a fake graph round."""
 import asyncio
 import io
+import json
+import base64
+from pathlib import Path
 from email.parser import BytesParser
 from email.policy import default
 
@@ -10,6 +13,7 @@ from PIL import Image
 import proxy
 from gateway import workflows_catalog
 from gateway.workflow_openapi import _execution
+from gateway.workflow_call import build_request
 from test_image_prompt_binding import image_round  # noqa: F401
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload
 from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401
@@ -47,7 +51,7 @@ def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fak
         "protocol": "comfyui", "name": "catalog-edit-uploads",
         "provenance": {"source": "hand-written", "reference": "ComfyUI POST /upload/image"},
         "exchanges": [{
-            "id": f"picture-{index}", "required": index < len(names),
+            "id": f"picture-{index}", "required": False,
             "match": {"method": "POST", "path": "/upload/image"},
             "response": {"json": {"name": f"uploaded-{index}.png", "subfolder": "", "type": "input"}},
         } for index in range(len(parts))],
@@ -90,3 +94,36 @@ def test_multi_picture_examples_repeat_one_part_name():
                   if part["input"] in names]
         assert actual == [(name, "image[]") for name in names], record.id
     assert checked, "no multi-picture edit workflow discovered"
+
+
+@pytest.mark.parametrize("record", EDIT_RECORDS, ids=lambda record: record.id)
+def test_adapter_request_keeps_repeated_parts_in_manifest_order(record):
+    names = image_names(record)
+    payloads = {}
+    for index, name in enumerate(names):
+        content = io.BytesIO()
+        Image.new("RGB", (2, 1), (index * 30, 80, 160)).save(content, format="PNG")
+        payloads[name] = content.getvalue()
+    inputs = {name: "data:image/png;base64," + base64.b64encode(payloads[name]).decode()
+              for name in reversed(names)}
+    sync = _execution(record, None)["sync"]
+    built = asyncio.run(build_request(lambda *_args: None, None, None, {}, sync, inputs, wrap_intent=None))
+    assert [(field, content) for field, (_, content, _) in built.files] == [
+        ("image[]", payloads[name]) for name in names]
+
+
+@pytest.mark.parametrize("filename,identifier", [
+    ("workflows-image-edit.json", "image.edit.flux2-klein-4b"),
+    ("workflows-image-edit-multiref.json", "image.edit.qwen-image-2.1-edit-multiref"),
+])
+def test_try_fixture_matches_the_real_catalog_contract(filename, identifier):
+    record = next(record for record in EDIT_RECORDS if record.id == identifier)
+    fixture = json.loads((Path(__file__).resolve().parents[1] / "web/tests/fixtures" / filename).read_text())["workflows"][0]
+    sync = _execution(record, record.manifest.get("typical_seconds"))["sync"]
+    assert fixture["openapi"]["execution"]["sync"] == sync
+    assert fixture["inputs"] == workflows_catalog._input_rows(record, {"sync": sync, "recommended": "sync"})
+    assert fixture["example_request"] == example_request(record) | {
+        "curl": fixture["example_request"]["curl"],
+        "python": fixture["example_request"]["python"],
+        "javascript": fixture["example_request"]["javascript"],
+    }

@@ -306,8 +306,8 @@ def _native_route_image_inputs(
                 bound.update(
                     str(name) for name in declared if isinstance(name, str) and name
                 )
-    ordered = [name for name, asset in is_asset.items() if asset and name in bound]
-    if is_asset.get("source_image") and "source_image" not in ordered:
+    ordered = [name for name, asset in is_asset.items() if asset and name in bound and name != "source_image"]
+    if is_asset.get("source_image"):
         ordered.insert(0, "source_image")
     return ordered
 

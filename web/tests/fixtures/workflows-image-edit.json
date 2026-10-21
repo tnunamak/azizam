@@ -19,7 +19,10 @@
      "accepted": true,
      "ignored": false,
      "applies": "Multipart form",
-     "request_field": "prompt"
+     "request_field": "prompt",
+     "description": "Describe what you want to make.",
+     "help": "Describe what you want to make.",
+     "label": "description"
     },
     {
      "name": "source_image",
@@ -58,7 +61,10 @@
      "applies": "Multipart form",
      "request_field": "size",
      "minimum": 64,
-     "maximum": 2048
+     "maximum": 2048,
+     "description": "Picture width in pixels.",
+     "help": "Picture width in pixels.",
+     "label": "width"
     },
     {
      "name": "height",
@@ -69,7 +75,10 @@
      "applies": "Multipart form",
      "request_field": "size",
      "minimum": 64,
-     "maximum": 2048
+     "maximum": 2048,
+     "description": "Picture height in pixels.",
+     "help": "Picture height in pixels.",
+     "label": "height"
     },
     {
      "name": "steps",
@@ -80,7 +89,10 @@
      "applies": "Workflow extension",
      "request_field": "steps",
      "minimum": 1,
-     "maximum": 100
+     "maximum": 100,
+     "description": "More steps take longer.",
+     "help": "More steps take longer.",
+     "label": "steps"
     },
     {
      "name": "guidance",
@@ -91,7 +103,8 @@
      "applies": "Workflow extension",
      "request_field": "guidance",
      "minimum": 0,
-     "maximum": 20
+     "maximum": 20,
+     "label": "prompt guidance"
     },
     {
      "name": "denoise",
@@ -104,7 +117,9 @@
      "default": 1,
      "minimum": 0,
      "maximum": 1,
-     "description": "Amount of denoising applied by truncating the Flux2 sigma schedule. Lower values preserve more input-image structure."
+     "description": "Lower values preserve more of the original.",
+     "help": "Lower values preserve more of the original.",
+     "label": "change strength"
     },
     {
      "name": "n",
@@ -116,7 +131,8 @@
      "request_field": "n",
      "minimum": 1,
      "maximum": 10,
-     "description": "Number of images."
+     "description": "Number of images.",
+     "label": "number of results"
     }
    ],
    "outputs": [
@@ -237,7 +253,8 @@
       "maximum": 10,
       "description": "Number of images.",
       "in": "body",
-      "field": "n"
+      "field": "n",
+      "label": "number of results"
      }
     ],
     "execution": {

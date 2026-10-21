@@ -132,6 +132,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
-        assert route_graph.openapi_digest(proxy.app) == "b3ce70b7f551306adc31394399bf8ef633b6db2e332268153c796f634ef9836e"
+        assert route_graph.openapi_digest(proxy.app) == "340a9e0060c267739bd0b541e430bf83c4cf7ec94cf38deb850d5a4adcd29f56"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
