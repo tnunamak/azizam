@@ -2,18 +2,19 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 import threading
+import time
 
 import pytest
 
 from gateway import accounts, admin_store, browser_sessions
-from gateway.admin_oidc import encode_session_cookie
+from gateway.admin_oidc import AUTH_TIME_UNKNOWN, encode_session_cookie
 from gateway.admin_runtime import create_admin_service_account_key
 from gateway.session_policy import DAY
 from tests.support.access import store_plan
 from tests.test_session_lifecycle import (  # noqa: F401 (fixtures and their dependencies)
     COOKIE, HELPER, OWNER, PASSWORD, SIGNING_KEY, cookie_session, csrf, forge, gateway,
     helper_client, owner_client, person_id, put_cookie, session_cookies, set_password, sg,
-    signed_in_state, through_provider,
+    asks_again, signed_in_state, through_provider,
 )
 
 
@@ -170,6 +171,32 @@ def test_a_stale_or_missing_cookie_does_not_prevent_a_password_sign_in(sg, incom
 
     assert response.status_code == 200
     assert signed_in_state(client)
+    if incoming == "forged":
+        assert accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id,
+                                        path=sg.path) is True
+
+
+@pytest.mark.parametrize("proof_time", ["old", "unknown"])
+def test_oidc_invite_acceptance_does_not_refresh_the_sign_in_proof(sg, proof_time):
+    client = sg.client()
+    auth_time = int(time.time()) - DAY if proof_time == "old" else None
+    response = sg.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], auth_time=auth_time)
+    assert response.status_code == 302
+    previous = cookie_session(client)
+    assert previous.authenticated_at == (auth_time if auth_time is not None else AUTH_TIME_UNKNOWN)
+    plan = store_plan("Invited", path=sg.path, models=["test-model"])
+    _, token = accounts.create_link("invite", previous.subject, plan_id=plan["id"], path=sg.path)
+
+    response = client.post("/auth/api/invite/accept",
+                           json={"token": token, "email": HELPER, "name": "Invited"}, headers=csrf(client))
+
+    assert response.status_code == 200, response.text
+    current = cookie_session(client)
+    assert current.family_id != previous.family_id
+    assert current.authenticated_at == previous.authenticated_at
+    assert not accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
+    app_id = response.json()["app"]["id"]
+    assert asks_again(client.post(f"/me/api/apps/{app_id}/keys", json={}, headers=csrf(client)))
 
 
 def test_failed_password_sign_in_keeps_the_incoming_session(sg):
