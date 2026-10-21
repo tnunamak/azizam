@@ -7,6 +7,7 @@ Only the FIBO graph may differ, and its exact permitted difference is asserted.
 import asyncio
 import copy
 import json
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -17,7 +18,7 @@ from fastapi import FastAPI
 from gateway import identity_api
 from gateway.manifests import load_workflow_manifest
 from test_identity_api import FakeClient, GOOD, PHOTO
-from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
+from test_image_route_receipts import _MultipartRequest, _MultipartUpload
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,19 +102,52 @@ def run_image(manifest):
 
 
 @pytest.mark.parametrize('path,manifest', MANIFESTS, ids=[p.stem for p, _ in MANIFESTS])
-def test_every_image_manifest_matches_pre_fix_graph_bytes(path, manifest, image_round, record_property):
+def test_every_image_manifest_matches_pre_fix_graph_bytes(path, manifest, image_round):
     response = run_image(manifest)
     assert response.status_code == 200, response.body
     assert image_round, path
-    serialized = json.dumps(image_round, separators=(',', ':'), ensure_ascii=True)
     expected = json.loads(BASELINE.read_text())
     assert set(expected) == {p.name for p, _ in MANIFESTS}
-    if path.name in expected:
-        before = expected[path.name]
-        if path.stem == 'fibo-2-edit-turbo':
-            before = copy.deepcopy(before)
-            for graph in before:
-                assert graph['6']['inputs'].pop('text') == PROMPT
-                assert graph['6']['inputs']['prompt'] == 'edit the image'
-                graph['6']['inputs']['prompt'] = PROMPT
-        assert serialized == json.dumps(before, separators=(',', ':'), ensure_ascii=True)
+    comparable = copy.deepcopy(image_round)
+    if path.stem == 'fibo-2-edit-turbo':
+        for graph in comparable:
+            assert graph['6']['inputs']['prompt'] == PROMPT
+            assert 'text' not in graph['6']['inputs']
+            # Reverse exactly the intended correction before comparing every byte.
+            graph['6']['inputs']['prompt'] = 'edit the image'
+            graph['6']['inputs']['text'] = PROMPT
+    serialized = json.dumps(comparable, separators=(',', ':'), ensure_ascii=True).encode()
+    assert hashlib.sha256(serialized).hexdigest() == expected[path.name]
+
+
+@pytest.mark.parametrize('intent', ['image.generate', 'image.edit'])
+@pytest.mark.parametrize('mapping', ['multiple', 'absent', 'empty'])
+def test_prompt_targets_and_legacy_fallback(intent, mapping, image_round, monkeypatch):
+    manifest = copy.deepcopy(next(m for p, m in MANIFESTS if p.stem == 'fibo-2-edit-turbo'))
+    workflow = json.loads((ROOT / manifest['bindings']['comfyui']['workflow']).read_text())
+    manifest['intent'] = intent
+    manifest['id'] = intent + '.fixture-prompt'
+    workflow['legacy'] = {'class_type': 'Fixture', 'inputs': {'text': 'legacy default'}}
+    workflow['_meta']['prompt_node'] = 'legacy'
+    workflow['second'] = {'class_type': 'Fixture', 'inputs': {'instruction': 'second default'}}
+    mapping_data = manifest['bindings']['comfyui']['map']
+    if mapping == 'multiple':
+        mapping_data['prompt'].append({'node': 'second', 'input': 'instruction'})
+    elif mapping == 'empty':
+        mapping_data['prompt'] = []
+    else:
+        del mapping_data['prompt']
+    monkeypatch.setattr(proxy, 'load_graph_workflow', lambda model: copy.deepcopy(workflow))
+    monkeypatch.setattr(proxy, '_find_image_manifest', lambda *args: manifest)
+    response = run_image(manifest)
+    assert response.status_code == 200, response.body
+    assert len(image_round) == 1
+    inputs = image_round[0]
+    if mapping == 'multiple':
+        assert inputs['6']['inputs']['prompt'] == PROMPT
+        assert 'text' not in inputs['6']['inputs']
+        assert inputs['second']['inputs']['instruction'] == PROMPT
+        assert inputs['legacy']['inputs']['text'] == 'legacy default'
+    else:
+        assert inputs['legacy']['inputs']['text'] == PROMPT
+        assert inputs['6']['inputs']['prompt'] == 'edit the image'

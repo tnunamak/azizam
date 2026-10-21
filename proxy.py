@@ -8351,10 +8351,8 @@ async def proxy_graph_image_request(
         force_bypass_reason="output_format=jpeg has no alpha channel",
     )
 
-    prompt_node = meta.get("prompt_node")
     size_node = meta.get("size_node")
-    if prompt_node and prompt_node in workflow:
-        workflow[prompt_node]["inputs"]["text"] = prompt
+    workflow = _apply_workflow_prompt(manifest, workflow, meta, prompt)
 
     width, height = parse_size(size)
     effective_size = f"{width}x{height}"
@@ -8911,11 +8909,8 @@ async def proxy_graph_image_edit_request(
                 ),
             )
 
-            prompt_node = meta.get("prompt_node")
             size_node = meta.get("size_node")
-
-            if prompt_node and prompt_node in workflow:
-                workflow[prompt_node]["inputs"]["text"] = prompt
+            workflow = _apply_workflow_prompt(manifest, workflow, meta, prompt)
 
             # Upload any reference images beyond the first (already uploaded
             # above as `uploaded_filename`) and bind every uploaded filename,
@@ -19564,9 +19559,7 @@ async def _proxy_offset_inpaint_tile_request(
 
     base_workflow = copy.deepcopy(base_workflow)
     base_meta = base_workflow.pop("_meta", {})
-    base_prompt_node = base_meta.get("prompt_node")
-    if base_prompt_node and base_prompt_node in base_workflow:
-        base_workflow[base_prompt_node]["inputs"]["text"] = prompt
+    base_workflow = _apply_workflow_prompt(base_manifest, base_workflow, base_meta, prompt)
     base_size_node = base_meta.get("size_node")
     if base_size_node and base_size_node in base_workflow:
         base_workflow[base_size_node]["inputs"]["width"] = width
@@ -19768,6 +19761,23 @@ def _manifest_required_route_mask_input(manifest: Mapping[str, Any] | None) -> s
     if isinstance(spec, Mapping) and spec.get("required"):
         return mask_name
     return None
+
+
+def _apply_workflow_prompt(
+    manifest: Mapping[str, Any] | None,
+    workflow: dict[str, Any],
+    meta: Mapping[str, Any],
+    prompt: str,
+) -> dict[str, Any]:
+    """Prefer declared prompt targets; retain the legacy target when unmapped."""
+    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING) if manifest else None
+    mapping = binding.get("map") if isinstance(binding, Mapping) else None
+    if isinstance(mapping, Mapping) and mapping.get("prompt"):
+        return _apply_manifest_route_inputs(manifest, workflow, {"prompt": prompt})
+    prompt_node = meta.get("prompt_node")
+    if prompt_node and prompt_node in workflow:
+        workflow[prompt_node]["inputs"]["text"] = prompt
+    return workflow
 
 
 def _apply_manifest_route_inputs(
