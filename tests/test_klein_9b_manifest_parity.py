@@ -35,6 +35,7 @@ def image_round(monkeypatch, fake_upstreams):
     fake = fake_upstreams.asgi(load_scenario('comfyui/upload-ok-any'))
     for name, value in {
         'COMFY_HOST': fake.base_url, 'COMFY_ENABLED': True,
+        '_select_edit_workflow': lambda model, **kwargs: model,
         '_dispatch_admission_response': Mock(return_value=None),
         '_service_availability_response': Mock(return_value=None),
         'configured_downstream_headers': Mock(return_value={}),
@@ -88,8 +89,14 @@ def run_image(manifest):
     items = [(key, json.dumps(value) if isinstance(value, dict) else str(value))
              for key, value in fields.items()]
     items.append(('image', _MultipartUpload('source.png', PHOTO)))
-    if 'mask' in manifest.get('inputs', {}):
-        items.append(('mask', _MultipartUpload('mask.png', _png_bytes((0, 0, 0, 0)))))
+    if model == 'qwen-image-2.1-edit-multiref':
+        items.append(('image[]', _MultipartUpload('second.png', PHOTO)))
+    if (manifest.get('inputs', {}).get('mask') or {}).get('required'):
+        from PIL import Image
+        import io
+        mask = io.BytesIO()
+        Image.new('RGBA', (1280, 960), (0, 0, 0, 0)).save(mask, format='PNG')
+        items.append(('mask', _MultipartUpload('mask.png', mask.getvalue())))
     return asyncio.run(proxy.proxy_graph_image_edit_request(_MultipartRequest(items), proxy.NO_AUTH_CONTEXT))
 
 
