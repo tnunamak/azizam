@@ -372,7 +372,7 @@ describe("Home and Library polish", () => {
       "true",
     );
     await waitFor(() =>
-      expect(requests).toContain("/me/api/media?limit=40&kind=video"),
+      expect(requests).toContain("/me/api/media?limit=40&kind=video&scope=me"),
     );
   });
 });
