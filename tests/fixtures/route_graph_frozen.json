@@ -432,24 +432,6 @@
    "POST": "/{path:path} unmatched_route",
    "PUT": "/{path:path} unmatched_route"
   },
-  "/admin/api/engines/sample/retention/facts": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/engines/{service_id}/retention/facts get_engine_facts",
-   "HEAD": "405 allow=GET via /admin/api/engines/{service_id}/retention/facts get_engine_facts",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/admin/api/engines/{service_id}/retention/facts put_engine_facts"
-  },
-  "/admin/api/engines/sample/retention/ledger": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/engines/{service_id}/retention/ledger engine_ledger",
-   "HEAD": "405 allow=GET via /admin/api/engines/{service_id}/retention/ledger engine_ledger",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/{path:path} unmatched_route"
-  },
   "/admin/api/engines/sample/stt-measurements": {
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/admin/api/engines/{service_id}/stt-measurements options",
@@ -562,15 +544,6 @@
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/admin/api/invites/{link_id}/link copy_invite",
    "HEAD": "405 allow=GET via /admin/api/invites/{link_id}/link copy_invite",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/{path:path} unmatched_route"
-  },
-  "/admin/api/me/retention/ledger": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/me/retention/ledger current_retention_ledger",
-   "HEAD": "405 allow=GET via /admin/api/me/retention/ledger current_retention_ledger",
    "OPTIONS": "/{path:path} unmatched_route",
    "PATCH": "/{path:path} unmatched_route",
    "POST": "/{path:path} unmatched_route",
@@ -837,15 +810,6 @@
    "POST": "/admin/api/providers/{provider_id}/reconciliation/{reservation_id} reconcile_provider_reservation",
    "PUT": "/{path:path} unmatched_route"
   },
-  "/admin/api/providers/sample/retention/facts": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/providers/{provider_id}/retention/facts get_provider_facts",
-   "HEAD": "405 allow=GET via /admin/api/providers/{provider_id}/retention/facts get_provider_facts",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/admin/api/providers/{provider_id}/retention/facts put_provider_facts"
-  },
   "/admin/api/providers/sample/test": {
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/{path:path} unmatched_route",
@@ -853,15 +817,6 @@
    "OPTIONS": "/{path:path} unmatched_route",
    "PATCH": "/{path:path} unmatched_route",
    "POST": "/admin/api/providers/{provider_id}/test test_provider",
-   "PUT": "/{path:path} unmatched_route"
-  },
-  "/admin/api/requests/sample/retention/ledger": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/requests/{request_id}/retention/ledger request_retention_ledger",
-   "HEAD": "405 allow=GET via /admin/api/requests/{request_id}/retention/ledger request_retention_ledger",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
    "PUT": "/{path:path} unmatched_route"
   },
   "/admin/api/session": {
@@ -935,24 +890,6 @@
    "PATCH": "/{path:path} unmatched_route",
    "POST": "/{path:path} unmatched_route",
    "PUT": "/{path:path} unmatched_route"
-  },
-  "/admin/api/settings/retention/ledger": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/settings/retention/ledger retention_ledger",
-   "HEAD": "405 allow=GET via /admin/api/settings/retention/ledger retention_ledger",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/{path:path} unmatched_route"
-  },
-  "/admin/api/settings/retention/systems/sample/facts": {
-   "DELETE": "/{path:path} unmatched_route",
-   "GET": "/admin/api/settings/retention/systems/{system_id}/facts get_system_facts",
-   "HEAD": "405 allow=GET via /admin/api/settings/retention/systems/{system_id}/facts get_system_facts",
-   "OPTIONS": "/{path:path} unmatched_route",
-   "PATCH": "/{path:path} unmatched_route",
-   "POST": "/{path:path} unmatched_route",
-   "PUT": "/admin/api/settings/retention/systems/{system_id}/facts put_system_facts"
   },
   "/admin/api/settings/sessions": {
    "DELETE": "/{path:path} unmatched_route",
@@ -5596,32 +5533,6 @@
    "type": "APIRoute"
   },
   {
-   "endpoint": "gateway.api.create_request_retention_router.<locals>.current_retention_ledger",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "current_retention_ledger",
-   "openapi_extra": null,
-   "path": "/admin/api/me/retention/ledger",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.api.create_request_retention_router.<locals>.request_retention_ledger",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "request_retention_ledger",
-   "openapi_extra": null,
-   "path": "/admin/api/requests/{request_id}/retention/ledger",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
    "endpoint": "gateway.api_reference.register_api_reference.<locals>.reference",
    "include_in_schema": false,
    "methods": [
@@ -6684,110 +6595,6 @@
    "name": "update_provider_models",
    "openapi_extra": null,
    "path": "/admin/api/providers/{provider_id}/models",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.engine_ledger",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "engine_ledger",
-   "openapi_extra": null,
-   "path": "/admin/api/engines/{service_id}/retention/ledger",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.get_engine_facts",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "get_engine_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/engines/{service_id}/retention/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.get_provider_facts",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "get_provider_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/providers/{provider_id}/retention/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.get_system_facts",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "get_system_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/settings/retention/systems/{system_id}/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.put_engine_facts",
-   "include_in_schema": true,
-   "methods": [
-    "PUT"
-   ],
-   "name": "put_engine_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/engines/{service_id}/retention/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.put_provider_facts",
-   "include_in_schema": true,
-   "methods": [
-    "PUT"
-   ],
-   "name": "put_provider_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/providers/{provider_id}/retention/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.put_system_facts",
-   "include_in_schema": true,
-   "methods": [
-    "PUT"
-   ],
-   "name": "put_system_facts",
-   "openapi_extra": null,
-   "path": "/admin/api/settings/retention/systems/{system_id}/facts",
-   "response_class": null,
-   "status_code": null,
-   "type": "APIRoute"
-  },
-  {
-   "endpoint": "gateway.retention_fact_api.register_routes.<locals>.retention_ledger",
-   "include_in_schema": true,
-   "methods": [
-    "GET"
-   ],
-   "name": "retention_ledger",
-   "openapi_extra": null,
-   "path": "/admin/api/settings/retention/ledger",
    "response_class": null,
    "status_code": null,
    "type": "APIRoute"

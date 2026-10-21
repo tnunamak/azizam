@@ -46,7 +46,7 @@ Each design claim names its ground. A claim with no ground says
    until Tim decides. A delegated credential (a key or an MCP grant)
    reaches the new controls only with a privacy permission that the person
    grants, so existing keys and grants gain nothing.
-3. **LiteLLM keeps nothing.** Azizam decides retention before a request
+3. **LiteLLM keeps no content.** Azizam decides retention before a request
    reaches LiteLLM. The generated LiteLLM config and the launch environment
    turn off every LiteLLM place that can keep content. A test reads the
    generated artifact and fails when a content sink can be on.

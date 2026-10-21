@@ -150,6 +150,16 @@ Verification uses temporary stores and an isolated checkout. No live databases
 were inspected or changed. This inventory covers gateway-owned retention;
 external engine history, filesystem cleanup jobs and backups are UNVERIFIED.
 
+## Execution substrate accounting
+
+The pinned LiteLLM launcher prevents new request-content, error and tool-inventory
+writes. Numeric budget counters and aggregate cost metadata remain; the
+`litellm-spend-cost-metadata` fact in `registry/retention.yml` discloses them.
+Existing spend, error and tool rows remain until the owner chooses to purge them.
+The proposed seven-day legacy spend cleanup is not enabled. Private file modes
+and missing-output checks do not erase those records or prove their absence.
+See [the slice 3 verification](../verification/RETENTION_S3.md).
+
 ## Private files and deployment
 
 New content files, database files and atomic replacement stages use mode `0600`.
