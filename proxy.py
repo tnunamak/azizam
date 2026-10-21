@@ -4804,7 +4804,8 @@ class _ReplayableBody:
     """
 
     def __init__(self, request: Request, spool_dir: Path, limit: int, replay: stt_chunking.SttReplayReservation) -> None:
-        spool_dir.mkdir(parents=True, exist_ok=True)
+        from gateway import private_io
+        private_io.ensure_private_dir(spool_dir)
         self._limit = limit
         self._scope = request.scope
         self._receive = request.receive
@@ -20458,8 +20459,9 @@ _PROMPT_PURGE_DRAIN_LOCK = threading.Lock()
 @contextlib.contextmanager
 def _prompt_purge_queue() -> Iterable[Any]:
     import sqlite3
+    from gateway import private_io
     path = _prompt_migration_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.prepare_private_database(path)
     with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
         # The write lock serializes the schema upgrade across threads and processes.
         conn.execute("BEGIN IMMEDIATE")
@@ -20919,16 +20921,9 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
                 _store_ephemeral_media_job_payload(job_id, payload)
                 return
             _release_ephemeral_media_job_payload(job_id)
-            IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            from gateway import private_io
             path = _image_media_job_payload_path(job_id)
-            tmp = path.with_suffix(".json.tmp")
-            try:
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, sort_keys=True)
-                tmp.replace(path)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_text(path, json.dumps(payload, sort_keys=True))
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
@@ -24230,9 +24225,10 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
         return data
     try:
         with tempfile.TemporaryDirectory() as tmp:
+            from gateway import private_io
             src = Path(tmp) / f"in{suffix}"
             dst = Path(tmp) / f"out{suffix}"
-            src.write_bytes(data)
+            private_io.atomic_write_bytes(src, data)
             detect = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True, text=True, timeout=60,
@@ -24244,6 +24240,7 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
             gain_db = target_db - peak_db
             if peak_db < -70.0 or abs(gain_db) < 0.5 or gain_db > 50.0:
                 return data
+            private_io.create_private_file(dst)
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
                  "-af", f"volume={gain_db:.2f}dB", str(dst)],
