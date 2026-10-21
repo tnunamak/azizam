@@ -162,16 +162,16 @@ class RemoveMissingTests(unittest.TestCase):
         self._job("req_a", asset("A"))
         with sqlite3.connect(self.jobs_db) as conn:
             media_jobs.hide_assets_in(conn, self.alice["id"], [(asset("A"), self.job_ids("req_a")[0])])
-        self.assertEqual(
-            self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()["removal_plan"],
-            {"missing_items": 1},
-            "the job entry the removal deletes is part of what the caller sees",
-        )
         response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 0})
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["error"]["message"], CHANGED)
         self.assertEqual(len(self.job_ids("req_a")), 1)
         self.assertIn(asset("A"), set(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)))
+        self.assertEqual(
+            self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()["removal_plan"],
+            {"missing_items": 1},
+            "the job entry the removal deletes is part of what the caller sees",
+        )
         removed = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 1})
         self.assertEqual(removed.status_code, 200, removed.text)
         self.assertEqual(removed.json(), {"removed_assets": 0, "removed_jobs": 1})
