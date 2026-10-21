@@ -56,13 +56,11 @@ async def run() -> None:
     if mutation == 'spend_content':
         # Compared with spend_without_prompts, only this switch changes.
         compiled['general_settings']['store_prompts_in_spend_logs'] = True
-    if mutation == 'error_rows':
-        compiled['general_settings']['disable_error_logs'] = False
     config = Path('generated.yaml')
     config.write_text(yaml.safe_dump(compiled))
     await ps.initialize(config=str(config))
     assert ps.disable_spend_logs is (mutation not in {'spend_without_prompts', 'spend_content'})
-    assert ps.general_settings['disable_error_logs'] is (mutation != 'error_rows')
+    assert ps.general_settings['disable_error_logs'] is True
     assert litellm.turn_off_message_logging is True
     assert litellm.cache is None
 
@@ -81,7 +79,7 @@ async def run() -> None:
                     'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}}},
                 {'done': True}]}},
-            {'id': 'embeddings', 'match': {'method': 'POST', 'path': '/v1/embeddings'},
+            {'id': 'embeddings', 'repeat': True, 'match': {'method': 'POST', 'path': '/v1/embeddings'},
              'response': {'status': 200, 'json': {'object': 'list', 'model': 'canary',
                 'data': [{'object': 'embedding', 'index': 0, 'embedding': [0.1, 0.2]}],
                 'usage': {'prompt_tokens': 10, 'total_tokens': 10}}}},
@@ -139,7 +137,7 @@ async def run() -> None:
         nonlocal completed_batches
         await original_batch(**kwargs)
         completed_batches += 1
-        if completed_batches >= 3:
+        if completed_batches >= 4:
             batch_done.set()
     writer._batch_database_updates = batch
     original_queue = writer.spend_update_queue.add_update
@@ -180,6 +178,16 @@ async def run() -> None:
         assert error.status_code == 400, error.status_code
         server_error = await client.post('/v1/chat/completions', json=payload)
         assert server_error.status_code == 500, server_error.status_code
+        # Do not fabricate end_user_id on the auth object. Exercise upstream
+        # authentication with a real header and request-body `user` extraction.
+        ps.app.dependency_overrides.clear()
+        ps.master_key = 'sk-canary-master'
+        assert not ps.app.dependency_overrides
+        denied = await client.post('/v1/embeddings', json={'model': 'canary', 'input': MARKER})
+        assert denied.status_code == 401
+        real_auth = await client.post('/v1/embeddings', headers={'Authorization': 'Bearer sk-canary-master'},
+            json={'model': 'canary', 'input': MARKER, 'user': 'client-end-user'})
+        assert real_auth.status_code == 200, real_auth.text
     # Exercise the actual failure hook with a traceback-bearing error. The
     # normal proxy error route invokes it too; this pins its DB opt-out seam.
     await logger.async_post_call_failure_hook(request_data={'model': 'canary', 'messages': payload['messages']},

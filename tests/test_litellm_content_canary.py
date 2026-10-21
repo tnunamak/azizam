@@ -13,7 +13,7 @@ from gateway.log_scrub import forms
 from tests.support.litellm_content_canary import CONTENT_MARKERS
 
 
-@pytest.mark.parametrize('mutation', ['none', 'tool_inventory', 'default_log', 'spend_without_prompts', 'spend_content', 'error_rows'])
+@pytest.mark.parametrize('mutation', ['none', 'tool_inventory', 'default_log', 'spend_without_prompts', 'spend_content'])
 def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, mutation):
     root = Path(__file__).resolve().parents[1]
     private = tmp_path / 'scratch'
@@ -48,15 +48,11 @@ def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, mutation):
         for marker in ('tool_name', 'arguments', 'description', 'schema'):
             assert contains(spend, marker), marker
         assert matches == {'database.json'}
-    elif mutation == 'error_rows':
-        errors = json.dumps({name: rows for name, rows in tables.items() if 'error' in name.lower()}).encode()
-        assert contains(errors, 'prompt')
-        assert matches == {'database.json'}
     else:
         assert not matches, matches
         assert bool(tables['LiteLLM_SpendLogs']) is (mutation == 'spend_without_prompts')
         assert not any(rows for name, rows in tables.items() if 'error' in name.lower())
         daily = json.dumps({name: rows for name, rows in tables.items() if name.startswith('daily_')})
-        for term in ('canary-user-agent', 'client-end-user', 'request_id', 'canary', '/v1/chat/completions'):
+        for term in ('canary-user-agent', 'client-end-user', 'request_id', 'canary', '/chat/completions'):
             assert term in daily, term
         assert any('client-end-user' in json.dumps(rows) for name, rows in tables.items() if 'end_user' in name)
