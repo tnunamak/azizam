@@ -41,7 +41,10 @@ test.beforeAll(async ({ baseURL, browser }) => {
     ),
   );
   // Sign-in is throttled: sign in once and share the session.
-  const ctx = await browser.newContext({ baseURL });
+  const ctx = await browser.newContext({
+    baseURL,
+    storageState: { cookies: [], origins: [] },
+  });
   const page = await ctx.newPage();
   await page.goto("/sign-in/");
   await page.getByLabel("Email", { exact: true }).fill(seed.member_email);
