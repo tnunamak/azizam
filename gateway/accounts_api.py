@@ -150,13 +150,14 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if origin and urlsplit(origin).netloc != request.url.netloc:
             raise accounts.AccountError("origin_forbidden", "Use the sign-in page on this gateway.", 403)
 
-    def issue(user, payload):
+    def issue(request, user, payload):
         path = path_provider()
         names = admin_store.effective_admin_roles("user", user["id"], path=path)
         role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
         cookie, key = cookie_provider(), signing_key_provider()
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        browser_sessions.end_incoming(request, cookie=cookie, signing_key=key, path=path)
         session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path)
         response = JSONResponse(payload)
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
@@ -185,7 +186,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
         accounts.clear_signin_refusal(str(user["id"]), path=path_provider())
-        return issue(user, {"next": safe_browser_return_to(body.return_to)})
+        return issue(request, user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.post("/auth/api/invite")
     def inspect(request: Request, body: InspectInvite):
@@ -220,7 +221,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
                                                        path=path, oidc_user_id=oidc_user_id)
-        return issue(user, {"next": "/", "app": app, "credential": credential})
+        return issue(request, user, {"next": "/", "app": app, "credential": credential})
 
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):

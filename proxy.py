@@ -17349,6 +17349,7 @@ async def setup_claim_admin_key(request: Request):
     cookie = _browser_admin_cookie_config()
     # A session claimed with a key is not a person's sign-in: it is not recorded, never
     # renews, and ends after the fixed cookie life, whatever happens to the key.
+    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
     session = browser_sessions.issue(
         {"sub": session_subject, "email": session_email},
         role=role, cookie=cookie, path=ADMIN_STORE.path, register=False, renewable=False,
@@ -17371,6 +17372,7 @@ def _normalize_local_email(value: str) -> str:
 
 
 def _issue_browser_admin_session(
+    request: Request,
     *,
     user_id: str,
     email: str,
@@ -17379,6 +17381,7 @@ def _issue_browser_admin_session(
     redirect_to: str = "/setup/",
 ) -> Response:
     cookie = _browser_admin_cookie_config()
+    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
     session = browser_sessions.issue(
         {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
     )
@@ -17541,6 +17544,7 @@ async def setup_create_local_owner(request: Request):
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
     return _issue_browser_admin_session(
+        request,
         user_id=str(user["id"]),
         email=email,
         role="owner",
@@ -17644,6 +17648,7 @@ async def setup_local_login(request: Request):
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
     return _issue_browser_admin_session(
+        request,
         user_id=str(user["id"]),
         email=email,
         role=role,
@@ -17914,6 +17919,9 @@ async def admin_oidc_callback(request: Request):
         # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
         # "now": the session is signed in and never recent (decision D40).
         provider_time = _provider_auth_time(claims)
+        if not state.reauth:
+            await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
+                                    signing_key=cfg.signing_key, path=ADMIN_STORE.path)
         session = browser_sessions.issue(
             session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
             authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,

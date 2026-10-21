@@ -33,6 +33,7 @@ def test_sign_in_ends_the_session_the_browser_already_had(sg, via):
     previous = cookie_session(client)
     old_copy = sg.client()
     put_cookie(old_copy, client.cookies.get(COOKIE))
+    assert old_copy.get("/admin/api/access-plans").status_code in (200, 403)
 
     if via == "password":
         helper_client(sg)
@@ -64,7 +65,7 @@ def test_sign_in_ends_the_session_the_browser_already_had(sg, via):
     current = browser_sessions.read(client.cookies.get(COOKIE), signing_key=SIGNING_KEY, path=sg.path)
     assert current.family_id != previous.family_id
     assert not accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
-    assert old_copy.get("/me/api/apps").status_code == 401
+    assert old_copy.get("/admin/api/access-plans").status_code == 401
 
 
 def test_after_a_switch_the_old_cookie_and_try_key_get_401(sg):
@@ -81,15 +82,19 @@ def test_after_a_switch_the_old_cookie_and_try_key_get_401(sg):
     assert minted.status_code == 201
     bearer = {"authorization": "Bearer " + minted.json()["credential"]["api_key"]}
     key_client = sg.client()
-    assert key_client.get("/v1/models", headers=bearer).status_code == 200
+    key_status = key_client.get("/v1/models", headers=bearer).status_code
+    assert key_status == 200
     current_copy = sg.client()
     put_cookie(current_copy, client.cookies.get(COOKIE))
+    assert retired_copy.get("/admin/api/access-plans").status_code == 200
+    assert current_copy.get("/admin/api/access-plans").status_code == 200
 
     assert client.post("/auth/api/login", json={"email": HELPER, "password": PASSWORD}).status_code == 200
 
-    assert retired_copy.get("/me/api/apps").status_code == 401
-    assert current_copy.get("/me/api/apps").status_code == 401
-    assert key_client.get("/v1/models", headers=bearer).status_code == 401
+    assert retired_copy.get("/admin/api/access-plans").status_code == 401
+    assert current_copy.get("/admin/api/access-plans").status_code == 401
+    key_status = key_client.get("/v1/models", headers=bearer).status_code
+    assert key_status == 401
     assert signed_in_state(client)
 
 
@@ -123,7 +128,7 @@ def test_two_tabs_signing_in_together_end_the_old_session_and_leave_one_working_
         futures = [workers.submit(sign_in, tab, email) for tab, email in zip(tabs, (OWNER, HELPER))]
         settled = [future.result(timeout=30) for future in as_completed(futures)]
 
-    assert old_browser.get("/me/api/apps").status_code == 401
+    assert old_browser.get("/admin/api/access-plans").status_code == 401
     families = set()
     for tab, email, response in settled:
         assert response.status_code == 200
