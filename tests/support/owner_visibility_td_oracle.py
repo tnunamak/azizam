@@ -79,4 +79,3 @@ def expected(v, r, action, origin):
             return is_self(v, r) and (v.delegation is None or v.privacy_permission)
         return False
     raise AssertionError(k)
-
