@@ -10,8 +10,6 @@ upload), against a fake ComfyUI and the shipped proxy_config.yml.
 from __future__ import annotations
 
 import base64
-from types import SimpleNamespace
-from starlette.datastructures import FormData
 import contextlib
 import copy
 import json
@@ -19,10 +17,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import FormData
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -601,7 +601,8 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
                          "video-minimax-h3-keyframes")
 
     def test_finished_clip_lands_in_the_library_as_a_video(self) -> None:
-        
+        import anyio
+
         self._create()
         mp4 = mp4_bytes()
         self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4")
