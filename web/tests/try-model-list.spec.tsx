@@ -499,7 +499,8 @@ describe("Try keys stay in page memory", () => {
 
 
 it("announces access refresh completion and preserves Refresh focus while loading", async () => {
-  account.viewer.serviceAdmin = false;
+  account.viewer = { authenticated: true, serviceAdmin: false, admin: false };
+  Object.assign(account, { promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }) });
   let finish: (() => void) | undefined;
   let hold = false;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {

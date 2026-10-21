@@ -108,7 +108,7 @@ async function openPlansTab(role: Viewer["role"], fixture = plans) {
   );
   const user = userEvent.setup();
   await user.click(await screen.findByRole("tab", { name: "Access plans" }));
-  await screen.findByRole("heading", { name: "Family" });
+  await screen.findByRole("heading", { name: fixture[0].name });
   return user;
 }
 

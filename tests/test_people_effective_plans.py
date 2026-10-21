@@ -44,8 +44,8 @@ def test_plan_holders_count_only_active_people_and_direct_apps(db, state):
     family = store_plan("Family", path=db, caps=("chat",))
     accounts.change_person(user["id"], "owner", path=db, plan_id=family["id"])
     admin_store.ensure_session_app_for_user(user["id"], name="Personal", path=db)
-    admin_store.create_app("Direct", kind="shared", owner_user_id=user["id"], access_plan=family["id"], path=db)
-    disabled = admin_store.create_app("Disabled", kind="shared", owner_user_id=user["id"], access_plan=family["id"], path=db)
+    admin_store.create_app("Direct", kind="service", owner_user_id=user["id"], access_plan=family["id"], path=db)
+    disabled = admin_store.create_app("Disabled", kind="service", owner_user_id=user["id"], access_plan=family["id"], path=db)
     with admin_store._conn(db) as conn:
         conn.execute("UPDATE apps SET disabled_at=1 WHERE id=?", (disabled["id"],))
         # Test owner state independently: Direct remains enabled.
