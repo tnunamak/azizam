@@ -1,0 +1,79 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.flux2-klein
+intent: image.generate
+display_name: FLUX.2 Klein 9B
+purpose: Detailed images from a prompt
+description: Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.
+source: local
+trusted: true
+typical_seconds: 6
+inputs:
+  prompt:
+    label: description
+    help: Describe what you want to make.
+    type: string
+    required: true
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    label: steps
+    help: More steps take longer.
+    type: integer
+    minimum: 1
+    maximum: 100
+  guidance:
+    label: prompt guidance
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "27"
+          input: width
+      height:
+        - node: "27"
+          input: height
+      steps:
+        - node: "31"
+          input: steps
+      guidance:
+        - node: "35"
+          input: guidance
+      seed:
+        - node: "31"
+          input: seed
+      batch_size:
+        - node: "27"
+          input: batch_size
