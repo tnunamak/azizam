@@ -634,7 +634,7 @@ def _plan_removal(
                 hides.append((asset_id, job_id))
         if everything_gone:
             job_ids.append(job_id)
-            if not any(asset_id in gone_assets for asset_id in gone):
+            if all(asset_id in deleted or (asset_id, job_id) in hidden for asset_id in gone):
                 unshown_jobs.append(job_id)
     return _Removal(tuple(gone_assets), tuple(hides), tuple(job_ids), tuple(unshown_jobs))
 

@@ -163,7 +163,6 @@ class RemoveMissingTests(unittest.TestCase):
         with sqlite3.connect(self.jobs_db) as conn:
             media_jobs.hide_assets_in(conn, self.alice["id"], [(asset("A"), hidden_job)])
         scoped_jobs = me_media._scoped_jobs
-        selections = []
         for hidden_first in (False, True):
             with self.subTest(hidden_first=hidden_first):
                 def ordered_jobs(*args, **kwargs):
@@ -180,9 +179,8 @@ class RemoveMissingTests(unittest.TestCase):
                         self.alice["id"], storage, admin_path=self.admin_db,
                         jobs_path=self.jobs_db, receipts_path=self.receipts_db,
                     )
-                    selections.append((set(plan.job_ids), plan.missing_count()))
-        self.assertEqual(selections[0], selections[1])
-        self.assertEqual(selections[0][0], {hidden_job, self.job_ids("visible")[0]})
+                    self.assertEqual(set(plan.job_ids), {hidden_job, self.job_ids("visible")[0]})
+                    self.assertEqual(plan.missing_count(), 2)
         response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 2})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 1, "removed_jobs": 2})

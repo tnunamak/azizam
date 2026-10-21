@@ -404,22 +404,15 @@ interface RemovalDialog {
   /** The folder gives no ground to remove anything yet, so the confirmation is not offered. */
   blocked: boolean;
 }
-function itemCount(count: number) {
-  return `${count} ${count === 1 ? "item" : "items"}`;
-}
 function removalDialog(folder: MediaFolderView | null, own: number): RemovalDialog {
   const open = folderToConfirm(folder);
-  const label = `Remove ${itemCount(own)}`;
-  const title = `Remove ${own} missing ${own === 1 ? "item" : "items"}?`;
+  const label = `Remove ${own} ${own === 1 ? "entry" : "entries"}`;
+  const title = own === 1 ? "Remove 1 entry with a missing file?" : `Remove ${own} entries with missing files?`;
+  const body = "Removes your entries for missing files, including saved job records whose media was already hidden or deleted. Receipts and stored files stay.";
   if (!open) {
     return {
       title,
-      body: own === 1 ? (
-        <>
-          <span className="block">Removes it and its saved prompt from your Library. Receipts stay.</span>
-          <span className="block">The stored file is not touched.</span>
-        </>
-      ) : "Removes them and their saved prompts from your Library. Receipts and every stored file stay.",
+      body,
       confirmLabel: label,
       blocked: false,
     };
@@ -451,18 +444,13 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
       blocked: true,
     };
   }
-  // The viewer's own count comes first and says it is theirs; the folder evidence is the whole Library's.
-  const yours = `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
   const evidence = libraryEvidenceSentence(path, checked, here);
   return {
     title,
     body: (
       <>
         {changed}
-        <span className="block">
-          {`${yours} Removing ${own !== 1 ? "them deletes their" : "it deletes its"} Library ${own !== 1 ? "entries" : "entry"} and saved ${own !== 1 ? "prompts" : "prompt"}${own === 1 ? "." : "; the stored files are not touched."}`}
-        </span>
-        {own === 1 ? <span className="block">The stored file is not touched.</span> : null}
+        <span className="block">{body}</span>
         {evidence ? <span className="block">{evidence}</span> : null}
       </>
     ),
@@ -2790,7 +2778,7 @@ export default function LibraryPage() {
       const session = await mediaRequest<{ csrf_token: string }>(
         "/me/api/session",
       );
-      return mediaRequest<{ removed_assets: number }>(
+      return mediaRequest<{ removed_assets: number; removed_jobs: number }>(
         REMOVE_MISSING_PATH,
         {
           method: "POST",
@@ -2804,9 +2792,11 @@ export default function LibraryPage() {
         "delete",
       );
     },
-    onSuccess: ({ removed_assets: removed }) => {
+    onSuccess: ({ removed_assets, removed_jobs }) => {
       setDeleteAnnouncement(
-        `Removed ${removed} missing ${removed === 1 ? "item" : "items"} from your Library.`,
+        removed_assets > 0 || removed_jobs > 0
+          ? "Removed missing Library entries. Receipts and stored files were kept."
+          : "No missing entries needed removal.",
       );
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
@@ -3202,7 +3192,7 @@ export default function LibraryPage() {
                 : removalPending
                 ? "Checking the whole Library…"
                 : missingItemCount > 0
-                ? `${itemCount(missingItemCount)} missing across your Library.`
+                ? `${missingItemCount} ${missingItemCount === 1 ? "entry with a missing file" : "entries with missing files"} across your Library.`
                 : goneAssets.length === 1
                 ? goneConfirmed
                   ? "1 file is no longer stored."
