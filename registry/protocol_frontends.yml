@@ -8,6 +8,8 @@
 # they stay `lenient`, because clients send fields these translators do not map and a refusal would break them.
 records:
   - id: openai
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [openai.chat, openai.responses, openai.images, openai.audio, openai.video, openai.decisions, openai.models, openai.rerank]
     name: OpenAI-compatible
     protocol: openai
     source: builtin
@@ -387,6 +389,8 @@ records:
         - images variations route through a configurable edit-capable workflow (images.variations.default_workflow) with a fixed generic prompt, since there is no local model dedicated to variations
         - assistants, files, batches, fine-tuning, and realtime routes are registered but return OpenAI-shaped unsupported_operation errors
   - id: typesafe
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [typesafe.systemone, typesafe.models]
     name: TypeSafe-compatible decisions
     protocol: typesafe
     source: builtin
@@ -411,6 +415,8 @@ records:
       base_url_recipe: "Set TYPESAFE_BASE_URL to the gateway root plus /typesafe."
       endpoints: [/typesafe/v1/systemone, /typesafe/v1/models, /v1/systemone]
   - id: anthropic
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [anthropic.messages]
     name: Anthropic Messages-compatible
     protocol: anthropic
     source: builtin
@@ -503,6 +509,8 @@ records:
         - /v1/models remains OpenAI-shaped; use /anthropic/v1/models for Anthropic ModelInfoList
         - count_tokens is a best-effort gateway estimator
   - id: ollama
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [ollama.chat, ollama.generate, ollama.embeddings, ollama.models, ollama.tags]
     name: Ollama-compatible
     protocol: ollama
     source: builtin
@@ -714,6 +722,8 @@ records:
         - model lifecycle endpoints create/pull/push/copy/delete do not mutate local model files through the gateway
         - backend-native options without portable meaning are rejected
   - id: gateway
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [gateway.media, azizam.make]
     name: Gateway-native
     protocol: gateway
     source: builtin
@@ -765,6 +775,8 @@ records:
         - /openai/v1/audio/generate and /v1/audio/generate are gateway-native music/SFX generation routes, not OpenAI SDK-compatible audio endpoints
         - signed asset content URLs are bearerless capability URLs until expiry; asset metadata and input reuse remain API-key scoped
   - id: provider-native
+    # Stored-receipt protocol vocabulary; owner projections read this data.
+    receipt_protocols: [provider-native]
     name: Provider-native passthrough
     protocol: provider-native
     source: builtin
