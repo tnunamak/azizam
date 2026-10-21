@@ -1,0 +1,3166 @@
+{
+  "event_writers": [
+    {
+      "call": "_event",
+      "event": "'cancel_requested'",
+      "function": "cancel_job",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395"
+    },
+    {
+      "call": "_event",
+      "event": "'canceled'",
+      "function": "_settle_canceled",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "4c68fcb1181d52c288bb5a156e1cfeac5900026dd6e3369c4ca9d2f19fc99047"
+    },
+    {
+      "call": "_event",
+      "event": "'canceled'",
+      "function": "cancel_job",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395"
+    },
+    {
+      "call": "_event",
+      "event": "'failed'",
+      "function": "_fail",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "af7f5578ddb3fd68d40ee2206486d28ad5c9546fd6c2e6d957ba20af6e9b81a3"
+    },
+    {
+      "call": "_event",
+      "event": "'queued'",
+      "function": "_submit",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc"
+    },
+    {
+      "call": "_event",
+      "event": "'started'",
+      "function": "_run",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa"
+    },
+    {
+      "call": "_event",
+      "event": "'succeeded'",
+      "function": "_run",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa"
+    },
+    {
+      "call": "append_client_event",
+      "event": "event_type",
+      "function": "store_event_appender",
+      "path": "gateway/api.py",
+      "access": "content:job:read",
+      "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
+      "source_sha256": "0db5dabdb5beb2bf94a9106a03547f9074cfdccaed26a5b9950e9bed1fb9734a",
+      "resolved_types": [
+        "progress",
+        "note"
+      ]
+    },
+    {
+      "call": "append_event",
+      "event": "'attempt'",
+      "function": "_run_image_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+    },
+    {
+      "call": "append_event",
+      "event": "'completed'",
+      "function": "_run_audio_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d"
+    },
+    {
+      "call": "append_event",
+      "event": "'completed'",
+      "function": "_run_video_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+    },
+    {
+      "call": "append_event",
+      "event": "'failed'",
+      "function": "_mark_audio_media_job_failed",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "02a43e7d19baebb7a88822ccd7c60e2d2ded969b8b24fbc3375fc3d383647b21"
+    },
+    {
+      "call": "append_event",
+      "event": "'failed'",
+      "function": "_mark_image_media_job_failed",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "04581e1ce993af41eddb64a2b54484e1ff9eb583c115fbf30f131bc2f01fea65"
+    },
+    {
+      "call": "append_event",
+      "event": "'failed'",
+      "function": "_mark_video_media_job_failed",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "9baa99f1b40d6a95b147b9da15d193aee891952b5c163c3faf9dad0dfd4db3e4"
+    },
+    {
+      "call": "append_event",
+      "event": "'progress'",
+      "function": "_run_video_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+    },
+    {
+      "call": "append_event",
+      "event": "'progress'",
+      "function": "report",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "7d57b65f4619d79f7dbade4a58d8fa382b27db5117dc423438cc8c356a92cd2b"
+    },
+    {
+      "call": "append_event",
+      "event": "'queued'",
+      "function": "_submit_audio_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8530c9b2098ba50cde6e0a300198f8e457d278fadd8613e0be5f550cd65f8c22"
+    },
+    {
+      "call": "append_event",
+      "event": "'queued'",
+      "function": "_submit_video_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "4600c7ffa51a2c0576894ac4c7df1d1df3a8f4b5e00c066d3f2188ddafd6db73"
+    },
+    {
+      "call": "append_event",
+      "event": "'queued'",
+      "function": "gateway_image_generations_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "eb22b324241d00f466535e0cc22255c1bb90bf0ef5bdc7d86ef58e737d9976bf"
+    },
+    {
+      "call": "append_event",
+      "event": "'retry'",
+      "function": "_run_image_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+    },
+    {
+      "call": "append_event",
+      "event": "'retry'",
+      "function": "_run_image_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+    },
+    {
+      "call": "append_event",
+      "event": "'started'",
+      "function": "_run_audio_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d"
+    },
+    {
+      "call": "append_event",
+      "event": "'started'",
+      "function": "_run_image_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+    },
+    {
+      "call": "append_event",
+      "event": "'started'",
+      "function": "_run_video_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+    },
+    {
+      "call": "append_event",
+      "event": "'submitted'",
+      "function": "_run_video_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+    },
+    {
+      "call": "append_event",
+      "event": "'succeeded'",
+      "function": "_protocol_image_result",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "ff9be2f2c4ebfbfa7330965d633a1a990c7a303b8091488030fe238f76c08f2f"
+    },
+    {
+      "call": "append_event",
+      "event": "'succeeded'",
+      "function": "_run_identity_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "7758f5955141dda2b0be4ace038ce8de3112e23e61e8261cc50c31b4d4becf62"
+    },
+    {
+      "call": "append_event",
+      "event": "'succeeded'",
+      "function": "_run_image_media_job",
+      "path": "proxy.py",
+      "access": "content:job:read",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+    },
+    {
+      "call": "append_event",
+      "event": "event_type",
+      "function": "append_client_event",
+      "path": "gateway/media_jobs.py",
+      "access": "content:job:read",
+      "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
+      "source_sha256": "00e205787901d5bf147325d7440b8a34abe5b84aa5cf8e41f9b416f9fc23b513",
+      "resolved_types": [
+        "progress",
+        "note"
+      ]
+    },
+    {
+      "call": "append_event",
+      "event": "kind",
+      "function": "_event",
+      "path": "gateway/me_make.py",
+      "access": "content:job:read",
+      "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
+      "source_sha256": "33f8dbd97bebb11094b3975584065f7459cd10ea878ed12bc97ce0b1a97ede3e",
+      "resolved_types": [
+        "queued",
+        "started",
+        "succeeded",
+        "failed",
+        "canceled",
+        "cancel_requested"
+      ]
+    }
+  ],
+  "mcp_fields": {
+    "aliases": "none",
+    "allowed_origins": "none",
+    "authenticate": "none",
+    "authorization_servers": "none",
+    "call": "content:creation:reuse+content:job:read+content:job:cancel+content:voice:read",
+    "catalog": "none",
+    "owner_visible": "none",
+    "poll_interval": "none",
+    "public_base_url": "none",
+    "read_asset": "content:creation:reuse",
+    "rename": "own-account",
+    "retention_ledger": "content:receipt:read+none",
+    "retention_visible": "none",
+    "scopes": "none",
+    "server_version": "none",
+    "store_asset": "content:creation:link",
+    "stt_measurement": "operational",
+    "visible": "none"
+  },
+  "mcp_tools": [
+    {
+      "actions": [],
+      "name": "capabilities",
+      "parameters": [
+        "intent",
+        "query",
+        "target"
+      ],
+      "access": "none+content:voice:read",
+      "operations": {
+        "list": "none",
+        "describe": "none",
+        "speech-voices": "content:voice:read"
+      }
+    },
+    {
+      "actions": [],
+      "name": "run",
+      "parameters": [
+        "inputs",
+        "mode",
+        "target",
+        "wait_seconds"
+      ],
+      "access": "content:creation:reuse+content:voice:reuse+content:creation:link",
+      "operations": {
+        "workflow-auto": "content:creation:reuse+content:creation:link",
+        "workflow-sync": "content:creation:reuse+content:creation:link",
+        "workflow-async": "content:creation:reuse+content:job:read",
+        "speech": "content:voice:reuse+content:creation:link"
+      }
+    },
+    {
+      "actions": [],
+      "name": "job",
+      "parameters": [
+        "cancel",
+        "job_id",
+        "wait_seconds"
+      ],
+      "access": "content:job:read+content:job:cancel+content:creation:link",
+      "operations": {
+        "poll": "content:job:read",
+        "wait": "content:job:read",
+        "content": "content:job:read+content:creation:link",
+        "cancel": "content:job:cancel"
+      }
+    },
+    {
+      "actions": [],
+      "name": "rename_app",
+      "parameters": [
+        "app",
+        "name"
+      ],
+      "access": "own-account",
+      "operations": {
+        "rename": "own-account"
+      }
+    },
+    {
+      "actions": [],
+      "name": "rename_key",
+      "parameters": [
+        "app",
+        "key",
+        "name"
+      ],
+      "access": "own-account",
+      "operations": {
+        "rename": "own-account"
+      }
+    },
+    {
+      "actions": [
+        "options",
+        "configure",
+        "start",
+        "status",
+        "cancel",
+        "apply"
+      ],
+      "name": "stt_measurement",
+      "parameters": [
+        "action",
+        "inputs",
+        "job_id",
+        "revision",
+        "service_id",
+        "settings"
+      ],
+      "access": "operational",
+      "operations": {
+        "options": "operational",
+        "configure": "operational",
+        "start": "operational",
+        "status": "operational",
+        "cancel": "operational",
+        "apply": "operational"
+      }
+    },
+    {
+      "actions": [
+        "ledger"
+      ],
+      "name": "requests",
+      "parameters": [
+        "action",
+        "request_id"
+      ],
+      "access": "content:receipt:read+none",
+      "operations": {
+        "ledger-with-request-id": "content:receipt:read",
+        "ledger-without-request-id": "none"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "handler": "fastapi.applications.FastAPI.setup.<locals>.openapi",
+      "method": "GET",
+      "path": "/openapi.json",
+      "access": "none"
+    },
+    {
+      "handler": "fastapi.applications.FastAPI.setup.<locals>.openapi",
+      "method": "HEAD",
+      "path": "/openapi.json",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/latent-upscale-modes",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/options",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/progress",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/samplers",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/schedulers",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/sd-models",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/sd-vae",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "GET",
+      "path": "/sdapi/v1/upscalers",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/extra-batch-images",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/extra-single-image",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/img2img",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/interrogate",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/interrupt",
+      "access": "content:job:cancel"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/options",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/png-info",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.a1111_api.register_a1111_routes.<locals>.guarded.<locals>.route",
+      "method": "POST",
+      "path": "/sdapi/v1/txt2img",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.accept",
+      "method": "POST",
+      "path": "/auth/api/invite/accept",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.copy_invite",
+      "method": "GET",
+      "path": "/admin/api/invites/{link_id}/link",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.create_invite",
+      "method": "POST",
+      "path": "/admin/api/invites",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.get_options",
+      "method": "GET",
+      "path": "/auth/api/options",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.inspect",
+      "method": "POST",
+      "path": "/auth/api/invite",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.invites",
+      "method": "GET",
+      "path": "/admin/api/invites",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.login",
+      "method": "POST",
+      "path": "/auth/api/login",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.people",
+      "method": "GET",
+      "path": "/admin/api/people",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.reauth",
+      "method": "POST",
+      "path": "/auth/api/reauth",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.remove_person",
+      "method": "DELETE",
+      "path": "/admin/api/people/{user_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.reset",
+      "method": "POST",
+      "path": "/auth/api/password-reset",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.reset_link",
+      "method": "POST",
+      "path": "/admin/api/people/{user_id}/reset",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.revoke_invite",
+      "method": "DELETE",
+      "path": "/admin/api/invites/{link_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.sign_out_everywhere",
+      "method": "POST",
+      "path": "/auth/api/sign-out-everywhere",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.update_person",
+      "method": "PATCH",
+      "path": "/admin/api/people/{user_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.activity_api.create_activity_router.<locals>.requests",
+      "method": "GET",
+      "path": "/admin/api/activity/requests",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.access_plan_editor",
+      "method": "GET",
+      "path": "/admin/api/access-plans/editor",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.add_service",
+      "method": "POST",
+      "path": "/admin/api/operator/services",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.add_trusted_address",
+      "method": "POST",
+      "path": "/admin/api/apps/{app_id}/trusted-addresses",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.audit",
+      "method": "GET",
+      "path": "/admin/api/audit",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.audit_event",
+      "method": "GET",
+      "path": "/admin/api/audit/{event_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.audit_events",
+      "method": "GET",
+      "path": "/admin/api/audit-events",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.change_secret_entries",
+      "method": "POST",
+      "path": "/admin/api/operator/services/{service_id}/secret-entries",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.check_access",
+      "method": "POST",
+      "path": "/admin/api/access/check",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.create_access_plan",
+      "method": "POST",
+      "path": "/admin/api/access-plans",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.create_admin_key",
+      "method": "POST",
+      "path": "/admin/api/admin-keys",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.create_app",
+      "method": "POST",
+      "path": "/admin/api/apps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.create_key",
+      "method": "POST",
+      "path": "/admin/api/apps/{app_id}/keys",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.create_litellm_key",
+      "method": "POST",
+      "path": "/admin/api/operator/litellm/keys",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.delete_access_plan",
+      "method": "DELETE",
+      "path": "/admin/api/access-plans/{plan_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.delete_credential",
+      "method": "DELETE",
+      "path": "/admin/api/credentials/{credential_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.delete_litellm_keys",
+      "method": "POST",
+      "path": "/admin/api/operator/litellm/keys/delete",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.delete_trusted_address",
+      "method": "DELETE",
+      "path": "/admin/api/apps/{app_id}/trusted-addresses/{entry_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.detect_service_models",
+      "method": "POST",
+      "path": "/admin/api/operator/services/detect-models",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.disable_app",
+      "method": "DELETE",
+      "path": "/admin/api/apps/{app_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.enable_app",
+      "method": "POST",
+      "path": "/admin/api/apps/{app_id}/enable",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.enable_extension_package",
+      "method": "POST",
+      "path": "/admin/api/extensions/enable",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.fix_excluded_record",
+      "method": "PUT",
+      "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_access_plan",
+      "method": "GET",
+      "path": "/admin/api/access-plans/{plan_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_host_commands",
+      "method": "GET",
+      "path": "/admin/api/operator/host-commands",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_litellm_config",
+      "method": "GET",
+      "path": "/admin/api/operator/litellm-config",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.get_service_registry",
+      "method": "GET",
+      "path": "/admin/api/operator/service-registry",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_access_plans",
+      "method": "GET",
+      "path": "/admin/api/access-plans",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_apps",
+      "method": "GET",
+      "path": "/admin/api/apps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_credentials",
+      "method": "GET",
+      "path": "/admin/api/credentials",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_extension_packages",
+      "method": "GET",
+      "path": "/admin/api/extensions",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_litellm_keys",
+      "method": "GET",
+      "path": "/admin/api/operator/litellm/keys",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_operator_overrides",
+      "method": "GET",
+      "path": "/admin/api/operator/overrides",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_trusted_addresses",
+      "method": "GET",
+      "path": "/admin/api/apps/{app_id}/trusted-addresses",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.list_users",
+      "method": "GET",
+      "path": "/admin/api/users",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.overview",
+      "method": "GET",
+      "path": "/admin/api/overview",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.preview_access",
+      "method": "POST",
+      "path": "/admin/api/access/preview",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.remove_excluded_record",
+      "method": "DELETE",
+      "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.remove_extension_package",
+      "method": "DELETE",
+      "path": "/admin/api/extensions/{package_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.remove_service",
+      "method": "DELETE",
+      "path": "/admin/api/operator/services/{service_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.rename_key",
+      "method": "PATCH",
+      "path": "/admin/api/apps/{app_id}/keys/{credential_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.revoke_credential",
+      "method": "POST",
+      "path": "/admin/api/credentials/{credential_id}/revoke",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.session",
+      "method": "GET",
+      "path": "/admin/api/session",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.set_service_enabled",
+      "method": "POST",
+      "path": "/admin/api/operator/services/{service_id}/enabled",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.status_payload",
+      "method": "GET",
+      "path": "/admin/api/status",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.test_service_connection",
+      "method": "POST",
+      "path": "/admin/api/operator/services/test",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_access_plan",
+      "method": "PUT",
+      "path": "/admin/api/access-plans/{plan_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_app",
+      "method": "PATCH",
+      "path": "/admin/api/apps/{app_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_host_commands",
+      "method": "PUT",
+      "path": "/admin/api/operator/host-commands",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_media_job_admission_overrides",
+      "method": "PUT",
+      "path": "/admin/api/operator/media-job-admission",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_service",
+      "method": "PATCH",
+      "path": "/admin/api/operator/services/{service_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_service_availability_overrides",
+      "method": "PUT",
+      "path": "/admin/api/operator/service-availability",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.update_service_registry",
+      "method": "PUT",
+      "path": "/admin/api/operator/service-registry",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.admin_api.create_admin_router.<locals>.validate_extension_package",
+      "method": "POST",
+      "path": "/admin/api/extensions/validate",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.append_media_job_event",
+      "method": "POST",
+      "path": "/gateway/v1/media/jobs/{job_id}/events",
+      "access": "own-account+content:job:read",
+      "note": "Legacy client event append uses job ownership; v3 lists no separate append action."
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.cancel_media_job",
+      "method": "POST",
+      "path": "/gateway/v1/media/jobs/{job_id}/cancel",
+      "access": "content:job:cancel"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.create_media_job",
+      "method": "POST",
+      "path": "/gateway/v1/media/jobs",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.get_media_job",
+      "method": "GET",
+      "path": "/gateway/v1/media/jobs/{job_id}",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.get_model_capabilities",
+      "method": "GET",
+      "path": "/gateway/v1/models/{model}/capabilities",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.get_receipt",
+      "method": "GET",
+      "path": "/gateway/v1/receipts/{request_id}",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.get_workflow",
+      "method": "GET",
+      "path": "/gateway/v1/workflows/{workflow_id}",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_aliases",
+      "method": "GET",
+      "path": "/gateway/v1/aliases",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_capabilities",
+      "method": "GET",
+      "path": "/gateway/v1/capabilities",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_extensions",
+      "method": "GET",
+      "path": "/gateway/v1/extensions",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_media_job_events",
+      "method": "GET",
+      "path": "/gateway/v1/media/jobs/{job_id}/events",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_media_jobs",
+      "method": "GET",
+      "path": "/gateway/v1/media/jobs",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_receipts",
+      "method": "GET",
+      "path": "/gateway/v1/receipts",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_resources",
+      "method": "GET",
+      "path": "/gateway/v1/resources",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.list_workflows",
+      "method": "GET",
+      "path": "/gateway/v1/workflows",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_gateway_router.<locals>.resolve_alias_dry_run",
+      "method": "GET",
+      "path": "/gateway/v1/aliases/resolve",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_request_retention_router.<locals>.current_retention_ledger",
+      "method": "GET",
+      "path": "/admin/api/me/retention/ledger",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api.create_request_retention_router.<locals>.request_retention_ledger",
+      "method": "GET",
+      "path": "/admin/api/requests/{request_id}/retention/ledger",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.api_reference.register_api_reference.<locals>.reference",
+      "method": "GET",
+      "path": "/docs",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.api_reference.register_api_reference.<locals>.reference",
+      "method": "GET",
+      "path": "/redoc",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "GET",
+      "path": "/admin/api/categories/active",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "GET",
+      "path": "/admin/api/categories/history",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "GET",
+      "path": "/admin/api/categories/revisions/{revision}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "GET",
+      "path": "/admin/api/categories/services",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "POST",
+      "path": "/admin/api/categories/candidates/{revision}/activate",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "POST",
+      "path": "/admin/api/categories/candidates",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "POST",
+      "path": "/admin/api/categories/preview-as",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.category_api.create_category_router.<locals>.install.<locals>.endpoint",
+      "method": "POST",
+      "path": "/admin/api/categories/revisions/{revision}/restore",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.decisions_api.register_decision_routes.<locals>.list_typesafe_models",
+      "method": "GET",
+      "path": "/typesafe/v1/models",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.decisions_api.register_decision_routes.<locals>.reserved_openai_decisions",
+      "method": "POST",
+      "path": "/v1/decisions",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.decisions_api.register_decision_routes.<locals>.systemone",
+      "method": "POST",
+      "path": "/typesafe/v1/systemone",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.decisions_api.register_decision_routes.<locals>.systemone",
+      "method": "POST",
+      "path": "/v1/systemone",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.check_engine",
+      "method": "POST",
+      "path": "/admin/api/engines/check",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.engine_access",
+      "method": "POST",
+      "path": "/admin/api/engines/access",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.get_engine",
+      "method": "GET",
+      "path": "/admin/api/engines/{service_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.get_engine_definitions",
+      "method": "GET",
+      "path": "/admin/api/engine-definitions",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_admin.register_engine_routes.<locals>.test_engine",
+      "method": "POST",
+      "path": "/admin/api/engines/test",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.engine_protocols",
+      "method": "GET",
+      "path": "/admin/api/engine-protocols",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.connection_test",
+      "method": "POST",
+      "path": "/me/api/connection-test",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.dismiss_setup",
+      "method": "POST",
+      "path": "/admin/api/setup-dismiss",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.home",
+      "method": "GET",
+      "path": "/me/api/home",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.member_status",
+      "method": "GET",
+      "path": "/me/api/status",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.setup_evidence",
+      "method": "POST",
+      "path": "/admin/api/setup-evidence",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.home_api.create_home_router.<locals>.setup_progress",
+      "method": "GET",
+      "path": "/admin/api/setup-progress",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.identity_api.register_identity_routes.<locals>.identity_route",
+      "method": "POST",
+      "path": "/gateway/v1/images/identity",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.identity_api.register_identity_routes.<locals>.likeness_route",
+      "method": "POST",
+      "path": "/gateway/v1/faces/likeness",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.as_metadata",
+      "method": "GET",
+      "path": "/.well-known/oauth-authorization-server",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.authorize",
+      "method": "GET",
+      "path": "/oauth/authorize",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.connections",
+      "method": "GET",
+      "path": "/me/api/mcp/connections",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.consent_decision",
+      "method": "POST",
+      "path": "/me/api/mcp/requests/{request_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.consent_details",
+      "method": "GET",
+      "path": "/me/api/mcp/requests/{request_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.preflight",
+      "method": "OPTIONS",
+      "path": "/.well-known/oauth-authorization-server",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.preflight",
+      "method": "OPTIONS",
+      "path": "/oauth/register",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.preflight",
+      "method": "OPTIONS",
+      "path": "/oauth/revoke",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.preflight",
+      "method": "OPTIONS",
+      "path": "/oauth/token",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.register_client",
+      "method": "POST",
+      "path": "/oauth/register",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.revoke",
+      "method": "POST",
+      "path": "/oauth/revoke",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.revoke_connection",
+      "method": "POST",
+      "path": "/me/api/mcp/connections/{grant_id}/revoke",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.token",
+      "method": "POST",
+      "path": "/oauth/token",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_server.register_mcp_routes.<locals>.mcp_no_stream",
+      "method": "DELETE",
+      "path": "/mcp",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_server.register_mcp_routes.<locals>.mcp_no_stream",
+      "method": "GET",
+      "path": "/mcp",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_server.register_mcp_routes.<locals>.mcp_post",
+      "method": "POST",
+      "path": "/mcp",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_server.register_mcp_routes.<locals>.protected_resource",
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.mcp_server.register_mcp_routes.<locals>.protected_resource",
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource/mcp",
+      "access": "none"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.get_avatar",
+      "method": "GET",
+      "path": "/me/api/profile/avatar",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.get_picture",
+      "method": "GET",
+      "path": "/me/api/profile/avatar/picture",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.list_avatars",
+      "method": "GET",
+      "path": "/me/api/profile/avatars",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.put_avatar",
+      "method": "PUT",
+      "path": "/me/api/profile/avatar",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_make.add_make_routes.<locals>.cancel_job",
+      "method": "POST",
+      "path": "/me/api/make/jobs/{job_id}/cancel",
+      "access": "content:job:cancel"
+    },
+    {
+      "handler": "gateway.me_make.add_make_routes.<locals>.get_job",
+      "method": "GET",
+      "path": "/me/api/make/jobs/{job_id}",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.me_make.add_make_routes.<locals>.list_jobs",
+      "method": "GET",
+      "path": "/me/api/make/jobs",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.me_make.add_make_routes.<locals>.submit",
+      "method": "POST",
+      "path": "/me/api/make/jobs",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.confirm_media_folder",
+      "method": "POST",
+      "path": "/me/api/media/confirm-folder",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.delete_media",
+      "method": "DELETE",
+      "path": "/me/api/media/{asset_id}",
+      "access": "content:creation:delete"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.job_detail",
+      "method": "GET",
+      "path": "/me/api/jobs/{job_id}",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.list_jobs",
+      "method": "GET",
+      "path": "/me/api/jobs",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.list_media",
+      "method": "GET",
+      "path": "/me/api/media",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.media_detail",
+      "method": "GET",
+      "path": "/me/api/media/{asset_id}",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.media_download",
+      "method": "GET",
+      "path": "/me/api/media/{asset_id}/download",
+      "access": "content:creation:link"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.remove_missing_media",
+      "method": "POST",
+      "path": "/me/api/media/remove-missing",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_media.create_me_media_router.<locals>.usage_summary",
+      "method": "GET",
+      "path": "/me/api/usage/summary",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.delete_prompt_memory",
+      "method": "DELETE",
+      "path": "/me/api/prompt-memory/prompts",
+      "access": "content:prompt:delete"
+    },
+    {
+      "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.get_prompt_memory",
+      "method": "GET",
+      "path": "/me/api/prompt-memory",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.put_prompt_memory",
+      "method": "PUT",
+      "path": "/me/api/prompt-memory",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.models_catalog.create_models_catalog_router.<locals>.models_catalog",
+      "method": "GET",
+      "path": "/me/api/models/catalog",
+      "access": "none+content:receipt:read"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.add_provider",
+      "method": "POST",
+      "path": "/admin/api/providers",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.clear_global_caps",
+      "method": "DELETE",
+      "path": "/admin/api/providers/-/global-caps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.clear_provider_caps",
+      "method": "DELETE",
+      "path": "/admin/api/providers/{provider_id}/caps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.delete_provider_key",
+      "method": "DELETE",
+      "path": "/admin/api/providers/{provider_id}/key",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.get_provider",
+      "method": "GET",
+      "path": "/admin/api/providers/{provider_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.list_catalog",
+      "method": "GET",
+      "path": "/admin/api/providers/-/catalog",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.list_provider_reconciliation",
+      "method": "GET",
+      "path": "/admin/api/providers/{provider_id}/reconciliation",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.list_providers",
+      "method": "GET",
+      "path": "/admin/api/providers",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.reconcile_provider_reservation",
+      "method": "POST",
+      "path": "/admin/api/providers/{provider_id}/reconciliation/{reservation_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.remove_provider",
+      "method": "DELETE",
+      "path": "/admin/api/providers/{provider_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.set_global_caps",
+      "method": "PUT",
+      "path": "/admin/api/providers/-/global-caps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.set_provider_caps",
+      "method": "PUT",
+      "path": "/admin/api/providers/{provider_id}/caps",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.set_provider_key",
+      "method": "PUT",
+      "path": "/admin/api/providers/{provider_id}/key",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.test_provider",
+      "method": "POST",
+      "path": "/admin/api/providers/{provider_id}/test",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.test_unsaved_provider",
+      "method": "POST",
+      "path": "/admin/api/providers/-/test",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.provider_admin.create_provider_admin_router.<locals>.update_provider_models",
+      "method": "PUT",
+      "path": "/admin/api/providers/{provider_id}/models",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.engine_ledger",
+      "method": "GET",
+      "path": "/admin/api/engines/{service_id}/retention/ledger",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.get_engine_facts",
+      "method": "GET",
+      "path": "/admin/api/engines/{service_id}/retention/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.get_provider_facts",
+      "method": "GET",
+      "path": "/admin/api/providers/{provider_id}/retention/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.get_system_facts",
+      "method": "GET",
+      "path": "/admin/api/settings/retention/systems/{system_id}/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.put_engine_facts",
+      "method": "PUT",
+      "path": "/admin/api/engines/{service_id}/retention/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.put_provider_facts",
+      "method": "PUT",
+      "path": "/admin/api/providers/{provider_id}/retention/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.put_system_facts",
+      "method": "PUT",
+      "path": "/admin/api/settings/retention/systems/{system_id}/facts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.retention_fact_api.register_routes.<locals>.retention_ledger",
+      "method": "GET",
+      "path": "/admin/api/settings/retention/ledger",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.export_effective",
+      "method": "GET",
+      "path": "/admin/api/settings/effective/export",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_defaults",
+      "method": "GET",
+      "path": "/admin/api/settings/defaults",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_effective",
+      "method": "GET",
+      "path": "/admin/api/settings/effective",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_instance",
+      "method": "GET",
+      "path": "/admin/api/settings/instance",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_prompt_memory",
+      "method": "GET",
+      "path": "/admin/api/settings/prompt-memory",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_receipts",
+      "method": "GET",
+      "path": "/admin/api/settings/receipts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.get_sessions",
+      "method": "GET",
+      "path": "/admin/api/settings/sessions",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.preview_receipts",
+      "method": "GET",
+      "path": "/admin/api/settings/receipts/preview",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.put_defaults",
+      "method": "PUT",
+      "path": "/admin/api/settings/defaults",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.put_instance",
+      "method": "PUT",
+      "path": "/admin/api/settings/instance",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.put_prompt_memory",
+      "method": "PUT",
+      "path": "/admin/api/settings/prompt-memory",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.put_receipts",
+      "method": "PUT",
+      "path": "/admin/api/settings/receipts",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.settings_api.create_settings_router.<locals>.put_sessions",
+      "method": "PUT",
+      "path": "/admin/api/settings/sessions",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.setup_api.build_setup_api_router.<locals>.setup_state",
+      "method": "GET",
+      "path": "/setup/api/state",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.begin_test",
+      "method": "GET",
+      "path": "/admin/api/signin/test/{test_id}/start",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.cancel_test",
+      "method": "DELETE",
+      "path": "/admin/api/signin/test/{test_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.discover_route",
+      "method": "POST",
+      "path": "/admin/api/signin/discover",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.dismiss_notice",
+      "method": "POST",
+      "path": "/admin/api/signin/notice/dismiss",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.get_snapshot",
+      "method": "GET",
+      "path": "/admin/api/signin",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.get_test",
+      "method": "GET",
+      "path": "/admin/api/signin/test/{test_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.link_owner",
+      "method": "POST",
+      "path": "/admin/api/signin/link-owner",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.owner_password",
+      "method": "POST",
+      "path": "/admin/api/signin/owner-password",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.preview",
+      "method": "POST",
+      "path": "/admin/api/signin/preview",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.save",
+      "method": "PUT",
+      "path": "/admin/api/signin",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.signin_api.create_signin_api.<locals>.start_test",
+      "method": "POST",
+      "path": "/admin/api/signin/test",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.apply",
+      "method": "POST",
+      "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/apply",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.cancel",
+      "method": "POST",
+      "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.configure",
+      "method": "PATCH",
+      "path": "/admin/api/engines/{service_id}/stt-settings",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.options",
+      "method": "GET",
+      "path": "/admin/api/engines/{service_id}/stt-measurements",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.progress",
+      "method": "GET",
+      "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.stt_measurement_api.register_routes.<locals>.start",
+      "method": "POST",
+      "path": "/admin/api/engines/{service_id}/stt-measurements",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.create_consent",
+      "method": "POST",
+      "path": "/openai/v1/audio/voice_consents",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.create_consent",
+      "method": "POST",
+      "path": "/v1/audio/voice_consents",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.create_voice",
+      "method": "POST",
+      "path": "/openai/v1/audio/voices",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.create_voice",
+      "method": "POST",
+      "path": "/v1/audio/voices",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.delete_consent",
+      "method": "DELETE",
+      "path": "/openai/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:delete"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.delete_consent",
+      "method": "DELETE",
+      "path": "/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:delete"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.delete_voice",
+      "method": "DELETE",
+      "path": "/openai/v1/audio/voices/{voice_id}",
+      "access": "content:voice:delete"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.delete_voice",
+      "method": "DELETE",
+      "path": "/v1/audio/voices/{voice_id}",
+      "access": "content:voice:delete"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.get_consent",
+      "method": "GET",
+      "path": "/openai/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.get_consent",
+      "method": "GET",
+      "path": "/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.get_voice",
+      "method": "GET",
+      "path": "/openai/v1/audio/voices/{voice_id}",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.get_voice",
+      "method": "GET",
+      "path": "/v1/audio/voices/{voice_id}",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.list_consents",
+      "method": "GET",
+      "path": "/openai/v1/audio/voice_consents",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.list_consents",
+      "method": "GET",
+      "path": "/v1/audio/voice_consents",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.rename_consent",
+      "method": "POST",
+      "path": "/openai/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.rename_consent",
+      "method": "POST",
+      "path": "/v1/audio/voice_consents/{consent_id}",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.update_voice",
+      "method": "POST",
+      "path": "/openai/v1/audio/voices/{voice_id}",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.update_voice",
+      "method": "POST",
+      "path": "/v1/audio/voices/{voice_id}",
+      "access": "content:voice:reuse"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.voice_sample",
+      "method": "GET",
+      "path": "/openai/v1/audio/voices/{voice_id}/sample",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.voices_api.register_voice_routes.<locals>.voice_sample",
+      "method": "GET",
+      "path": "/v1/audio/voices/{voice_id}/sample",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "gateway.workflows_catalog.create_workflows_catalog_router.<locals>.workflows_catalog",
+      "method": "GET",
+      "path": "/me/api/workflows",
+      "access": "none+content:receipt:read"
+    },
+    {
+      "handler": "proxy.admin_config_export",
+      "method": "GET",
+      "path": "/admin/api/config/export",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.admin_config_reload",
+      "method": "POST",
+      "path": "/admin/api/config/reload",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.admin_drain_set",
+      "method": "POST",
+      "path": "/admin/api/drain",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.admin_drain_status",
+      "method": "GET",
+      "path": "/admin/api/drain",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.admin_logout",
+      "method": "POST",
+      "path": "/logout",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.admin_oidc_callback",
+      "method": "GET",
+      "path": "/admin/oidc/callback",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.anthropic_count_tokens",
+      "method": "POST",
+      "path": "/anthropic/v1/messages/count_tokens",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.anthropic_count_tokens",
+      "method": "POST",
+      "path": "/v1/messages/count_tokens",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.anthropic_messages",
+      "method": "POST",
+      "path": "/anthropic/v1/messages",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.anthropic_messages",
+      "method": "POST",
+      "path": "/v1/messages",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.anthropic_model_retrieve",
+      "method": "GET",
+      "path": "/anthropic/v1/models/{model_id:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.anthropic_model_retrieve",
+      "method": "GET",
+      "path": "/openai/v1/models/{model_id:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.anthropic_model_retrieve",
+      "method": "GET",
+      "path": "/v1/models/{model_id:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.anthropic_models",
+      "method": "GET",
+      "path": "/anthropic/v1/models",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.assets_content",
+      "method": "GET",
+      "path": "/openai/v1/assets/{asset_id}/content",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.assets_content",
+      "method": "GET",
+      "path": "/v1/assets/{asset_id}/content",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.assets_thumbnail",
+      "method": "GET",
+      "path": "/v1/assets/{asset_id}/thumbnail",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.audio_generate",
+      "method": "POST",
+      "path": "/openai/v1/audio/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_generate",
+      "method": "POST",
+      "path": "/v1/audio/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_models",
+      "method": "GET",
+      "path": "/openai/v1/audio/models",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.audio_models",
+      "method": "GET",
+      "path": "/v1/audio/models",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.audio_speech",
+      "method": "POST",
+      "path": "/openai/v1/audio/speech",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_speech",
+      "method": "POST",
+      "path": "/v1/audio/speech",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_transcriptions",
+      "method": "POST",
+      "path": "/openai/v1/audio/transcriptions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_transcriptions",
+      "method": "POST",
+      "path": "/v1/audio/transcriptions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_translations",
+      "method": "POST",
+      "path": "/openai/v1/audio/translations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.audio_translations",
+      "method": "POST",
+      "path": "/v1/audio/translations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.browser_login",
+      "method": "GET",
+      "path": "/login",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.cancel_response",
+      "method": "POST",
+      "path": "/openai/v1/responses/{response_id}/cancel",
+      "access": "content:chat:cancel",
+      "note": "Current route is unsupported; step 3 must keep the chat cancel matrix cell Deny."
+    },
+    {
+      "handler": "proxy.cancel_response",
+      "method": "POST",
+      "path": "/v1/responses/{response_id}/cancel",
+      "access": "content:chat:cancel",
+      "note": "Current route is unsupported; step 3 must keep the chat cancel matrix cell Deny."
+    },
+    {
+      "handler": "proxy.chat_completions",
+      "method": "POST",
+      "path": "/openai/v1/chat/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.chat_completions",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.completions",
+      "method": "POST",
+      "path": "/openai/v1/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.completions",
+      "method": "POST",
+      "path": "/v1/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.count_response_input_tokens",
+      "method": "POST",
+      "path": "/openai/v1/responses/input_tokens",
+      "access": "own-account+content:chat:reuse"
+    },
+    {
+      "handler": "proxy.count_response_input_tokens",
+      "method": "POST",
+      "path": "/v1/responses/input_tokens",
+      "access": "own-account+content:chat:reuse"
+    },
+    {
+      "handler": "proxy.create_response",
+      "method": "POST",
+      "path": "/openai/v1/responses",
+      "access": "own-account+content:chat:reuse"
+    },
+    {
+      "handler": "proxy.create_response",
+      "method": "POST",
+      "path": "/v1/responses",
+      "access": "own-account+content:chat:reuse"
+    },
+    {
+      "handler": "proxy.delete_response",
+      "method": "DELETE",
+      "path": "/openai/v1/responses/{response_id}",
+      "access": "content:chat:delete"
+    },
+    {
+      "handler": "proxy.delete_response",
+      "method": "DELETE",
+      "path": "/v1/responses/{response_id}",
+      "access": "content:chat:delete"
+    },
+    {
+      "handler": "proxy.embeddings",
+      "method": "POST",
+      "path": "/openai/v1/embeddings",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.embeddings",
+      "method": "POST",
+      "path": "/v1/embeddings",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.gateway_asset_content",
+      "method": "GET",
+      "path": "/gateway/v1/assets/{asset_id}/content",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.gateway_asset_metadata",
+      "method": "GET",
+      "path": "/gateway/v1/assets/{asset_id}",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.gateway_image_generations_media_job",
+      "method": "POST",
+      "path": "/gateway/v1/media/jobs/image-generations",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.gateway_media_job_content",
+      "method": "GET",
+      "path": "/gateway/v1/media/jobs/{job_id}/content",
+      "access": "content:job:read+content:creation:link"
+    },
+    {
+      "handler": "proxy.health",
+      "method": "GET",
+      "path": "/health",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.images_content",
+      "method": "GET",
+      "path": "/openai/v1/images/{image_id}/content",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.images_content",
+      "method": "GET",
+      "path": "/v1/images/{image_id}/content",
+      "access": "content:creation:read"
+    },
+    {
+      "handler": "proxy.images_edits",
+      "method": "POST",
+      "path": "/openai/v1/images/edits",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.images_edits",
+      "method": "POST",
+      "path": "/v1/images/edits",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.images_generations",
+      "method": "POST",
+      "path": "/openai/v1/images/generations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.images_generations",
+      "method": "POST",
+      "path": "/v1/images/generations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.images_variations",
+      "method": "POST",
+      "path": "/openai/v1/images/variations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.images_variations",
+      "method": "POST",
+      "path": "/v1/images/variations",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.internal_litellm_current_chat_completions",
+      "method": "POST",
+      "path": "/internal/litellm/current/v1/chat/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.internal_litellm_current_completions",
+      "method": "POST",
+      "path": "/internal/litellm/current/v1/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.internal_litellm_local_chat_completions",
+      "method": "POST",
+      "path": "/internal/litellm/local/{backend}/v1/chat/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.list_models",
+      "method": "GET",
+      "path": "/openai/v1/models",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.list_models",
+      "method": "GET",
+      "path": "/v1/models",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.list_response_input_items",
+      "method": "GET",
+      "path": "/openai/v1/responses/{response_id}/input_items",
+      "access": "content:chat:read"
+    },
+    {
+      "handler": "proxy.list_response_input_items",
+      "method": "GET",
+      "path": "/v1/responses/{response_id}/input_items",
+      "access": "content:chat:read"
+    },
+    {
+      "handler": "proxy.list_voices",
+      "method": "GET",
+      "path": "/openai/v1/audio/voices",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "proxy.list_voices",
+      "method": "GET",
+      "path": "/openai/v1/voices",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "proxy.list_voices",
+      "method": "GET",
+      "path": "/v1/audio/voices",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "proxy.list_voices",
+      "method": "GET",
+      "path": "/v1/voices",
+      "access": "content:voice:read"
+    },
+    {
+      "handler": "proxy.llms_txt",
+      "method": "GET",
+      "path": "/llms.txt",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.logout_confirmation",
+      "method": "GET",
+      "path": "/auth/logout-confirm",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "DELETE",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "GET",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "OPTIONS",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "PATCH",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "POST",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.native_engine_request",
+      "method": "PUT",
+      "path": "/native/{engine_id}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.ollama_blobs",
+      "method": "HEAD",
+      "path": "/api/blobs/{digest}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_blobs",
+      "method": "HEAD",
+      "path": "/ollama/api/blobs/{digest}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_blobs",
+      "method": "POST",
+      "path": "/api/blobs/{digest}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_blobs",
+      "method": "POST",
+      "path": "/ollama/api/blobs/{digest}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_chat",
+      "method": "POST",
+      "path": "/api/chat",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_chat",
+      "method": "POST",
+      "path": "/ollama/api/chat",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_copy",
+      "method": "POST",
+      "path": "/api/copy",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_copy",
+      "method": "POST",
+      "path": "/ollama/api/copy",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_create",
+      "method": "POST",
+      "path": "/api/create",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_create",
+      "method": "POST",
+      "path": "/ollama/api/create",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_delete",
+      "method": "DELETE",
+      "path": "/api/delete",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_delete",
+      "method": "DELETE",
+      "path": "/ollama/api/delete",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_embed",
+      "method": "POST",
+      "path": "/api/embed",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_embed",
+      "method": "POST",
+      "path": "/ollama/api/embed",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_embeddings",
+      "method": "POST",
+      "path": "/api/embeddings",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_embeddings",
+      "method": "POST",
+      "path": "/ollama/api/embeddings",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_generate",
+      "method": "POST",
+      "path": "/api/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_generate",
+      "method": "POST",
+      "path": "/ollama/api/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_ps",
+      "method": "GET",
+      "path": "/api/ps",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_ps",
+      "method": "GET",
+      "path": "/ollama/api/ps",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_pull",
+      "method": "POST",
+      "path": "/api/pull",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_pull",
+      "method": "POST",
+      "path": "/ollama/api/pull",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_push",
+      "method": "POST",
+      "path": "/api/push",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_push",
+      "method": "POST",
+      "path": "/ollama/api/push",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_show",
+      "method": "POST",
+      "path": "/api/show",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_show",
+      "method": "POST",
+      "path": "/ollama/api/show",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.ollama_tags",
+      "method": "GET",
+      "path": "/api/tags",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_tags",
+      "method": "GET",
+      "path": "/ollama/api/tags",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_version",
+      "method": "GET",
+      "path": "/api/version",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.ollama_version",
+      "method": "GET",
+      "path": "/ollama/api/version",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "DELETE",
+      "path": "/openai/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "GET",
+      "path": "/openai/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "PATCH",
+      "path": "/openai/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "POST",
+      "path": "/openai/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "PUT",
+      "path": "/openai/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "DELETE",
+      "path": "/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "GET",
+      "path": "/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "PATCH",
+      "path": "/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "POST",
+      "path": "/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_assistants_unsupported",
+      "method": "PUT",
+      "path": "/v1/assistants{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "DELETE",
+      "path": "/openai/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "GET",
+      "path": "/openai/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "POST",
+      "path": "/openai/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "DELETE",
+      "path": "/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "GET",
+      "path": "/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_batches_unsupported",
+      "method": "POST",
+      "path": "/v1/batches{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "DELETE",
+      "path": "/openai/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "GET",
+      "path": "/openai/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "POST",
+      "path": "/openai/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "DELETE",
+      "path": "/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "GET",
+      "path": "/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_files_unsupported",
+      "method": "POST",
+      "path": "/v1/files{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "DELETE",
+      "path": "/openai/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "GET",
+      "path": "/openai/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "POST",
+      "path": "/openai/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "DELETE",
+      "path": "/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "GET",
+      "path": "/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_fine_tuning_unsupported",
+      "method": "POST",
+      "path": "/v1/fine_tuning{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "DELETE",
+      "path": "/openai/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "GET",
+      "path": "/openai/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "POST",
+      "path": "/openai/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "DELETE",
+      "path": "/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "GET",
+      "path": "/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.openai_realtime_unsupported",
+      "method": "POST",
+      "path": "/v1/realtime{rest:path}",
+      "access": "none",
+      "note": "Explicit unsupported contract; no stored content."
+    },
+    {
+      "handler": "proxy.provider_native_detail",
+      "method": "GET",
+      "path": "/gateway/v1/providers/{provider}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.provider_native_list",
+      "method": "GET",
+      "path": "/gateway/v1/providers",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "DELETE",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "GET",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "OPTIONS",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "PATCH",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "POST",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.provider_native_request",
+      "method": "PUT",
+      "path": "/gateway/v1/providers/{provider}/{native_path:path}",
+      "access": "own-account",
+      "note": "Opaque backend pass-through; no gateway content grant is inferred."
+    },
+    {
+      "handler": "proxy.realtime_v1",
+      "method": "APIWEBSOCKETROUTE",
+      "path": "/openai/v1/realtime",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.realtime_v1",
+      "method": "APIWEBSOCKETROUTE",
+      "path": "/v1/realtime",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.rerank_root",
+      "method": "POST",
+      "path": "/rerank",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.rerank_v1",
+      "method": "POST",
+      "path": "/openai/v1/rerank",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.rerank_v1",
+      "method": "POST",
+      "path": "/v1/rerank",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.rerank_v2",
+      "method": "POST",
+      "path": "/v2/rerank",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.retrieve_response",
+      "method": "GET",
+      "path": "/openai/v1/responses/{response_id}",
+      "access": "content:chat:read"
+    },
+    {
+      "handler": "proxy.retrieve_response",
+      "method": "GET",
+      "path": "/v1/responses/{response_id}",
+      "access": "content:chat:read"
+    },
+    {
+      "handler": "proxy.run_video_manifest_workflow",
+      "method": "POST",
+      "path": "/gateway/v1/workflows/{workflow_id}/run",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.setup_claim_admin_key",
+      "method": "POST",
+      "path": "/setup/claim",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.setup_console",
+      "method": "GET",
+      "path": "/setup/console",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.setup_create_first_app",
+      "method": "POST",
+      "path": "/setup/first-app",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.setup_create_local_owner",
+      "method": "POST",
+      "path": "/setup/local-owner",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.setup_local_login",
+      "method": "POST",
+      "path": "/setup/local-login",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.status_dashboard_raw",
+      "method": "GET",
+      "path": "/status/raw",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.status_dashboard_raw",
+      "method": "GET",
+      "path": "/status/raw/",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "DELETE",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "GET",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "OPTIONS",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "PATCH",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "POST",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.unmatched_route",
+      "method": "PUT",
+      "path": "/{path:path}",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.user_portal_activity",
+      "method": "GET",
+      "path": "/me/api/activity",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "proxy.user_portal_create_app",
+      "method": "POST",
+      "path": "/me/api/apps",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_credential_access",
+      "method": "GET",
+      "path": "/me/api/credentials/{credential_id}/access",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_delete_app",
+      "method": "DELETE",
+      "path": "/me/api/apps/{app_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_mint_key",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/keys",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_receipt_detail",
+      "method": "GET",
+      "path": "/me/api/receipts/{request_id}",
+      "access": "content:receipt:read"
+    },
+    {
+      "handler": "proxy.user_portal_rename_app",
+      "method": "PATCH",
+      "path": "/me/api/apps/{app_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_rename_key",
+      "method": "PATCH",
+      "path": "/me/api/credentials/{credential_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_request_access",
+      "method": "POST",
+      "path": "/me/api/access-request",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_revoke_key",
+      "method": "DELETE",
+      "path": "/me/api/credentials/{credential_id}",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_revoke_key",
+      "method": "POST",
+      "path": "/me/api/credentials/{credential_id}/revoke",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_session",
+      "method": "GET",
+      "path": "/me/api/session",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_try_key",
+      "method": "POST",
+      "path": "/me/api/try-key",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.v1_status",
+      "method": "GET",
+      "path": "/v1/status",
+      "access": "operational"
+    },
+    {
+      "handler": "proxy.videos_content",
+      "method": "GET",
+      "path": "/openai/v1/videos/{video_id}/content",
+      "access": "content:job:read+content:creation:link"
+    },
+    {
+      "handler": "proxy.videos_content",
+      "method": "GET",
+      "path": "/v1/videos/{video_id}/content",
+      "access": "content:job:read+content:creation:link"
+    },
+    {
+      "handler": "proxy.videos_create",
+      "method": "POST",
+      "path": "/openai/v1/videos",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_create",
+      "method": "POST",
+      "path": "/v1/videos",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_delete",
+      "method": "DELETE",
+      "path": "/openai/v1/videos/{video_id}",
+      "access": "content:job:read",
+      "note": "Legacy video DELETE uses job read; no job delete cell exists in v3. Resolve in step 3."
+    },
+    {
+      "handler": "proxy.videos_delete",
+      "method": "DELETE",
+      "path": "/v1/videos/{video_id}",
+      "access": "content:job:read",
+      "note": "Legacy video DELETE uses job read; no job delete cell exists in v3. Resolve in step 3."
+    },
+    {
+      "handler": "proxy.videos_edit",
+      "method": "POST",
+      "path": "/openai/v1/videos/edits",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_edit",
+      "method": "POST",
+      "path": "/v1/videos/edits",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_extend",
+      "method": "POST",
+      "path": "/openai/v1/videos/extensions",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_extend",
+      "method": "POST",
+      "path": "/v1/videos/extensions",
+      "access": "own-account+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_list",
+      "method": "GET",
+      "path": "/openai/v1/videos",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "proxy.videos_list",
+      "method": "GET",
+      "path": "/v1/videos",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "proxy.videos_remix",
+      "method": "POST",
+      "path": "/openai/v1/videos/{video_id}/remix",
+      "access": "content:job:read+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_remix",
+      "method": "POST",
+      "path": "/v1/videos/{video_id}/remix",
+      "access": "content:job:read+content:creation:reuse"
+    },
+    {
+      "handler": "proxy.videos_status",
+      "method": "GET",
+      "path": "/openai/v1/videos/{video_id}",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "proxy.videos_status",
+      "method": "GET",
+      "path": "/v1/videos/{video_id}",
+      "access": "content:job:read"
+    },
+    {
+      "handler": "proxy.well_known_azizam",
+      "method": "GET",
+      "path": "/.well-known/azizam",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.well_known_skill_file",
+      "method": "GET",
+      "path": "/.well-known/skills/{skill_id}/SKILL.md",
+      "access": "none"
+    },
+    {
+      "handler": "proxy.well_known_skills",
+      "method": "GET",
+      "path": "/.well-known/skills",
+      "access": "none"
+    },
+    {
+      "handler": null,
+      "method": "UIROUTE",
+      "path": "",
+      "access": "none"
+    }
+  ],
+  "event_types": {
+    "attempt": "content:job:read",
+    "cancel_requested": "content:job:read",
+    "canceled": "content:job:read",
+    "completed": "content:job:read",
+    "failed": "content:job:read",
+    "note": "content:job:read",
+    "progress": "content:job:read",
+    "queued": "content:job:read",
+    "retry": "content:job:read",
+    "started": "content:job:read",
+    "submitted": "content:job:read",
+    "succeeded": "content:job:read"
+  }
+}

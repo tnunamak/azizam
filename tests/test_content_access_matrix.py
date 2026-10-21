@@ -65,7 +65,7 @@ def records(*, active=True, include_prompt=False, available=True, legacy=False):
     }
 
 
-@pytest.mark.parametrize("kind,action", product(MATRIX, ACTIONS))
+@pytest.mark.parametrize("kind,action", tuple(product(MATRIX, ACTIONS)))
 def test_every_kind_action_basis_cell(kind, action):
     for actor, (viewer, bases) in ACTORS.items():
         for active, include_prompt, available, legacy, role, privacy in product((False, True), repeat=6):
