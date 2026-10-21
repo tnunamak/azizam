@@ -26,6 +26,7 @@ from tests import test_me_media as base
 
 REMOVE = "/me/api/media/remove-missing"
 CONFIRM_FOLDER = "/me/api/media/confirm-folder"
+CHANGED = "Your Library changed since you opened this. Review it again."
 VALID = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
 UNSEEN = "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
 EMPTY = "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
@@ -42,11 +43,11 @@ class RemoveMissingTests(unittest.TestCase):
         # Existing fixtures represent a known, mounted volume.
         prompt_memory.confirm_media_folder(self.cache, owner=True, path=self.jobs_db)
 
-    def make_client(self, asset_path_resolver, storage_provider=None) -> TestClient:
+    def make_client(self, asset_path_resolver, storage_provider=None, session_provider=None) -> TestClient:
         # The route reads the media folder through this provider; without it, it refuses.
         app = FastAPI()
         app.include_router(me_media.create_me_media_router(
-            session_provider=self._session,
+            session_provider=session_provider or self._session,
             mutation_validator=self._mutation_validator,
             signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
             asset_path_resolver=asset_path_resolver,
@@ -68,6 +69,21 @@ class RemoveMissingTests(unittest.TestCase):
     _asset_metadata, _catalog = base.MeMediaRouterTests._asset_metadata, base.MeMediaRouterTests._catalog
     _delete_unshared, _write_asset = base.MeMediaRouterTests._delete_unshared, base.MeMediaRouterTests._write_asset
     _receipt, _job = base.MeMediaRouterTests._receipt, base.MeMediaRouterTests._job
+
+    def remove_missing(self):
+        storage = me_media.create_storage_snapshot_provider(self.cache)() or me_media.StorageSnapshot(frozenset())
+        plan = me_media._viewer_removal(
+            self.current_user["id"], storage, admin_path=self.admin_db, jobs_path=self.jobs_db,
+            receipts_path=self.receipts_db,
+        )
+        return self.client.post(REMOVE, headers=VALID, json={"expected_missing": len(plan.gone_assets)})
+
+    def confirm_folder(self):
+        storage = me_media.create_storage_snapshot_provider(self.cache)() or me_media.StorageSnapshot(frozenset())
+        here, total, _ = me_media._folder_counts(
+            storage, admin_path=self.admin_db, jobs_path=self.jobs_db, receipts_path=self.receipts_db,
+        )
+        return self.client.post(CONFIRM_FOLDER, headers=VALID, json={"items_here": here, "library_items": total})
 
     def seed(self) -> None:
         """Alice: A gone alone, B stored, C gone beside D stored. Bob: E gone."""
@@ -107,26 +123,90 @@ class RemoveMissingTests(unittest.TestCase):
         before_jobs = media_jobs.recent(500, path=self.jobs_db)
         before_marker = (self.cache / ".azizam-media").read_bytes()
         with patch("gateway.me_media._viewer_removal", wraps=me_media._viewer_removal) as selection:
-            page = self.client.get("/me/api/media?q=prompt+A&limit=1").json()
+            page = self.client.get("/me/api/media?removal_plan=1&q=prompt+A&limit=1").json()
             self.assertEqual(page["removal_plan"], {"missing_items": 2})
             self.assertEqual(len(page["assets"]), 1)
             self.assertEqual(media_jobs.recent(500, path=self.jobs_db), before_jobs)
             self.assertEqual((self.cache / ".azizam-media").read_bytes(), before_marker)
-            removed = self.client.post(REMOVE, headers=VALID)
+            removed = self.client.post(REMOVE, headers=VALID, json={"expected_missing": page["removal_plan"]["missing_items"]})
             self.assertEqual(removed.status_code, 200, removed.text)
             self.assertEqual(removed.json()["removed_assets"], page["removal_plan"]["missing_items"])
             self.assertEqual(selection.call_count, 2, "plan and action use the same viewer selection")
-        self.assertEqual(self.client.get("/me/api/media").json()["removal_plan"], {"missing_items": 0})
+        self.assertEqual(self.client.get("/me/api/media?removal_plan=1").json()["removal_plan"], {"missing_items": 0})
 
     def test_removal_reselects_when_a_file_disappears_after_the_plan(self) -> None:
         self.seed()
-        page = self.client.get("/me/api/media").json()
+        page = self.client.get("/me/api/media?removal_plan=1").json()
         self.assertEqual(page["removal_plan"], {"missing_items": 2})
         self._asset_path(asset("B")).unlink()
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": page["removal_plan"]["missing_items"]})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["message"], CHANGED)
+        self.assert_nothing_changed()
+        self.assertEqual(self.library(), {asset("A"): False, asset("B"): False, asset("C"): False, asset("D"): True})
+
+    def test_removal_allows_a_smaller_fresh_selection(self) -> None:
+        self.seed()
+        page = self.client.get("/me/api/media?removal_plan=1").json()
+        self._write_asset(asset("A"), ["sha256:alice"])
+        response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": page["removal_plan"]["missing_items"]})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"removed_assets": 3, "removed_jobs": 2})
-        self.assertEqual(self.library(), {asset("D"): True})
+        self.assertEqual(response.json(), {"removed_assets": 1, "removed_jobs": 0})
+        self.assertTrue(self._asset_path(asset("A")).exists())
+
+    def test_confirm_refuses_folder_swapped_after_the_read(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        evidence = self.client.get("/me/api/media?folder_state=1").json()["media_folder"]
+        original = self.cache.with_name("original-media")
+        self.cache.rename(original)
+        self.cache.mkdir()
+        self._write_asset(asset("B"), ["sha256:alice"])
+        response = self.client.post(CONFIRM_FOLDER, headers=VALID, json={
+            "items_here": evidence["items_here"], "library_items": evidence["library_items"],
+        })
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["message"], CHANGED)
+        self.assert_not_recorded()
+        self.assertEqual(admin_store.list_audit(action_prefix="media.folder.", limit=10, path=self.admin_db), [])
+
+    def test_lightweight_folder_read_skips_listing_and_plan(self) -> None:
+        self.seed()
+        with patch("gateway.me_media._list_media", side_effect=AssertionError("listing")), \
+             patch("gateway.me_media._viewer_removal", side_effect=AssertionError("plan")):
+            response = self.client.get("/me/api/media?folder_state=1")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"media_folder": {"state": "confirmed"}})
+        with patch("gateway.me_media._viewer_removal", side_effect=AssertionError("plan")):
+            self.assertIsNone(self.client.get("/me/api/media").json()["removal_plan"])
+        signed_out = self.make_client(self._asset_path, session_provider=lambda request: None)
+        self.assertEqual(signed_out.get("/me/api/media?folder_state=1").status_code, 401)
+
+    def test_owner_everyone_plan_only_counts_owners_items_and_cursor_has_no_plan(self) -> None:
+        self.seed()
+        owner_app = admin_store.create_app(
+            "Owner", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
+        )
+        self._receipt(owner_app["id"], "owner_missing")
+        self._job("owner_missing", asset("f"))
+        self.current_user = self.owner
+        page = self.client.get("/me/api/media?scope=everyone&removal_plan=1&limit=1").json()
+        self.assertEqual(page["removal_plan"], {"missing_items": 1})
+        self.assertIsNotNone(page["next_cursor"])
+        with patch("gateway.me_media._viewer_removal", side_effect=AssertionError("cursor plan")):
+            response = self.client.get("/me/api/media?scope=everyone&removal_plan=1&cursor=" + page["next_cursor"])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["removal_plan"])
+
+    def test_action_evidence_is_required_and_must_be_a_nonnegative_integer(self) -> None:
+        self.seed()
+        for value in (None, {}, {"expected_missing": True}, {"expected_missing": -1}, {"expected_missing": "2"}):
+            self.assertEqual(self.client.post(REMOVE, headers=VALID, json=value).status_code, 400)
+        self.current_user = self.owner
+        for value in (None, {}, {"items_here": True, "library_items": 5}):
+            self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID, json=value).status_code, 400)
+        self.assert_nothing_changed()
 
     def test_owner_plan_includes_shared_asset_named_in_another_persons_deletion_audit(self) -> None:
         owner_app = admin_store.create_app(
@@ -144,15 +224,16 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertTrue(self._asset_path(shared).exists())
         self._asset_path(shared).unlink()
         self.current_user = self.owner
-        # Force the evidence path: its global deletion exclusion omits the shared asset.
+        # Force the evidence path: the shared asset remains whole-Library evidence.
         (self.cache / ".azizam-media").unlink()
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
-        page = self.client.get("/me/api/media").json()
-        self.assertEqual(page["media_folder"]["library_items"], page["media_folder"]["items_here"])
+        page = self.client.get("/me/api/media?removal_plan=1").json()
+        self.assertEqual(page["media_folder"]["library_items"], 2)
+        self.assertEqual(page["media_folder"]["items_here"], 1)
         self.assertEqual(page["removal_plan"], {"missing_items": 1})
-        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 200)
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json()["removed_assets"], 1)
+        self.assertEqual(self.confirm_folder().status_code, 200)
+        self.assertEqual(self.remove_missing().json()["removed_assets"], 1)
 
     def test_an_unmounted_folder_with_a_new_file_removes_nothing(self) -> None:
         self.seed()
@@ -161,7 +242,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.cache.mkdir()
         self._write_asset(asset("N"), ["sha256:alice"])
         self.assertFalse((self.cache / ".azizam-media").exists())
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
         self.assert_nothing_changed(written=frozenset({asset("N")}))
@@ -172,7 +253,7 @@ class RemoveMissingTests(unittest.TestCase):
         value = json.loads(marker.read_text())
         value["volume_id"] = "0" * 32
         marker.write_text(json.dumps(value))
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
         self.assertEqual(response.json()["error"]["details"]["layer"], "library")
@@ -183,17 +264,17 @@ class RemoveMissingTests(unittest.TestCase):
         (self.cache / ".azizam-media").unlink()
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).status_code, 503)
-        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 403)
+        self.assertEqual(self.remove_missing().status_code, 503)
+        self.assertEqual(self.confirm_folder().status_code, 403)
         self.assertFalse((self.cache / ".azizam-media").exists())
         self.assert_nothing_changed()
         self.current_user = self.owner
-        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        response = self.confirm_folder()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"confirmed": True})
         self.assert_nothing_changed()
         self.current_user = self.alice
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 2, "removed_jobs": 1})
 
     def test_confirm_requires_owner_in_core_and_user_action_at_route(self) -> None:
         before = (self.cache / ".azizam-media").read_bytes()
@@ -212,7 +293,7 @@ class RemoveMissingTests(unittest.TestCase):
             conn.execute("DELETE FROM media_volume_identity")
         self.current_user = self.owner
         # The owner has nothing missing, so there is nothing to remove and nothing to bootstrap.
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertFalse((self.cache / ".azizam-media").exists())
@@ -220,13 +301,13 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_an_empty_index_does_not_create_a_marker_on_a_remove(self) -> None:
         (self.cache / ".azizam-media").unlink()
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertFalse((self.cache / ".azizam-media").exists())
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
         (self.cache / ("f" * 64 + ".png")).write_bytes(b"orphaned media")
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertFalse((self.cache / ".azizam-media").exists())
 
@@ -236,7 +317,7 @@ class RemoveMissingTests(unittest.TestCase):
         for value in ('not json', '{}', '{"volume_id": 7, "created_at": 1}'):
             with self.subTest(value=value):
                 marker.write_text(value)
-                response = self.client.post(REMOVE, headers=VALID)
+                response = self.remove_missing()
                 self.assertEqual(response.status_code, 503, response.text)
                 self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
                 self.assert_nothing_changed()
@@ -262,7 +343,7 @@ class RemoveMissingTests(unittest.TestCase):
             return removed
 
         with patch("gateway.media_jobs.delete_succeeded_in", lose_marker):
-            response = self.client.post(REMOVE, headers=VALID)
+            response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         self.assert_nothing_changed()
         with sqlite3.connect(self.jobs_db) as conn:
@@ -291,7 +372,7 @@ class RemoveMissingTests(unittest.TestCase):
             return conn.execute("SELECT volume_id FROM media_volume_identity WHERE singleton=1").fetchone()[0]
 
     def refused_unconfirmed(self) -> None:
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
         self.assert_nothing_changed()
@@ -335,7 +416,7 @@ class RemoveMissingTests(unittest.TestCase):
             self._meta_path(asset(letter)).unlink()
         self.assertEqual(os.listdir(self.cache), [])
         self.current_user = self.owner
-        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        response = self.confirm_folder()
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_no_matches")
         self.assertEqual(response.json()["error"]["message"], self.NO_MATCHES)
@@ -346,7 +427,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.seed()
         self.unconfirm_folder()
         self.current_user = self.owner
-        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        response = self.confirm_folder()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.media_folder(), {"state": "confirmed"})
         rows = admin_store.list_audit(action_prefix="media.folder.confirm", limit=10, path=self.admin_db)
@@ -357,7 +438,7 @@ class RemoveMissingTests(unittest.TestCase):
     def test_confirm_allows_an_empty_folder_when_the_library_is_empty(self) -> None:
         self.unconfirm_folder()
         self.current_user = self.owner
-        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        response = self.confirm_folder()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue((self.cache / ".azizam-media").is_file())
 
@@ -374,7 +455,7 @@ class RemoveMissingTests(unittest.TestCase):
             "state": "unconfirmed", "path": str(self.cache), "library_items": 5, "items_here": 2,
             "uncheckable_items": 1,
         })
-        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 200)
+        self.assertEqual(self.confirm_folder().status_code, 200)
         rows = admin_store.list_audit(action_prefix="media.folder.confirm", limit=10, path=self.admin_db)
         self.assertEqual(rows[0]["metadata"], {"library_items": 5, "items_here": 2})
 
@@ -393,14 +474,14 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_a_member_is_refused_before_the_folder_is_looked_up(self) -> None:
         self.client = self.make_client(self._asset_path, storage_provider=lambda: None)
-        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 403)
+        self.assertEqual(self.confirm_folder().status_code, 403)
 
     def test_remove_with_nothing_missing_on_an_unconfirmed_folder_is_a_normal_success(self) -> None:
         self._write_asset(asset("B"), ["sha256:alice"], prompt="prompt B")
         self._receipt(self.app_a["id"], "req_b")
         self._job("req_b", asset("B"))
         self.unconfirm_folder()
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertFalse((self.cache / ".azizam-media").exists())
@@ -470,7 +551,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertIn(ids[3], {a["asset_id"] for job in media_jobs.recent(500, path=self.jobs_db) for a in job["assets"]})
 
     def refuse_removal(self) -> None:
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
         self.assertEqual(len(media_jobs.recent(500, path=self.jobs_db)), len(self.alice_jobs))
@@ -509,7 +590,7 @@ class RemoveMissingTests(unittest.TestCase):
                     (self.cache / ("f" * 64 + ".png")).write_bytes(b"someone else's picture")
                 self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
                 self.assert_not_recorded()
-                response = self.client.post(REMOVE, headers=VALID)
+                response = self.remove_missing()
                 self.assertEqual(response.status_code, 503, response.text)
                 self.assertEqual(response.json()["error"]["code"],
                                  "media_folder_unconfirmed" if with_a_file else "media_folder_unavailable")
@@ -608,7 +689,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.unconfirm_folder()
         self.current_user = self.owner
         with patch.object(os, "link", side_effect=OSError(errno.EPERM, "Operation not permitted")):
-            response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+            response = self.confirm_folder()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.media_folder(), {"state": "confirmed"})
 
@@ -707,7 +788,7 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_removes_only_the_callers_missing_entries_and_keeps_files_receipts_and_other_people(self) -> None:
         self.seed()
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 1})
         # The Library shows only what is stored.
@@ -733,15 +814,15 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_a_second_removal_has_nothing_left_to_remove(self) -> None:
         self.seed()
-        self.client.post(REMOVE, headers=VALID)
-        again = self.client.post(REMOVE, headers=VALID)
+        self.remove_missing()
+        again = self.remove_missing()
         self.assertEqual(again.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertEqual(self.library(), {asset("B"): True, asset("D"): True})
 
     def test_the_owner_removes_only_their_own_entries(self) -> None:
         self.seed()
         self.current_user = self.owner
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 0, "removed_jobs": 0})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertEqual(len(self.job_ids("req_a")), 1)
 
     def test_it_needs_the_user_action_and_csrf_headers(self) -> None:
@@ -778,7 +859,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual([row for row in audit if row["action"] != "media.folder.confirm"], [])
 
     def refused(self, message: str = UNSEEN) -> None:
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 503, response.text)
         error = response.json()["error"]
         self.assertEqual(error["code"], "media_folder_unavailable")
@@ -812,7 +893,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.seed()
         self.empty_the_folder()
         self.current_user = self.owner
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assert_nothing_changed()
@@ -825,14 +906,14 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(os.listdir(self.cache), [])
         self.assertEqual(self.media_folder(), {"state": "confirmed"})
         marker = json.loads((self.cache / ".azizam-media").read_text())
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertRegex(marker["volume_id"], r"^[0-9a-f]{32}$")
         self.assertGreater(marker["created_at"], 0)
         with sqlite3.connect(self.jobs_db) as conn:
             self.assertEqual(conn.execute("SELECT volume_id FROM media_volume_identity").fetchone()[0], marker["volume_id"])
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).status_code, 200)
+        self.assertEqual(self.remove_missing().status_code, 200)
         self.assertEqual(json.loads((self.cache / ".azizam-media").read_text()), marker)
 
     def test_a_folder_with_only_sidecars_and_scratch_files_removes_nothing(self) -> None:
@@ -856,7 +937,7 @@ class RemoveMissingTests(unittest.TestCase):
                 request_id=f"req_odd{index}", intent="video.generate", status=media_jobs.STATUS_SUCCEEDED,
                 progress=100, assets=[{"asset_id": asset_id, "media_type": media_type,
                                        "filename": f"out.{media_type.split('/')[1]}"}]), path=self.jobs_db)
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 1})
         self.assertEqual(len(self.job_ids("req_odd0")), 1)
         self.assertEqual(len(self.job_ids("req_odd1")), 1)
@@ -865,7 +946,7 @@ class RemoveMissingTests(unittest.TestCase):
     def test_a_file_stored_under_any_suffix_counts_as_stored(self) -> None:
         self.seed()
         (self.cache / ("A" * 64 + ".bin")).write_bytes(b"unknown suffix")
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 1, "removed_jobs": 0})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(len(self.job_ids("req_a")), 1)
 
     def test_the_media_folder_is_listed_once_however_many_files_are_gone(self) -> None:
@@ -889,7 +970,7 @@ class RemoveMissingTests(unittest.TestCase):
             return real_listdir(path)
 
         with patch("gateway.me_media.os.listdir", counting_listdir):
-            response = client.post(REMOVE, headers=VALID)
+            response = client.post(REMOVE, headers=VALID, json={"expected_missing": 22})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 22, "removed_jobs": 21})
         self.assertEqual(probes, [], "presence comes from the one listing, not a lookup per asset")
@@ -909,7 +990,7 @@ class RemoveMissingTests(unittest.TestCase):
         deleted = self.client.delete(f"/me/api/media/{asset('P')}", headers=VALID)
         self.assertEqual(deleted.status_code, 200, deleted.text)
         self.assertEqual(self.library(), {asset("G"): False})
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 1, "removed_jobs": 0})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(len(self.job_ids("req_pg")), 1, "the file P is still on disk")
         self.assertEqual(self.library(), {})
 
@@ -920,7 +1001,7 @@ class RemoveMissingTests(unittest.TestCase):
             media_jobs.create(media_jobs.MediaJob(
                 request_id=f"req_{name}", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
                 assets=[{"asset_id": asset(letter), "media_type": "image/png"} for letter in assets]), path=self.jobs_db)
-        response = self.client.post(REMOVE, headers=VALID)
+        response = self.remove_missing()
         # G is gone in both jobs that name it: both go. P is stored, so both jobs naming it stay.
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 2})
         self.assertEqual((self.job_ids("req_one"), self.job_ids("req_two")), ([], []))
@@ -936,7 +1017,7 @@ class RemoveMissingTests(unittest.TestCase):
             assets=[{"asset_id": asset("G"), "media_type": "image/png"},
                     {"asset_id": asset("S"), "media_type": "image/png"}]), path=self.jobs_db)
         self._write_asset(asset("S"), ["sha256:alice"])
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 1, "removed_jobs": 0})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(self.library(), {asset("S"): True})
         # The same bytes are generated again: the file is back and a new job names it.
         self._write_asset(asset("G"), ["sha256:alice"], prompt="again")
@@ -955,7 +1036,7 @@ class RemoveMissingTests(unittest.TestCase):
             raise sqlite3.OperationalError("disk I/O error")
 
         with patch("gateway.media_jobs.delete_succeeded_in", fail_after_deleting):
-            response = self.client.post(REMOVE, headers=VALID)
+            response = self.remove_missing()
         self.assertGreaterEqual(response.status_code, 500)
         self.assert_nothing_changed()
         self.assertEqual(self.library(), {asset("A"): False, asset("B"): True, asset("C"): False, asset("D"): True})
@@ -964,7 +1045,7 @@ class RemoveMissingTests(unittest.TestCase):
             hidden = conn.execute("SELECT COUNT(*) FROM media_hidden_assets").fetchone()[0] if "media_hidden_assets" in tables else 0
         self.assertEqual(hidden, 0)
         # A retry after the fault completes the removal.
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 2, "removed_jobs": 1})
 
     # --- erasing a person erases their hides too ------------------------------------------
 
@@ -974,7 +1055,7 @@ class RemoveMissingTests(unittest.TestCase):
 
     def seed_hides(self) -> None:
         self.seed()
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 2, "removed_jobs": 1})
         with media_jobs._conn(self.jobs_db) as conn:
             media_jobs.hide_assets_in(conn, self.bob["id"], [(asset("E"), "job_bob")])
             conn.commit()
@@ -1025,7 +1106,7 @@ class RemoveMissingTests(unittest.TestCase):
 
     def hidden_by_alice(self) -> None:
         self.seed()
-        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(self.remove_missing().json(), {"removed_assets": 2, "removed_jobs": 1})
         self.assertEqual(len(media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)), 1)
 
     def test_a_lock_on_the_hide_read_is_retried_briefly(self) -> None:

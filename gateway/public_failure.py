@@ -77,6 +77,7 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
     "media_folder_unconfirmed": ("library", "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings."),
     "media_folder_no_matches": ("library", "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again."),
     "media_folder_owner_required": ("account", "Only the owner can confirm the media folder. Ask the owner to confirm it once, in Settings."),
+    "media_folder_changed": ("library", "Your Library changed since you opened this. Review it again."),
     "prompt_not_accessible": ("library", "Only the person who made this can download it with its prompt, "
                                          "and only while the prompt is kept. Download it without the prompt."),
     "job_not_found": ("library", "This task isn't in your account. Return to the list and choose another task."),
