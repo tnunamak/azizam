@@ -305,16 +305,20 @@ def _prepare_start_fixture(work: Path) -> None:
     shutil.copytree(ROOT / "registry", work / "registry")
     # Keep the real sidecar/config/secret path, but replace its final runtime.
     # The pinned launcher itself is exercised by the real-package canary.
+    # The sidecar imports require_single_process from this module before it
+    # builds the child environment, so the replacement runs only as a script.
     (work / "gateway" / "litellm_launcher.py").write_text(
         "import os,re,sys\nfrom pathlib import Path\n"
-        "args=sys.argv[1:]\n"
-        "if '--content-proof' in args:\n i=args.index('--content-proof'); del args[i:i+2]\n"
-        "os.environ['FAKE_LOG']=str(Path.cwd()/'log.txt')\n"
-        "config=Path(args[args.index('--config')+1]).read_text()\n"
-        "refs=re.findall(r'os.environ/(AZIZAM_PROVIDER_SECRET_[A-Z0-9]+)',config)\n"
-        "expected=Path.cwd()/'expected-env-name'\n"
-        "os.environ['EXPECTED_PROVIDER_ENV']=expected.read_text() if expected.exists() else (refs[0] if refs else 'UNUSED_PROVIDER_ENV')\n"
-        "os.execvp('litellm',['litellm',*args])\n"
+        "def require_single_process(argv, env):\n pass\n"
+        "if __name__ == '__main__':\n"
+        " args=sys.argv[1:]\n"
+        " if '--content-proof' in args:\n  i=args.index('--content-proof'); del args[i:i+2]\n"
+        " os.environ['FAKE_LOG']=str(Path.cwd()/'log.txt')\n"
+        " config=Path(args[args.index('--config')+1]).read_text()\n"
+        " refs=re.findall(r'os.environ/(AZIZAM_PROVIDER_SECRET_[A-Z0-9]+)',config)\n"
+        " expected=Path.cwd()/'expected-env-name'\n"
+        " os.environ['EXPECTED_PROVIDER_ENV']=expected.read_text() if expected.exists() else (refs[0] if refs else 'UNUSED_PROVIDER_ENV')\n"
+        " os.execvp('litellm',['litellm',*args])\n"
     )
     (work / "start.sh").chmod(0o755)
     requirements = work / "requirements.txt"
