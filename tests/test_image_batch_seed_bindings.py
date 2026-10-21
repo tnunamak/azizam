@@ -172,6 +172,21 @@ def test_missing_seed_target_returns_configuration_error_without_submitting(batc
         error = json.loads(batch.response.body)["error"]
         assert error["code"] == "invalid_workflow_extension"
         assert error["message"] == "The image workflow configuration is invalid."
+        graph, response = asyncio.run(proxy._apply_workflow_extensions_to_image_request(
+            request_body={"extensions": {"com.azizam.workflow": {"seed": 41}}},
+            manifest=manifest, backend_request={},
+            standard_fields=proxy.STANDARD_IMAGE_GENERATE_FIELDS, receipt=None,
+        ))
+        assert graph is None
+        assert response.status_code == 503
+        assert json.loads(response.body)["error"] == error
+        response, image = asyncio.run(proxy._run_single_graph_image(
+            client=object(), workflow={}, meta={}, manifest=manifest,
+            headers={}, label="broken-seed-target", seed=41,
+        ))
+        assert image is None
+        assert response.status_code == 503
+        assert json.loads(response.body)["error"] == error
     assert capsys.readouterr().out.count(manifest["id"]) == 1
 
 
