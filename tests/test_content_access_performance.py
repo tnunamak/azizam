@@ -5,6 +5,7 @@ Predicates below are copied from main, independently of the new policy code.
 """
 from timeit import repeat
 
+import gateway.accounts  # match gateway initialization order
 from gateway import me_media, record_ownership
 from gateway.content_access import CreationRecord, ReceiptRecord, Viewer, decide, project
 from tests.test_owner_projection import seeded_record, NAMES

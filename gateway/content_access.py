@@ -1,7 +1,7 @@
 """Pure content policy from OWNER_VISIBILITY v4.2 at c6968dc8, section 3.1.
 
 Roles grant an operational view, never content. Callers supply trusted identity
-and resolved share rows; this module performs no storage reads or side effects.
+and resolved share rows; the decision functions perform no storage reads or side effects.
 Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
@@ -70,7 +70,6 @@ def viewer_from_auth(
         trusted_address=identity.trusted_address if identity else None,
         connection_id=identity.connection_id if identity else None,
     )
-
 
 
 @dataclass(frozen=True)

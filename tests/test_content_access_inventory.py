@@ -59,7 +59,7 @@ def _writers_in_source(text, path):
                 name = writer_name(value, aliases)
                 if name in {"append_event", "append_client_event"}:
                     writers.append({"path": path, "function": function, "source_sha256": source,
-                                    "call": name, "event": "<indirect>"})
+                                    "call": name, "event": "__indirect_event_type__"})
             name = writer_name(node.func, aliases)
             if name in {"append_event", "append_client_event"} or (path == "gateway/me_make.py" and name == "_event"):
                 value = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg in {"kind", "event_type"}), None)
@@ -133,7 +133,7 @@ def test_job_event_types_have_a_closed_classified_inventory():
     frozen = _frozen()
     actual = set()
     for writer in _event_writers():
-        value = ast.parse(writer["event"], mode="eval").body if writer["event"] != "<indirect>" else None
+        value = ast.parse(writer["event"], mode="eval").body
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             actual.add(value.value)
         else:
@@ -213,8 +213,8 @@ def test_token_count_route_has_no_content_access():
 def test_indirect_event_writers_are_detected():
     sources = {
         'getattr': ('def writer(job_id):\n    fn = getattr(media_jobs, "append_event")\n    return fn(job_id, "indirect", {})\n', "'indirect'"),
-        'callback': ('def writer(job_id):\n    return helper(job_id, emit=media_jobs.append_event)\n', '<indirect>'),
-        'partial': ('def writer(job_id):\n    return functools.partial(media_jobs.append_event, job_id)("indirect", {})\n', '<indirect>'),
+        'callback': ('def writer(job_id):\n    return helper(job_id, emit=media_jobs.append_event)\n', '__indirect_event_type__'),
+        'partial': ('def writer(job_id):\n    return functools.partial(media_jobs.append_event, job_id)("indirect", {})\n', '__indirect_event_type__'),
     }
     for form, (source, event) in sources.items():
         rows = _writers_in_source(source, 'test_writer.py')
