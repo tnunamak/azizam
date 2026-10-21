@@ -91,6 +91,8 @@ def _without_prompt_fields(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _valid_timestamp(value: Any, now: float) -> Optional[float]:
+    if not math.isfinite(now):
+        return None
     try:
         timestamp = float(value)
     except (TypeError, ValueError, OverflowError):
