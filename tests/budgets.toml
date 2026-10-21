@@ -131,7 +131,8 @@
 # including six MOSS/private-output/availability integration cases.
 # Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
 # Offline node:test runs: 5 compatibility + 82 Pi = 87.
-pytest = 15567
+# Retired eight image workflows and the Ideogram prompt tests (-30), remeasured with --collect-only -q on 2026-10-21: 15537.
+pytest = 15537
 vitest = 3068
 playwright = 502
 
