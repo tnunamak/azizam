@@ -103,7 +103,7 @@ it("lists each category with its meaning, who can see it and what is in it", asy
   mount();
   const experimental = await screen.findByRole("region", { name: "Experimental" });
   expect(within(experimental).getByText("Still being built.")).toBeVisible();
-  expect(await within(experimental).findByText(/You; allowed plans: Family \(2 people, 1 app\)/)).toBeVisible();
+  expect(await within(experimental).findByText(/You; allowed plans: Family \(2 people, 0 apps\)/)).toBeVisible();
   expect(within(experimental).getByText("Tile maker")).toBeVisible();
   expect(within(experimental).getByText("Workflow")).toBeVisible();
   const adult = screen.getByRole("region", { name: "Adult" });
@@ -112,18 +112,18 @@ it("lists each category with its meaning, who can see it and what is in it", asy
   expect(within(adult).getByText("Nothing in Adult yet")).toBeVisible();
 });
 
-it("counts each category plan's people and effective apps, and says when no one is assigned", async () => {
+it("counts each category plan's people and directly assigned apps, and says when no one is assigned", async () => {
   const snapshot = rules();
   snapshot.categories.experimental.visible_to = ["plan_family", "plan_guest"];
   mount({ snapshot });
   const region = await screen.findByRole("region", { name: "Experimental" });
-  expect(await within(region).findByText("You; allowed plans: Family (2 people, 1 app), Guest (0 people, 0 apps; no one assigned)")).toBeVisible();
+  expect(await within(region).findByText("You; allowed plans: Family (2 people, 0 apps), Guest (0 people, 0 apps; no one assigned)")).toBeVisible();
 });
 
-it("does not turn an unavailable app count into an empty-plan claim", async () => {
+it("uses plan counts even when the separate Apps list is unavailable", async () => {
   mount({ appsFail: true });
   const region = await screen.findByRole("region", { name: "Experimental" });
-  expect(await within(region).findByText("You; allowed plans: Family (assignment counts unavailable)")).toBeVisible();
+  expect(await within(region).findByText("You; allowed plans: Family (2 people, 0 apps)")).toBeVisible();
   expect(within(region).queryByText(/no one assigned/)).toBeNull();
 });
 

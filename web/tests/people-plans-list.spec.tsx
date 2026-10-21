@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { CategoryList } from "@/app/categories/category-list";
+import { api } from "@/lib/api";
 import PeoplePage from "@/app/people/page";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import type { AccessPlan, AccessPlanDocument } from "@/lib/api";
@@ -82,17 +84,17 @@ const viewer = (role: Viewer["role"]): Viewer => ({
   admin: true,
 });
 
-async function openPlansTab(role: Viewer["role"]) {
+async function openPlansTab(role: Viewer["role"], fixture = plans) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return Response.json(
         url.endsWith("/people")
-          ? { people: [], access_plans: plans }
+          ? { people: [], access_plans: fixture }
           : url.endsWith("/invites")
-            ? { invites: [], access_plans: plans, invite_access_plan: null }
-            : { access_plans: plans },
+            ? { invites: [], access_plans: fixture, invite_access_plan: null }
+            : { access_plans: fixture },
       );
     }),
   );
@@ -133,4 +135,35 @@ it("offers the owner New, Edit and Delete for access plans", async () => {
   const unused = screen.getByRole("heading", { name: "Creative" }).closest("li")!;
   await user.click(within(unused).getByRole("button", { name: "Assign people" }));
   expect(screen.getByRole("tab", { name: /^People$/ })).toHaveAttribute("aria-selected", "true");
+});
+
+
+it("shows pending invitations and sign-in rules without counting them as holders", async () => {
+  await openPlansTab("owner", [{ ...plans[1], used_by: { people: [], apps: [], invites: 1, signin_rules: 1 } }]);
+  const row = screen.getByRole("heading", { name: "Creative" }).closest("li")!;
+  expect(row).toHaveTextContent("No one is on this plan yet. 1 invitation pending.");
+  expect(row).toHaveTextContent("Assigned by a sign-in rule");
+  expect(within(row).getByRole("button", { name: "Assign people" })).toBeVisible();
+});
+
+it("Categories and People count the same direct Apps without counting personal Apps", async () => {
+  const fixture = [{ ...plans[0], used_by: { people: ["Member"], apps: ["Direct"], invites: 0 } }];
+  await openPlansTab("owner", fixture);
+  expect(screen.getByRole("heading", { name: "Family" }).closest("li")).toHaveTextContent("Used by 1 person and 1 app");
+  cleanup();
+  vi.spyOn(api.accessPlans, "list").mockResolvedValue(fixture);
+  vi.spyOn(api.apps, "list").mockResolvedValue([
+    { id: "personal", effective_access_plan_id: fixture[0].id },
+    { id: "direct", effective_access_plan_id: fixture[0].id },
+    { id: "disabled", effective_access_plan_id: fixture[0].id, disabled_at: 1 },
+  ] as never);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><CategoryList
+    active={{ revision: 1, snapshot: { id: "rules", completeness_gate: true, people: {}, apps: {}, retained: {}, services: {}, categories: {
+      labs: { id: "labs", label: "Labs", kind: "set", values: ["included"], applies_to: ["release"], visible_to: [fixture[0].id] },
+    } } }} catalog={[]} presets={[]} catalogLoading={false} catalogError={false} onCatalogRetry={() => {}}
+    onSaved={() => {}} adding={false} onAddingChange={() => {}} picking={false} onPickingChange={() => {}}
+  /></QueryClientProvider>);
+  expect(await screen.findByText("You; allowed plans: Family (1 person, 1 app)")).toBeVisible();
+  vi.restoreAllMocks();
 });
