@@ -63,7 +63,8 @@ def provider_mutation_lock(db_path: Path):
     around create/remove/key/model/caps/plans changes. Hold this only for
     synchronous local writes, never across request-body reads or provider calls.
     """
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.ensure_private_dir(db_path.parent)
     path = db_path.parent / ".provider-mutation.lock"
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as handle:
@@ -111,7 +112,8 @@ def ensure_provider_secret_schema_on(conn: sqlite3.Connection) -> None:
 
 
 def ensure_provider_secret_schema(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     with closing(sqlite_startup.connect(path)) as conn:
         ensure_provider_secret_schema_on(conn)
         conn.commit()
@@ -336,11 +338,13 @@ def load_secret_key(path: Path) -> bytes:
 def load_or_create_secret_key(path: Path) -> bytes:
     if path.exists():
         return load_secret_key(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     key = AESGCM.generate_key(bit_length=256)
     # Publish a complete key atomically; a concurrent first write never reads
     # the other writer's empty, newly-created file.
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.") as handle:
+        os.fchmod(handle.fileno(), 0o600)
         handle.write(base64.b64encode(key))
         handle.flush()
         os.fsync(handle.fileno())

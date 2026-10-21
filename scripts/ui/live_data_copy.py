@@ -29,13 +29,13 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
 
 import yaml
+from gateway import private_io
 
 PASSWORD = "Sweep copy browser password 2026"
 SOURCE_DEFAULT = Path.home() / "applications" / "azizam"
@@ -52,6 +52,9 @@ COPIED_SOURCE_FILES = ("openai_model_aliases.generated.yml",)
 
 def _backup(source: Path, target: Path) -> None:
     """Copy one SQLite database without writing to the source."""
+    private_io.ensure_private_dir(target.parent)
+    if not target.exists():
+        private_io.create_private_file(target)
     with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=30)) as src, \
             closing(sqlite3.connect(target)) as dst:
         src.backup(dst)
@@ -63,10 +66,11 @@ def copy_data(source: Path, state: Path) -> None:
     for name in DATABASES:
         if (data / name).exists():
             _backup(data / name, state / name)
-    shutil.copy2(source / "proxy_config.yml", state / "source_proxy_config.yml")
+    private_io.ensure_private_dir(state)
+    private_io.atomic_copy_file(source / "proxy_config.yml", state / "source_proxy_config.yml")
     for name in COPIED_SOURCE_FILES:
         if (source / name).exists():
-            shutil.copy2(source / name, state / name)
+            private_io.atomic_copy_file(source / name, state / name)
 
 
 def _retarget(node, engine_port: int, engine_url: str):
@@ -109,7 +113,7 @@ def write_config(state: Path, port: int, engine_port: int) -> Path:
     voices["dir"] = str(state / "voices")
     config["voices"] = voices
     path = state / "config.yml"
-    path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    private_io.atomic_write_text(path, yaml.safe_dump(config, sort_keys=False, allow_unicode=True))
     return path
 
 
@@ -202,10 +206,10 @@ def _quiet_recent_evidence(state: Path) -> dict[str, int]:
 
 
 def prepare(state: Path, port: int, engine_port: int, *, source: Path, restarted: bool) -> dict[str, object]:
-    state.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(state)
     copy_data(source, state)
     for name in ("images", "voices", "home"):
-        (state / name).mkdir(exist_ok=True)
+        private_io.ensure_private_dir(state / name)
     repo = Path(__file__).resolve().parents[2]
     for name in SYMLINKED_REPO_ENTRIES:
         if (repo / name).exists() and not (state / name).exists():
@@ -255,8 +259,8 @@ def env_for(state: Path, port: int, engine_port: int, config: Path) -> dict[str,
 
 
 def write_manifest(manifest: dict[str, object], state: Path) -> None:
-    (state / "live-data-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    private_io.atomic_write_text(state / "live-data-manifest.json", json.dumps(manifest))
     target = os.environ.get("LIVE_DATA_MANIFEST_PATH")
     if target:
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        Path(target).write_text(json.dumps(manifest), encoding="utf-8")
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(target), json.dumps(manifest))

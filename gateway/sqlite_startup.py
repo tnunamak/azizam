@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+from gateway import private_io
+
 # Lock files this thread already holds; nested connects must not block on them.
 _held = threading.local()
 
@@ -49,6 +51,7 @@ def _held_locks() -> set[Path]:
 def _open_lock(path: Path | str):
     """Open the store lock file; never delete it, or two holders could lock different files."""
     fd = os.open(lock_path(path), os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
     return os.fdopen(fd, "r+b")
 
 
@@ -69,6 +72,8 @@ class _LockedConnection(sqlite3.Connection):
 def _admit(path: Path, target: str, uri: bool, kwargs: dict[str, Any]) -> sqlite3.Connection:
     if lock_path(path) in _held_locks():
         check_quarantine_pending(path)
+        if not uri:
+            private_io.prepare_private_database(path)
         return sqlite3.connect(target, uri=uri, **kwargs)
     try:
         lock = _open_lock(path)
@@ -78,6 +83,8 @@ def _admit(path: Path, target: str, uri: bool, kwargs: dict[str, Any]) -> sqlite
     try:
         fcntl.flock(lock, fcntl.LOCK_SH)
         check_quarantine_pending(path)
+        if not uri:
+            private_io.prepare_private_database(path)
         conn = sqlite3.connect(target, uri=uri, factory=_LockedConnection, **kwargs)
     except BaseException:
         lock.close()
@@ -188,7 +195,7 @@ def store_startup(path: Path, *, full_check: bool = True) -> Iterator[None]:
     block; this thread's nested connects reuse the held lock.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(path.parent)
     key = lock_path(path)
     if key in _held_locks():
         check_quarantine_pending(path)

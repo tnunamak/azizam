@@ -572,6 +572,7 @@ def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
     db_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
     backup = access_plans_backup_path(db_file)
     if not backup.exists():
+        secure_state_path(backup)
         target = sqlite3.connect(str(backup))
         try:
             conn.backup(target)
@@ -764,13 +765,14 @@ def secure_state_path(path: Path) -> None:
     database avoids a process-wide umask change in this multithreaded gateway.
     """
     check_quarantine_pending(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         pass
     else:
+        os.fchmod(fd, 0o600)
         os.close(fd)
     for state_file in (path, Path(f"{path}-wal"), Path(f"{path}-shm"), Path(f"{path}-journal")):
         try:
@@ -1555,22 +1557,27 @@ def update_access_plan(
 
 
 def access_plan_users(conn: sqlite3.Connection, plan_id: str) -> dict[str, list[str] | int]:
-    """Who holds a plan: people, apps (by name) and open invitations."""
-    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
-        "SELECT name, disabled_at FROM apps WHERE access_plan = ? ORDER BY name", (plan_id,),
+    """Active holders, pending invitations and sign-in rule assignments."""
+    apps = [str(r[0]) for r in conn.execute(
+        "SELECT app.name FROM apps app LEFT JOIN account_access a ON a.user_id = app.owner_user_id "
+        "WHERE app.access_plan = ? AND app.disabled_at IS NULL "
+        "AND a.disabled_at IS NULL AND a.removed_at IS NULL ORDER BY app.name", (plan_id,),
     )]
     people: list[str] = []
     invites = 0
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
         people = [str(r[0] or r[1]) for r in conn.execute(
             "SELECT u.display_name, u.email FROM account_access a JOIN users u ON u.id = a.user_id "
-            "WHERE a.plan_id = ? AND a.removed_at IS NULL ORDER BY u.created_at", (plan_id,),
+            "WHERE a.plan_id = ? AND a.removed_at IS NULL AND a.disabled_at IS NULL ORDER BY u.created_at", (plan_id,),
         )]
         invites = conn.execute(
             "SELECT COUNT(*) FROM account_links WHERE plan_id = ? AND kind = 'invite' AND used_at IS NULL "
             "AND revoked_at IS NULL AND expires_at > ?", (plan_id, _now()),
         ).fetchone()[0]
-    return {"people": people, "apps": apps, "invites": invites}
+    signin_rules = conn.execute(
+        "SELECT COUNT(*) FROM signin_rule_plans WHERE plan_id = ?", (plan_id,),
+    ).fetchone()[0]
+    return {"people": people, "apps": apps, "invites": invites, "signin_rules": signin_rules}
 
 
 def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:

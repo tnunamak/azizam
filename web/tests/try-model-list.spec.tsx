@@ -57,6 +57,9 @@ const catalog = {
     row("krea2-turbo", "Krea 2 Turbo", "image.generate", ["text"]),
     row("anima-turbo", "Anima Turbo (anime)", "image.generate", ["text"]),
     row("flux2-klein-4b", "Flux2 Klein 4B", "image.generate", ["text"]),
+    row("moss-image", "MOSS Image", "image.generate", ["text"]),
+    row("moss-image-fast", "MOSS Image Fast", "image.generate", ["text"]),
+    row("moss-image-quality", "MOSS Image Quality", "image.generate", ["text"]),
     row("qwen-image-2.1-edit", "Qwen-Image 2.1 Edit", "image.edit", ["text", "image"]),
     row("flux2-klein-4b-edit", "Flux2 Klein 4B Edit", "image.edit", ["text", "image"]),
     row("flux2-klein-4b-inpaint", "Flux2 Klein 4B Inpaint", "image.edit", ["text", "image"]),
@@ -121,7 +124,7 @@ async function optionNames() {
 describe("Make a picture lists only models that make a picture from a prompt", () => {
   it("leaves out edit, inpaint, upscale, tile and check models", async () => {
     const names = await optionNames();
-    expect(names).toEqual(["Krea 2 Turbo", "Anima Turbo (anime)", "Flux2 Klein 4B"]);
+    expect(names).toEqual(["Krea 2 Turbo", "Anima Turbo (anime)", "Flux2 Klein 4B", "MOSS Image", "MOSS Image Fast", "MOSS Image Quality"]);
     for (const hidden of [
       "Qwen-Image 2.1 Edit",
       "Flux2 Klein 4B Edit",
@@ -495,4 +498,40 @@ describe("Try keys stay in page memory", () => {
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/chat/completions"))).toBe(false);
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
+});
+
+
+it("announces access refresh completion and preserves Refresh focus while loading", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  account.viewer = { authenticated: true, serviceAdmin: false, admin: false };
+  Object.assign(account, { promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }) });
+  let finish: (() => void) | undefined;
+  let hold = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (hold && url.includes("models/catalog")) await new Promise<void>((resolve) => { finish = resolve; });
+    return json(url.includes("workflows") ? { workflows: [] } : { ...catalog, access_plan: { id: "family", name: "Family" } });
+  }));
+  try {
+    render(<TryPage />);
+    const status = await screen.findByText("Your access plan: Family.");
+    expect(status).toHaveAttribute("role", "status");
+    const user = userEvent.setup();
+    const refresh = screen.getByRole("button", { name: "Refresh access" });
+    hold = true;
+    await user.click(refresh);
+    expect(refresh).toHaveFocus();
+    expect(refresh).not.toBeDisabled();
+    expect(refresh).toHaveAttribute("aria-disabled", "true");
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(status).toHaveTextContent("Checking your access plan…");
+    await user.click(refresh);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("models/catalog"))).toHaveLength(2);
+    await act(async () => { finish!(); });
+    await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+    expect(refresh).toHaveFocus();
+    expect(status).toHaveTextContent("Your access plan: Family.");
+    expect(status).toHaveTextContent("Access refresh complete.");
+  } finally {
+    account.viewer.serviceAdmin = true;
+  }
 });

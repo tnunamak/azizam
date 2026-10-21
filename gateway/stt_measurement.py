@@ -28,7 +28,7 @@ import wave
 import yaml
 
 from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, QueueClass, ResourceClaim, evaluate_admission
-from gateway import private_tmp, stt_chunking, stt_measure as measure, stt_samples
+from gateway import private_io, private_tmp, stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
@@ -150,8 +150,11 @@ class Measurements:
 
     @contextlib.contextmanager
     def _workspace_lease(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with (self.path.parent / "stt-measurement-work.lock").open("a+b") as lock:
+        private_io.ensure_private_dir(self.path.parent)
+        lock_path = self.path.parent / "stt-measurement-work.lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "r+b") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -194,10 +197,10 @@ class Measurements:
     @contextlib.contextmanager
     def _db(self):
         self._scratch_directory()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        private_io.ensure_private_dir(self.path.parent)
         self._cleanup_abandoned_workspaces()
+        private_io.prepare_private_database(self.path)
         db = sqlite3.connect(self.path)
-        os.chmod(self.path, 0o600)
         db.execute("CREATE TABLE IF NOT EXISTS measurements (id TEXT PRIMARY KEY, service TEXT, payload TEXT NOT NULL)")
         if not self.initialized:
             for jid, raw in db.execute("SELECT id,payload FROM measurements").fetchall():
@@ -392,7 +395,7 @@ class Measurements:
             duration = wav.getnframes() / wav.getframerate()
             if settings["enabled"]:
                 pcm = audio.with_suffix(".pcm")
-                pcm.write_bytes(wav.readframes(wav.getnframes()))
+                private_io.atomic_write_bytes(pcm, wav.readframes(wav.getnframes()))
         segments = [(0.0, duration)]
         if settings["enabled"]:
             try:
@@ -429,8 +432,7 @@ class Measurements:
                 self._save(job)
                 with self._workspace_lease():
                     scratch = self._scratch_directory()
-                    scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    scratch.chmod(0o700)
+                    private_io.ensure_private_dir(scratch)
                     with tempfile.TemporaryDirectory(dir=scratch, prefix="job-") as root:
                         report = await self._measure(ctx, job, policy, Path(root))
                 job.update(status="succeeded", phase="Complete; review before applying", report=_finite(report))
@@ -464,7 +466,7 @@ class Measurements:
         metadata, prepared = [], []
         for spec in selected:
             folder = root / spec.id
-            folder.mkdir()
+            private_io.ensure_private_dir(folder)
             audio, reference = await self._prepare(job, spec, folder, policy)
             metadata.append({"id": spec.id, "speakers": spec.speakers, "timing": spec.timing,
                              "licence": spec.licence.name, **spec.rights_metadata()})
@@ -569,9 +571,19 @@ class Measurements:
 
 def _wave_slice(source: wave.Wave_read, destination: Path, start: float, end: float) -> None:
     source.setpos(int(start * source.getframerate()))
-    with wave.open(str(destination), "wb") as output:
-        output.setparams(source.getparams())
-        output.writeframes(source.readframes(int((end - start) * source.getframerate())))
+    private_io.ensure_private_dir(destination.parent)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            with wave.open(handle, "wb") as output:
+                output.setparams(source.getparams())
+                output.writeframes(source.readframes(int((end - start) * source.getframerate())))
+        os.replace(temporary, destination)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _arm_parent_death(expected_parent: int) -> None:
@@ -594,12 +606,13 @@ def _prepare_main() -> None:
     _, sample_id, root, max_bytes, parent_pid = sys.argv[1:]
     _arm_parent_death(int(parent_pid))
     folder = Path(root)
+    private_io.ensure_private_dir(folder)
     spec = next(s for s in stt_samples.load_manifest() if s.id == sample_id)
     def progress(done, total, phase):
         print(json.dumps({"done": done, "total": total, "phase": phase}), flush=True)
     sample = stt_samples.fetch_sample(spec, folder / "sources", max_bytes=int(max_bytes), progress=progress)
     os.replace(sample.audio_path, folder / "audio.wav")
-    (folder / "reference.json").write_text(json.dumps(sample.words))
+    private_io.atomic_write_text(folder / "reference.json", json.dumps(sample.words))
 
 
 if __name__ == "__main__":

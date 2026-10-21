@@ -462,6 +462,8 @@ def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None)
 def init_db(path: Path = DB_PATH) -> None:
     """Check existing data safely, then initialize the schema."""
     with store_startup(path):
+        from gateway import private_io
+        private_io.prepare_private_database(path)
         conn = sqlite3.connect(str(path), timeout=5.0)
         try:
             _apply_pragmas(conn)

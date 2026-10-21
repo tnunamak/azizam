@@ -230,6 +230,10 @@ describe("the prompt in the viewer", () => {
     state.viewer = { role: "owner", name: "Sam", id: "usr_sam", admin: true };
     state.home = { receipts: [], user: { id: "usr_sam" } };
     renderWith([othersView]);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    (await screen.findByRole("combobox", { name: "Person" })).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("option", { name: "Everyone" }));
     const dialog = await openOnly(user);
     expect(dialog.textContent ?? "").not.toMatch(/prompt|with details/i);
   });

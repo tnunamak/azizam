@@ -28,6 +28,7 @@ from typing import Any, Mapping
 import httpx
 
 from gateway import admin_store, client_errors, secret_store
+from gateway import private_io
 from gateway.access_plans import PlanCaps
 from gateway.policy import NO_ACCESS, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
@@ -310,13 +311,14 @@ def _backup_ledger_before_plan_migration(path: Path) -> None:
         backup = path.with_name(f"{path.name}.bak.pre-access-plans")
         if backup.exists():
             return
+        private_io.create_private_file(backup)
         with closing(sqlite3.connect(backup)) as target:
             source.backup(target)
         backup.chmod(0o600)
 
 
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.prepare_private_database(path)
     _backup_ledger_before_plan_migration(path)
     with sqlite3.connect(path) as conn:
         conn.execute("BEGIN IMMEDIATE")

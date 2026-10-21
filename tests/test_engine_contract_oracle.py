@@ -93,6 +93,13 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
+    # Freeze the original catalog separately from the three data-only additions.
+    added = {"moss-image", "moss-image-fast", "moss-image-quality"}
+    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == {
+        name: ("image", {"input_modalities": ["text"], "output_modalities": ["image"]})
+        for name in added
+    }
+    model_surface = [row for row in model_surface if row[0] not in added]
 
     app = FastAPI()
     app.include_router(create_gateway_router(_build_registry(), capabilities_provider=lambda _r: _sample_capabilities()))
@@ -116,6 +123,11 @@ def test_litellm_compiler_and_current_are_frozen() -> None:
     compiled = compile_litellm_config_from_registry({"services": {"engine-a": service}})
     names = [row["model_name"] for row in compiled["model_list"]]
     assert "current" in names and "current-fast" in names
+    from gateway.litellm_content import profile
+    assert compiled.pop('router_settings') == profile()['router_settings']
+    for section in ('general_settings', 'litellm_settings'):
+        for key, value in profile()[section].items():
+            assert compiled[section].pop(key) == value
     assert _digest(compiled) == "837dc6e043ab9d7cf2dfa0ac0916e662c48db9d73bd25aa0999aade926f77dd7"
 
 

@@ -721,6 +721,11 @@ def augment_openapi(
                     "content": {_JSON: {"schema": _ref("MediaJobContent")}}},
             "409": {"description": "Job not finished yet (`media_job_not_ready`).",
                     "content": {_JSON: {"schema": _ERROR_REF}}},
+            "410": {"description": "Output files are missing (`media_job_outputs_missing`).",
+                    "content": {_JSON: {"schema": _ERROR_REF}}},
+            "503": {"description": "Output storage is temporarily unavailable (`media_job_outputs_unavailable`); retry later.",
+                    "headers": {"Retry-After": {"description": "Seconds before retrying.", "schema": {"type": "integer"}}},
+                    "content": {_JSON: {"schema": _ERROR_REF}}},
             "404": errors["404"],
         }
 

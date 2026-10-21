@@ -122,6 +122,7 @@ def create_me_media_router(
         media_jobs_path=media_jobs_path,
         receipts_path=receipts_path,
         runtime=make_runtime,
+        asset_path_resolver=asset_path_resolver,
     )
 
     @router.get("/jobs", include_in_schema=False)
@@ -146,7 +147,7 @@ def create_me_media_router(
             )
             page = rows[:100]
             cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
-            return _json({"jobs": [me_make._client_view(job) for job in page],
+            return _json({"jobs": [me_make._client_view(job, asset_path_resolver=asset_path_resolver) for job in page],
                           "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -160,7 +161,7 @@ def create_me_media_router(
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
             if job is None or not _job_in_scope(job, scope):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
-            return _json({"job": me_make._client_view(job)})
+            return _json({"job": me_make._client_view(job, asset_path_resolver=asset_path_resolver)})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 

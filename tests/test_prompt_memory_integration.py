@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import os
 import io
 import sqlite3
 import time
@@ -269,6 +270,7 @@ def test_failed_payload_is_removed(tmp_path):
     file.write_text('{"prompt":"orphan-sentinel"}', encoding="utf-8")
     temporary = payload_dir / "mj_failed.json.tmp"
     temporary.write_text('{"prompt":"temporary-sentinel"}', encoding="utf-8")
+    os.utime(temporary, (1, 1))
     with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", tmp_path / "data" / "jobs.db"):
         proxy._mark_image_media_job_failed("mj_failed", "failed")
     assert not file.exists()
@@ -294,6 +296,7 @@ def test_owner_kill_switch_removes_pending_payload_files(tmp_path):
     interrupted = payload_dir / "mj_writing.json.tmp"
     normal.write_text('{"prompt":"pending-secret"}', encoding="utf-8")
     interrupted.write_text('{"prompt":"interrupted-secret"}', encoding="utf-8")
+    os.utime(interrupted, (1, 1))
     jobs_db = tmp_path / "data" / "jobs.db"
     media_jobs.init_db(jobs_db)
     with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", jobs_db):

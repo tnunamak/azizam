@@ -209,7 +209,10 @@ class Store:
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
-        path = str(self._path())
+        from gateway import private_io
+        db_path = self._path()
+        private_io.prepare_private_database(db_path)
+        path = str(db_path)
         conn = sqlite3.connect(path, timeout=5)
         conn.row_factory = sqlite3.Row
         try:

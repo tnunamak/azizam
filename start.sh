@@ -57,7 +57,9 @@ print(secrets.token_urlsafe(32))
 PY
 )}"
 
-if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
+export AZIZAM_MANAGE_LITELLM="${AZIZAM_MANAGE_LITELLM:-true}"
+export AZIZAM_LITELLM_PID_FILE="${AZIZAM_LITELLM_PID_FILE:-data/litellm.pid}"
+if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
     # LiteLLM's virtual-key DB path shells out to the Prisma CLI when
     # DATABASE_URL is set. In systemd, nvm-managed node is not on PATH, so
     # prisma-client-py falls back to ~/.cache/prisma-python/nodeenv. If a prior

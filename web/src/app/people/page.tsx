@@ -715,12 +715,17 @@ export default function PeoplePage() {
                   titleAs="h2"
                   // One line: what the plan allows and its counts; with the
                   // description, in full on hover and in the plan editor.
-                  meta={[plan.summary, usedByLabel(plan)]}
-                  metaTitle={[plan.summary, usedByLabel(plan)]
+                  meta={[usedByLabel(plan), plan.summary]}
+                  metaTitle={[usedByLabel(plan), plan.summary]
                     .filter(Boolean)
                     .join(" · ")}
                   trailing={
                     <>
+                      {owner && plan.used_by && !plan.used_by.people.length && !plan.used_by.apps.length && (
+                        <Button variant="outline" className="max-sm:hidden" onClick={() => setTab("people")}>
+                          Assign people
+                        </Button>
+                      )}
                       {owner && (
                         <Button
                           variant="outline"
@@ -748,6 +753,11 @@ export default function PeoplePage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {owner && plan.used_by && !plan.used_by.people.length && !plan.used_by.apps.length && (
+                            <DropdownMenuItem onSelect={() => setTab("people")}>
+                              Assign people
+                            </DropdownMenuItem>
+                          )}
                           {owner && (
                             <DropdownMenuItem onSelect={() => setEditor(plan)}>
                               Edit access plan
@@ -1178,7 +1188,10 @@ function usedByLabel(plan: AccessPlan): string | null {
     used.people.length ? `${used.people.length} ${used.people.length === 1 ? "person" : "people"}` : null,
     used.apps.length ? `${used.apps.length} ${used.apps.length === 1 ? "app" : "apps"}` : null,
   ].filter(Boolean);
-  return parts.length ? `Used by ${parts.join(" and ")}` : "Not used yet";
+  const holders = parts.length ? `Used by ${parts.join(" and ")}` : "No one is on this plan yet";
+  const pending = used.invites ? `${used.invites} invitation${used.invites === 1 ? "" : "s"} pending.` : "";
+  const rule = used.signin_rules ? "Assigned by a sign-in rule" : "";
+  return [holders + (pending || rule ? "." : ""), pending, rule].filter(Boolean).join(" ");
 }
 function Confirmation({
   title,

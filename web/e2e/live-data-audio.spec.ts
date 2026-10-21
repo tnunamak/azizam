@@ -36,10 +36,13 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
     await fulfilJson(route, body, { response });
   });
   const firstList = page.waitForResponse((candidate) =>
-    candidate.url().includes("/me/api/media?limit=40&scope=everyone"),
+    candidate.url().includes("/me/api/media?limit=40"),
   );
   await page.goto("/library/");
   await (await firstList).finished();
+  // This playback fixture is keyless legacy media, available only after choosing Everyone.
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page.getByRole("option", { name: "Everyone", exact: true }).click();
   const refreshed = page.waitForResponse((candidate) =>
     candidate.url().includes("kind=audio"),
   );

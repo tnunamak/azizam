@@ -93,8 +93,18 @@ async function media(request: APIRequestContext, id: string, everyone = false) {
   };
 }
 
-async function openViewer(page: Page, id: string) {
-  await page.goto(`/library/?asset=${encodeURIComponent(id)}`);
+// The Library starts every viewer on Mine, so a deep link reaches only the
+// viewer's own creations. An owner reaches another person's creation by
+// choosing Everyone, then opening its tile.
+async function openViewer(page: Page, id: string, everyone = false) {
+  if (everyone) {
+    await page.goto("/library/");
+    await page.getByRole("combobox", { name: "Person", exact: true }).click();
+    await page.getByRole("option", { name: "Everyone", exact: true }).click();
+    await page.locator(`[data-asset-open="${id}"]`).click();
+  } else {
+    await page.goto(`/library/?asset=${encodeURIComponent(id)}`);
+  }
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   // The facts load with the viewer; wait for them before reading its text.
@@ -241,7 +251,7 @@ test.describe("Library: the prompt is the maker's alone", () => {
       search.assets.map((a: { asset_id: string }) => a.asset_id),
     ).not.toContain(id);
 
-    const dialog = await openViewer(page, id);
+    const dialog = await openViewer(page, id, true);
     await expect(dialog).toContainText("Robin");
     await expect(dialog).not.toContainText(/prompt/i);
     await expect(

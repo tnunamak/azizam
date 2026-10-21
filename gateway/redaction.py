@@ -32,6 +32,7 @@ Design notes
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable, Mapping
 
 # Forbidden key vocabulary, in three groups so it stays readable:
@@ -44,6 +45,8 @@ _RAW_PAYLOAD_KEYS = frozenset(
     {
         "prompt",
         "prompts",
+        "prompt_used",
+        "prompt_text",
         "negative_prompt",
         "lyrics",
         "tags",
@@ -110,9 +113,12 @@ _REJECTION_REASON = (
 
 
 def is_forbidden_key(key: Any) -> bool:
-    """Return True if ``key`` (case-insensitive) is on the forbidden list."""
+    """Return True if ``key`` names a forbidden value, independent of casing/style."""
     try:
-        return str(key).lower() in FORBIDDEN_KEYS
+        name = str(key)
+        snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+        normalized = re.sub(r"[-\s]+", "_", snake).lower()
+        return normalized in FORBIDDEN_KEYS
     except Exception:  # noqa: BLE001
         return False
 

@@ -170,6 +170,37 @@ it("sends the original return target to the server and follows its validated nex
     expect(continueTo).toHaveBeenCalledWith("/usage/?receipt=one"),
   );
 });
+it("requires a password before sign-in and sends a one-character password", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login" ? json({ next: "/" }) : original(input, init),
+  );
+  mount();
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("Email"), "member@example.test");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(fetch).not.toHaveBeenCalledWith("/auth/api/login", expect.anything());
+  expect(screen.getByLabelText("Password")).toBeRequired();
+  await user.type(screen.getByLabelText("Password"), "x");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ body: JSON.stringify({ email: "member@example.test", password: "x", return_to: "/" }) })));
+});
+it("requires a password before reset and sends a one-character password", async () => {
+  window.history.replaceState(null, "", "/sign-in/#reset=reset-test");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/password-reset" ? json({ next: "/" }) : original(input, init),
+  );
+  mount();
+  const user = userEvent.setup();
+  const field = await screen.findByLabelText("New password");
+  await user.click(screen.getByRole("button", { name: "Save password" }));
+  expect(fetch).not.toHaveBeenCalledWith("/auth/api/password-reset", expect.anything());
+  expect(field).toBeRequired();
+  await user.type(field, "x");
+  await user.click(screen.getByRole("button", { name: "Save password" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/password-reset", expect.objectContaining({ body: JSON.stringify({ token: "reset-test", password: "x" }) })));
+});
 it.each([
   [
     "invalid_login",

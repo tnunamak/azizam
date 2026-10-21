@@ -36,3 +36,34 @@ def test_person_without_a_plan_shows_none_and_their_apps_are_denied(db):
 
     assert person["plan_id"] is None
     assert not identity.access.complete
+
+
+@pytest.mark.parametrize("state", ["active", "disabled", "removed"])
+def test_plan_holders_count_only_active_people_and_direct_apps(db, state):
+    user = admin_store.upsert_oidc_user("issuer", state, display_name="Member", path=db)
+    family = store_plan("Family", path=db, caps=("chat",))
+    accounts.change_person(user["id"], "owner", path=db, plan_id=family["id"])
+    admin_store.ensure_session_app_for_user(user["id"], name="Personal", path=db)
+    admin_store.create_app("Direct", kind="service", owner_user_id=user["id"], access_plan=family["id"], path=db)
+    disabled = admin_store.create_app("Disabled", kind="service", owner_user_id=user["id"], access_plan=family["id"], path=db)
+    with admin_store._conn(db) as conn:
+        conn.execute("UPDATE apps SET disabled_at=1 WHERE id=?", (disabled["id"],))
+        # Test owner state independently: Direct remains enabled.
+        if state != "active":
+            conn.execute(f"UPDATE account_access SET {state}_at=1 WHERE user_id=?", (user["id"],))
+        conn.commit()
+        used = admin_store.access_plan_users(conn, family["id"])
+    assert used["people"] == (["Member"] if state == "active" else [])
+    assert used["apps"] == (["Direct"] if state == "active" else [])
+
+
+def test_plan_holders_report_signin_rule_assignments_separately(db):
+    family = store_plan("Family", path=db, caps=("chat",))
+    user = admin_store.upsert_oidc_user("issuer", "rule", path=db)
+    with admin_store._conn(db) as conn:
+        assert admin_store.access_plan_users(conn, family["id"])["signin_rules"] == 0
+        conn.execute("INSERT INTO signin_rule_plans(user_id,plan_id,set_at) VALUES (?,?,1)", (user["id"], family["id"]))
+        used = admin_store.access_plan_users(conn, family["id"])
+    assert used["signin_rules"] == 1
+    assert used["people"] == []
+    assert used["apps"] == []

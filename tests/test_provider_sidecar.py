@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
 
 from gateway import provider_configuration
+from gateway.litellm_content import profile
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.provider_sidecar import (
     build_sidecar_env,
@@ -279,8 +281,9 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
         )
 
     assert exc.value.code == 23
-    assert captured["file"] == "litellm"
-    assert captured["args"] == ["litellm", "--config", str(config_path)]
+    assert captured["file"] == sys.executable
+    assert Path(captured["args"][1]).name == "litellm_launcher.py"
+    assert captured["args"][-2:] == ["--config", str(config_path)]
     assert "sk-live-secret" not in repr(captured["args"])
     env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
     assert captured["env"][env_name] == "sk-live-secret"  # type: ignore[index]
@@ -328,8 +331,9 @@ def test_run_replaces_stale_config_and_uses_one_registry_snapshot_before_exec(
         assert "AI_GATEWAY_PROVIDER_SECRET_" not in config_path.read_text()
         assert secret not in config_path.read_text()
         assert secret not in json.dumps(args)
-        assert file == "litellm"
-        assert args == ["litellm", "--config", str(config_path)]
+        assert file == sys.executable
+        assert Path(args[1]).name == "litellm_launcher.py"
+        assert args[-2:] == ["--config", str(config_path)]
         raise SystemExit(23)
 
     monkeypatch.setattr(provider_sidecar, "_read_service_registry", read_once)
@@ -425,7 +429,7 @@ def test_sidecar_resolver_failures_remove_stale_env_and_hide_details(
         result = build_sidecar_env(db_path=db_path, base_env=base_env)
 
         assert seen == [(secret_id, db_path, "https://provider.test:443")]
-        assert result == {"PATH": "/synthetic/bin"}
+        assert result == {"PATH": "/synthetic/bin", **profile()["environment"]}
         assert base_env[env_name] == "stale-value"
         output = capsys.readouterr()
         assert failure_type.__name__ in output.err
@@ -468,7 +472,7 @@ def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(
         db_path=db_path,
         base_env={"PATH": "/synthetic/bin", env_name: "stale-value"},
     )
-    assert after == {"PATH": "/synthetic/bin"}
+    assert after == {"PATH": "/synthetic/bin", **profile()["environment"]}
 
 
 def _write_registry_json(db_path: Path, registry: dict[str, object]) -> None:

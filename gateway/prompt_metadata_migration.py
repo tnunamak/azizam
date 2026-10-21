@@ -28,7 +28,7 @@ CACHE_MUTATION_LOCK = threading.RLock()
 _SCAN_LOCK = threading.Lock()
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _LEGACY_SCRATCH = re.compile(r"^[0-9a-f]{32}\.(?:in|out|probe)\.[a-z0-9]+$")
-_STAGING = re.compile(r"^([0-9a-f]{64})\.([a-z0-9]+)\.tmp$")
+_STAGING = re.compile(r"^\.?([0-9a-f]{64})\.(meta\.json|[a-z0-9]+)(?:\.[a-zA-Z0-9_-]+)?\.tmp$")
 _ASSET_ID = re.compile(r"^(?:img|aud|vid)_([0-9a-f]{64})$")
 _DDL = """CREATE TABLE IF NOT EXISTS prompt_metadata_migration (
     path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version INTEGER NOT NULL
@@ -151,7 +151,9 @@ def strip_cached_assets(
         return result
     if throttle_seconds < 0 or (max_files is not None and max_files < 0):
         raise ValueError("migration limits cannot be negative")
-    state_path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.prepare_private_database(state_path)
+    # Single-process locks: a draining old gateway during restart is a second process.
     with _SCAN_LOCK, sqlite3.connect(state_path, timeout=30) as db:
         db.execute(_DDL)
         db.execute(_ATTEMPTS_DDL)
@@ -160,18 +162,18 @@ def strip_cached_assets(
         # Permanent failures must not starve later files in bounded batches.
         paths = sorted(cache_dir.iterdir(), key=lambda path: (attempts.get(str(path.absolute()), 0), path.name))
         for path in paths:
-            # Only this migration writes these names, while holding _SCAN_LOCK.
-            # Sweep even a selected/bounded run: no active staging file can exist here.
+            # Spare young stages that another process may still be replacing.
             if path.name.startswith(".metadata-clean-"):
                 try:
-                    path.unlink(missing_ok=True)
+                    if time.time() - path.lstat().st_mtime >= 600:
+                        path.unlink(missing_ok=True)
                 except OSError as exc:
                     result.pending += 1
                     result.errors[path.name] = type(exc).__name__
                 continue
             staging = _STAGING.fullmatch(path.name)
             if staging and (digests is None or staging[1] in digests):
-                if media_metadata.media_kind("." + staging[2]) is None:
+                if staging[2] != "meta.json" and media_metadata.media_kind("." + staging[2]) is None:
                     continue
                 with CACHE_MUTATION_LOCK:
                     try:

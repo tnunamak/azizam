@@ -35,7 +35,7 @@ def _generate(fakes: FakeUpstreams, monkeypatch, scenario: str):
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
             return await proxy._generate_images_with_adaptive_batching(
                 request=SimpleNamespace(), client=client, base_workflow=json.loads(json.dumps(WORKFLOW)),
-                meta={}, seed_node=None, seed_field="seed", workflow_name="fk", width=512, height=512,
+                meta={}, manifest=None, workflow_name="fk", width=512, height=512,
                 n_requested=1, response_format="b64_json", headers={},
             )
 
@@ -84,7 +84,7 @@ def test_a_refused_background_removal_round_is_retried_without_it_and_the_gatewa
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
             return await proxy._generate_images_with_adaptive_batching(
                 request=SimpleNamespace(), client=client, base_workflow=json.loads(json.dumps(WORKFLOW)),
-                meta={}, seed_node=None, seed_field="seed", workflow_name="fk+rmbg", width=512, height=512,
+                meta={}, manifest=None, workflow_name="fk+rmbg", width=512, height=512,
                 n_requested=1, response_format="b64_json", headers={},
                 background_removal_decision=proxy.ImageBackgroundRemovalDecision(True, 1.0, "transparent asked"),
                 fallback_workflow=fallback, fallback_workflow_name="fk",

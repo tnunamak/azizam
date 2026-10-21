@@ -614,11 +614,14 @@ def test_the_owner_can_set_a_password_and_use_it_whatever_made_their_account(sg,
     assert login.cookies.get("opx_admin_session")
 
 
-def test_a_short_password_is_refused(sg, monkeypatch):
+def test_an_empty_password_is_refused_and_a_short_one_is_accepted(sg, monkeypatch):
+    # No length policy beyond non-empty; the sign-in throttle limits guessing.
     monkeypatch.setattr(accounts, "_SCRYPT_N", 2 ** 10)
     owner = owner_client(sg)
-    refused = owner.post("/admin/api/signin/owner-password", json={"password": "short"}, headers=csrf_for(owner))
+    refused = owner.post("/admin/api/signin/owner-password", json={"password": ""}, headers=csrf_for(owner))
     assert refused.status_code == 400 and refused.json()["error"]["code"] == "invalid_password"
+    accepted = owner.post("/admin/api/signin/owner-password", json={"password": "short"}, headers=csrf_for(owner))
+    assert accepted.status_code < 400, accepted.text
 
 
 def test_the_owners_password_works_while_built_in_sign_in_is_off_and_nobody_elses_does(sg, monkeypatch):

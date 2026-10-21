@@ -177,6 +177,8 @@ describe("Check access", () => {
   it("lists what the plan can and cannot use without any typing", async () => {
     const { spy } = mount(preview(SMALL));
     expect(await screen.findByText("Can use 2 of 3")).toBeVisible();
+    expect(screen.getByText(/Previewing Family for both the person and the app/)).toBeVisible();
+    expect(screen.getByText(/does not assign the plan or change Try/)).toBeVisible();
     expect(spy).toHaveBeenCalledExactlyOnceWith("plan_family");
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByLabelText("Model or workflow")).toBeNull();

@@ -55,6 +55,10 @@ for (const width of [390, 1440] as const) {
 
   test(`maker key and unavailable tile are not clipped at ${width}`, async ({ page }) => {
     await open(page, width);
+    if (width === 390) await page.getByRole("button", { name: /^Filters/ }).click();
+    await page.getByRole("combobox", { name: "Person", exact: true }).click();
+    await page.getByRole("option", { name: "Everyone", exact: true }).click();
+    if (width === 390) await page.keyboard.press("Escape");
     await page.getByText("Show them").click();
     const key = page.getByRole("group", { name: "Creation makers" });
     await expect(key).toBeVisible();

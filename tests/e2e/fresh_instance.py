@@ -225,6 +225,7 @@ def run(compose):
         env = {"PATH": os.defpath, "HOME": str(root), "LANG": "C.UTF-8",
                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1"}
+        env["AZIZAM_KEY_ACTIVITY_LOG"] = str(root / "key_activity.jsonl")
         env["AZIZAM_CONFIG_PATH"] = str(source / "first-run.yml")
         env["AZIZAM_LITELLM_API_KEY"] = "sk-fresh-instance-test"
         env["LITELLM_MASTER_KEY"] = env["AZIZAM_LITELLM_API_KEY"]
@@ -342,7 +343,8 @@ def run(compose):
             # Use the same gateway-generated configuration as Compose.
             wait_file(source / "data/litellm.config.yaml")
             substrate_socket.close()
-            sidecar = launch([str(Path(sys.executable).parent / "litellm"), "--config", "data/litellm.config.yaml",
+            sidecar = launch([sys.executable, '-m', 'gateway.provider_sidecar', 'run',
+                              '--db', 'data/admin.db', '--', 'litellm', '--config', 'data/litellm.config.yaml',
                               "--host", "127.0.0.1", "--port", str(substrate_port)])
             wait_litellm_ready(env["AZIZAM_LITELLM_BASE_URL"], env["AZIZAM_LITELLM_API_KEY"], sidecar)
         deadline = time.monotonic() + 120
@@ -367,8 +369,12 @@ def run(compose):
             code = str(error.get("code", "unknown"))
             if not re.fullmatch(r"[a-z_]{1,80}", code):
                 code = "upstream_error"
-            if response.status_code not in {502, 503} or code != "backend_unavailable" or time.monotonic() >= deadline:
-                raise RuntimeError(f"Chat failed with HTTP {response.status_code}, code {code}")
+            # Startup can check the Compose profile before the substrate is
+            # ready. Let its bounded refusal recheck run before declaring failure.
+            if response.status_code not in {502, 503} or code not in {"backend_unavailable", "litellm_content_unverified"} or time.monotonic() >= deadline:
+                slug = re.search(r"\((profile_check_unavailable|database_[a-z_]+)\)", str(error.get("message", "")))
+                problem = slug.group(1) if slug else "unavailable"
+                raise RuntimeError(f"Chat failed with HTTP {response.status_code}, code {code}, problem {problem}")
             time.sleep(1)
         content = response.json()["choices"][0]["message"]["content"]
         if content != ANSWER:

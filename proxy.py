@@ -103,7 +103,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
-from gateway import video_subject, thumbnails
+from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
@@ -348,6 +348,7 @@ from gateway.litellm_substrate import (
 )
 from gateway.manifests import (
     ManifestError,
+    ManifestIdentity,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -4804,7 +4805,8 @@ class _ReplayableBody:
     """
 
     def __init__(self, request: Request, spool_dir: Path, limit: int, replay: stt_chunking.SttReplayReservation) -> None:
-        spool_dir.mkdir(parents=True, exist_ok=True)
+        from gateway import private_io
+        private_io.ensure_private_dir(spool_dir)
         self._limit = limit
         self._scope = request.scope
         self._receive = request.receive
@@ -6833,6 +6835,7 @@ def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -
 
 def _image_signing_secret() -> bytes:
     """Resolve (and lazily generate) the HMAC secret used for signed image URLs."""
+    from gateway import private_io
     global _image_url_signing_secret
     if _image_url_signing_secret is not None:
         return _image_url_signing_secret
@@ -6849,11 +6852,10 @@ def _image_signing_secret() -> bytes:
         except Exception:
             pass
     # Generate and persist.
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     secret = secrets.token_urlsafe(48).encode("utf-8")
     try:
-        secret_path.write_bytes(secret)
-        os.chmod(secret_path, 0o600)
+        private_io.atomic_write_bytes(secret_path, secret)
     except Exception as e:
         print(f"[proxy] Could not persist image URL signing secret: {e}", flush=True)
     _image_url_signing_secret = secret
@@ -6934,14 +6936,14 @@ def _read_asset_metadata(asset_id: str) -> dict[str, Any]:
 
 
 def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
+    from gateway import private_io
     path = _asset_metadata_path(asset_id)
     if path is None:
         return
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     tmp = path.with_name(f"{path.name}.tmp")
     try:
-        tmp.write_text(json.dumps(dict(metadata), sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        private_io.atomic_write_text(path, json.dumps(dict(metadata), sort_keys=True))
     except Exception as e:
         print(f"[proxy] Could not persist asset metadata for {asset_id}: {e}", flush=True)
         try:
@@ -7072,6 +7074,7 @@ def _store_asset_bytes(
     maker_person_id: str | None | object = _CURRENT_MAKER,
 ) -> str:
     """Store clean media; any retained prompt lives only in asset_prompts."""
+    from gateway import private_io
     kind = str(kind).strip().lower()
     if kind not in {"img", "aud", "vid"}:
         raise ValueError("asset kind must be one of img, aud, vid")
@@ -7094,16 +7097,11 @@ def _store_asset_bytes(
     content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     target = IMAGE_CACHE_DIR / f"{digest}{suffix}"
     with prompt_metadata_migration.CACHE_MUTATION_LOCK:
         if not target.exists():
-            tmp = target.with_suffix(f"{suffix}.tmp")
-            try:
-                tmp.write_bytes(content)
-                tmp.replace(target)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_bytes(target, content)
         _record_asset_owner(asset_id, owner_key_hash)
         person_id = (getattr(delivery, "person_id", None) or getattr(decision, "person_id", None)) if maker_person_id is _CURRENT_MAKER else maker_person_id
         metadata_sidecar = _read_asset_metadata(asset_id)
@@ -7732,8 +7730,7 @@ async def _generate_images_with_adaptive_batching(
     client: httpx.AsyncClient,
     base_workflow: dict,
     meta: dict,
-    seed_node: Optional[str],
-    seed_field: str,
+    manifest: Mapping[str, Any] | None,
     workflow_name: str,
     width: int,
     height: int,
@@ -7752,6 +7749,7 @@ async def _generate_images_with_adaptive_batching(
     output_background: Optional[str] = None,
     output_quality: Optional[str] = None,
     output_size: Optional[str] = None,
+    legacy_seed_field: str = "seed",
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -7759,6 +7757,11 @@ async def _generate_images_with_adaptive_batching(
     measure the per-image VRAM cost so subsequent rounds (and subsequent
     requests) can scale up safely. Never exceeds free VRAM minus reserve.
     """
+    try:
+        identity = manifest_identity(dict(manifest)) if manifest is not None else None
+    except ManifestError:
+        return _image_workflow_configuration_error(manifest, workflow_name)
+    batch_limit = ((manifest or {}).get("inputs") or {}).get("batch_size", {}).get("maximum")
     estimate = get_vram_estimate(workflow_name, width, height)
     free_before = await graph_free_vram_bytes(client)
     warnings: list[str] = []
@@ -7768,6 +7771,7 @@ async def _generate_images_with_adaptive_batching(
     images_collected: list[bytes] = []
     images_remaining = n_requested
     rounds_run = 0
+    seed_offset = 0
 
     # Soft cap on rounds — each round produces at least 1 image, so worst case
     # we run n_requested rounds. Add a small extra buffer for retry-on-OOM.
@@ -7808,17 +7812,21 @@ async def _generate_images_with_adaptive_batching(
             # measurement code below.
             batch_target = min(IMAGE_MAX_BATCH_SIZE, images_remaining)
 
+        if isinstance(batch_limit, int) and not isinstance(batch_limit, bool):
+            batch_target = min(batch_target, max(1, batch_limit))
+
         # Build a per-round workflow copy. Re-seed each round so multiple rounds
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
-        if seed_node and seed_node in round_workflow:
-            round_seed = (
-                (fixed_seed + len(images_collected))
-                if fixed_seed is not None
-                else random.randint(0, 2**32 - 1)
+        round_offset = len(images_collected) if manifest is None else seed_offset
+        try:
+            round_workflow, round_seed = _reseed_image_workflow(
+                round_workflow, manifest, workflow_name,
+                fixed_seed + round_offset if fixed_seed is not None else None,
+                meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
             )
-            inputs = round_workflow[seed_node].get("inputs", {})
-            inputs[seed_field] = round_seed
+        except ManifestError:
+            return _image_workflow_configuration_error(manifest, workflow_name)
 
         applied = apply_batch_size(round_workflow, meta, batch_target)
         if not applied and batch_target > 1:
@@ -7855,9 +7863,10 @@ async def _generate_images_with_adaptive_batching(
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     round_workflow = copy.deepcopy(base_workflow)
-                    if seed_node and seed_node in round_workflow:
-                        inputs = round_workflow[seed_node].get("inputs", {})
-                        inputs[seed_field] = round_seed
+                    round_workflow, _ = _reseed_image_workflow(
+                        round_workflow, manifest, workflow_name, round_seed,
+                        meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
+                    )
                     apply_batch_size(round_workflow, meta, 1)
                     err, round_images = await _graph_run_round(
                         client, round_workflow, headers,
@@ -7869,14 +7878,7 @@ async def _generate_images_with_adaptive_batching(
         if err is None:
             _delivery = media_delivery.current()
             if _delivery is not None:
-                _round_seed = (
-                    round_workflow.get(seed_node, {}).get("inputs", {}).get(seed_field)
-                    if seed_node
-                    else None
-                )
-                _delivery.seeds.extend(
-                    [_round_seed if isinstance(_round_seed, int) else None] * len(round_images)
-                )
+                _delivery.seeds.extend([round_seed] * len(round_images))
         if err is not None:
             if (
                 background_removal_decision is not None
@@ -7908,8 +7910,7 @@ async def _generate_images_with_adaptive_batching(
                     client=client,
                     base_workflow=copy.deepcopy(fallback_workflow),
                     meta=meta,
-                    seed_node=seed_node,
-                    seed_field=seed_field,
+                    manifest=manifest,
                     workflow_name=fallback_workflow_name or workflow_name,
                     width=width,
                     height=height,
@@ -7920,6 +7921,7 @@ async def _generate_images_with_adaptive_batching(
                     image_transform=image_transform,
                     image_response_headers=image_response_headers,
                     fixed_seed=fixed_seed,
+                    legacy_seed_field=legacy_seed_field,
                     auth_context=auth_context,
                     output_format=output_format,
                     output_compression=output_compression,
@@ -7934,6 +7936,7 @@ async def _generate_images_with_adaptive_batching(
                 )
             return err
 
+        seed_offset += max(1, len(round_images))
         if not round_images:
             warnings.append(f"round {rounds_run} produced 0 images")
             # Avoid infinite loops if the backend silently returns nothing.
@@ -8338,8 +8341,6 @@ async def proxy_graph_image_request(
 
     prompt_node = meta.get("prompt_node")
     size_node = meta.get("size_node")
-    seed_node = meta.get("seed_node")
-
     if prompt_node and prompt_node in workflow:
         workflow[prompt_node]["inputs"]["text"] = prompt
 
@@ -8417,8 +8418,7 @@ async def proxy_graph_image_request(
                 client=client,
                 base_workflow=workflow,
                 meta=meta,
-                seed_node=seed_node,
-                seed_field="seed",
+                manifest=manifest,
                 workflow_name=workflow_name_for_batching,
                 width=width,
                 height=height,
@@ -8900,7 +8900,6 @@ async def proxy_graph_image_edit_request(
             )
 
             prompt_node = meta.get("prompt_node")
-            seed_node = meta.get("seed_node")
             size_node = meta.get("size_node")
 
             if prompt_node and prompt_node in workflow:
@@ -9041,13 +9040,6 @@ async def proxy_graph_image_edit_request(
                 set_workflow_background_removal(workflow, meta, False)
                 workflow_name_for_batching = workflow_name
 
-            # V2 uses RandomNoise with noise_seed, V1 used KSampler with seed.
-            seed_field = "seed"
-            if seed_node and seed_node in workflow:
-                inputs = workflow[seed_node].get("inputs", {})
-                if "noise_seed" in inputs:
-                    seed_field = "noise_seed"
-
             admission = _dispatch_admission_response(
                 "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -9059,8 +9051,11 @@ async def proxy_graph_image_edit_request(
                 client=client,
                 base_workflow=workflow,
                 meta=meta,
-                seed_node=seed_node,
-                seed_field=seed_field,
+                manifest=manifest,
+                legacy_seed_field=(
+                    "noise_seed" if "noise_seed" in workflow.get(meta.get("seed_node"), {}).get("inputs", {})
+                    else "seed"
+                ),
                 workflow_name=workflow_name_for_batching,
                 width=img_width,
                 height=img_height,
@@ -12982,6 +12977,9 @@ async def lifespan(app: FastAPI):
     # Saved /v1/responses conversations survive until explicit deletion.
     print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
 
+    from gateway.litellm_content import gate as content_gate
+
+    await content_gate.check(_litellm_runtime_config().base_url)
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = await _start_receipts_maintenance(receipts_maintenance_stop)
 
@@ -14071,6 +14069,10 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
         print(f"[proxy] retention fact lookup unavailable: {type(error).__name__}", flush=True)
         view = retention_facts.ledger({"services": {}}, kinds=retention.bundled().data["kinds"])
         view["fact_basis"] = "Today's facts. Some destination facts are unavailable."
+    from gateway.litellm_content import deployment_status
+
+    view["execution_substrate"] = deployment_status(registry)
+    view["never_save_text"] += "\n\n" + view["execution_substrate"]["detail"]
     if receipt:
         view["request_id"] = request_id
         view["observed"] = {key: receipt[key] for key in ("backend", "resolved_model", "requested_model", "accepted_at_ms", "sent_at_ms") if receipt.get(key) is not None}
@@ -14318,6 +14320,7 @@ app.include_router(
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
+        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
@@ -15227,7 +15230,7 @@ async def _run_identity_job(
                 _ADMISSION_WORKER.reset(worker_token)
             item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
-            asset.update(identity_api.scene_extras(result))
+            asset.update(identity_api.stored_scene_extras(result, req))
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_SUCCEEDED, progress=100, add_assets=[asset],
                 metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
@@ -15239,7 +15242,20 @@ async def _run_identity_job(
         except identity_api.IdentityUnavailable:
             _identity_job_failed(job_id, "The face service could not be started.")
         except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
-            _identity_job_failed(job_id, str(exc))
+            # Exception text can quote the request's person labels or descriptions.
+            message = {
+                "no_face": "no face was found in a reference photo; choose a clearer photo.",
+                "same_face": "Two people point at the same face; give each person a different box.",
+                "face_too_small": "A reference face is too small; choose a closer photo.",
+                "ambiguous_faces": "Reference faces could not be matched; give each person a face box.",
+            }.get(getattr(exc, "code", None), "The identity request could not be completed; check its photos and settings.")
+            # These validation errors contain only fixed copy and numeric limits.
+            if getattr(exc, "code", None) == "invalid_request" and (
+                re.fullmatch(r"people\[\]\.image \d+ has no matching photo", str(exc))
+                or re.fullmatch(r"at most \d+ people are supported", str(exc))
+            ):
+                message = str(exc)
+            _identity_job_failed(job_id, message)
         except asyncio.CancelledError:
             _identity_job_failed(job_id, "The gateway stopped before the job finished.")
             raise
@@ -16276,8 +16292,9 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     # Blocking SQLite and file work runs on a worker thread so a slow disk
     # cannot stall every other request on the event loop.
     auth_contexts = await asyncio.to_thread(_session_catalog_auth_contexts, session, user_snapshot)
+    account_plan = (user_snapshot.get("user") or {}).get("access_plan")
     if not auth_contexts:
-        return build_models_catalog(alias_views={}, capabilities=[])
+        return {**build_models_catalog(alias_views={}, capabilities=[]), "access_plan": account_plan}
 
     def load_catalog_inputs() -> tuple[dict[str, Any], Mapping[str, Any], list[list[Any]]]:
         activity = build_user_activity_snapshot(
@@ -16341,6 +16358,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
 
     catalog = await asyncio.to_thread(assemble_catalog)
+    # Try labels the account plan that produced this list, including no assignment.
+    catalog["access_plan"] = account_plan
     # The browser has a session, not a public API key. Carry the configured
     # voice contract on each already-authorized speech row so it can choose
     # a voice before creating its temporary Try key.
@@ -17453,6 +17472,13 @@ async def setup_create_local_owner(request: Request):
         return await _setup_page_response(
             request,
             create_error="Enter a password for the owner account.",
+            create_email=email,
+            status_code=400,
+        )
+    if len(password) > 1024:
+        return await _setup_page_response(
+            request,
+            create_error="Enter a password of up to 1,024 characters.",
             create_email=email,
             status_code=400,
         )
@@ -19321,29 +19347,54 @@ def _gateway_workflow_extension_values(
     return dict(result.validation.accepted), None
 
 
-def _seed_field_for_workflow(workflow: Mapping[str, Any], seed_node: str | None) -> str:
-    if seed_node and seed_node in workflow:
-        inputs = workflow[seed_node].get("inputs", {})
-        if isinstance(inputs, Mapping) and "noise_seed" in inputs:
-            return "noise_seed"
-    return "seed"
+_image_reseed_unavailable: set[str] = set()
+_image_configuration_invalid: set[str] = set()
 
 
-def _set_workflow_seed(
-    workflow: Mapping[str, Any],
-    *,
-    seed_node: str | None,
-    seed_field: str,
+def _image_workflow_configuration_error(manifest, workflow_name: str) -> Response:
+    workflow_id = str((manifest or {}).get("id") or workflow_name)
+    if workflow_id not in _image_configuration_invalid:
+        _image_configuration_invalid.add(workflow_id)
+        print(f"[proxy] workflow '{workflow_id}': invalid image workflow configuration", flush=True)
+    return Response(
+        content=json.dumps({"error": {
+            "message": "The image workflow configuration is invalid.",
+            "type": "api_error", "code": "invalid_workflow_extension",
+        }}),
+        status_code=503, media_type="application/json",
+    )
+
+
+def _reseed_image_workflow(
+    workflow: dict[str, Any],
+    manifest: Mapping[str, Any] | None,
+    workflow_name: str,
     seed: int | None,
-) -> None:
-    if not seed_node or seed_node not in workflow:
-        return
-    inputs = workflow[seed_node].get("inputs", {})
-    if not isinstance(inputs, dict):
-        return
+    *,
+    meta: Mapping[str, Any] | None = None,
+    legacy_seed_field: str = "seed",
+    identity: ManifestIdentity | None = None,
+) -> tuple[dict[str, Any], int | None]:
+    """Use manifest bindings, or the legacy metadata path for graphs without one."""
+    if manifest is None:
+        node = (meta or {}).get("seed_node")
+        if node and node in workflow:
+            if seed is None:
+                seed = random.randint(0, 2**32 - 1)
+            workflow[node].get("inputs", {})[legacy_seed_field] = int(seed)
+            return workflow, int(seed)
+    binding = ((manifest or {}).get("bindings") or {}).get(_GRAPH_BINDING) or {}
+    mapping = binding.get("map") or {}
+    if not mapping.get("seed"):
+        name = workflow_name.removesuffix("+rmbg")
+        if name not in _image_reseed_unavailable:
+            _image_reseed_unavailable.add(name)
+            print(f"[proxy] workflow '{name}': reseeding unavailable (no manifest seed binding); "
+                  "using template inputs", flush=True)
+        return workflow, None
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
-    inputs[seed_field] = int(seed)
+    return bind_backend_request(dict(manifest), _GRAPH_BINDING, workflow, {"seed": int(seed)}, identity=identity).request, int(seed)
 
 
 async def _run_single_graph_image(
@@ -19352,20 +19403,21 @@ async def _run_single_graph_image(
     client: httpx.AsyncClient,
     workflow: dict[str, Any],
     meta: Mapping[str, Any],
+    manifest: Mapping[str, Any] | None,
     headers: Mapping[str, str],
     label: str,
     seed: int | None = None,
 ) -> tuple[Response | None, bytes | None]:
     round_workflow = copy.deepcopy(workflow)
     apply_batch_size(round_workflow, dict(meta), 1)
-    seed_node = meta.get("seed_node")
-    seed_node_str = str(seed_node) if seed_node is not None else None
-    _set_workflow_seed(
-        round_workflow,
-        seed_node=seed_node_str,
-        seed_field=_seed_field_for_workflow(round_workflow, seed_node_str),
-        seed=seed,
-    )
+    node = meta.get("seed_node")
+    field = "noise_seed" if "noise_seed" in round_workflow.get(str(node), {}).get("inputs", {}) else "seed"
+    try:
+        round_workflow, _ = _reseed_image_workflow(
+            round_workflow, manifest, label, seed, meta=meta, legacy_seed_field=field,
+        )
+    except ManifestError:
+        return _image_workflow_configuration_error(manifest, label), None
     err, images = await _graph_run_round(
         client,
         round_workflow,
@@ -19562,6 +19614,7 @@ async def _proxy_offset_inpaint_tile_request(
                     client=client,
                     workflow=base_workflow,
                     meta=base_meta,
+                    manifest=base_manifest,
                     headers=headers,
                     label=f"offset tile base {index + 1}/{n}",
                     seed=base_seed,
@@ -19625,6 +19678,7 @@ async def _proxy_offset_inpaint_tile_request(
                     client=client,
                     workflow=edit_workflow,
                     meta=edit_meta,
+                    manifest=inpaint_manifest,
                     headers=headers,
                     label=f"offset tile seam inpaint {index + 1}/{n}",
                     seed=seam_seed,
@@ -20031,7 +20085,9 @@ def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: st
         standard_portable_names.update(
             str(name) for name in route_bound if isinstance(name, str) and name
         )
-    return tuple(name for name in mapping.keys() if name not in standard_portable_names)
+    # Route-owned bindings need not declare a public extension input.
+    inputs = manifest.get("inputs") or {}
+    return tuple(name for name in mapping if name in inputs and name not in standard_portable_names)
 
 
 def _manifest_required_route_bound_inputs(
@@ -20274,7 +20330,9 @@ async def _apply_workflow_extensions_to_image_request(
         )
         if receipt is not None:
             record_image_extension_binding(receipt, result)
-    except (ExtensionError, ManifestError, ValueError) as e:
+    except ManifestError:
+        return None, _image_workflow_configuration_error(manifest, "image workflow")
+    except (ExtensionError, ValueError) as e:
         return None, _image_extension_error_response(receipt, str(e))
 
     if result.unknown_top_level:
@@ -20455,8 +20513,9 @@ _PROMPT_PURGE_DRAIN_LOCK = threading.Lock()
 @contextlib.contextmanager
 def _prompt_purge_queue() -> Iterable[Any]:
     import sqlite3
+    from gateway import private_io
     path = _prompt_migration_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.prepare_private_database(path)
     with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
         # The write lock serializes the schema upgrade across threads and processes.
         conn.execute("BEGIN IMMEDIATE")
@@ -20591,6 +20650,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
     def spared(payload: Mapping[str, Any] | None) -> bool:
         return before is not None and int((payload or {}).get("created_at") or 0) > before
 
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         # Move active jobs to memory so they can finish without a durable prompt.
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -20615,8 +20675,9 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                         )
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
-            for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
-                if person_id is None and (before is None or int(path.stat().st_mtime) <= before):
+            for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                         *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+                if person_id is None and not _young_media_payload_stage(path) and (before is None or int(path.stat().st_mtime) <= before):
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
             if not isinstance(payload.get("body"), dict) or spared(payload):
@@ -20916,16 +20977,9 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
                 _store_ephemeral_media_job_payload(job_id, payload)
                 return
             _release_ephemeral_media_job_payload(job_id)
-            IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            from gateway import private_io
             path = _image_media_job_payload_path(job_id)
-            tmp = path.with_suffix(".json.tmp")
-            try:
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, sort_keys=True)
-                tmp.replace(path)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_text(path, json.dumps(payload, sort_keys=True))
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
@@ -20943,12 +20997,25 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
         return data if isinstance(data, dict) else None
 
 
+def _young_media_payload_stage(path: Path) -> bool:
+    if not path.name.endswith(".tmp"):
+        return False
+    try:
+        return time.time() - path.stat().st_mtime < 600
+    except FileNotFoundError:
+        return False
+
+
 def _delete_image_media_job_payload(job_id: str) -> None:
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
-                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
+                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(f".{job_id}.json.*.tmp")):
             try:
+                if _young_media_payload_stage(path):
+                    continue
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
@@ -20956,6 +21023,7 @@ def _delete_image_media_job_payload(job_id: str) -> None:
 
 def _prune_orphaned_media_job_payloads() -> int:
     """Remove terminal-job spools; absent history may be in quarantine."""
+    # Single-process lock: a draining old gateway during restart is a second process.
     with _MEDIA_PAYLOAD_LOCK:
         removed = 0
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
@@ -20966,10 +21034,15 @@ def _prune_orphaned_media_job_payloads() -> int:
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             return removed
         for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
-                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
-            job_id = path.name.split(".json", 1)[0]
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+            if _young_media_payload_stage(path):
+                continue
+            job_id = path.name.lstrip(".").split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if (path.name.startswith(".") and path.name.endswith(".tmp")) or (
+                job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES
+            ):
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed
@@ -21244,8 +21317,8 @@ def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, An
             continue
         item = {
             key: asset[key]
-            for key in ("asset_id", "asset_url", "url", "media_type")
-            if isinstance(asset.get(key), str) and asset.get(key)
+            for key in ("asset_id", "asset_url", "url", "media_type", "available", "availability")
+            if asset.get(key) is not None
         }
         if item:
             data.append(item)
@@ -21280,15 +21353,16 @@ def _media_job_asset_items(
         parsed = _parse_asset_id(asset_id)
         if parsed is None or parsed[0] != kind:
             continue
-        signed_url = build_signed_asset_url(request, asset_id)
         item = {
             key: asset[key]
-            for key in ("asset_id", "media_type", "size_bytes", "index")
+            for key in ("asset_id", "media_type", "size_bytes", "index", "available", "availability")
             if asset.get(key) is not None
         }
-        item["url"] = signed_url
-        item["asset_url"] = signed_url
-        item["content_url"] = signed_url
+        if asset.get("available") is not False:
+            signed_url = build_signed_asset_url(request, asset_id)
+            item["url"] = signed_url
+            item["asset_url"] = signed_url
+            item["content_url"] = signed_url
         items.append(item)
     return items
 
@@ -23445,6 +23519,16 @@ async def gateway_media_job_content(job_id: str, request: Request):
             status_code=409,
             media_type="application/json",
         )
+    job = output_availability.project(job, asset_cache_path)
+    if job.get("output_state") in {"missing", "unavailable"}:
+        retryable = job["output_state"] == "unavailable"
+        return JSONResponse({
+            "error": {"type": "server_error",
+                      "code": "media_job_outputs_unavailable" if retryable else "media_job_outputs_missing",
+                      "message": "The job's output files are unavailable."},
+            "output_state": job["output_state"], "assets": job["assets"],
+        }, status_code=503 if retryable else 410,
+           headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
@@ -24220,9 +24304,10 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
         return data
     try:
         with tempfile.TemporaryDirectory() as tmp:
+            from gateway import private_io
             src = Path(tmp) / f"in{suffix}"
             dst = Path(tmp) / f"out{suffix}"
-            src.write_bytes(data)
+            private_io.atomic_write_bytes(src, data)
             detect = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True, text=True, timeout=60,
@@ -24234,6 +24319,7 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
             gain_db = target_db - peak_db
             if peak_db < -70.0 or abs(gain_db) < 0.5 or gain_db > 50.0:
                 return data
+            private_io.create_private_file(dst)
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
                  "-af", f"volume={gain_db:.2f}dB", str(dst)],
@@ -25840,6 +25926,12 @@ async def _start_receipts_maintenance(stop_event: asyncio.Event) -> asyncio.Task
     """Schedule retries before the first cleanup, including when startup cleanup fails."""
     task = asyncio.create_task(_receipts_maintenance_loop(stop_event), name="receipt-maintenance")
     try:
+        retained = await asyncio.to_thread(firehose_metrics.compact_log)
+        if retained is not None:
+            print(f"[proxy] firehose startup compaction retained {retained} records", flush=True)
+    except Exception as exc:
+        print(f"[proxy] firehose startup compaction failed: {type(exc).__name__}", flush=True)
+    try:
         pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
         print(f"[proxy] receipt startup maintenance pruned {pruned} receipts", flush=True)
     except Exception as exc:
@@ -25854,10 +25946,19 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
         except asyncio.TimeoutError:
             try:
+                from gateway.litellm_content import gate as content_gate
+
+                await content_gate.check(_litellm_runtime_config().base_url, force=True)
                 await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path,
                                         fact_store_path=media_jobs.DB_PATH)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
+            try:
+                retained = await asyncio.to_thread(firehose_metrics.compact_log)
+                if retained is not None:
+                    print(f"[proxy] firehose hourly compaction retained {retained} records", flush=True)
+            except Exception as exc:
+                print(f"[proxy] firehose hourly compaction failed: {type(exc).__name__}", flush=True)
 
 
 def _responses_error(
@@ -28955,6 +29056,11 @@ async def _forward_litellm_proxy_request(
     if engine_reply_timeout is not None:
         # The router gives up at the engine's own reply time; wait a little longer for its answer.
         read_timeout = max(read_timeout, engine_reply_timeout + 5.0)
+    from gateway.litellm_content import execution_refusal
+
+    refusal = await execution_refusal(runtime.base_url)
+    if refusal is not None:
+        return refusal
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=litellm_url(

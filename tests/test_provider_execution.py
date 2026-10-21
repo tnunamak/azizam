@@ -198,6 +198,15 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
         return response, send
 
+    async def test_content_precondition_refuses_paid_execution_before_dispatch(self) -> None:
+        from gateway import litellm_content
+
+        with patch.object(litellm_content.gate, "check", AsyncMock(return_value="database_team_unsafe")):
+            response, send = await self._execute()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "litellm_content_unverified")
+        send.assert_not_awaited()
+
     async def test_paid_app_success_records_cost_receipt(self) -> None:
         response, send = await self._execute()
 

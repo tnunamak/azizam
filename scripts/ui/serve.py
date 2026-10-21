@@ -30,9 +30,11 @@ if not 18000 <= PORT < 18999:
     raise SystemExit('UI_E2E_PORT must be between 18000 and 18998')
 # Use a disk-backed, test-owned directory; do not inherit operator environment.
 state_base = Path(os.environ.get('UI_E2E_STATE_ROOT', str(REPO / '.ui-e2e-state')))
-state_base.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(REPO))
 from scripts import scratch_owner  # noqa: E402
+from gateway import private_io  # noqa: E402
+
+private_io.ensure_private_dir(state_base)
 
 scratch_owner.sweep(state_base, 'run-')  # what a SIGKILLed server left
 children = []
@@ -48,19 +50,19 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     state = Path(temp)
     scratch_owner.mark(state)
     home = state / 'home'
-    home.mkdir()
-    (state / 'images').mkdir()
+    private_io.ensure_private_dir(home)
+    private_io.ensure_private_dir(state / 'images')
     config = state / 'config.yml'
     if FIRST_RUN:
         import yaml
         document = yaml.safe_load((REPO / 'first-run.yml').read_text())
         document['proxy']['port'] = PORT
-        config.write_text(yaml.safe_dump(document))
+        private_io.atomic_write_text(config, yaml.safe_dump(document))
     else:
         # Backend definitions are seed data, not engine-specific implementation.
         disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
                              for name in ('kobold', 'comfyui', 'embeddings'))
-        config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
+        private_io.atomic_write_text(config, f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
                           'admin:\n  oidc:\n    cookie:\n      secure: false\n'
                           'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
                           f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n')
@@ -79,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     for name, filename in {
         'AZIZAM_ADMIN_DB': 'admin.db', 'AZIZAM_METRICS_DB': 'metrics.db',
         'AZIZAM_RESPONSES_DB': 'responses.db', 'AZIZAM_RECEIPTS_DB': 'receipts.db',
-        'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db',
+        'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db', 'AZIZAM_KEY_ACTIVITY_LOG': 'key_activity.jsonl',
     }.items():
         env[name] = str(state / filename)
     if SEED_PROFILE == 'household':
@@ -99,7 +101,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         manifest_path = Path(env.get('UI_HOUSEHOLD_MANIFEST_PATH', state / 'household-manifest.json'))
         manifest = json.loads(manifest_path.read_text())
         manifest['fixture_state'] = state.name
-        manifest_path.write_text(json.dumps(manifest))
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(manifest_path), json.dumps(manifest))
     # Extra top-level configuration for a disposable server that needs more than
     # the browser seed: JSON data merged into config.yml (web/e2e/fixtures/oracle.ts
     # adds a video workflow and a transcription alias), after any household seed.
@@ -115,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
 
         document = yaml.safe_load(config.read_text())
         merge(document, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
-        config.write_text(yaml.safe_dump(document))
+        private_io.atomic_write_text(config, yaml.safe_dump(document))
     try:
         servers = [('scripts.ui.fake_engine:app', ENGINE_PORT, {}), ('proxy:app', PORT, {})]
         if FIRST_RUN:

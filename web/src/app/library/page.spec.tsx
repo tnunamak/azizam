@@ -408,7 +408,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
     ).toBeVisible();
-    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1", {
+    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1?scope=me", {
       credentials: "same-origin",
     });
   });
@@ -835,6 +835,7 @@ describe("Library honesty and access", () => {
         : undefined,
     );
     renderLibrary();
+    await choosePerson("Everyone");
 
     fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") }));
     let dialog = await screen.findByRole("dialog");
@@ -857,9 +858,9 @@ describe("Library honesty and access", () => {
     ).toBeVisible();
   });
 
-  test("9 asks for everyone's work explicitly in the owner's default view", async () => {
+  test("9 starts every role on their own work", async () => {
     // The API starts every role on their own work (PF-183).
-    for (const [role, expected] of [["owner", "scope=everyone"], ["member", null]] as const) {
+    for (const role of ["owner", "member"] as const) {
       session.viewer = { role, name: "Alex" };
       session.home = { receipts: [], user: { id: "alex" }, apps: [] };
       const paths: string[] = [];
@@ -869,10 +870,103 @@ describe("Library honesty and access", () => {
       });
       const view = renderLibrary();
       await waitFor(() => expect(paths.length).toBeGreaterThan(0));
-      if (expected) expect(paths[0]).toContain(expected);
-      else expect(paths[0]).not.toContain("scope=");
+      expect(new URL(paths[0], "https://test.invalid").searchParams.get("scope")).toBe("me");
+      expect(new URL(paths[0], "https://test.invalid").searchParams.has("person")).toBe(false);
+      if (role === "owner") expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Mine");
       view.unmount();
     }
+  });
+
+  test.each(["first load", "remount", "clear filters", "Mine", "deep link"])(
+    "owner requests only their own assets after %s",
+    async (lifecycle) => {
+      session.viewer = { role: "owner", name: "Alex", id: "alex" };
+      session.home = { receipts: [], user: { id: "alex" }, apps: [] };
+      const ownSource = { id: "app:alex", kind: "app", label: "Alex app", app_id: "alex" };
+      const own = picture("alex-image", "Alex image", {
+        owner_name: "Alex", source: ownSource, thumbnail_url: "/signed/alex-thumb",
+      });
+      const detail = picture("alex-detail", "Alex detail", { owner_name: "Alex", source: ownSource });
+      const other = picture("sam-image", "Sam image", { owner_name: "Sam", source: { id: "app:sam", kind: "app", label: "Sam app", app_id: "sam" } });
+      const paths: string[] = [];
+      routeFetch((path) => {
+        if (!path.startsWith("/me/api/media")) {
+          if (path === "/signed/alex-detail") return new Response("png", { headers: { "content-type": "image/png" } });
+          return undefined;
+        }
+        paths.push(path);
+        const url = new URL(path, "https://test.invalid");
+        if (url.pathname === "/me/api/media") return list(url.searchParams.get("scope") === "me" ? [own, {
+          ...picture("alex-video", "Alex video"), kind: "video", source: ownSource, poster_asset_id: "alex-poster",
+        }] : [other]);
+        if (url.pathname.endsWith("/download")) {
+          const id = url.pathname.split("/")[4];
+          return Response.json({ download_url: `/signed/${id}` });
+        }
+        return Response.json({ asset: detail });
+      });
+      const share = vi.fn(async () => undefined);
+      Object.assign(navigator, { share, canShare: () => true });
+      const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+      try {
+        if (lifecycle === "deep link") navigation.searchParams.set("asset", "alex-detail");
+        let view = renderLibrary();
+        await screen.findByRole("button", { name: /^Open Alex image,/ });
+        if (lifecycle === "remount") {
+          view.unmount();
+          paths.length = 0;
+          view = renderLibrary();
+          await screen.findByRole("button", { name: /^Open Alex image,/ });
+        }
+        if (lifecycle === "clear filters" || lifecycle === "Mine") {
+          await choosePerson("Everyone");
+          await screen.findByRole("button", { name: /^Open Sam image,/ });
+          paths.length = 0;
+          if (lifecycle === "Mine") await choosePerson("Mine");
+          else fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+          await screen.findByRole("button", { name: /^Open Alex image,/ });
+        }
+        expect(screen.queryByRole("button", { name: /^Open Sam image,/ })).toBeNull();
+        expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
+        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download?"))).toBe(true));
+        if (lifecycle !== "deep link") {
+          navigation.searchParams.set("asset", "alex-detail");
+          // Keep the same tree shape as renderLibrary, or React remounts LibraryPage and resets the owner filter.
+          view.rerender(<QueryClientProvider client={view.queryClient}><Profiler id="library" onRender={() => {}}><LibraryPage /></Profiler></QueryClientProvider>);
+        }
+        const dialog = await screen.findByRole("dialog", { name: "Alex detail" });
+        fireEvent.click(await within(dialog).findByRole("button", { name: "Download" }));
+        await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+        fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
+        await waitFor(() => expect(share).toHaveBeenCalledOnce());
+        expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media")).toBe(true);
+        expect(paths.some((path) => path.includes("/alex-detail?"))).toBe(true);
+        expect(paths.filter((path) => path.includes("/alex-detail/download?")).length).toBeGreaterThanOrEqual(3);
+        for (const path of paths) {
+          const params = new URL(path, "https://test.invalid").searchParams;
+          expect(params.getAll("scope"), path).toEqual(["me"]);
+          expect(params.has("person"), path).toBe(false);
+        }
+        view.queryClient.clear();
+      } finally {
+        anchorClick.mockRestore();
+        Reflect.deleteProperty(navigator, "share");
+        Reflect.deleteProperty(navigator, "canShare");
+      }
+    },
+  );
+
+  test("empty Everyone to Mine is the unfiltered empty Library", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([]) : undefined);
+    renderLibrary();
+    await choosePerson("Everyone");
+    await screen.findByRole("region", { name: "No matching creations" });
+    await choosePerson("Mine");
+    const empty = await screen.findByRole("region", { name: "No creations yet" });
+    expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Filters/ })).not.toHaveTextContent("1");
   });
 
   test("9a never leaves another person's results openable after the person filter changes", async () => {
@@ -888,9 +982,10 @@ describe("Library honesty and access", () => {
       return list([picture("sam1", "Sam's lighthouse", { owner_name: "Sam" })]);
     });
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") });
 
-    await choosePerson("Alex (you)");
+    await choosePerson("Mine");
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     // Sam's result belongs to the previous filter: it is not shown or openable.
     expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") })).toBeNull();
@@ -1354,6 +1449,7 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Maker picture, ") });
     for (const [title, person] of [["Maker picture", "Sam"], ["Maker audio", "Sam"], ["Maker video", "Alex"]]) {
       const open = screen.getByRole("button", { name: (name) => name.startsWith(`Open ${title}, `) });
@@ -1389,6 +1485,7 @@ describe("Library media identity and tile playback", () => {
               : undefined,
       );
       const view = renderLibrary();
+      await choosePerson("Everyone");
       const key = await screen.findByRole("group", { name: "Creation makers" });
       const fill = (name: string) =>
         (within(key).getByRole("img", { name }).firstElementChild as HTMLElement).style.backgroundImage;
@@ -1417,6 +1514,7 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     const key = await screen.findByRole("group", { name: "Creation makers" });
     expect(within(key).getAllByRole("img")).toHaveLength(2);
     for (const name of ["Sam", "Alex"]) {
@@ -1430,7 +1528,7 @@ describe("Library media identity and tile playback", () => {
     expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Sam image, ") })).toBeVisible();
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
     expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
-    await choosePerson("Alex (you)");
+    await choosePerson("Mine");
     await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
   });
 
@@ -1443,6 +1541,7 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Stored picture, ") });
     expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
     fireEvent.click(screen.getByText("Show them"));
@@ -1478,6 +1577,7 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Morning birds, ") });
     for (const [title, duration, icon] of [["Morning birds", "2:05", "lucide-audio-lines"], ["Short film", "0:09", "lucide-video"]] as const) {
       const button = screen.getByRole("button", { name: `Play ${title}` });

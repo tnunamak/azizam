@@ -91,9 +91,14 @@ class IdentityJobTests(unittest.TestCase):
         self.assertEqual(job["progress"], 100)
         payload = proxy._identity_payload_from_media_job(job)
         self.assertEqual(payload["data"][0]["asset_id"], "img_1")
-        self.assertEqual(payload["warnings"][0]["code"], "pose_rewritten")
-        self.assertEqual(payload["refinements"][0]["person"], "baby")
-        self.assertEqual(payload["likeness"]["overall"]["status"], "review")
+        self.assertNotIn("prompt_used", payload)
+        self.assertEqual(payload["likeness"], result().report)
+        self.assertEqual(payload["attempts"], result().attempts)
+        self.assertEqual(payload["seconds"], 1.5)
+        self.assertEqual(payload["warnings"], result().warnings)
+        self.assertEqual(payload["refinements"], [{"person": 1, "accepted": True}])
+        self.assertEqual(payload["people"], [{"person_index": 0}])
+
         events = media_jobs.events(body["id"], audience="internal", path=self.db)
         self.assertIn("progress", [e.get("event_type") or e.get("type") or e.get("event") for e in events])
 
@@ -112,6 +117,14 @@ class IdentityJobTests(unittest.TestCase):
         _, body = self.run_job(crash)
         self.assertIn("RuntimeError", media_jobs.get(body["id"], audience="internal", path=self.db)["error"])
 
+    def test_actionable_validation_errors_survive_async_storage(self) -> None:
+        for message in ("people[].image 2 has no matching photo", "at most 4 people are supported"):
+            async def fail(auth, req):
+                raise ids.IdentityError(message, param="people")
+            _, submitted = self.run_job(fail)
+            job = media_jobs.get(submitted["id"], audience="internal", path=self.db)
+            self.assertEqual(job["error"], message)
+
     def test_orphaned_jobs_fail_after_restart(self) -> None:
         job = media_jobs.MediaJob(intent="image.identity", request_id="r1")
         media_jobs.create(job, path=self.db)
@@ -120,6 +133,18 @@ class IdentityJobTests(unittest.TestCase):
         self.assertEqual(proxy._fail_orphaned_identity_jobs(), 1)
         self.assertEqual(media_jobs.get(job.job_id, audience="internal", path=self.db)["status"], "failed")
         self.assertEqual(media_jobs.get(other.job_id, audience="internal", path=self.db)["status"], "queued")
+
+    def test_failed_identity_diagnostics_do_not_store_person_or_prompt_words(self) -> None:
+        marker = "PRIVATE_IDENTITY_REFERENCE_LABEL_7f2a"
+
+        async def fail(auth, req):
+            raise ids.IdentityError(f"{marker} and another person point at the same face", code="same_face")
+
+        _, submitted = self.run_job(fail)
+        job = media_jobs.get(submitted["id"], audience="internal", path=self.db)
+        self.assertEqual(job["status"], "failed")
+        self.assertNotIn(marker, json.dumps(job))
+        self.assertIn("same face", job["error"])
 
 
 if __name__ == "__main__":

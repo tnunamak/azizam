@@ -22,7 +22,7 @@ function signInError(error: Error): string {
       case "builtin_disabled":
         return "Password sign-in is turned off for everyone but the owner. Reload this page to see how to sign in.";
       case "invalid_password":
-        return "Use a password between 12 and 1,024 characters.";
+        return "Enter a password of up to 1,024 characters.";
     }
   }
   return "Couldn’t sign you in. Check your connection and try again.";
@@ -124,14 +124,6 @@ export default function SignInPage() {
               ? "Set up Azizam"
               : `Sign in to ${instanceName || PRODUCT_NAME}`}
         </h1>
-        {reset && (
-          <p
-            id="password-help"
-            className="text-muted-foreground text-body mt-2"
-          >
-            Use at least 12 characters.
-          </p>
-        )}
         <div className="mt-8">
           {loading ? (
             <p role="status" className="text-muted-foreground text-body">
@@ -239,8 +231,6 @@ export default function SignInPage() {
                       id="password"
                       type="password"
                       autoComplete={reset ? "new-password" : "current-password"}
-                      aria-describedby={reset ? "password-help" : undefined}
-                      minLength={reset ? 12 : undefined}
                       required
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}

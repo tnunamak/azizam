@@ -160,6 +160,8 @@ def init_db(path: Path = DB_PATH) -> None:
     # Recheck a previous failure before acting on it; the marker can be stale.
     with store_startup(path, full_check=marker.exists()):
         marker.unlink(missing_ok=True)
+        from gateway import private_io
+        private_io.prepare_private_database(path)
         conn = sqlite3.connect(str(path), timeout=5.0)
         try:
             _apply_pragmas(conn)

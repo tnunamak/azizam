@@ -64,8 +64,9 @@ def normalize_email(value: str) -> str:
 
 
 def hash_password(password: str) -> str:
-    if not isinstance(password, str) or not 12 <= len(password) <= 1024:
-        raise AccountError("invalid_password", "Use a password between 12 and 1,024 characters.")
+    # No length policy beyond non-empty: the sign-in throttle limits guessing (see throttle()).
+    if not isinstance(password, str) or not 1 <= len(password) <= 1024:
+        raise AccountError("invalid_password", "Enter a password of up to 1,024 characters.")
     salt = secrets.token_bytes(16)
     with _PASSWORD_WORK:
         derived = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT_N, r=8, p=1,
