@@ -41,6 +41,18 @@ def write_wav(path: Path) -> None:
         output.writeframes(b"\x00\x00" * 160)
 
 
+def test_stt_request_spool_ancestors_are_private(tmp_path, permissive_umask):
+    from gateway import stt_chunking
+    from tests.test_engine_protocol_adapter import _stt_execution
+
+    spool = tmp_path / "spool" / "nested"
+    workspace = stt_chunking.create_request_workspace(_stt_execution(spool_dir=spool))
+    try:
+        assert mode(workspace) == mode(spool) == mode(spool.parent) == 0o700
+    finally:
+        stt_chunking.remove_request_workspace(workspace)
+
+
 def test_measurement_database_and_workspace_lock_are_private(tmp_path, monkeypatch, permissive_umask):
     class Store:
         path = tmp_path / "data" / "admin.db"
