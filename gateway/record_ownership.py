@@ -25,12 +25,13 @@ def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
                 key_hash: str | None = None, owner_keys: tuple[str, ...] = ()) -> bool:
     if kind not in {"receipt", "media_job"}:
         return False
+    # An explicit App is authoritative; reject a mismatch before resolving
+    # either cached Viewer. Most foreign rows need no key-scope work.
+    if record.get("app_id") and record["app_id"] != app_id:
+        return False
     app_viewer, key_viewer = _scope_viewers(app_id, key_hash, tuple(owner_keys))
-    # An explicit App is authoritative; a key field cannot override it.
     if record.get("app_id"):
         principals = (f"app:{record['app_id']}",)
-        if record["app_id"] != app_id:
-            return False
         viewer = app_viewer
     else:
         owner = record.get("owner_key_hash")
