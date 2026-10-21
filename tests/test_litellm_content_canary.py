@@ -35,7 +35,7 @@ def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, positive):
     tables = json.loads((private / 'database.json').read_text())
     budget = json.loads((private / 'budget.json').read_text())
     assert budget['budget_refused'] is True
-    assert TOOL_NAME in json.dumps(tables['LiteLLM_ToolTable'])
+    assert bool(tables['LiteLLM_ToolTable']) is positive
     assert tables['LiteLLM_SpendLogGuardrailIndex'] == []
     assert {'key', 'user', 'team'} <= {row['entity_type'] for row in budget['updates']}
     if positive:

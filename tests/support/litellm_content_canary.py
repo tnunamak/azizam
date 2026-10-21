@@ -24,6 +24,7 @@ MARKER = 'RETENTION_CANARY_8bf972_nested_prompt'
 TOOL_NAME = 'retention_canary_tool'
 CONTENT_MARKERS = {
     'prompt': MARKER,
+    'tool_name': TOOL_NAME,
     'arguments': 'RETENTION_CANARY_8bf972_tool_arguments',
     'description': 'RETENTION_CANARY_8bf972_tool_description',
     'schema': 'RETENTION_CANARY_8bf972_tool_schema',
@@ -41,6 +42,9 @@ async def run() -> None:
 
     litellm.disable_aiohttp_transport = True  # in-memory httpx transport replaces network only
     positive = os.environ.get('CANARY_POSITIVE') == 'true'
+    if not positive:
+        from gateway.litellm_launcher import install_no_content_shim
+        install_no_content_shim()
     compiled = compile_litellm_substrate_config({})
     compiled['model_list'] = [{'model_name': 'canary', 'litellm_params': {
         'model': 'openai/canary', 'api_base': 'http://engine.fk.test/v1', 'api_key': 'fake-only',
@@ -171,7 +175,7 @@ async def run() -> None:
     from litellm.proxy.utils import update_spend_logs_job
     await update_spend_logs_job(prisma_client=prisma, db_writer_client=None, proxy_logging_obj=ps.proxy_logging_obj)
     assert prisma.spend_log_transactions == []
-    assert TOOL_NAME in json.dumps(tables['LiteLLM_ToolTable'], default=str)
+    assert bool(tables['LiteLLM_ToolTable']) is positive
     if not positive:
         assert not tables['LiteLLM_SpendLogToolIndex']
     assert not tables['LiteLLM_SpendLogGuardrailIndex']

@@ -165,7 +165,7 @@ class ContentGate:
         config_path = Path(proof["config"])
         if "--config" not in argv or Path(argv[argv.index("--config") + 1]).resolve() != config_path:
             raise ValueError("different process command")
-        if not any(Path(arg).name == "litellm" for arg in argv):
+        if not any(Path(arg).resolve() == Path(__file__).resolve().with_name("litellm_launcher.py") for arg in argv if arg):
             raise ValueError("different process command")
         if generation == self.checked:
             return generation

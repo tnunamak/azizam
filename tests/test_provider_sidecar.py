@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -280,8 +281,9 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
         )
 
     assert exc.value.code == 23
-    assert captured["file"] == "litellm"
-    assert captured["args"] == ["litellm", "--config", str(config_path)]
+    assert captured["file"] == sys.executable
+    assert Path(captured["args"][1]).name == "litellm_launcher.py"
+    assert captured["args"][-2:] == ["--config", str(config_path)]
     assert "sk-live-secret" not in repr(captured["args"])
     env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
     assert captured["env"][env_name] == "sk-live-secret"  # type: ignore[index]
@@ -329,8 +331,9 @@ def test_run_replaces_stale_config_and_uses_one_registry_snapshot_before_exec(
         assert "AI_GATEWAY_PROVIDER_SECRET_" not in config_path.read_text()
         assert secret not in config_path.read_text()
         assert secret not in json.dumps(args)
-        assert file == "litellm"
-        assert args == ["litellm", "--config", str(config_path)]
+        assert file == sys.executable
+        assert Path(args[1]).name == "litellm_launcher.py"
+        assert args[-2:] == ["--config", str(config_path)]
         raise SystemExit(23)
 
     monkeypatch.setattr(provider_sidecar, "_read_service_registry", read_once)

@@ -116,6 +116,11 @@ def test_litellm_compiler_and_current_are_frozen() -> None:
     compiled = compile_litellm_config_from_registry({"services": {"engine-a": service}})
     names = [row["model_name"] for row in compiled["model_list"]]
     assert "current" in names and "current-fast" in names
+    from gateway.litellm_content import profile
+    assert compiled.pop('router_settings') == profile()['router_settings']
+    for section in ('general_settings', 'litellm_settings'):
+        for key, value in profile()[section].items():
+            assert compiled[section].pop(key) == value
     assert _digest(compiled) == "837dc6e043ab9d7cf2dfa0ac0916e662c48db9d73bd25aa0999aade926f77dd7"
 
 

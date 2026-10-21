@@ -44,20 +44,30 @@ budgets. Its aggregate daily accounting remains operational metadata. The
 canary checks the real success logger, queued cost increments and budget guard.
 It does not disable all spend updates to obtain an empty database.
 
-Tool names remain operational metadata, as the owner directed on 2026-10-20.
-LiteLLM 1.86.2 auto-discovers them for its registry and tool-policy lookup;
-Azizam does not read that inventory. The write is independent of
-`disable_spend_logs`: `proxy/db/db_spend_update_writer.py:210-309` enqueues the
-name and attribution; `:1086-1097` flushes it; `proxy/db/tool_registry_writer.py:70-130`
-upserts `LiteLLM_ToolTable`. `proxy/schema.prisma:1177-1199` lists its columns.
-No disable switch was found. There is no startup patch or shim.
+Tool inventory is suppressed by `gateway/litellm_launcher.py`. LiteLLM is
+Azizam's execution substrate, not an engine under the knowledge boundary.
+The launcher is the only shim implementation. It checks package version
+`1.86.2` and the SHA-256 of
+`DBSpendUpdateWriter._enqueue_tool_registry_upsert` before replacing that
+method with a no-op. It leaves the surrounding spend writer, numeric counters
+and cost accounting unchanged. A version, missing-symbol or implementation
+mismatch prints a fixed startup diagnostic and exits 78. The launcher never
+modifies installed files. The managed sidecar and the shipped Compose service
+both invoke it; Compose mounts this standalone source file read-only.
 
-The `litellm-tool-names` fact in `registry/retention.yml` appears in the current
-ledger and its assembled "never save" text. It names what is kept, why it is
-kept, who can read it, and how to purge it. To purge unwanted names, the owner
-stops chat, backs up their database and deletes the selected rows from
-`LiteLLM_ToolTable` with their database tools. Later tool calls can recreate
-the names. This procedure was documented, not executed.
+The verified source is `proxy/db/db_spend_update_writer.py:208-310`, SHA-256
+`0f760b1f54019de072223ac6799427e39f4291c6a29dfc20cbaad50063977c43`.
+Without the shim it queues names independently of `disable_spend_logs` and
+flushes them at `:1086-1097` through
+`proxy/db/tool_registry_writer.py:70-130`.
+The version-bump and symbol-change tests require deliberate re-verification
+on every dependency upgrade. The private launch proof is written only after
+the shim is applied; an unpatched or failed launcher cannot authorize content.
+
+The `litellm-spend-cost-metadata` fact in `registry/retention.yml` discloses the
+remaining accounting data in the ledger and its assembled "never save" text.
+No tool-name exception remains. Old ToolTable records are not removed by this
+slice; an owner can purge them separately with their database tools.
 
 Legacy spend cleanup is a separate owner decision. The data file proposes
 `maximum_spend_logs_retention_period: 7d` under `legacy_spend_cleanup_proposal`.
@@ -117,8 +127,8 @@ URL-encoded and base64 forms.
 
 Separate markers cover message text, tool arguments, descriptions, schemas and
 tool results. They must reach the fake engine and appear in no database sink,
-index table or output line. Tool names must appear in `LiteLLM_ToolTable`,
-which proves that the allowed metadata exception is exercised. The leaky
+index table or output line. Tool names must also be absent from `LiteLLM_ToolTable`. The positive control
+leaves the shim off and must persist the name, proving that its sink is exercised. The leaky
 positive control enables spend/error logging and uses the default log level;
 it must expose content to both the database scanner and output scanner.
 
