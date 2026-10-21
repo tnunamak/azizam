@@ -250,8 +250,8 @@ def capture_video_submit(
 def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> dict[str, int]:
     """Rehydrate in-memory counters from the JSONL log on startup.
 
-    Reads the entire file (cheap since we only care about ~24h of records and
-    the file rotates implicitly via the cutoff filter — see ``compact_log``).
+    Reads the activity file to rebuild its ~24h in-memory view. The lifecycle
+    compactor keeps the persisted projection within that same window.
     Returns a small stats dict for logging.
     """
     flush_persisted()
