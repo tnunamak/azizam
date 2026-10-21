@@ -128,16 +128,8 @@
 # and +1 legacy empty-round fixed-seed offset case.
 # Full hermetic --collect-only -q on 2026-10-21 measured 15373.
 pytest = 15327
-vitest = 3054
-playwright = 492
-
-playwright = 492
-
-playwright = 492
-
-playwright = 492
-
-
+vitest = 3068
+playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
