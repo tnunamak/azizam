@@ -145,7 +145,9 @@
 # full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
 # Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
 # Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
-pytest = 15797
+# Keyframe video workflows: +37 cases in tests/test_video_keyframes.py and +1 signature case (15797 -> 15835),
+# counted with scripts/run-hermetic-pytest.sh --collect-only -q on the two files.
+pytest = 15835
 vitest = 3068
 playwright = 502
 
