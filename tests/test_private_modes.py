@@ -348,3 +348,36 @@ def test_mode_report_handles_directory_replaced_by_symlink(tmp_path, monkeypatch
     assert "cache" in report and "errors=1" in report
     assert "private-name" not in report and "outside-name" not in report
     assert mode(exposed) == 0o666
+
+
+def test_mode_fixer_keeps_parent_descriptors_when_an_ancestor_is_replaced(tmp_path, monkeypatch) -> None:
+    checker = load_mode_checker("mode_checker_ancestor")
+    root = tmp_path / "data"
+    outside = tmp_path / "outside"
+    for folder in (root, outside):
+        (folder / "child").mkdir(parents=True)
+        (folder / "child" / "content").write_bytes(b"fixture")
+        os.chmod(folder / "child" / "content", 0o666)
+    renamed = tmp_path / "original-data"
+    scandir = checker.os.scandir
+    moved = False
+
+    class Entries:
+        def __init__(self, fd):
+            self.entries = scandir(fd)
+
+        def __enter__(self):
+            return self.entries.__enter__()
+
+        def __exit__(self, *args):
+            nonlocal moved
+            self.entries.__exit__(*args)
+            if not moved:
+                root.rename(renamed)
+                root.symlink_to(outside, target_is_directory=True)
+                moved = True
+
+    monkeypatch.setattr(checker.os, "scandir", Entries)
+    checker.inspect(root, fix=True)
+    assert mode(outside / "child" / "content") == 0o666
+    assert mode(renamed / "child" / "content") == 0o600
