@@ -89,11 +89,14 @@ class IdentityJobTests(unittest.TestCase):
         job = media_jobs.get(body["id"], audience="internal", path=self.db)
         self.assertEqual(job["status"], "succeeded")
         self.assertEqual(job["progress"], 100)
+        self.assertEqual(
+            set(job["assets"][0]) & set(proxy.identity_api.EXTRA_KEYS),
+            set(),
+            "identity diagnostics must not be persisted in durable job assets",
+        )
         payload = proxy._identity_payload_from_media_job(job)
         self.assertEqual(payload["data"][0]["asset_id"], "img_1")
-        self.assertEqual(payload["warnings"][0]["code"], "pose_rewritten")
-        self.assertEqual(payload["refinements"][0]["person"], "baby")
-        self.assertEqual(payload["likeness"]["overall"]["status"], "review")
+        self.assertNotIn("prompt_used", payload)
         events = media_jobs.events(body["id"], audience="internal", path=self.db)
         self.assertIn("progress", [e.get("event_type") or e.get("type") or e.get("event") for e in events])
 
