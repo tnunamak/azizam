@@ -1,11 +1,11 @@
 schema_version: 1
 min_gateway_version: "0.1"
-version: "0.3.0"
+version: "0.1.0"
 id: image.edit.flux2-klein
 intent: image.edit
 display_name: FLUX.2 Klein 9B Edit
 purpose: Edit an image from an instruction
-description: Portable image edit contract bound to the existing ComfyUI workflow.
+description: Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.
 source: local
 trusted: true
 inputs:
@@ -47,14 +47,6 @@ inputs:
     type: number
     minimum: 0
     maximum: 20
-  denoise:
-    label: change strength
-    help: Lower values preserve more of the original.
-    type: number
-    minimum: 0
-    maximum: 1
-    default: 1
-    description: Amount of denoising applied by truncating the Flux2 sigma schedule. Lower values preserve more input-image structure.
 outputs:
   image:
     media_type: image/png
@@ -88,6 +80,3 @@ bindings:
       seed:
         - node: "25"
           input: noise_seed
-      denoise:
-        - node: "49"
-          input: denoise
