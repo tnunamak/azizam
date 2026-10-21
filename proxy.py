@@ -6898,11 +6898,13 @@ def _asset_url_session(request: Request):
     # App credentials take precedence over a coincidentally present cookie.
     # Try credentials retain their family even without cookies (e.g. job shims).
     def binding():
+        identity = getattr(getattr(request, "scope", {}).get("auth_context"), "identity", None)
+        bound = getattr(identity, "browser_session", None)
         api_key = _resolve_client_api_key(request)
         credential = (admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
-                      if api_key else None)
-        family = credential.get("session_id") if credential else None
-        if api_key and not family:
+                      if api_key and identity is None else None)
+        family = bound.family_id if bound else credential.get("session_id") if credential else None
+        if not family and (api_key or (identity and identity.key_hash.startswith("sha256:"))):
             return None
         raw = getattr(request, "cookies", {}).get(_browser_admin_cookie_config().name)
         key = _browser_admin_session_signing_key()
@@ -6910,10 +6912,12 @@ def _asset_url_session(request: Request):
             try:
                 # Never drop a binding when sign-out races the mint.
                 session = decode_session_cookie(raw, signing_key=key, now=0)
-                if not family or (session.family_id == family and session.subject == credential.get("created_by")):
+                if not family or (session.family_id == family and session.subject == (bound.subject if bound else credential.get("created_by"))):
                     return session
             except SessionError:
                 pass
+        if bound is not None:
+            return bound
         if family:
             # Pre-upgrade Try keys have no timing facts: their derived URLs fail
             # closed until a matching cookie supplies them or a new key is minted.
@@ -6953,7 +6957,7 @@ def _session_asset_cache_headers(request: Request, asset_id: str, *, variant: st
     if "family" not in request.query_params:
         return {}
     identity = f"asset-delivery-v1:{asset_id}:{variant}".encode()
-    return {"Cache-Control": "private, no-cache", "ETag": f'"{hashlib.sha256(identity).hexdigest()}"'}
+    return {"Cache-Control": "private, no-cache", "ETag": '"' + hmac.new(_image_signing_secret(), identity, hashlib.sha256).hexdigest() + '"'}
 
 
 def _asset_not_modified(request: Request, etag: str) -> bool:
@@ -15280,6 +15284,7 @@ async def _identity_submit_job(
     job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
+    shim.scope["auth_context"] = auth_context
     task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
     _identity_job_tasks.add(task)
     task.add_done_callback(_identity_job_tasks.discard)
@@ -21700,6 +21705,7 @@ async def _run_image_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             "image.generate", count_queue=False, auth_context=auth_context,
         )
@@ -22388,6 +22394,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
         )
@@ -22881,6 +22888,7 @@ async def _run_video_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         video_id = (job.get("metadata") or {}).get("upstream_video_id")
         if not video_id:
             # Admission is re-checked only before submitting new work; a job
@@ -23852,7 +23860,7 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
     headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
     headers.update(_session_asset_cache_headers(
-        request, asset_id, variant=f"thumb:{thumbnails.THUMB_EDGE}:{thumbnails.THUMB_MEDIA_TYPE}:q78:m4:md=none",
+        request, asset_id, variant=f"thumb:{thumbnails.THUMB_EDGE}:{thumbnails.THUMB_MEDIA_TYPE}:{thumbnails.THUMB_RECIPE}:md=none:{stat.st_mtime_ns}:{stat.st_size}",
     ))
     if _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
@@ -23938,7 +23946,7 @@ def _signed_asset_content_response(
             media_type="application/json",
         )
 
-    data = cache_path.read_bytes()
+    stat = cache_path.stat()
     metadata_identity = ""
     if md_raw == provenance.METADATA_FULL:
         person_id: str | None = None
@@ -23959,8 +23967,17 @@ def _signed_asset_content_response(
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
-        # Full delivery also depends on the separately stored metadata, not only the asset digest.
-        metadata_identity = hashlib.sha256(json.dumps(record["metadata"], sort_keys=True).encode()).hexdigest()
+        # The public validator is keyed: predictable prompt metadata must not be guessable from it.
+        metadata_identity = hmac.new(_image_signing_secret(), json.dumps(record["metadata"], sort_keys=True).encode(),
+                                     hashlib.sha256).hexdigest()
+    headers = _session_asset_cache_headers(
+        request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:"
+        f"{metadata_identity}:{stat.st_mtime_ns}:{stat.st_size}:{media_delivery.encoder_revision()}",
+    )
+    if headers and _asset_not_modified(request, headers["ETag"]):
+        return Response(status_code=304, headers=headers)
+    data = cache_path.read_bytes()
+    if md_raw == provenance.METADATA_FULL:
         data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
     try:
         data = media_delivery.deliver_bytes(
@@ -23973,11 +23990,6 @@ def _signed_asset_content_response(
             status_code=502,
             media_type="application/json",
         )
-    headers = _session_asset_cache_headers(
-        request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:{metadata_identity}",
-    )
-    if headers and _asset_not_modified(request, headers["ETag"]):
-        return Response(status_code=304, headers=headers)
     response = media_delivery.ranged_delivery_response(
         request,
         data,

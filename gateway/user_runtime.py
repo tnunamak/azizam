@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import secrets
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -238,8 +237,9 @@ def build_user_portal_snapshot(
         "authenticated": True,
         # Public per-sign-in epoch, stable across renewal, distinct from every credential.
         "session_view_id": hmac.new(
-            secret_store.load_or_create_secret_key(path.parent / secret_store.DEFAULT_KEY_FILE),
-            b"azizam.session-view.v1\0" + session.family_id.encode(), hashlib.sha256,
+            hmac.new(secret_store.load_or_create_secret_key(path.parent / secret_store.DEFAULT_KEY_FILE),
+                     b"azizam.session-view.v1", hashlib.sha256).digest(),
+            session.family_id.encode(), hashlib.sha256,
         ).hexdigest(),
         "user": {
             "id": user.get("id"),

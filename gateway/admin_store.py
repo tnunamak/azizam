@@ -2486,6 +2486,7 @@ def runtime_access_row(
         row = conn.execute(
             "SELECT c.id AS cred_id, c.subject_kind AS cred_subject_kind, c.revoked_at AS cred_revoked_at, "
             "c.expires_at AS cred_expires_at, c.created_by AS cred_created_by, "
+            "c.session_id AS cred_session_id, c.session_timing_json AS cred_session_timing_json, "
             "c.display_name AS cred_display_name, q.* FROM credentials c "
             f"JOIN ({_RUNTIME_ACCESS_SELECT}) q ON q.app_id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
             "WHERE c.hash = ?", (key_hash,),

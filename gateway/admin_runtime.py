@@ -34,6 +34,7 @@ from gateway import session_guard
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
+    AdminSession,
     CookieConfig,
     OIDCConfigError,
     SessionError,
@@ -2431,7 +2432,13 @@ def runtime_identity_for_app_credential_hash(
         name=str(row.get("app_name") or row.get("cred_display_name") or row["app_id"]),
         person_id=person_for_app_credential(app, {"created_by": row["cred_created_by"]}),
     )
-    return replace(identity, credential_id=str(row["cred_id"]),
+    browser_session = None
+    if row.get("cred_session_id"):
+        timing = json.loads(row.get("cred_session_timing_json") or
+                            '{"issued_at":0,"renewed_at":0,"expires_at":0}')
+        browser_session = AdminSession(subject=row.get("cred_created_by") or "", email="", role="none",
+                                       session_id=row["cred_session_id"], **timing)
+    return replace(identity, credential_id=str(row["cred_id"]), browser_session=browser_session,
                    auth_kind="service_key" if row["app_kind"] == "service" else "app_key")
 
 

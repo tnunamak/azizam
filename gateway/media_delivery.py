@@ -16,6 +16,8 @@ side). It never imports ``proxy``.
 from __future__ import annotations
 
 import contextvars
+import functools
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -189,6 +191,20 @@ def deliver_bytes(
     return media_metadata.strip_metadata(
         content, suffix, workdir=workdir or DEFAULT_WORKDIR
     )
+
+
+@functools.lru_cache(maxsize=1)
+def encoder_revision() -> str:
+    """Identify the installed lossless remuxer without launching it per fetch.
+
+    The cached file identity changes across upgrades/restarts. Content stripping
+    itself uses container-level rewrites for images, not a Pillow re-encode.
+    """
+    executable = shutil.which("ffmpeg")
+    if not executable:
+        return "no-remuxer"
+    stat = Path(executable).stat()
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
 
 
 def ranged_delivery_response(
