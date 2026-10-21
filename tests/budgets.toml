@@ -151,9 +151,18 @@
 # Retired eight image workflows and the Ideogram prompt tests (-30), then +2 Klein 9B parity cases; --collect-only -q on 2026-10-21: 15539.
 # Train r88: 15797 + 5 (review-gap and plan-deletion cases) - 28 (retired legacy image workflows, +2 Klein 9B parity) = 15774.
 # Train r88 test gaps: +2 plan-deletion blockers (enabled-App-only, sign-in-rule-only) -> 15776.
-pytest = 15776
-# Try multi-image multipart: +3 regressions (Library + upload order, missing
-# second picture, repeated file parts in code examples). vitest list --json: 3071.
+# FIBO 2 Edit Turbo: one data-only workflow adds three cases (catalog UI graph, submit payload, legacy seed-binding graph bytes).
+# Full hermetic --collect-only -q on 2026-10-21 measured 15800.
+# Manifest prompt binding: +17 full-catalog graph differentials, +6 mapping/fallback
+# cases and +2 FIBO template/public-route signature checks.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15825.
+# Prompt-binding followups: replace 17 graph hashes with 14 scoped manifest lint
+# cases and one synthetic rejection case.
+# Full hermetic --collect-only -q measured 15823 on 2026-10-21.
+# Train r89: full hermetic --collect-only -q measured 15804 on 2026-10-21.
+# Web is unchanged from r88; retain its Vitest ceiling (3068).
+pytest = 15804
+# Try multi-image multipart adds three cases; remeasure after followup coverage.
 vitest = 3071
 playwright = 502
 

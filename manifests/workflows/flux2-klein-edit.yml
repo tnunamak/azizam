@@ -8,6 +8,7 @@ purpose: Edit an image with the larger model
 description: Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.
 source: local
 trusted: true
+typical_seconds: 27  # measured 2026-10-21 through the gateway on an empty queue, warm
 inputs:
   prompt:
     label: description

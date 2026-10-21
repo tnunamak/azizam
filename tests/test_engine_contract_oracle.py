@@ -93,9 +93,10 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    # Freeze the original catalog separately from the data-only additions: three MOSS and two FLUX.2 Klein workflows.
+    # Freeze the original catalog separately from the data-only additions: three MOSS, two FLUX.2 Klein and one FIBO workflow.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
+        "fibo-2-edit-turbo": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
         "moss-image": ("image", text_to_image),
         "moss-image-fast": ("image", text_to_image),
         "moss-image-quality": ("image", text_to_image),
