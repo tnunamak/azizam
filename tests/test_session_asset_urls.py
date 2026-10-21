@@ -383,3 +383,49 @@ def test_try_key_upgrade_keeps_binding_without_inventing_cookie_timestamps(media
     assert media.client().get(url).status_code == 403
     # A matching signed cookie can still provide the real lifetime facts after upgrade.
     assert media.client().get(mint(client, key=key["api_key"])).status_code == 200
+
+
+def test_try_identity_background_job_mints_family_bound_urls(media, monkeypatch, tmp_path):
+    import asyncio
+    from gateway import admin_runtime, media_jobs
+    client = owner_client(media)
+    session = cookie_session(client)
+    key = user_runtime.ensure_try_session_key(session, path=media.path)["api_key"]
+    auth = proxy.AuthContext(identity=admin_runtime.runtime_identity_for_app_credential_hash(
+        proxy.hash_api_key(key), path=media.path))
+    original = Request({"type": "http", "method": "POST", "scheme": "https", "server": ("ai.example", 443),
+                        "headers": [(b"host", b"ai.example")], "path": "/v1/images/identity", "query_string": b"",
+                        "auth_context": auth})
+    shim = proxy._identity_request_shim(original)
+    assert not proxy._resolve_client_api_key(shim) and not getattr(shim, "cookies", None)
+    jobs = tmp_path / "jobs.db"
+    media_jobs.init_db(jobs)
+    monkeypatch.setattr(media_jobs, "DB_PATH", jobs)
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)
+    async def execute(*args):
+        return SimpleNamespace(image=_png(64, 64))
+    monkeypatch.setattr(proxy.app.state, "identity_execute", execute)
+    monkeypatch.setattr(proxy.identity_api, "stored_scene_extras", lambda *a: {})
+    job = media_jobs.MediaJob(intent="image.generate", workflow="test", backend="test", request_id="try-identity")
+    media_jobs.create(job, path=jobs)
+    asyncio.run(proxy._run_identity_job(job.job_id, shim, auth, SimpleNamespace(), "url"))
+    finished = media_jobs.get(job.job_id, audience="client", path=jobs)
+    assert finished["status"] == media_jobs.STATUS_SUCCEEDED, finished.get("error")
+    urls = [finished["assets"][0][field] for field in ("asset_url", "url")]
+    for url in urls:
+        assert parse_qs(urlsplit(url).query)["family"] == [session.family_id]
+        assert media.client().get(url).headers["cache-control"] == "private, no-cache"
+    browser_sessions.end(session, path=media.path)
+    assert all(media.client().get(url).status_code == 403 for url in urls)
+
+
+def test_browser_etag_changes_after_an_in_place_asset_rewrite(media):
+    client = owner_client(media)
+    url = mint(client)
+    response = client.get(url)
+    path = proxy.asset_cache_path(ASSET)
+    path.write_bytes(_png(80, 80))
+    changed = client.get(url, headers={"if-none-match": response.headers["etag"]})
+    assert changed.status_code == 200 and changed.content != response.content
+    assert changed.headers["etag"] != response.headers["etag"]
+    assert client.get(url, headers={"range": "bytes=0-9", "if-range": response.headers["etag"]}).status_code == 200
