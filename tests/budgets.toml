@@ -149,7 +149,7 @@
 # Full hermetic --collect-only -q on 2026-10-21 measured 15800.
 # Manifest prompt binding: +17 full-catalog graph differentials, +6 mapping/fallback
 # cases and +2 FIBO template/public-route signature checks.
-# Full hermetic --collect-only -q on 2026-10-21 measured 15823.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15825.
 # Prompt-binding followups: replace 17 graph hashes with 14 scoped manifest lint
 # cases and one synthetic rejection case.
 # Full hermetic --collect-only -q measured 15823 on 2026-10-21.
