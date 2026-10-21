@@ -936,7 +936,7 @@ deliverable. Until then the owner stops a runaway job's source by disabling
 the person or revoking the key; whether that also stops a job already
 running is UNVERIFIED. The fix is never to give the owner job content.
 
-## 6. Storage
+## 6. Storage (step 4)
 
 ST recommends per-person storage inside Usage, a private cleanup view for
 each member, no quota by default, and a protective pause on new work when the
@@ -947,18 +947,22 @@ guards the speech-to-text spool (`gateway/stt_chunking.py:784-865`).
 ### 6.1 Owner: Storage in Usage (owner section)
 
 - **Disk.** One line per filesystem that holds Azizam data (the creations
-  folder, `data/` and job spools), merged when they are the same device:
+  folder, `data/`, job spools and private temp), merged when they are the same device:
   free bytes, total, percent used (description only), the reserve in bytes,
   measured time, and state Healthy, Low, Paused or Unknown (§6.4).
 - **People.** One row per person: name, stored bytes, item count, sorted by
   bytes. Tapping a row shows the split by kind: pictures, videos, audio,
-  voices, other. No limit column (§6.5).
+  voices, other; kept request history has a separate bytes-only row. No limit column (§6.5).
 - **Service Apps.** One row per service App: App name, its accountable
   person, bytes. They are not added to the person's row (ST §12).
 - **Not linked to a person.** Bytes no App accounts for (Unresolved, §10.2
   question 2), and bytes kept only by a legacy owner key that maps to no App.
   Never spread across people.
 - **Gateway data.** Databases and caches, as one separate line.
+- **Kept request history (RT3 M4).** Count retained history bytes per maker,
+  separately from creations and shared App bytes. The owner sees bytes
+  only: no history count, item id, model, title, date or link. This row
+  waits for RR slice 5 as well as step 4.
 - No file names, thumbnails, single-item dates or links. It is the storage
   projection (§3.3).
 
@@ -974,35 +978,62 @@ guards the speech-to-text spool (`gateway/stt_chunking.py:784-865`).
   confirmation adds
   "{n} people lose access." Deletion is today's Library delete. There is no
   trash in v1.
+- **Kept request history (with RR slice 5).** The member's own "Review
+  storage" includes their retained history, largest first, with byte size
+  and Delete using the same maker authorization and erasure fences. Owner
+  storage offers no history drill-down or deletion of another person's item.
 - After deletion the number is measured again, not computed.
 
 ### 6.3 Accounting
 
 - **Person's stored bytes** (logical): the sizes of creation files whose
   sidecar lists one of the person's App principals, plus their voice folders
-  (`gateway/custom_voices.py:103`). Sharing adds nothing.
+  (`gateway/custom_voices.py:103`), plus the maker's kept-history bytes
+  when RR slice 5 exists. Its owner projection is bytes only. Sharing adds
+  nothing.
 - **Files with several owners** count in full for each owner. The server
   disk line counts them once. Reclaim estimates exclude them (§6.2).
-- **Deletion releases a claim (RT2 M5).** Today delete hides the item for
-  the deleting person but never removes them from the sidecar, so a file
-  two people made stays on disk after both delete it, still counted, and
-  "Review storage" could not free it (§1.3). v3: under the existing
-  `CACHE_MUTATION_LOCK` (`gateway/me_media.py:684-688`), delete removes the
-  viewer's principals (`viewer.owner_keys`) from `owner_key_hashes` and the
-  viewer from `maker_person_ids`, revokes the viewer's shares of the item,
-  and removes the bytes and sidecar only when no owner is left. The audit
-  tombstone stays as history. It hides an item only while it is newer than
-  the person's claim: if the same bytes are made again later, the new claim
-  wins, so the item shows again and counts again (today the tombstone hides
-  it for ever, `gateway/me_media.py:1299-1322`). Step 4 also releases the claims of
-  every existing `media.asset.delete` event, so items deleted before v3 stop
-  counting and can be freed.
-  Historical provenance (who made it) lives in the audit event, not in the
-  sidecar. A side effect closes a gap: today a deleted item stays readable
-  through the person's App keys; after v3 it is not, because their App no
-  longer owns it. The asset store writes bytes, owners and makers under the same lock
-  (`proxy.py:7099-7114`), so a concurrent identical generation either keeps
-  the file or writes it again.
+- **Deletion releases a claim (RT3 M8).** Main keeps actor/asset-id audit
+  tombstones (`gateway/me_media.py:1299-1322`); sidecars store no claim
+  timestamp (`proxy.py:7088-7115`). Do not compare claim and deletion
+  times. Under `CACHE_MUTATION_LOCK` (`gateway/me_media.py:684-704`), remove
+  the caller's intersecting readable principals from `owner_key_hashes`
+  and the caller from `maker_person_ids`, revoke their shares, and remove
+  bytes/sidecar only if no owner remains. After release the removed
+  principal itself hides the item; drop tombstone-based list/detail hiding.
+  Audit events remain history and never suppress a future new claim to
+  identical bytes. A fresh generation adds its principals under the same
+  lock (`proxy.py:7088-7115`), so the item can reappear without a timestamp.
+  The deleter's App keys then lose read/reuse while surviving co-owners keep
+  access. If a service App principal is removed, confirmation adds
+  **"This also removes it from {App}."** List each affected service App;
+  a session's `owner_keys` includes both App kinds (O6).
+- **One-time pre-v3 cleanup (RT3 M8).** Preview existing
+  `media.asset.delete` events by actor and asset. Release only that actor's
+  personal-App principals and their historical aliases, plus `user:<id>`;
+  do not replay the actor's current full session `owner_keys`, which also
+  contains service Apps (`gateway/admin_store.py:2144-2152`,
+  `gateway/me_media.py:1257-1275`). Keep service-App and other owners'
+  claims. Apply on stopped state with an idempotent manifest/version, then
+  never replay old tombstones against newly created claims. With no claim
+  time, cleanup cannot distinguish a later pre-cut-over identical
+  generation; the concrete preview must show every claim it releases.
+- **Library/history cascade (RT3 M2; RR §3.1).** Library delete removes the
+  deleting maker's Library prompt and linked request-history records in
+  one `media_jobs.db` transaction, using RR erasure cutoff/fence checks
+  (`docs/design/REQUEST_RETENTION.md:126-131`,
+  `docs/design/REQUEST_RETENTION.md:398-405`,
+  `docs/design/REQUEST_RETENTION.md:1267-1271`). Other makers' prompts,
+  history and bytes are preserved. Claim release and file mutation are
+  serialized under the cache lock; they are not falsely described as part
+  of the SQLite transaction. Use a durable idempotent deletion intent
+  written with the content-row cascade, then apply sidecar/file release
+  and mark complete; replay unfinished intents before accepting new claims
+  after restart. The writer fence prevents a concurrent history/prompt
+  write from resurrecting deleted content. A creation delete cannot leave
+  a second kept copy of the same maker's words behind. This cascade waits
+  for RR slice 5; the implementation gate tests its crash boundaries.
+
 - **How it is measured.** Sidecars have no size field, so a scan reads file
   sizes, caches the result and returns `measured_at`. A result older than
   15 minutes is shown as stale (P18). The scan cost on the live cache is
@@ -1015,24 +1046,43 @@ ST: "stop admitting uploads/generation jobs that need affected storage
 BEFORE invoking billable providers", and never delete to make room. v2 used
 a percentage of the filesystem. RT2 M3 showed that this is wrong for this
 server: the disk is shared with other software and is large, so a percentage
-says nothing about Azizam's need. Measured on 2026-10-11 (§0): 1.45 TB
-total, 79.5 GB available, 95% used. v2's 5% reserve is 72.6 GB, so v2 would
+says nothing about Azizam's need. The v3 worktree measurement on 2026-10-11 was 1.45 TB
+total, 79.5 GB available, 95% used; v4 measures 101.6 GB available (§0). v2's 5% reserve is 72.6 GB, so v2 would
 have shown Low on deploy and paused after about 7 GB of growth by other
 software, while Azizam needs a few GB. v3 reserves **bytes**, sized from the
 work Azizam admits.
 
-The speech-to-text spool already does this: it holds an in-process byte
-reservation per admitted request and admits only while free bytes minus
-reserved bytes cover the new request plus a floor (`gateway/stt_chunking.py:784-865`).
-v3 applies the same rule to every storage-writing job. It is a counter in
-memory, not a persistent ledger.
+**One byte ledger per process and device (RT3 M5).** Main's
+`SttResourceGate` has a separate `_reserved_bytes`, assumes one event loop
+and probes `spool_dir` only (`gateway/stt_chunking.py:762-868`), with a
+64 MiB floor (`gateway/stt_chunking.py:369`). Step 4 replaces its disk
+counter with the same shared per-device lease ledger used by every other
+writer. Keep STT concurrency policy separate, but never account its bytes
+in a second independent disk ledger.
+
+STT upload, decoded workspace, segment/conversion and replay reservations
+all count in `leased(d)`, including top-ups after probing. STT obeys
+`reserve_bytes` and the shared Healthy/Low/Paused state; its additional
+configured floor may only narrow admission (use the stricter floor), not
+bypass the reserve. Check-and-lease/top-up/release are under the same
+process-wide `threading.Lock`, including thread and event-loop callers.
+A reservation is counted once, even if STT and a job refer to the same
+workspace.
+
+Measure the private temp directory as well as `data/`, creations and
+explicit job/STT spools. Relative STT spool lives under private temp
+(`gateway/stt_chunking.py:318-333`). Bare-metal default private temp is
+beside admin.db (`gateway/private_tmp.py:35-42`); Docker explicitly places
+it on image storage (`Dockerfile:26-27`), which may differ from the data
+volume. Resolve paths and merge only by device id; do not infer devices
+from the checkout measurement. Re-measure each before step 4.
 
 **Definitions**, per filesystem *d* that Azizam writes (the creations
-folder, `data/`, job spools; merged when they are the same device):
+folder, `data/`, job spools and private temp; merged when they are the same device):
 - `peak_bytes(job)`: the most bytes one job can add to *d* before it ends:
   stored upload or input copy, output, temporary and conversion copies,
   derivatives (posters), and its database and WAL growth. Each
-  storage-writing job kind (image, video, audio, speech, voice, upload)
+  storage-writing job kind (image, video, audio, speech, voice, upload, kept history)
   declares a bound in config, with a code default taken from its existing
   limits (for example the voice upload limit, `gateway/custom_voices.py:49`, and the
   512 MiB MCP result limit, `gateway/mcp_server.py:91`). The inventory test (§9.2)
@@ -1041,7 +1091,7 @@ folder, `data/`, job spools; merged when they are the same device):
   the largest stored output of each kind and sets the default above it.
 - `W_max`: the largest `peak_bytes` of any kind the server admits.
 - `leased(d)`: the sum of `peak_bytes` of the admitted jobs that have not
-  ended. A job takes its lease at admission and returns it when it ends
+  ended, including STT upload/workspace/replay leases. A job takes its lease at admission and returns it when it ends
   (success, failure or cancel). A job that resumes after a restart takes a
   new lease before it runs.
 - `reserve_bytes`: owner setting `storage.reserve_bytes`. Default:
@@ -1063,8 +1113,9 @@ needed. Free space that running jobs have already used is counted twice (in
 
 - **Check and lease are one step.** One process-wide lock (a
   `threading.Lock`, because runners use threads) covers reading free space,
-  comparing, and adding the lease. The STT gate relies on one event loop
-  (`gateway/stt_chunking.py:762-865`); this gate does not.
+  comparing, and adding, extending or releasing every device lease. STT
+  uses this same lock and ledger; it cannot admit against an independent
+  counter. Acquire all device leases atomically or none.
 - **Leases cannot leak.** A lease is released in a `finally` on every exit
   of the job's run, including cancel and error. Leases live in memory, so a
   restart clears them all; a job resumed after a restart takes a new lease
@@ -1085,12 +1136,17 @@ needed. Free space that running jobs have already used is counted twice (in
 - **The promise is "budgeted", not "guaranteed".** Other software can fill
   the disk after admission. A write that fails for lack of space ends the
   job with terminal reason `storage_full`, never success.
-- **What still works:** sign-in, browsing, downloads and deletion. Chat and
-  other work that stores no file is not paused.
+- **What still works (RT3 M4):** sign-in, browsing, downloads, deletion and
+  requests whose only optional write is kept history. When Paused/Unknown,
+  skip that history write with receipt reason `storage_unavailable`;
+  return the model response normally. Do not fail or refuse the request
+  just because default-on history cannot be saved. This is an optional
+  retention write, not admission of a required upload/creation/STT spool.
+  No queue or background retry may later save that skipped content.
 - Nothing is ever deleted automatically (P19).
 
 On this server, as an illustration only: if `W_max` were 1 GiB, the reserve
-would be 3 GiB, against 79.5 GB available, so the state on deploy would be
+would be 3 GiB, against 101.6 GB available at the v4 worktree measurement, so the state on deploy would be
 Healthy. The real `W_max` is UNVERIFIED until the build measures it.
 
 ### 6.5 No quotas in v1
@@ -1202,8 +1258,8 @@ is no second migration framework (RT 10, RT2 complexity note). The tool
 ships with whichever design is built first. Each unit writes its own version
 row in `admin.db`. A unit whose version row exists is **verify only**: it
 runs its verify step and changes nothing. So the ownership unit runs once,
-whether AP or this design ships first, and AP's plan migration runs it, or
-verifies it, before its own steps.
+after AP's existing schema migrations; an AP schema version is not this
+unit's completion receipt.
 
 ### 8.1 Unit 1: enforce App bindings on AP v4 (step 2; RT3 B1, B2, M6)
 
@@ -1250,7 +1306,7 @@ version and enforcement checks.
    and App deletion. Prove control-plane adoption still works. Exercise
    fresh, current and schema-v6 upgrade paths before marking verified.
 
-### 8.2 Unit 2: the visibility switch
+### 8.2 Unit 2: the visibility switch (step 3; RT3 N3)
 
 Runs after unit 1 in the same tool run, or later.
 
@@ -1258,11 +1314,21 @@ Runs after unit 1 in the same tool run, or later.
    in the three classes of §10.2 question 2; creations and bytes per person;
    free bytes against the reserve (§6.4).
 2. **Owner approves.**
-3. **Apply**: map `superadmin` rows to `owner` or `admin`; attach the
-   proven-unbound records to "No person recorded"; leave Unresolved records
-   ungranted; write `visibility_version = 1`.
-4. **Verify**: zero `superadmin` rows; the attached records are owned by
-   "No person recorded"; `ownership_version = 1`.
+3. **Apply**: map `superadmin` rows to `owner` or `admin`. Attachment is
+   an idempotent, re-runnable sidecar operation, outside the `admin.db`
+   transaction: persist the accepted asset-id manifest with pre/post owner
+   sets before writing, atomically replace each affected sidecar, and skip
+   an already-correct post-state on resume. Refuse an unexpected state
+   instead of overwriting it. AP §4.2's backup includes every affected
+   sidecar so restore reverses both stores before traffic. Leave Unresolved
+   records ungranted. Only after all attachments verify, write
+   `visibility_version=1`; acceptance remains blocked until then.
+4. **Verify**: zero `superadmin` rows; every manifest sidecar matches its
+   accepted post-state and is owned by "No person recorded"; unresolved
+   records unchanged; `ownership_version=1`. Test crash before/after each
+   atomic file replacement, replay, unexpected sidecar edits and restore
+   of sidecars plus database. Neither a version row nor an SQLite commit
+   alone proves the attachments finished.
 
 The `shares` table is not part of the switch. It is new, holds no existing
 data, and is created by the sharing release (§12 step 5) with its normal
@@ -1273,8 +1339,8 @@ URL is refused like any unknown grant.
 - the marker says a unit started but was not accepted (AP §4.2);
 - the release needs `ownership_version = 1` or `visibility_version = 1` and
   the row is missing;
-- `visibility_version = 1` and auth is disabled in config (until AP §2.8
-  removes that mode).
+- a removed auth-disabled setting is supplied; current main already rejects
+  it (`proxy.py:2114`), so this is not a future AP dependency.
 
 Old signed URLs fail on their own: the signed message changed. Browser
 sessions keep their person.
@@ -1410,7 +1476,8 @@ Rewrite the §1.5 specs to these expectations. Do not delete them.
    - **Proven unbound**: no person, no App, no credential hash that matches
      any credential, and written through the keyless LAN path. Attached to
      one new service App, "No person recorded", with you as its accountable
-     person. They appear in your Library, where you can keep or delete each
+     person and `access_plan="person"` (AP v4;
+     `gateway/admin_runtime.py:399-401`). They appear in your Library, where you can keep or delete each
      one (P19).
    - **Resolvable**: a stored owner key or `maker_person_ids` maps them to
      an App or person through today's aliases (`gateway/ownership.py:46-55`). Not a
@@ -1421,7 +1488,7 @@ Rewrite the §1.5 specs to these expectations. Do not delete them.
 3. **Share expiry.** **Default: no expiry.** Ordinary shares (Immich,
    Nextcloud, OneDrive) do not expire. The badge keeps a share visible, and
    the maker can stop it at any time. RT agrees.
-4. **Disk reserve.** **Default: `reserve_bytes = W_max + 2 GiB`**, an
+4. **Disk reserve (re-measure before step 4).** **Default: `reserve_bytes = W_max + 2 GiB`**, an
    absolute amount (§6.4), not v2's 5%. With 101.6 GB available at the v4 worktree measurement
    (measured, §0), this does not pause on deploy unless `W_max` is above
    about 99 GB. Change it only if you want a larger margin for the other
