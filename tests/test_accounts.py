@@ -718,6 +718,50 @@ def test_plan_held_only_by_a_disabled_app_deletes(account_db):
     assert admin_store.get_app(orphan["id"], path=path)["access_plan"] is None
 
 
+def test_deleting_a_plan_returns_an_inactive_session_app_to_its_person(account_db):
+    path, plan = account_db
+    broad = store_plan("Broad plan", path=path, models=["test-model", "other-model"])
+    person = admin_store.upsert_oidc_user("https://identity.example", "pinned", email="pinned@example.test", path=path)
+    accounts.change_person(person["id"], "owner", plan_id=broad["id"], path=path)
+    session_app = admin_store.ensure_session_app_for_user(person["id"], name="Browser", path=path)
+    keyed = admin_store.create_app("Pinned key", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    admin_store.set_app_access_plan(session_app["id"], plan["id"], path=path)
+    admin_store.disable_app(session_app["id"], path=path)
+    admin_store.disable_app(keyed["id"], path=path)
+    assert admin_store.delete_access_plan(plan["id"], path=path)["id"] == plan["id"]
+    # The browser session follows the person, as a new session App would; the next
+    # sign-in changes nothing. A keyed App stays denied until the owner assigns it.
+    assert admin_store.get_app(session_app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+    admin_store.enable_app(session_app["id"], path=path)
+    again = admin_store.ensure_session_app_for_user(person["id"], name="Browser", path=path)
+    assert (again["id"], again["access_plan"]) == (session_app["id"], admin_store.PERSON_ASSIGNMENT)
+    admin_store.enable_app(keyed["id"], path=path)
+    assert admin_store.get_app(keyed["id"], path=path)["access_plan"] is None
+
+
+def test_deleting_a_plan_clears_it_from_an_enabled_app_of_a_disabled_person(account_db):
+    path, plan = account_db
+    person = admin_store.upsert_oidc_user("https://identity.example", "paused", email="paused@example.test", path=path)
+    app = admin_store.create_app("Paused person's", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    accounts.change_person(person["id"], "owner", disabled=True, path=path)
+    assert admin_store.get_app(app["id"], path=path)["disabled_at"] is None
+    assert admin_store.delete_access_plan(plan["id"], path=path)["id"] == plan["id"]
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] is None
+
+
+def test_an_active_person_on_the_plan_blocks_deletion_through_a_same_as_person_app(account_db):
+    path, plan = account_db
+    person = admin_store.upsert_oidc_user("https://identity.example", "active", email="active@example.test", path=path)
+    accounts.change_person(person["id"], "owner", plan_id=plan["id"], path=path)
+    app = admin_store.create_app("Follows person", kind="personal", owner_user_id=person["id"],
+                                 access_plan=admin_store.PERSON_ASSIGNMENT, path=path)
+    with pytest.raises(ValueError, match="Move them to another plan first"):
+        admin_store.delete_access_plan(plan["id"], path=path)
+    assert admin_store.get_access_plan(plan["id"], path=path) is not None
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+    assert accounts.access(person["id"], path=path)["plan_id"] == plan["id"]
+
+
 def test_deleting_a_plan_clears_it_from_removed_people(account_db):
     path, plan = account_db
     person = admin_store.upsert_oidc_user("https://identity.example", "gone", email="gone@example.test", path=path)
