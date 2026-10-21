@@ -104,7 +104,8 @@
 # 56 independent round-2 oracle cells and 2 principal/projection benchmarks.
 # Hermetic collection before the final allocation case: 15546. The final
 # full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
-pytest = 15547
+# Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
+pytest = 15549
 vitest = 3051
 playwright = 492
 
