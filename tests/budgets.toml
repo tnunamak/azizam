@@ -149,8 +149,10 @@
 # no counting on confirmed or member reads, unrelated folder, two pinned-marker swap cases); Library spec 95 -> 98
 # cases by count. Measured 2026-10-21: pytest collect 15803, vitest list 3071.
 # Media folder round 3: +6 vitest cases (owner Confirm the media folder action); pytest unchanged. vitest list 3077.
-pytest = 15803
-vitest = 3077
+# Media-folder round 4: measured hermetic collection 15806 (+3 viewer-plan regressions)
+# and vitest list --json 3082 (+3 Library and +2 Settings rendered cases).
+pytest = 15806
+vitest = 3082
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
