@@ -452,6 +452,7 @@ def _owned_source(
         if not isinstance(job_id, str):
             raise not_found
         job = media_jobs.get(job_id, path=jobs_path)
+        # OWNER_VISIBILITY_STEP3: replace this content decision with creation/job Own, retaining accountable service Apps (O6).
         owned_apps = {str(app["id"]) for app in admin_store.list_apps_for_user(user_id, path=admin_path)}
         if job is None or str(job.get("app_id") or "") not in owned_apps:
             raise not_found

@@ -131,7 +131,21 @@
 # including six MOSS/private-output/availability integration cases.
 # Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
 # Offline node:test runs: 5 compatibility + 82 Pi = 87.
-pytest = 15567
+# Owner visibility step 1, remeasured after the v4.2 corrections:
+# 58 matrix cases, 48 independent TD-oracle cells, 2 real-auth identity cases,
+# 1 HTTP differential, 6 inventory cases, 38 projection cases and 2 stored-shape
+# cases. These are 155 cases total over the 15319 baseline; origin cases are
+# included in the matrix count, not added a second time.
+# Hermetic pytest collection: 15474; Vitest list: 3051.
+# Playwright lists: 471 + 3 + 18 = 492.
+# Owner visibility round 2: +73 cases (15474 -> 15547): 3 inventory,
+# 4 identity/invariant/allocation regressions, 8 stored-receipt cases,
+# 56 independent round-2 oracle cells and 2 principal/projection benchmarks.
+# Hermetic collection before the final allocation case: 15546. The final
+# full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
+# Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
+# Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
+pytest = 15797
 vitest = 3068
 playwright = 502
 

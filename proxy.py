@@ -2451,7 +2451,7 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
-                                        connection_id=connection.grant_id))
+                                        connection_id=connection.grant_id, auth_kind="mcp_grant"))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -6906,6 +6906,16 @@ def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
             current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
+def _asset_content_viewer(auth_context: AuthContext | None):
+    """Normalize the caller once for every asset/job in this read request."""
+    from gateway.content_access import viewer_from_auth
+    # Hold the context with the Viewer so a reused object id cannot match it.
+    return request_connections.memo(
+        ("asset-content-viewer", id(auth_context)),
+        lambda: (auth_context, viewer_from_auth(
+            auth_context, owner_keys=_asset_read_owner_keys(auth_context))))[1]
+
+
 async def _warm_video_owner_keys(auth_context: AuthContext | None) -> None:
     """Resolve the caller's owner keys (SQLite) off the loop, once per request.
 
@@ -6972,10 +6982,12 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
     owners_raw = _read_asset_metadata(asset_id).get("owner_key_hashes") or []
     owners = {str(owner) for owner in owners_raw if isinstance(owner, str)}
     if not owners:
+        # OWNER_VISIBILITY_STEP3: delete this no-identity cache exception.
         # Fail closed for authenticated callers when metadata is absent. Auth-
         # disabled local runs have no identity and keep the old cache behavior.
         return _asset_owner_key(auth_context) is None
-    return bool(owners.intersection(_asset_read_owner_keys(auth_context)))
+    from gateway.content_access import decide_own
+    return decide_own(_asset_content_viewer(auth_context), owners)
 
 
 _CURRENT_MAKER = object()
@@ -9377,8 +9389,10 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
     record = _video_job_records.get(prompt_id)
     owner = record.get("owner_key_hash") if record is not None else None
     if not owner:
+        # OWNER_VISIBILITY_STEP3: delete the no-identity video-job exception.
         return _asset_owner_key(auth_context) is None
-    return owner in _asset_read_owner_keys(auth_context)
+    from gateway.content_access import decide_own
+    return decide_own(_asset_content_viewer(auth_context), (owner,))
 
 
 def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
@@ -9514,6 +9528,7 @@ def _tracked_video_fields(prompt_id: str, auth_context: AuthContext | None = Non
     if person_id != record.get("person_id"):
         person_id = None
     prompt_asset_id = str(record.get("asset_id") or f"video_{prompt_id}")
+    # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
     saved = prompt_memory.get(prompt_asset_id, person_id) if person_id else None
     fields["prompt"] = saved["prompt_text"] if saved else None
     return fields
@@ -9708,6 +9723,7 @@ def _gc_video_job_records_locked(now: float) -> None:
     for pid in drop:
         _video_job_records.pop(pid, None)
         _forget_video_record_row(pid)
+        # OWNER_VISIBILITY_STEP3: video DELETE/GC currently removes prompts under job-read ownership, not prompt Self.
         prompt_memory.delete_asset(f"video_{pid}")
 
 
@@ -12131,6 +12147,7 @@ async def proxy_graph_video_content(
             record = _video_job_records.get(prompt_id) or {}
             person_id = record.get("person_id")
             saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
+            # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
             saved_prompt = await asyncio.to_thread(prompt_memory.get, saved_prompt_id, person_id) if person_id else None
             household = await asyncio.to_thread(prompt_memory.household_settings, admin_path=ADMIN_STORE.path)
             if metadata_mode == provenance.METADATA_FULL and (
@@ -14047,6 +14064,7 @@ def _gateway_retention_ledger(request: Request, request_id: str | None = None) -
     ctx = _require_admin(ADMIN_AUTH, request)
     if isinstance(ctx, Response):
         raise PermissionError("An owner or administrator management credential is required")
+    # OWNER_VISIBILITY_STEP3: replace management-role receipt access with Own.
     return _retention_ledger_view(request, request_id, viewer_person_id=ctx.subject)
 
 
@@ -14774,6 +14792,7 @@ def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -
     if not isinstance(auth, AuthContext) or not _retention_ledger_allowed(auth):
         raise PermissionError("An owner or administrator is required")
     request.scope["auth_context"] = auth
+    # OWNER_VISIBILITY_STEP3: replace MCP admin/owner receipt access with Own.
     return _retention_ledger_view(request, request_id)
 
 
@@ -20930,6 +20949,7 @@ def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) 
     video_id = (result.get("metadata") or {}).get("upstream_video_id")
     prompt_id = _prompt_id_from_video_id(video_id) if isinstance(video_id, str) else None
     if prompt_id:
+        # OWNER_VISIBILITY_STEP3: job-read cancellation/DELETE removes a prompt; enforce its separate prompt mutation rule.
         prompt_memory.delete_asset(f"video_{prompt_id}")
     return media_jobs.get(job_id, audience=audience, path=media_jobs.DB_PATH)
 
@@ -21475,7 +21495,7 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
             if identity is not None and connection_id:
                 if not (MCP_OAUTH_ENABLED and MCP_OAUTH.connection_active(connection_id, person_id)):
                     return None
-                identity = replace(identity, connection_id=connection_id)
+                identity = replace(identity, connection_id=connection_id, auth_kind="mcp_grant")
         else:
             identity = runtime_identity_for_trusted_app(app_id, str(auth.get("trusted_address") or ""),
                                                         path=ADMIN_STORE.path)
@@ -23844,6 +23864,7 @@ def _signed_asset_content_response(
             # session can supply one, but never override a real credential.
             session = _oidc_session_from_request(request)
             person_id = str(session.subject) if session is not None else None
+        # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
@@ -25986,6 +26007,8 @@ class _PreviousResponseNotFound(Exception):
 
 def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
     """Match the creator person and stable App (or legacy credential) scope (retention.conversation_row_visible)."""
+    # OWNER_VISIBILITY_STEP3: the retention predicate preserves legacy scopes;
+    # pass delegation, creator-App and privacy permission when switching policy.
     return retention.conversation_row_visible(row, _responses_scope(auth_context))
 
 

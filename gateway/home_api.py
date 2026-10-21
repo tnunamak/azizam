@@ -364,6 +364,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             records = tuple(workflow_records())
             allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
             credential_aliases: dict[str, list[dict[str, Any]]] = {}
+            # OWNER_VISIBILITY_STEP3: content scope includes accountable service Apps (O6); person content still needs Self.
             owned_apps = [app for app in admin_store.list_apps_for_user(session.subject, path=store.path)
                           if not app.get("disabled_at")]
             # Keys and access rows for every app are read in one query each, so

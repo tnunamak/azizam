@@ -308,6 +308,7 @@ def build_user_activity_snapshot(
         limit=safe_limit,
         audience="client",
         viewer_person_id=str(user["id"]),
+        # OWNER_VISIBILITY_STEP3: remove owner-everyone activity scope.
         app_ids=None if owner else owned,
         path=receipts_path,
     )
@@ -355,6 +356,7 @@ def get_user_receipt(
     owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
     owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
     owner = bool(owner_roles & {"owner", "superadmin"})
+    # OWNER_VISIBILITY_STEP3: delete the owner receipt-detail bypass.
     if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found
 

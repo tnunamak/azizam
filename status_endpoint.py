@@ -2489,6 +2489,7 @@ def _image_dims(path: Path, mtime: int) -> dict:
     return info
 
 
+# OWNER_VISIBILITY_STEP3: recent renders expose member content; remove from owner operational status.
 def _recent_renders_videos(
     n: int = 20,
     *,
@@ -3636,6 +3637,7 @@ async def build_status_payload(config: dict) -> dict:
     thermal = await sync_section("sensors", _read_sensors) or {}
     cpu = await sync_section("cpu_usage", _cpu_usage_quick) or {}
 
+    # OWNER_VISIBILITY_STEP3: remove member recent-media content from operational status audiences.
     recent_videos = await sync_section(
         "recent_videos",
         lambda: _recent_renders_videos(20),
@@ -3667,6 +3669,7 @@ async def build_status_payload(config: dict) -> dict:
             video_meta = {}
     else:
         video_meta = {}
+    # OWNER_VISIBILITY_STEP3: live jobs need job Own; operational status must use the closed projection.
     video_jobs = loop_section(
         "video_jobs",
         lambda: _live_video_jobs(proxy_module, video_meta) if proxy_module else [],
