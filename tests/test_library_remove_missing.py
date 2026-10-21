@@ -156,35 +156,34 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_shared_missing_asset_counts_hidden_jobs_independently_of_job_order(self) -> None:
         self._write_asset(asset("B"), ["sha256:alice"])
-        for request_id in ("visible", "hidden"):
-            self._receipt(self.app_a["id"], request_id)
-            self._job(request_id, asset("A"))
-        hidden_job = self.job_ids("hidden")[0]
-        with sqlite3.connect(self.jobs_db) as conn:
-            media_jobs.hide_assets_in(conn, self.alice["id"], [(asset("A"), hidden_job)])
         scoped_jobs = me_media._scoped_jobs
         for hidden_first in (False, True):
             with self.subTest(hidden_first=hidden_first):
+                visible_request, hidden_request = f"visible-{hidden_first}", f"hidden-{hidden_first}"
+                for request_id in (visible_request, hidden_request):
+                    self._receipt(self.app_a["id"], request_id)
+                    self._job(request_id, asset("A"))
+                visible_job = self.job_ids(visible_request)[0]
+                hidden_job = self.job_ids(hidden_request)[0]
+                with sqlite3.connect(self.jobs_db) as conn:
+                    media_jobs.hide_assets_in(conn, self.alice["id"], [(asset("A"), hidden_job)])
+
                 def ordered_jobs(*args, **kwargs):
                     return sorted(scoped_jobs(*args, **kwargs),
                                   key=lambda row: (row[0]["job_id"] == hidden_job) != hidden_first)
+
                 with patch.object(me_media, "_scoped_jobs", side_effect=ordered_jobs):
                     page = self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()
                     self.assertEqual(page["removal_plan"], {"missing_items": 2})
                     response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 1})
                     self.assertEqual(response.status_code, 409, response.text)
                     self.assertEqual(response.json()["error"]["message"], CHANGED)
-                    storage = me_media.create_storage_snapshot_provider(self.cache)()
-                    plan = me_media._viewer_removal(
-                        self.alice["id"], storage, admin_path=self.admin_db,
-                        jobs_path=self.jobs_db, receipts_path=self.receipts_db,
-                    )
-                    self.assertEqual(set(plan.job_ids), {hidden_job, self.job_ids("visible")[0]})
-                    self.assertEqual(plan.missing_count(), 2)
-        response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 2})
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"removed_assets": 1, "removed_jobs": 2})
-        self.assertEqual(self.job_ids("visible") + self.job_ids("hidden"), [])
+                    self.assertEqual(self.job_ids(visible_request), [visible_job])
+                    self.assertEqual(self.job_ids(hidden_request), [hidden_job])
+                    response = self.client.post(REMOVE, headers=VALID, json={"expected_missing": 2})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), {"removed_assets": 1, "removed_jobs": 2})
+                    self.assertEqual(self.job_ids(visible_request) + self.job_ids(hidden_request), [])
 
     def test_a_removal_that_would_delete_only_a_job_the_caller_was_not_shown_is_refused(self) -> None:
         """An already hidden asset leaves no Library item, but its job entry still goes: the plan says so."""
