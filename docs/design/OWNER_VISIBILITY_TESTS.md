@@ -8,19 +8,19 @@ Code evidence throughout this file is `origin/main` at
 The source map in §10 replaces all old file:line offsets and source links.
 D46-D51 were read in `~/Documents/azizam/engine-contract/DECISIONS.md`.
 This file specifies future tests. No implementation tests were run and no
-notice readiness is claimed. Historical `CURRENT VERIFIED` labels below
+notice readiness is claimed. `CURRENT SOURCE-INSPECTED` labels below
 mean source-inspected behavior, never an executed pass. Sections 1-9 give
 target assertions; §10 identifies current-main adapters and limitations.
 
 ## 1. Blocking conclusions and test-oracle authority
 
 The v4 design is not built. Source-confirmed current behavior must not become the privacy oracle:
-- Library owner/superadmin broadening remains, including a local-network detail/download bypass. Regression tests must require the target denial rather than bless this behavior.
+- Library owner/superadmin broadening remains, including broad direct detail/download access through owner scope. Regression tests must require the target denial rather than bless this behavior.
 - MCP has direct asset read/store callbacks in addition to REST dispatch. Route authorization tests alone cannot cover input reuse, returned bytes, signed-link minting, or discovery content.
 - Receipt storage forbids sensitive key names but not sensitive values. Whole-envelope recursive typed projection, not the existing structural guard, is the target owner boundary.
 [v4] - AP v4's accountable-person schema is already on main. Step 2 still enforces O2/O3/O4 on keys AND trusted addresses. Test the real schema-v6→current upgrade before post-migration trigger installation, current→enforced and fresh initialization; do not treat AP being present as verify-only completion. See §10 current-main evidence.
 [v3] - RESOLVED in v3 (OV §3.1): a session Viewer intentionally includes every App the person is accountable for, of both kinds (OV §2.4 O6). There is no Accountable basis. Test that the production Viewer builder includes service Apps for the session and only its own App for a key; prompts and chats stay Self and Self+App.
-- Trigger SQL, migration machinery, content_access, share storage/serialization, signed delivery, metadata stripping, route registry, full log pipeline, actual export handlers and storage admission implementation are UNVERIFIED under this allow-list.
+- Trigger SQL, migration machinery, content_access, share storage/serialization, signed delivery, metadata stripping, route registry, full log pipeline, actual export handlers and storage admission implementation are not implemented or executed by this design task.
 [v3] - RESOLVED in v3 (OV §6.4): the disk pause is an absolute byte rule, free_bytes - leased_bytes >= reserve_bytes, with reserve_bytes defaulting to W_max + 2 GiB and in-process per-job leases. Percent is display only.
 
 Normative ordering for these proposed tests: authenticated identity first; removed-parameter validation on authenticated /me requests; resource existence/authorization core; audience-specific serializer; side effect/bytes/provider boundary. Authentication error status and unsupported-MCP wire encoding are UNVERIFIED; lock their established transport contract after permitted implementation inspection rather than inventing 401/403 mappings here. Every resource-level denial below is exactly HTTP 404 with error code not_found, equivalent in semantic status/code through MCP dispatch, unless a more specific explicit error below applies.
@@ -88,7 +88,7 @@ B/O/D: content all denied; list excludes A. O alone may obtain operational proje
 S/N: matching A App principal (explicit same-App fixture) permits creation Own and receipt/job Own, but not A prompt/chat. A different App principal denies all. S/no-maker share fails no_maker.
 Q: exact shared creation/poster only, read+g=s link; prompt only if included; no reuse/delete/share/md=full/receipt/job/events/workflow/chat/voice.
 F: same as B once revoked, unless independently Own.
-Rk/Rs: reject authentication before any content/operational path, independent of role or previous share. An independently valid bearer g=o URL is still a bearer grant until expiry; revoking a key alone does not revoke that URL under v2.
+Rk/Rs: reject authentication before any content/operational path, independent of role or previous share. An independently valid bearer g=o URL is still a bearer grant until expiry; revoking a key alone does not revoke that URL under the unchanged bearer-grant policy.
 [v3] C against S work (no maker person): Own, so creation read/delete/reuse/g=o link, receipt/job read, job cancel and events; no share (no maker), no prompt or chat. C authenticating with C's own personal key is not Own for S. Against another person's personal App, C has nothing.
 H: valid signed URL delivers its exact granted asset only; no discovery, JSON detail, minting, reuse, prompt or arbitrary ID access.
 U: auth failure for authenticated endpoints, 403 Invalid or expired signature for invalid/missing signed grants.
@@ -112,15 +112,15 @@ Apply all actor/resource rows in §2 to each path row; the stated kind/action an
 
 P01 Library list GET /me/api/media:
 [v3] authenticated 200, exact Own set for default/view=mine; exact active-share set for view=shared-with-me. Other/unshared/deleted/unresolved excluded. Q results serialized Shared, never raw own serializer. Repeat job-backed and cache-only resources. Verify q/facets/sort=size/recent/pagination against expected allowed set. O's default list identical to ordinary member logic, not household.
-CURRENT VERIFIED route in me_media; target views/sharing unimplemented here.
+CURRENT SOURCE-INSPECTED route in me_media; target views/sharing unimplemented here.
 
 P02 Library detail GET /me/api/media/{asset_id}:
 [v3] creation read oracle; 200 Own or Shared serializer, otherwise 404. Repeated forged scope/owner/person handled P16 before lookup. Metadata outside allowed audience absent even when bytes are shareable.
-CURRENT VERIFIED.
+CURRENT SOURCE-INSPECTED.
 
 P03 Download GET /me/api/media/{asset_id}/download:
 [v3] creation link oracle; 200 signed-link response only after Access. Own g=o, Shared g=s.id/md=none. Invalid caller 404 and signer never called for the denied target. If lookup builds an authorized collection, unrelated allowed items may invoke the signer; inspect target IDs rather than asserting zero total calls. Owner role never mints member link. md=full on g=o is bound to the authenticated fetcher's own prompt at delivery (OV §3.4); a two-maker file gives each fetcher their own prompt, an unauthenticated holder gets 403.
-CURRENT VERIFIED route; actual signer/delivery implementation UNVERIFIED.
+CURRENT SOURCE-INSPECTED route; actual signer/delivery implementation UNVERIFIED.
 
 P04 Thumbnail/poster:
 same creation decision as parent; exact poster binding, no sibling/other creation access, no raw internal asset path. Test direct guessed poster ID and parent-provided URL. Read/download parent and poster after revoke/delete; partial deletion preserves another genuine owner's bytes. Thumbnail route and thumbnail generation pipeline UNVERIFIED; poster metadata references VERIFIED in me_media.
@@ -135,7 +135,7 @@ P06 Prompt/workflow/md=full:
 Self for own saved prompt/workflow; exact share-maker prompt read only when included; never include workflow download or md=full for Shared. Same App/different person -> 404 prompt; same person/different App -> prompt allowed but chat denied. Include true->false immediately removes prompt from detail/list/q results and any shared title; erasing saved prompt shows "Prompt not saved", no stale cached value. Full-metadata endpoint handlers UNVERIFIED; viewer-specific prompt selection VERIFIED in me_media.
 
 P07 (step 3; step-1 classification) Receipt detail GET /me/api/receipts/{id} and key/MCP receipt lookup:
-receipt read oracle; full own view constrained by plan detail, no owner role bypass; share does not grant receipt access; unrelated 404. Owner counterpart GET /admin/api/activity/requests/{id}: 200 projection only when O, including for O's own receipt on this operational endpoint; D/B must be denied by role and disclose no item. Owner role-denial wire status is UNVERIFIED. receipt store methods VERIFIED; HTTP adapters outside allow-list UNVERIFIED.
+receipt read oracle; full own view constrained by plan detail, no owner role bypass; share does not grant receipt access; unrelated 404. Owner counterpart GET /admin/api/activity/requests/{id}: 200 projection only when O, including for O's own receipt on this operational endpoint; D/B must be denied by role and disclose no item. Owner role-denial wire status is UNVERIFIED. receipt store and current ledger adapters are source-inspected (§10); new authorization/projection remains an implementation gate.
 
 [v4] Ledger adapters: maker GET /gateway/v1/requests/{id}/retention/ledger and /me UI adapter require content:receipt:read Own before receipt/fact lookup. Maker with allowed receipt detail sees full ledger. The old /admin path becomes owner-only operational projection; O gets no observed.requested_model, private reason/deadline or raw facts envelope. D gets 404 there, including for a real id; D acting as maker on the maker route still works. Foreign known id and unknown id have equal 404 code/body/header class on each forbidden branch. Test the real REST provider and bound MCP requests callback, not just mocked admin auth. Rewrite tests/test_retention_ledger_headless.py expectations (see §10).
 Without request_id, REST/MCP ledger is classified none: current config facts only, no receipt fetch and no observed/request-specific field. The existing management/discovery gate remains; two worlds differing only in receipts and content produce identical output. A permissive retention_visible mock cannot bypass per-request authority.
@@ -196,11 +196,11 @@ POST /admin/api/apps/{id}/keys and /me/api/apps/{id}/keys: only App accountable 
 [v4] POST /admin/api/apps/{id}/trusted-addresses and the own-App /me adapter: same accountable-only add rule as keys; O cannot add on A's App, even on a personal App. SQL INSERT refuses foreign/NULL/empty created_by. No denied add mutates bindings or records a secret. Removal may narrow access; re-add requires the accountable person. Trusted-address identity T owns only its matched App; after removal its next request/reconnect cannot authenticate through the old address.
 
 P20 Job event writes and idempotency:
-[v3] Event append is NOT one of the six content_access actions in v2. Keep Own-only existing write authority as a proposed extension requiring explicit inventory classification; Own read/cancel of a job never implicitly grants event append. Client note/progress source and bounded payload validation must be enforced even for owner/admin; lifecycle event types or phase/status claims rejected before mutation. For same request_id, a different owner_scope may not replay or replace another job. Same canonical principal with rotated live key may replay only exact input digest; missing legacy scope/digest cannot prove replay. No denied request allocates seq/event row, mutates progress, consumes reservation or dispatches work. Actual event HTTP routes are UNVERIFIED; storage behavior is confirmed in media_jobs.
+[v3] Event append is NOT one of the six content_access actions in this design. Keep Own-only existing write authority as a proposed extension requiring explicit inventory classification; Own read/cancel of a job never implicitly grants event append. Client note/progress source and bounded payload validation must be enforced even for owner/admin; lifecycle event types or phase/status claims rejected before mutation. For same request_id, a different owner_scope may not replay or replace another job. Same canonical principal with rotated live key may replay only exact input digest; missing legacy scope/digest cannot prove replay. No denied request allocates seq/event row, mutates progress, consumes reservation or dispatches work. Current JSON event route is source-inspected at gateway/api.py:764-818; append/stream adapter coverage remains an implementation gate.
 
 P21 [v4] Request history, Debug and incognito (core step 1; step 3 with RR slice 5):
 Run the eight-kind oracle through actual production Viewer builders and retention.reader_allowed: the latter must call content_access.decide, then narrow, not implement another reader. Test list/search/direct read/export/Run again/receipt link adapters for Self and delegated privacy_permission. Owner/admin/accountable-App/Shared never adds authority. Same person with permission on personal key or MCP grant qualifies only while policy permits; maker_signed_in narrows to browser. Attempted reader widening is rejected.
-Default person-attributed history is on under D50. One incognito switch spans Try, chat, whole chat, App/key defaults and per-request extensions.com.azizam.prompts mode=forget. Assert zero prompt/history/conversation/debug content writes, one structural receipt and normal response delivery. Service Apps and trusted-address requests without person produce no_person and only structural receipts, never content assigned to the accountable person. Existing creation ownership stays OV §2. A request cannot override a stricter App/key or household never_keep.
+Default person-attributed history is on under D50. One incognito switch spans Try, chat, whole chat, App/key defaults and per-request extensions.com.azizam.prompts mode=forget. Assert zero prompt/history/conversation/debug content writes, one structural receipt and normal response delivery. Service Apps and trusted-address requests without person produce no_person and only structural receipts, never content assigned to the accountable person. Explicit store:true must not bypass this floor: current gateway/retention.py:459-468 has that exception, which step 3 removes for new writes. Existing creation ownership stays OV §2. A request cannot override a stricter App/key or household never_keep.
 Only accountable person edits per-App/per-key retention (O4b); O may narrow household never_keep but cannot edit A's App/key content-retention choice or widen readers. Verify allowed edits, denied writes/no effects and concurrent narrowing at the write fence.
 Gate incognito and history wording on step 3 AND RR slice 5. Home notice, Privacy, honest limits and owner Usage render their history variants only then; saved history is named among host-readable files. Try uses the existing forget/sessionStorage state, with no second switch. Keep the privacy notice once-only and test 390 px.
 
@@ -255,6 +255,14 @@ Switch/restore:
 [v4] M5 shared device ledger: STT acquire/top-up/replay/release and ordinary image/video/upload/history writers use one process-wide per-device counter under threading.Lock. Run barrier-started thread and asyncio callers together; prove they cannot each admit against the same unleased bytes. STT obeys reserve_bytes/state and may apply a stricter configured minimum; its 64 MiB default cannot bypass the household reserve. Count a workspace once, merge data/private-temp only on equal device id, and include Docker image scratch plus an absolute STT spool on another device. Atomic multi-device admission takes all leases or none; finally releases on every error/cancel/top-up failure and restart-resume re-leases.
 [v4] M4 Paused/Unknown history: send a request whose only optional write is request_history. Return the normal successful/streaming response and one receipt with not_kept/storage_unavailable; no kept row, content buffer persisted, delayed retry or provider refusal. Required creation/upload/STT spool work still refuses before body/provider while paused. Force an ENOSPC after the optional writer check: response still succeeds and receipt truthfully reports storage_unavailable. Verify the member's not-saved explanation without exposing its reason in O's projection.
 [v4] N3 Unit-2 attachments: backup all affected sidecars with the database; manifest contains accepted pre/post ownership sets; attachment is atomic replacement and idempotent. Crash before and after each sidecar write, replay, unexpected edits, final DB version write and restore. Version/acceptance cannot precede full file verification. Only proven-unbound assets attach; all unresolved files remain ungranted. No test may pretend an admin.db rollback undoes a sidecar write.
+
+Step ownership for the v4 additions: step 1 owns the pure eight-kind oracle,
+Viewer and inventory; step 2 owns issuance, address provenance and trigger
+upgrades; step 3 owns real reader/ledger/MCP enforcement, incognito and
+sidecar attachment; step 4 owns storage/claim cleanup and the shared STT
+ledger. RR slice 5 gates history controls, writers, permission, history copy
+and cascade. Step 5 owns shares and signed share delivery. These are test
+requirements, not evidence that a build step passed.
 
 ## 8. Proposed pytest layout, fixture interfaces and coverage gate
 

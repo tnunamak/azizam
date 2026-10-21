@@ -62,7 +62,6 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
   resolved data, creation, spool and private-temp path immediately before
   selecting `W_max` and applying the reserve (§6.4).
 
-
 ## 1. Current state
 
 ### 1.1 What is already private
@@ -112,8 +111,8 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
 | L9 | Keys on a member's App | `POST /admin/api/apps/{app_id}/keys` (`gateway/admin_runtime.py:620-634`) | A key that reads the App's creations, receipts and jobs; an owner admin key records `created_by=""` | Owner or accountable person (`gateway/admin_runtime.py:358-370`); the owner exception leaves L9 open |
 | L10 | Password reset | `POST /admin/api/people/{user_id}/reset` (`gateway/accounts_api.py:302-308`) | A sign-in link; route default 1 hour (`gateway/accounts_api.py:72-73`), store helper default 7 days (`gateway/accounts.py:473-475`) | Owner; issuer stored (`gateway/admin_store.py:335-338`, `gateway/accounts.py:503-506`), no member Security notice |
 | L11 | Host files | `data/*.db`, `cache/images/*`, job spools, logs | Everything | Host authority. Outside product control |
-| L13 | Per-request retention ledger | `GET /admin/api/requests/{id}/retention/ledger` (`gateway/api.py:965-973`); MCP `requests` (`gateway/mcp_server.py:654-669`) | Backend, resolved and free-text requested model, request timestamps and existence; members cannot read their own through this admin route | `_require_admin` with no request ownership (`proxy.py:14047-14076`); MCP checks admin grant (`proxy.py:14006-14010`) |
 | L12 | Trusted addresses on any App | `POST /admin/api/apps/{app_id}/trusted-addresses` (`gateway/admin_api.py:2096-2117`) | Keyless App access, with no person; owns `app:<id>` content (`gateway/admin_runtime.py:2457-2482`) | Owner can add to any non-session App; store checks no creator/accountable match (`gateway/admin_store.py:2065-2098`) |
+| L13 | Per-request retention ledger | `GET /admin/api/requests/{id}/retention/ledger` (`gateway/api.py:965-973`); MCP `requests` (`gateway/mcp_server.py:654-669`) | Backend, resolved and free-text requested model, request timestamps and existence; members cannot read their own through this admin route | `_require_admin` with no request ownership (`proxy.py:14047-14076`); MCP checks admin grant (`proxy.py:14006-14010`) |
 
 Not an exposure today:
 - `/me/api/jobs`, `/me/api/make/jobs` and notification polling are self-only,
@@ -141,7 +140,7 @@ These are today's facts. §3.1 keeps them.
 | Every key records `created_by`; legacy recovery still runs at startup. Unknown stays NULL without audit evidence; a proven foreign actor becomes empty string | `gateway/admin_store.py:550`, `gateway/admin_store.py:612-655` |
 | Session Apps never hold credentials; these existing triggers do not enforce O2-O4 | `gateway/admin_store.py:183-200` |
 | A trusted-address request carries only its App principal and `person_id=None`, even on a personal App | `gateway/admin_runtime.py:2457-2482` |
-| "Apps a person owns" selects on `owner_user_id` for both kinds. Eight call sites use it, including reuse (`gateway/me_make.py:452`) and the Library scope (`gateway/me_media.py:729-734`) | `gateway/admin_store.py:2144-2152` |
+| "Apps a person owns" selects on `owner_user_id` for both kinds. Call sites use it, including reuse (`gateway/me_make.py:452`) and the Library scope (`gateway/me_media.py:729-734`) | `gateway/admin_store.py:2144-2152` |
 | Admin key creation sets `created_by` to the acting person, or `""` for a service-account actor. Self-service, Try and invite keys set it to the App's owner | `gateway/admin_runtime.py:634`; `gateway/user_runtime.py:417`; `gateway/accounts.py:585-586` |
 | Authentication resolves the key and its App in one SELECT on each request, then checks active runtime use | `gateway/admin_store.py:2463-2485`; `gateway/admin_runtime.py:2403-2433` |
 | MCP reads input assets and stores result bytes through two direct callbacks, not through a REST route | `gateway/mcp_server.py:109-119`; `proxy.py:14653-14669` |
@@ -173,7 +172,7 @@ for creations, person for prompts, person and App for chats.
 - `web/src/app/library/page.spec.tsx:860-875`
 - `web/src/app/library/prompt-visibility.spec.tsx:228-236`
 - `web/tests/components/home-library-polish.spec.tsx:340`
-- `web/e2e/activity.spec.ts:81-129`
+- `web/e2e/activity.spec.ts:6-60`
 - `web/e2e/global-setup.ts:95-103`, `tests/e2e/contracts.py:144-145` (key
   minting by an admin automation key, §3.5)
 
@@ -264,7 +263,7 @@ blocks it:
 This section is the single statement of App ownership for this design and
 for AP. Each rule has an id so that both designs can cite it. `admin.db`
 triggers enforce the data shape of O2-O4 (§3.5); the issuance routes enforce
-who may call them (§3.5 item 1); `person_for_app_credential` computes O5.
+who may call them (§3.5 Caller check); `person_for_app_credential` computes O5.
 The ownership cut-over (§8.1) makes existing data obey them before any
 trigger is installed. Fresh and upgraded databases install them after all
 migrations, including AP, and before serving traffic (§3.5).
@@ -281,8 +280,8 @@ migrations, including AP, and before serving traffic (§3.5).
 | **O7** Policy and spending (AP) | A request runs only if both the accountable person's plan and the App's assignment allow it. Spend is attributed to the accountable person **at submission** and is never rewritten by a later transfer (AP §2.4, §2.11) |
 | **O8** Missing person | If the accountable person is missing or disabled, the App's requests are denied (AP §2.4) |
 
-O6 amends AP §2.4, which says the accountable person is "only the policy
-and spending subject". It still does not make a key act as that person (O5):
+AP v4 §2.4 already references OV for service-App content ownership (O6)
+as well as policy and spending. It does not make a key act as that person (O5):
 daisy's key does not read Tim's prompts. The amendment runs the other way:
 Tim, as daisy's accountable person, can find, use and delete what daisy
 made. Someone must be able to do that in the product (P19), and the
@@ -298,7 +297,6 @@ An open job-event stream continues after revocation until it disconnects;
 there is no per-event revoke guarantee. Test both that limit and denial of
 the next reconnect/poll. No permit or epoch is added.
 
-
 ## 3. Enforcement: one core with typed resources
 
 ### 3.1 The module (step 1; enforced in step 3)
@@ -309,7 +307,8 @@ showed that this drops real distinctions: an App key that may read a
 creation must not read its maker's prompt or chat, and a share must not
 satisfy delete. v2 kept **one module and one decision function**, but the
 decision takes the resource kind and the action. Each kind keeps today's
-identity rule (§1.3). v3 removes v2's separate "Accountable" basis (RT2 M1,
+identity rule (§1.3), except that D51 forbids new retained content without
+a maker person. v3 removes v2's separate "Accountable" basis (RT2 M1,
 below).
 
 ```python
@@ -403,7 +402,12 @@ request content for the accountable person would widen access past the
 maker. Record `no_person`; a service key or trusted address never acquires
 a maker by looking up its accountable person. This does not change §2's
 creation-ownership policy. Main already names `no_person` as a retention
-reason (`gateway/receipts.py:97-102`); D50/D51 close RR's remaining open
+reason (`gateway/receipts.py:97-102`). Its conversation writer still
+allows explicit `store:true` after `no_person`
+(`gateway/retention.py:459-468`); step 3 must remove that exception for
+new no-person request-content writes and test service/trusted-address
+`store:true` requests. It must not assign those requests to the
+accountable person. D50/D51 close RR's remaining open
 questions rather than authorize an owner-sees-all option.
 
 **The action matrix.** A cell lists the bases that allow the action. A blank
@@ -424,10 +428,10 @@ written from it independently; it does not call `decide`.
 Rules that follow from the matrix:
 - **Role is never an input.** `is_owner` feeds only `operational()`.
 - **Shared never satisfies a mutation**, `reuse`, `share` or an `o` link.
-- **Prompts and chats never follow the App.** A key on a member's App reads
-  that App's creations (Own) but not the member's prompts (Self) or chats
-  (Self+App). Today's code already behaves this way: an admin-made key has
-  no person (§1.3).
+- **Prompts and chats never follow App authority alone.** A personless key
+  reads its App's creations (Own), never prompts (Self) or chats (Self+App).
+  A proven personal key also has its maker person (O5), so it may satisfy
+  those separate predicates. Foreign-created keys are revoked in step 2.
 - **Receipt deletion is not an action.** Retention is an owner setting with
   preview (P19, DATA_RETENTION).
 - **Share refusal order.** A viewer who cannot read the creation gets
@@ -472,9 +476,8 @@ Rules that follow from the matrix:
 - Auth is already mandatory: main rejects the removed auth-disabled setting
   (`proxy.py:2114`). Fail-closed migration/version checks remain (§8.2).
 
-
-This is a consolidation, not new machinery. Existing resource identity shapes stay fixed. New inputs are sharing rows and the retention kinds/permission introduced
-with RR slice 5. No second content reader is added.
+Existing resource identity shapes stay fixed. Sharing rows and retention
+kinds/permission join the same decision function with RR slice 5. No second content reader is added.
 
 ### 3.2 Every read path uses it (step 3; inventory in step 1)
 
@@ -492,8 +495,8 @@ with RR slice 5. No second content reader is added.
 | L13 per-request ledger | `GET /gateway/v1/requests/{id}/retention/ledger` (and `/me` UI adapter) is `content:receipt:read` with Own from the core, checked before ledger lookup. Full ledger follows own receipt detail; owner role adds nothing. Owner operational route returns only §3.3 projection, never `observed.requested_model`, reason or deadline. Non-owner admins get `404 not_found` on that operational route, exactly as for a missing id; their own maker route still works. Replace the old admin path with that owner projection; no alias to full content |
 | No-request-id ledger | `none`: current destination/config facts only, no receipt lookup or observed/request fields; keep the management/discovery gate and prove two-world invariance |
 | History and Debug maker routes | `content:request_history:*` or `content:debug_capture:*` plus retention narrowing (§3.1), never a receipt or App grant; RR slice 5 gates their delivery |
-| Job events | Own, as for the job itself (RT2 M1 removed the conflict), on every surface. The `admin` job audience (`gateway/media_jobs.py:300-311`, a denylist that still includes `assets` and `error`) and the admin event audience (`gateway/media_jobs.py:1382-1397`) are deleted. No owner event view exists in v1 (RT 5). Per-job event sequence numbers stay; household-wide row ids stay hidden (`gateway/media_jobs.py:1404`) |
-| `/gateway/v1/*`, `/v1/videos/*`, `/v1/responses/*`, voices | Call `decide` with the kind and action. Behavior stays the same, by construction: each kind's basis is today's rule |
+| Job events | Own, as for the job itself (RT2 M1 removed the conflict), on every surface. The `admin` job audience (`gateway/media_jobs.py:300-311`, an allowlist that still includes `assets` and `error`) and the admin event audience (`gateway/media_jobs.py:1382-1397`) are deleted. No owner event view exists in v1 (RT 5). Per-job event sequence numbers stay; household-wide row ids stay hidden (`gateway/media_jobs.py:1398-1400`) |
+| `/gateway/v1/*`, `/v1/videos/*`, `/v1/responses/*`, voices | Call `decide` with the kind and action. Behavior stays the same, by construction: each kind's basis follows §3.1, with D51 no-person content writes refused |
 | Job content (`/gateway/v1/media/jobs/{id}/content`, `/v1/videos/{id}/content`) | `require(job, "read")`, **and** `require(creation, "link")` for each output before its bytes or URL. An owned job does not vouch for an asset it names |
 | MCP (`/mcp`) | Table below: every `McpDeps` callback, not only `call` (RT2 B2) |
 
@@ -573,7 +576,7 @@ back (`gateway/receipt_context.py:20-35`, `gateway/receipt_store.py:386-406`,
 | | `created_at`; `queued_at`, `started_at`, `first_output_at`, `finished_at` | timestamps |
 | | `person` | `{id, name}` of the **spending subject at submission** (AP ledger `person_id`), else `unknown`. Never the App's current owner (RT 11; `gateway/receipt_context.py:50-55` does that today) |
 | | `app` | `{id, name}` |
-| | `source_kind` | enum (`app_key`, `session`) |
+| | `source_kind` | enum (`app_key`, `session`, `trusted_address`, `mcp`) |
 | | `protocol` | enum; `stream`: boolean |
 | | `capability` | enum (AP §2.2 capability ids) |
 | | `model`, `workflow` | `{catalog_id, name}` or `{null, "Unknown model"}` |
@@ -586,7 +589,7 @@ back (`gateway/receipt_context.py:20-35`, `gateway/receipt_store.py:386-406`,
 | | `cost` | `{amount_usd: decimal or null, quality: measured\|estimated\|unknown, source: provider\|price_table\|none, reconciled: boolean}` |
 | | `refusal` | `{code: enum}` |
 | | `policy` | `{decision: allow\|deny, reason: enum}` (AP denial codes) |
-| | `resource_decision` | list of `{code, effect, resource_class}`, all enums, as `project_decision(…, "client")` builds them (`gateway/resource_decisions.py:79-96`). The owner audience's `rule` and `observed_at` are dropped |
+| | `resource_decision` | list of `{code, effect, resource_class}`, all enums, derived from the reasons of `project_decision(…, "client")` (`gateway/resource_decisions.py:79-96`). The message, actions and owner-only `rule`, `observed_at` and `quality` are dropped |
 | | `retention` | list of `{kind: enum, decision: kept\|not_kept\|failed}` only; no reason, deadline, parts or policy limit. Kind enum expands with RR to include `request_history` and `debug_capture` (`gateway/receipts.py:93-107`) |
 | Receipt list envelope | `coverage_start`, `aggregate_complete`, `unknown_paid_count`, `history_note` | timestamp, boolean, integer, enum (kept from `gateway/me_media.py:1889-1909`, RT 11) |
 | Job | `job_id`, `capability`, `model`, `workflow`, `status`, `phase`, `attempt`, `created_at`, `updated_at`, `latency_ms` | as above |
@@ -640,7 +643,7 @@ and metadata stripping (`gateway/media_delivery.py:174-191`) run after the check
   later one must sit after these checks; the inventory test lists HEAD
   routes, so a new HEAD handler cannot skip them.
 - `Cache-Control` stays `private, max-age=3600` for `g=o`
-  (`gateway/media_delivery.py:208-209`). `private` keeps shared caches out. For
+  (`gateway/media_delivery.py:194-209`). `private` keeps shared caches out. For
   `g=s` it is `private, no-store`, so a stopped share does not keep
   rendering from the recipient's browser cache.
 
@@ -651,7 +654,7 @@ is minted only for Own access. Revoking a key does not revoke a `g=o` URL
 already minted with it; the URL expires within the hour.
 
 **Metadata stripping is tested, not assumed.** Stored bytes are stripped on
-write (`proxy.py:7087`) and stripped again on delivery unless `md=full`. The
+write (`proxy.py:7094`) and stripped again on delivery unless `md=full`. The
 test puts a canary in the metadata of every container the stripper handles
 (`gateway/media_metadata.py:498-531`): PNG, JPEG, WebP, WAV, FLAC, MP3, MP4, WebM,
 MKV, OGG and M4A. It asserts that a `g=s` fetch does not contain the canary.
@@ -778,7 +781,7 @@ live authentication. Reissuing requires a new key, not unrevocation.
 - **Reverse proxy (Traefik)** may log `sig=` query strings. That is outside
   this repo and a deployment gate. The ops note says to log paths without
   query strings for `/v1/assets/` and `/v1/images/`.
-- `cache/key_activity.jsonl` (`firehose_metrics.py:71`) already strips prompt
+- `cache/key_activity.jsonl` (`firehose_metrics.py:72-86`) already strips prompt
   fields. It stays operational.
 
 ### 3.7 Removed query parameters fail closed
@@ -941,8 +944,8 @@ running is UNVERIFIED. The fix is never to give the owner job content.
 ST recommends per-person storage inside Usage, a private cleanup view for
 each member, no quota by default, and a protective pause on new work when the
 disk is nearly full (ST §12). This design takes the smallest version of
-each. Nothing counts storage per person today. The only free-space check
-guards the speech-to-text spool (`gateway/stt_chunking.py:784-865`).
+each. Nothing counts storage per person today. The speech-to-text
+free-space check guards its spool (`gateway/stt_chunking.py:784-865`).
 
 ### 6.1 Owner: Storage in Usage (owner section)
 
@@ -1165,12 +1168,13 @@ fact once per screen. `{Owner}` is the owner's display name.
 
 **Each row ships with the step that makes it true (RT2 M6).** The "Step"
 column names the build step (§12). A row never renders before its step; a
-row with two variants changes when the later step ships. History wording in Home, Privacy, honest limits and owner Usage is the
+row with two variants changes when the later step ships.
+
+History wording in Home, Privacy, honest limits and owner Usage is the
 RR slice-5 variant: render the words about saved request history only when
 step 3 AND RR slice 5 enforce it. Before then use the same rows with that
 phrase omitted. Storage and sharing still wait for steps 4 and 5.
-Navigation follows
-the same rule: "Manage sharing" and "Review storage" do not exist before
+Navigation follows the same rule: "Manage sharing" and "Review storage" do not exist before
 their steps.
 
 | Where | Step | Exact copy |
@@ -1242,7 +1246,8 @@ widening setting (D51).
   `receipt.detail.instance`; `recent_videos`, `recent_images`,
   `recent_renders`; the `admin` job and event audiences; the Library person
   picker and the Usage person picker outside the owner section; the
-  `scope=everyone` web calls (`web/src/app/library/page.tsx:278-279`, `web/src/app/library/page.tsx:537`, `web/src/app/library/page.tsx:552`,
+  `scope=everyone` web calls (`web/src/app/library/page.tsx:278-279`,
+  `web/src/app/library/page.tsx:723`, `web/src/app/library/page.tsx:537`, `web/src/app/library/page.tsx:552`,
   `web/src/app/library/page.tsx:1049`, `web/src/app/library/page.tsx:1103`, `web/src/app/library/page.tsx:1814`, `web/src/app/library/page.tsx:1837`, `web/src/app/library/page.tsx:2481`); signed URLs without `md` or `g`;
   the `created_by` startup back-fill (`gateway/admin_store.py:550`,
   `gateway/admin_store.py:612-655`). AP already removed service-account
@@ -1250,16 +1255,14 @@ widening setting (D51).
   Audit rows already written keep their labels
   (`web/src/lib/audit-description.ts:4-5`).
 
-
-**One protocol, two units.** Both units run in AP's migration tool and
-protocol (AP §4.2: gateway lock, full backup, marker before any live change,
-migrate in place, verify, owner accept; restore only before accept). There
-is no second migration framework (RT 10, RT2 complexity note). The tool
-ships with whichever design is built first. Each unit writes its own version
-row in `admin.db`. A unit whose version row exists is **verify only**: it
-runs its verify step and changes nothing. So the ownership unit runs once,
-after AP's existing schema migrations; an AP schema version is not this
-unit's completion receipt.
+**One protocol, two units.** Extend AP v4's §4.2 stop/backup/marker,
+migrate/verify/accept protocol; do not introduce another framework. Main's
+AP schema migration already exists (§1.3). OV adds separate version rows
+for its two units; AP's schema/version alone proves neither is complete.
+For an accepted OV version, a repeat run is verify-only. An interrupted
+unit resumes from its durable manifest while the started-but-unaccepted
+marker continues blocking traffic. Backups cover affected sidecars as
+well as databases (§8.2).
 
 ### 8.1 Unit 1: enforce App bindings on AP v4 (step 2; RT3 B1, B2, M6)
 
@@ -1382,6 +1385,11 @@ What remains is a stated limit, the same one AP §4.2 states for keys:
 | Owner request log | `GET /admin/api/activity/requests[/{id}]` (projection) | `azizam admin activity …` | Deferred |
 | Owner storage | `GET /admin/api/storage` | `azizam admin storage` | Deferred |
 | Storage reserve | `PUT /admin/api/settings/storage {reserve_bytes, warn_margin_bytes, resume_margin_bytes}` | `azizam admin storage reserve <bytes>` | Deferred |
+| Own retention ledger (step 3) | `GET /gateway/v1/requests/{id}/retention/ledger`; `/me` UI adapter | Request ledger command in HR CLI, when built | `requests {action:"ledger", request_id}`: same content:receipt:read |
+| Owner retention ledger (step 3) | Existing `/admin/api/requests/{id}/retention/ledger`, projection only | Same projection | `requests` owner operational branch uses projection |
+| Current ledger, no id (step 3 inventory) | Existing `/admin/api/me/retention/ledger`, config facts only | Current-facts command when built | `requests {action:"ledger"}`, `none` |
+| History/Debug (step 3 with RR) | RR maker routes under `/gateway/v1/requests`, Self and narrowing | RR CLI when built | RR requests operations use the same core and privacy permission |
+| Own App address add (step 2) | `POST /me/api/apps/{id}/trusted-addresses`; admin adapter has same accountable check | Own-App binding command when built | Not supported |
 | Own Security events | `GET /me/api/security/events` (§5) | `azizam account security` | Not supported |
 
 Errors:
@@ -1394,7 +1402,8 @@ Errors:
 - `403` "Invalid or expired signature" for a stopped, ungranted or old-format
   URL.
 - `503 storage_paused` (layer gateway) when free bytes minus leased bytes are
-  below the reserve (§6.4).
+  below the reserve for required storage (§6.4). Optional history skips
+  its write with `storage_unavailable`, without failing the request.
 - `400 reserve_below_largest_job` when `reserve_bytes` is below `W_max`.
 
 There is no CLI in this repo today. The CLI rows depend on HR Release B
@@ -1402,14 +1411,14 @@ item 4.
 
 ### 9.2 Tests (the oracle)
 
-The test section is `docs/design/OWNER_VISIBILITY_TESTS.md`: TD, adopted.
-Lines that v3 changed start with **[v3]**; the rest is TD unchanged. It
-defines the actors (A, B, O, D, S, N, Rk, Rs, Q, F, C, H, U), the resource
-states, an oracle written independently of `decide`, the assertion helpers,
-the path matrix P01-P20, the signed-grant and metadata suite, the canary and
-two-world noninterference tests, the identity, trigger, migration and
-storage regressions, the pytest layout, and its UNVERIFIED register. Where
-it and this design disagree, this design wins, and the test file is fixed.
+The test section is `docs/design/OWNER_VISIBILITY_TESTS.md`: TD, adopted
+and revised through v4. `[v3]` and `[v4]` mark revision requirements. Its
+current-main source map is §10; old review offsets no longer apply. It
+defines actors A, B, O, D, S, T (trusted address), N, Rk, Rs, Q, F, C, H
+and U, the states, eight kinds and six actions, an independent oracle,
+whole-response assertions, paths P01-P21, canary tests, and migration,
+STT/storage, history and incognito regressions. This design is authoritative
+if the two files disagree; fix the test design before implementation.
 
 Normative rules taken from TD:
 - Every resource denial is exactly `404 not_found`, the same body and
@@ -1421,7 +1430,7 @@ Normative rules taken from TD:
 - No member notice or Privacy copy ships because tests were designed; it
   ships when the step's gate passes on an implementation SHA (§12).
 
-v3 additions that TD does not cover:
+Required implementation additions (included in TD v4):
 1. **MCP callbacks** (RT2 B2), in `test_mcp_boundaries.py`, each through
    the real bound `McpDeps`: a guessed other-person asset id as a `run`
    input; a Shared-only asset as input; a personless service key reusing its
@@ -1436,7 +1445,11 @@ v3 additions that TD does not cover:
 4. **Web (390 px, P4)**: the owner's Library has no person picker; the share
    flow, stop sharing and "Shared with me" work by touch; the owner's Usage
    shows no thumbnails; "Review storage" selects and deletes by touch; the
-   member first-use notice shows once; no row of §7 renders before its step.
+   member first-use notice shows once; no row of §7 renders before its step
+   or its RR slice-5 variant gate.
+5. **Round 3**: TD P07/P15/P19/P21 and §7 cover trusted bindings, ledger
+   ownership/projection, retention permissions, incognito/O4b, shared STT
+   leases, optional history failure, claim release and sidecar replay.
 
 Rewrite the §1.5 specs to these expectations. Do not delete them.
 
@@ -1456,7 +1469,7 @@ Rewrite the §1.5 specs to these expectations. Do not delete them.
 | Logs hold exception text | §3.6 fixes the request-path sinks and ratchets the rest; logs are host files (L11) |
 | Reverse-proxy logs hold signed URLs; LiteLLM logging defaults | Deployment gates, UNVERIFIED |
 | A hand restore of a database brings back stopped shares | Stated limit, as for keys in AP §4.2; the ops restore note stops every share before start (§8.3) |
-| Revoking the listed keys breaks an app that uses one | The preview names each key and its App; an App used in the last 30 days that would lose every key blocks apply until it has a replacement or the owner approves that it stops (§8.1) |
+| Removing the listed bindings breaks an app that uses one | The preview names each key/address and its App; an App used in the last 30 days that would lose every binding blocks apply until it has a replacement or the owner approves that it stops (§8.1) |
 | The disk pause starts on deploy | The reserve is bytes sized from Azizam's own largest job (§6.4), not a share of a large shared disk. The preview reports free bytes against it |
 | Another program fills the disk after a job is admitted | The promise is "budgeted", not "guaranteed"; the job ends `storage_full` (§6.4) |
 | A person who is accountable for service Apps is removed | Removal disables their Apps and revokes the keys (`gateway/accounts.py:674-680`); O8 then denies the Apps. With no transfer route in v1, those Apps' work stays on disk under a removed person and nobody can open or free it in the product. Known limit; the transfer route (O3) is its fix. Until then, remove such a person only after deciding about their Apps |
@@ -1491,7 +1504,9 @@ Rewrite the §1.5 specs to these expectations. Do not delete them.
 4. **Disk reserve (re-measure before step 4).** **Default: `reserve_bytes = W_max + 2 GiB`**, an
    absolute amount (§6.4), not v2's 5%. With 101.6 GB available at the v4 worktree measurement
    (measured, §0), this does not pause on deploy unless `W_max` is above
-   about 99 GB. Change it only if you want a larger margin for the other
+   about 99 GB on that same device, before concurrent leases. This is not a
+   deploy prediction: the live data/scratch devices and `W_max` still need
+   measurement. Change it only if you want a larger margin for the other
    software on this disk.
 
 ## 11. Red-team resolution
@@ -1506,12 +1521,12 @@ column says so.
 | RT | Finding | Resolution (v2) | Where | Changed by round 2 |
 |---|---|---|---|---|
 | 1 (blocker) | The one core replaces resource-specific identity and action rules with an App intersection | **Applied.** Typed `ContentRecord` kinds and an action matrix inside the one module. Each kind keeps today's rule: App for creations (`gateway/ownership.py:46-55`), person for prompts (`gateway/me_media.py:1026`), person and App for chats (`proxy.py:25886-25888`), principal folder for voices. Shared never satisfies a mutation. Identity entry for sessions, personal keys (`gateway/admin_runtime.py:2312-2322`), makers and person-less Apps stated. Negative tests added | §3.1, §9.2 | M1: the Accountable basis is removed; one App-ownership rule (O6) |
-| 2 (blocker) | Key issuance is not a complete boundary: App ownership can change; key provenance unknown | **Applied.** All issuance paths enumerated (rotate and import do not exist). Triggers fix App kind and personal ownership; a service App owner change needs all keys revoked. Transfer is a content transfer with disclosure. Keys with `created_by` not equal to the owner, NULL or `""` are revoked. Read aliases stay; revocation ends authentication | §3.5, §8 | B1, M2: ownership cut-over (§8.1), NULL-safe triggers, issuance in the database |
+| 2 (blocker) | Key issuance is not a complete boundary: App ownership can change; key provenance unknown | **Applied.** All issuance paths enumerated (rotate and import do not exist). Triggers fix App kind and personal ownership; a service App owner change needs zero bindings (RT3 B1). Transfer is a content transfer with disclosure. Keys with `created_by` not equal to the owner, NULL or `""` are revoked. Read aliases stay; revocation ends authentication | §3.5, §8 | B1, M2: ownership cut-over (§8.1), NULL-safe triggers, issuance in the database |
 | 3 | Shared output needs its own serializer | **Applied.** `shared_view()` typed projection, applied before title, search and filter; list built from `shares`, not the own-receipt filters; title never from the prompt | §4.2, §9.2 | — |
 | 4 | The allowlist is not recursive; envelopes add fields back | **Applied.** Typed schema for every leaf, nested `cost` and `resource_decision` included; whole response projected; catalog names only, no `requested_model` fallback; recursive schema test and nested canaries | §3.3, §9.2 | — |
 | 5 | Job events and MCP not covered by a route inventory | **Applied.** Inventory covers HEAD, MCP tools and sub-operations, dispatch callbacks and event types (closed set). Admin job and event audiences deleted. Tests assert no side effects | §3.2, §9.2 | B2: every `McpDeps` callback; events follow job read |
-| 6 | "No prompts in logs" is contradicted by an exception sink | **Applied.** Claim withdrawn (74 `{exc}` prints found, not only MCP). MCP sink fixed; request-path sinks fixed; ratchet on the rest; exception-path canaries; LiteLLM and Traefik are deployment gates | §1.1, §3.6 | — |
-| 7 | Signed grants need a byte, derivative and cache contract | **Applied.** Checks before any read and before Range; poster bound to the share; `private, no-store` for shares; GIF refused; metadata canary per container; "now" scoped to the next fetch and the copy changed. Code facts: no HEAD route, ETag, 304 or server cache exists today (`gateway/media_delivery.py:194-234`) | §3.4, §7, §9.2 | `md=full` binding to the fetcher stated (§3.4) |
+| 6 | "No prompts in logs" is contradicted by an exception sink | **Applied.** Claim withdrawn (74 at the original review; 17 on current main, §1.1). MCP sink fixed; request-path sinks fixed; ratchet on the rest; exception-path canaries; LiteLLM and Traefik are deployment gates | §1.1, §3.6 | — |
+| 7 | Signed grants need a byte, derivative and cache contract | **Applied.** Checks before any read and before Range; poster bound to the share; `private, no-store` for shares; GIF refused; metadata canary per container; "now" scoped to the next fetch and the copy changed. Current range helper has no HEAD/ETag/304/cache handling; full route inventory remains the implementation gate (`gateway/media_delivery.py:194-234`) | §3.4, §7, §9.2 | `md=full` binding to the fetcher stated (§3.4) |
 | 8 | Several makers, partial deletion and the share key do not compose | **Applied, simplest option.** Sharing refuses items with more than one maker; the row's maker is authoritative for prompt, update and stop; deletion revokes that maker's shares and keeps other owners' bytes | §4.1, §9.2 | M5: deletion releases the deleter's claim (§6.3) |
 | 9 | Password reset is an existing impersonation path | **Applied.** Privacy page names it; the Security event joins the existing `account_links.created_by` (no new field). **Rejected for now:** verified-channel delivery, because Azizam has no mail | §5, §7 | M6: the event ships with the switch (§5) |
 | 10 | Migration and restore need executable fail-closed gates | **Applied.** One presence-based validator for removed parameters; the switch reuses AP §4.2 with a verify step; start refused on a partial switch or auth-disabled config | §3.7, §8 | M4: two-store guard removed (§8.3); both units use the full AP §4.2 protocol, whose marker is written before any live change |
@@ -1542,7 +1557,33 @@ the problem; "Rejected" means RT2's change was not taken, with the evidence.
 | Note: `service_account` principals | Control-plane principals could own content | Runtime auth rejects them (`gateway/admin_runtime.py:2411-2416`). The cut-over preview counts records with such a principal; any it finds are Unresolved | §3.1, §8.1 |
 | Note: step 1 | "Five checks call the final matrix" may change differing rules | The owner-everyone branches and the no-identity branch stay at the call sites in step 1, named for deletion in step 3, so step 1 changes no behavior | §12 |
 | Note: AP permits | The design leaned on `access_epoch` | Removed; per-request authorization is enough (§2.4 Linearization) | §2.4, §3.5 |
-| Consistency check of v3 (Sonnet, before commit) | 5 major, 9 minor; no blocker | Applied: cut-over sets persons before the last back-fill and computes the preview the same way; new databases need triggers and step 4 releases pre-v3 deletions (both corrected by RT3 M6/M8); `user:` principals stay in the session `Viewer`; §6.4 states its error bound, an atomic check-and-lease lock, leases released in `finally`, and admission following the state; database claims reworded (shape, not caller), `NULLIF` app ids, `BEFORE DELETE ON apps`; the two-query auth read argued safe instead of "one query"; test setups that mint keys as a service account added to §1.5; transfer tests deferred; ops restore note moved to step 2; removed-person limit stated (§10.1); Home copy names shared apps | §2.4, §3.1, §3.5, §6.3, §6.4, §7, §8.1, §10.1, §12 |
+| Consistency check of v3 (Sonnet, before commit) | 5 major, 9 minor; no blocker | Historical v3: cut-over set persons before a final back-fill (superseded by RT3 B2: AP supplies persons; no final back-fill); new databases need triggers and step 4 releases pre-v3 deletions (both corrected by RT3 M6/M8); `user:` principals stay in the session `Viewer`; §6.4 states its error bound, an atomic check-and-lease lock, leases released in `finally`, and admission following the state; database claims reworded (shape, not caller), `NULLIF` app ids, `BEFORE DELETE ON apps`; v3 argued two-query auth safe (superseded by main's single SELECT); test setups that mint keys as a service account added to §1.5; transfer tests deferred; ops restore note moved to step 2; removed-person limit stated (§10.1); Home copy names shared apps | §2.4, §3.1, §3.5, §6.3, §6.4, §7, §8.1, §10.1, §12 |
+
+### 11.3 Round 3 resolution
+
+Non-maker: Claude Opus, v3 at `782d763f`. Verdict: **BUILD AFTER THESE
+DESIGN EDITS**. All 15 findings are applied; none is rejected. Evidence
+below was re-read against `origin/main` `52408b26`. "Applied" means the
+design and test requirements changed, not that implementation has shipped.
+
+| Finding | Applied or rejected, with reason and current-main evidence | Section | Step |
+|---|---|---|---|
+| B1: trusted addresses grant content | **Applied.** Owner can add to any non-session App (`gateway/admin_api.py:2096-2117`, `gateway/admin_store.py:2065-2098`); runtime acts as `app:<id>` without a person (`gateway/admin_runtime.py:2457-2482`). O4 covers keys and addresses; accountable-only add, INSERT provenance trigger, zero-binding transfer and recent-use removal block | §1.2 L12, §2.4 O3/O4, §3.1, §3.5, §8.1; TD P19/§7 | 1 identity/inventory; 2 enforcement |
+| B2: AP v4 already supplies identity schema | **Applied.** NOT NULL/FK person, no service-account owner column (`gateway/admin_store.py:143-154`); migration assigns persons (`gateway/access_plan_migration.py:13-19`, `gateway/access_plan_migration.py:527-531`); service default (`gateway/admin_runtime.py:372-401`). L9 owner exception and empty automation creator remain (`gateway/admin_runtime.py:358-370`, `gateway/admin_runtime.py:620-634`); back-fill still runs (`gateway/admin_store.py:550`, `gateway/admin_store.py:612-655`). Unit 1 now enforces bindings, revokes/removes unproven provenance and deletes back-fill. Keep foreign-created personal-App row; drop obsolete person-approval row and Q5 | §1.3, §3.5, §8.1, §10.2, §13; TD §7 | 2 |
+| M1: retention ledger bypass/existence oracle | **Applied.** REST uses admin auth with no ownership and copies requested_model (`gateway/api.py:965-973`, `proxy.py:14047-14076`); MCP repeats the role gate (`gateway/mcp_server.py:654-669`, `proxy.py:14006-14010`). Add maker content:receipt:read route, owner projection without observed.requested_model, non-owner-admin 404 on operational route and missing-id equivalence. No-id ledger is none. Rewrite leak-encoding tests (`tests/test_retention_ledger_headless.py:43-73`, `tests/test_retention_ledger_headless.py:78-95`) | §1.2 L13, §1.5, §3.2/§3.3; TD P07/P15 | 1 classify; 3 enforce |
+| M2: retained-content kinds need one core | **Applied.** RR defines person-scoped kinds and narrowing (`docs/design/REQUEST_RETENTION.md:427-504`); the decision returns no_person (`gateway/retention.py:439-447`), but explicit conversation store still has a no-person exception (`gateway/retention.py:459-468`). Add request_history/debug_capture Self plus delegated privacy_permission, never O6/App Own; retention.reader_allowed calls decide then narrows. RR slice 5 has no independent reader. Library cascade joins maker deletion (`docs/design/REQUEST_RETENTION.md:126-131`) | §3.1, §6.3; TD P21/P18 | 1 kinds; 3 reader with RR slice 5; 4 cleanup |
+| M3: D50 incognito and retention authority/copy | **Applied.** Extend existing Try forget/sessionStorage (`web/src/app/try/page.tsx:1325`, `web/src/app/try/page.tsx:1413-1414`), one switch across prompt/history/conversation; O4b accountable-only App/key writes and household never_keep narrowing. Privacy, Home, owner Usage and honest limits name history, gated on RR slice 5 | §2.4 O4b, §7/§7.1; TD P21 | 2 binding authority; 3 controls/copy with RR slice 5 |
+| M4: kept-history bytes and paused write | **Applied.** RR adds kept requests in media_jobs.db (`docs/design/REQUEST_RETENTION.md:398-405`); main has storage_unavailable reason (`gateway/receipts.py:97-102`). Count per-maker bytes, owner bytes only, maker review/delete; Paused/Unknown skips optional history and never fails the request | §6.1-§6.4; TD P18/§7 | 4 with RR slice 5 |
+| M5: competing STT disk counter | **Applied.** STT owns separate reserved bytes, loop-only admission and spool probe (`gateway/stt_chunking.py:762-868`), floor 64 MiB (`gateway/stt_chunking.py:369`). Use one locked per-device ledger including STT upload/top-up/replay; STT obeys reserve. Measure private temp: data-adjacent default (`gateway/private_tmp.py:35-42`), relative STT (`gateway/stt_chunking.py:318-333`), Docker image disk (`Dockerfile:26-27`) | §0, §6.4, §10.2 Q4; TD §7 | 4 |
+| M6: trigger scope, revocation and upgrade order | **Applied.** Control-plane adoption updates created_by (`gateway/signin_admin.py:485-499`, `gateway/signin_admin.py:549`); AP updates App persons (`gateway/access_plan_migration.py:527-531`). Scope immutable credentials to OLD App rows, make App-key revocation final, install after every migration and test v6→current plus fresh/current initialization | §3.5, §8.1; TD §7 | 2 |
+| M7: new MCP fields and OAuth Viewer | **Applied.** Classify every field (`gateway/mcp_server.py:109-141`), wired at `proxy.py:14777-14800`: retention per M1, STT operational, rename own-account, gates/config none. OAuth is a person/session-App identity (`proxy.py:2425-2453`); its Viewer includes the person's Apps and privacy permission | §3.1/§3.2; TD P15/P21 | 1 inventory/identity; 3 enforcement |
+| M8: untimestamped claims/tombstone replay | **Applied.** Sidecar writes have no claim time (`proxy.py:7088-7115`); tombstones use actor/asset id (`gateway/me_media.py:1299-1322`), session principals include both App kinds (`gateway/admin_store.py:2144-2152`). Remove principals, stop tombstone hiding, replay pre-v3 cleanup once using personal-App aliases plus user only; service-App removal confirmation is explicit | §6.3; TD P18/§7 | 4 |
+| N1: stale facts and measurements | **Applied.** Reset route 1 hour versus helper 7 days (`gateway/accounts_api.py:72-73`, `gateway/accounts.py:473-475`); Try is personal (`gateway/user_runtime.py:472`, `gateway/user_runtime.py:499-536`); cancel still polls/fetches (`gateway/mcp_server.py:603-609`, `gateway/mcp_server.py:579-581`). Drop client_address/api_key_name (`gateway/receipts.py:72-81`); re-measure disk before step 4 | §0, §1.2, §2.4 O2, §3.2/§3.3, §6.4; TD §10 | 1 citations; 3 paths; 4 measurement |
+| N2: retention projection | **Applied.** Current retention vocabulary is closed (`gateway/receipts.py:93-107`). Owner projection adds only retention [{kind: enum, decision: enum}], never reason/deadline | §3.3; TD §6 | 1 schema; 3 delivery |
+| N3: sidecars outside admin.db transaction | **Applied.** Sidecars are file writes (`proxy.py:7110-7115`), not SQLite rows. Unit 2 uses an accepted pre/post manifest, atomic idempotent replacements, re-run/verification before version and acceptance, plus sidecars in AP backup/restore | §8.2; TD §7 | 3 |
+| N4: unbound App plan | **Applied.** App creation requires an explicit plan (`gateway/admin_runtime.py:399-401`). "No person recorded" is service, accountable to gateway owner, access_plan="person", no automatic binding | §8.1, §10.2 Q2; TD §7 | 2 create; 3 attach |
+| N5: open-stream revoke boundary | **Applied.** Runtime rows are per-request (`gateway/admin_store.py:2463-2485`); MCP polls dispatch fresh requests (`proxy.py:14607-14615`). Main event endpoint is JSON polling (`gateway/api.py:764-818`); the contract for an open event stream allows it to continue until disconnect, then reconnect re-authenticates. No per-event revocation guarantee | §2.4 Linearization; TD P12/U4 | 1 contract; 3 enforcement |
+| Open questions | **Applied.** Keep Q1 supervision, Q2 unbound creations (with N4), Q3 expiry and Q4 reserve (with M5/re-measure). Q5 is obsolete because AP already assigned service Apps (`gateway/access_plan_migration.py:13-19`) | §10.2 | 2 preview; 4 measurement |
 
 ## 12. Build order
 
@@ -1553,38 +1594,55 @@ live promise ships with its step, not in a later documents step.
 
 | Step | Ships | Gate |
 |---|---|---|
-| **1. One core, no behavior change** | `content_access` with kinds, the action matrix and `Viewer`. The five checks in §1.4 call it. The branches that differ from the matrix stay at their call sites, named for deletion in step 3: the owner-everyone scopes (`app_ids=None`, `gateway/me_media.py:737-754`, `gateway/user_runtime.py:305-312`) and the no-identity branch (`proxy.py:6973-6975`). The projection (§3.3) and its schema test exist but nothing serves them yet. The inventory test, with today's routes, MCP callbacks and event types classified | The current suite passes unchanged. The pure matrix test passes for every cell |
-| **2. Ownership cut-over** (§2.4, §3.5, §8.1) | Both App create paths; owner-only issuance on every path (`403 not_your_app`); the triggers, also in the base schema; the back-fill removed; the ownership unit of the migration tool; the ops restore note (§8.3), because revocations start here. If AP's cut-over has already run, this step is verify only. AP §2.4 cites §2.4 here | TD §7 "B1" and "M2" tests, the trigger transition matrix and the verify self-test. Owner approves the preview; no service-account App without a named person |
-| **3. Private by default** | Every read path uses the core and the projection (§3.2), including every MCP callback, job content per output, and job events. Removed parameters fail (§3.7). Signed URLs carry `g` (§3.4). Log sinks (§3.6). The visibility switch (§8.2) and fail-closed start. The reset event (§5). The web Library loses Everyone and the person picker; the owner's per-person usage moves to the Usage owner section. The step-3 rows of §7. PM's viewer table and UB §4.4 copy (§7.1) | TD in full except storage and sharing, plus the §9.2 MCP and reset-event additions. Owner approves the preview. LiteLLM and reverse-proxy logging checked on the deployment |
-| **4. Storage** | Owner storage in Usage (§6.1), member storage and "Review storage" (§6.2), accounting and claim release on delete (§6.3), the absolute disk reserve (§6.4). The step-4 rows of §7 | TD P18 and "M3", 390 px journeys |
+| **1. One core, no behavior change** | Eight kinds and action matrix, Viewer with trusted address, OAuth identity and privacy_permission; typed operational retention projection. Classify every route, ledger variant, MCP field/tool and event. Keep legacy broad/no-identity branches at call sites until step 3 | Current suite unchanged; independent eight-kind/six-action oracle, inventory completeness, identity and recursive schema tests |
+| **2. App-binding enforcement on AP v4** (§3.5, §8.1) | Accountable-only keys and trusted addresses; O2/O3/O4 triggers, App-scoped immutability and final revoke, installed after all migrations; startup back-fill removed; revoke/remove unproven bindings, recent-use stop/replacement block. Create unbound App with person plan only when needed. Ops restore note. AP installed is not a verify-only shortcut | Actual schema-v6→current, current and fresh paths; trigger/provenance/race/self-tests; control-plane adoption still works; accepted concrete preview |
+| **3. Private by default** | Core/projection on every path and MCP callback, maker ledger and projected owner ledger, unknown-id equivalence; parameter rejection, signed grants, log sinks, reset event and idempotent Unit-2 attachment/restore. Remove Everyone/person picker. With RR slice 5: request_history/debug_capture reader integration, delegated permission, O4b settings and single D50 incognito; history copy waits for that slice | TD P01-P17/P19-P21 except step-5 shares; no owner/admin bypass in real bound callbacks; sidecar crash/replay/restore; history and copy gates run on implementation SHA; deployment logging checked |
+| **4. Storage** | Owner/member storage, history bytes and maker review/delete (with RR slice 5); claim release, one-time personal-only pre-v3 cleanup and service-App removal copy; Library/history cascade and deletion intents. One per-device locked ledger across STT and other writers, scratch devices included; optional history skips while paused | Re-measure every resolved filesystem and W_max; TD P18/§7 device/thread/async/replay tests; normal response under history storage failure; 390 px cleanup journeys |
 | **5. Sharing v1** | `shares` table, `shared_view`, share sheet, "Shared with me", Recent entry, the share line of the ops restore note (§4, §8.3). The step-5 rows of §7. UB §2.3 and DATA_RETENTION (shares class (a)) | TD P14, §5 (signed grants and metadata) and the sharing rows of P01-P06 |
-| **6. Cross-references** | Links between this design, AP, PM, UB and HR checked | Cross-references checked |
+| **6. Cross-references** | AP v4, RR, PM, UB and HR references/copy aligned with this design and D50/D51. AP key-only transfer wording points to O3 zero bindings; no reader widening | References and notices match shipped step, no stale AP schema or second reader |
 
 Notes:
 - Step 2 comes before step 3 because the privacy promise needs a person on
-  every App (O6) and proven provenance on every live key (O4).
-- The §6.4 disk pause does not depend on steps 2-3. It can ship right
-  after step 1 (whose inventory test it uses) if the disk needs it.
+  every App (O6) and proven provenance on every live key and trusted address (O4).
+- The required-storage disk pause can ship after step 1 if needed, but
+  must include STT in the same ledger. History accounting/skip behavior
+  and cascade wait for the RR slice-5 writer/core integration.
 - Until step 3 ships, R18 finding 2 can be closed by a one-line web change:
   the owner's Library starts at "mine". That is optional; step 3 removes
   the view.
 - Step 3 is the largest. It is one step because each half alone is false:
-  hiding the Library while keys still read member Apps would make the notice
+  hiding the Library while foreign-created bindings still read member Apps would make the notice
   untrue.
 
 ## 13. Before building (P20)
 
-- [x] Non-maker red-team of v1 (RT). Resolutions in §11.1.
-- [x] Non-maker red-team of v2 (RT2) and a test design (TD). Resolutions in
-      §11.2; TD adopted (§9.2).
-- [ ] Red-team v3's changed areas: §2.4, §3.1 (one ownership rule), §3.2
-      MCP callbacks, §3.5 triggers, §6.3 claim release, §6.4, §8.
-- [ ] AP's revision cites §2.4 and agrees with O1-O8.
-- [ ] Owner answers or accepts the defaults in §10.2.
-- [ ] Record the go decision against the reviewed version.
-- [ ] Follow §12.
+- [x] Non-maker red-team of v1 (RT), §11.1.
+- [x] Non-maker red-team of v2 (RT2) and TD, §11.2/§9.2.
+- [x] Non-maker red-team of v3 (Claude Opus): BUILD AFTER THESE DESIGN
+      EDITS. Round-3 changes applied in v4, §11.3; no new review started.
+- [x] Re-check AP v4 (`545726a7`) and current-main AP schema (`52408b26`).
+      AP §2.4 cites OV's ownership model and preserves O5/O6; its old OV
+      section numbers and key-only transfer wording still need step-6
+      cross-reference updates. AP does not supply O2/O3/O4 enforcement;
+      step 2 is required. Do not report full cross-document agreement yet.
+- [x] Record decision: **Tim go on v3 2026-10-12; v4 edits per round 3**.
+      D50/D51 are fixed inputs, not open policy questions.
+- [ ] Apply or explicitly accept Q1-Q4 defaults in the concrete build
+      preview (§10.2); Q5 removed. Re-measure data/scratch before step 4.
+- [ ] Follow §12 and record implementation/test evidence before notices.
 
 ## Change log
+
+- v4, 2026-10-20. Resolves round 3 (§11.3) against main `52408b26`.
+  - Re-cites both files, rebases Unit 1 on shipped AP v4, includes trusted
+    addresses and trigger upgrade order, final revocation and provenance.
+  - Integrates maker ledger/history/Debug reads, MCP fields and permission,
+    D50 incognito and D51's unchanged maker-private policy. No-person
+    shared Apps retain structural receipts, not request content.
+  - Counts history bytes, skips optional retention while paused, shares
+    STT/device leases, replaces claim-time comparisons with principal
+    release and makes sidecar attachment/restore replayable.
+  - Records step ownership, copy/RR gates, Q1-Q4 and Tim's v3 go.
 
 - v3, 2026-10-11. Resolves RT2 (§11.2). Also:
   - New §2.4: the App-ownership model shared with AP (O1-O8), and the
@@ -1608,7 +1666,8 @@ Notes:
     coarse usage and spend, no content.
   - Corrected v1 facts: logs (§1.1); the reset issuer is already recorded
     (`account_links.created_by`), so no `issued_by` field is added; posters
-    are separate assets; reset links last 7 days today.
+    are separate assets; the store helper defaults to 7 days (the route
+    defaults to 1 hour on the v4 baseline, §1.2).
   - Sections renumbered: Storage is §6; wording §7; data §8; API and tests
     §9; risks §10; red-team §11; build order §12.
 - v1, 2026-10-11. First draft, then one non-maker review pass (11 findings
