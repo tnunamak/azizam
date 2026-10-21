@@ -122,4 +122,16 @@ which proves that the allowed metadata exception is exercised. The leaky
 positive control enables spend/error logging and uses the default log level;
 it must expose content to both the database scanner and output scanner.
 
-Final full-suite results and measured ceilings are recorded below after the run.
+Measured ceilings on 2026-10-21: pytest 15,354 (full hermetic collection),
+Vitest 3,051 (`vitest list --json`), Playwright 492 (471 + 3 + 18 across the
+three gate configurations), Node 87 (82 Pi cases and 5 compatibility cases).
+The Node count run had one unrelated Pi read-only-directory failure: the Pi
+CLI tried to create `trust.json.lock` inside that read-only directory. This
+slice changes no Node code. Both the installed and project-local Pi CLI
+reproduce it; it does not affect the Python retention gate.
+
+The focused profile/canary/management run passed 44 cases. Endpoint/compiler
+and authenticated-ledger checks passed 72 cases. The rehearsal returned
+`profile_valid` with synthetic clean flags. It was not a live database check.
+
+Final full-suite results are recorded below after the run.
