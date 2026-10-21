@@ -133,7 +133,8 @@
 # Full hermetic --collect-only -q on 2026-10-21 measured 15569.
 # Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
 # Offline node:test runs: 5 compatibility + 82 Pi = 87.
-pytest = 15569
+# Plan deletion review round 1: +3 (inactive session App returns to its person; disabled-person App; same-as-person blocker) -> 15572.
+pytest = 15572
 vitest = 3068
 playwright = 502
 
