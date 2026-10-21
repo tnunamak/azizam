@@ -78,7 +78,7 @@ def image_round(monkeypatch, fake_upstreams):
 def run_image(manifest):
     binding = manifest['bindings'].get('comfyui') or manifest['bindings']['gateway']
     model = binding.get('model_id') or Path(binding['workflow']).stem
-    options = {'seed': 41}
+    options = {'seed': 41} if 'seed' in manifest['inputs'] else {}
     if model == 'image-identity':
         options.update(attempts=1, refine='off', resolution=1024)
     fields = dict(model=model, prompt=PROMPT, size='1024x1024', n=1,
