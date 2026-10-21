@@ -21244,8 +21244,8 @@ def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, An
             continue
         item = {
             key: asset[key]
-            for key in ("asset_id", "asset_url", "url", "media_type")
-            if isinstance(asset.get(key), str) and asset.get(key)
+            for key in ("asset_id", "asset_url", "url", "media_type", "available", "availability")
+            if asset.get(key) is not None
         }
         if item:
             data.append(item)
@@ -21280,15 +21280,16 @@ def _media_job_asset_items(
         parsed = _parse_asset_id(asset_id)
         if parsed is None or parsed[0] != kind:
             continue
-        signed_url = build_signed_asset_url(request, asset_id)
         item = {
             key: asset[key]
-            for key in ("asset_id", "media_type", "size_bytes", "index")
+            for key in ("asset_id", "media_type", "size_bytes", "index", "available", "availability")
             if asset.get(key) is not None
         }
-        item["url"] = signed_url
-        item["asset_url"] = signed_url
-        item["content_url"] = signed_url
+        if asset.get("available") is not False:
+            signed_url = build_signed_asset_url(request, asset_id)
+            item["url"] = signed_url
+            item["asset_url"] = signed_url
+            item["content_url"] = signed_url
         items.append(item)
     return items
 
@@ -23445,6 +23446,12 @@ async def gateway_media_job_content(job_id: str, request: Request):
             status_code=409,
             media_type="application/json",
         )
+    job = output_availability.project(job, asset_cache_path)
+    if job.get("output_state") in {"missing", "unavailable"}:
+        return JSONResponse({
+            "error": {"code": "media_job_outputs_missing", "message": "The job's output files are unavailable."},
+            "output_state": job["output_state"], "assets": job["assets"],
+        }, status_code=410)
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
