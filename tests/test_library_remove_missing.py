@@ -1059,51 +1059,54 @@ class RemoveMissingTests(unittest.TestCase):
     # --- a job goes only when every file it names is gone -------------------------------
 
     def test_a_job_with_a_hidden_but_present_file_is_kept(self) -> None:
-        """The person deleted P from their Library while another owner still holds the file."""
-        self._write_asset(asset("P"), ["sha256:alice", "sha256:bob"], prompt="shared")
-        prompt_memory.put(asset("G"), self.alice["id"], "gone", kept_until=None, path=self.prompt_db)
+        """The person deleted the first item from their Library while another owner still holds the file."""
+        present, gone = "img_" + "1" * 64, "img_" + "2" * 64
+        self._write_asset(present, ["sha256:alice", "sha256:bob"], prompt="shared")
+        prompt_memory.put(gone, self.alice["id"], "gone", kept_until=None, path=self.prompt_db)
         self._receipt(self.app_a["id"], "req_pg")
         media_jobs.create(media_jobs.MediaJob(
             request_id="req_pg", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": asset("P"), "media_type": "image/png"},
-                    {"asset_id": asset("G"), "media_type": "image/png"}]), path=self.jobs_db)
-        deleted = self.client.delete(f"/me/api/media/{asset('P')}", headers=VALID)
+            assets=[{"asset_id": present, "media_type": "image/png"},
+                    {"asset_id": gone, "media_type": "image/png"}]), path=self.jobs_db)
+        deleted = self.client.delete(f"/me/api/media/{present}", headers=VALID)
         self.assertEqual(deleted.status_code, 200, deleted.text)
-        self.assertEqual(self.library(), {asset("G"): False})
+        self.assertEqual(self.library(), {gone: False})
         self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
-        self.assertEqual(len(self.job_ids("req_pg")), 1, "the file P is still on disk")
+        self.assertEqual(len(self.job_ids("req_pg")), 1, "the file is still on disk")
         self.assertEqual(self.library(), {})
 
     def test_an_output_named_by_two_jobs_follows_its_file(self) -> None:
-        self._write_asset(asset("P"), ["sha256:alice"], prompt="present")
-        for name, assets in (("one", ["G"]), ("two", ["G"]), ("pone", ["P"]), ("ptwo", ["P", "H"])):
+        present, gone, other = ("img_" + digit * 64 for digit in "123")
+        self._write_asset(present, ["sha256:alice"], prompt="present")
+        for name, assets in (("one", [gone]), ("two", [gone]), ("pone", [present]), ("ptwo", [present, other])):
             self._receipt(self.app_a["id"], f"req_{name}")
             media_jobs.create(media_jobs.MediaJob(
                 request_id=f"req_{name}", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-                assets=[{"asset_id": asset(letter), "media_type": "image/png"} for letter in assets]), path=self.jobs_db)
+                assets=[{"asset_id": asset_id, "media_type": "image/png"} for asset_id in assets]), path=self.jobs_db)
         response = self.remove_missing()
-        # G is gone in both jobs that name it: both go. P is stored, so both jobs naming it stay.
+        # The gone output is gone in both jobs that name it: both go. The present one keeps its jobs.
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 2})
         self.assertEqual((self.job_ids("req_one"), self.job_ids("req_two")), ([], []))
         self.assertEqual(len(self.job_ids("req_pone")), 1)
         self.assertEqual(len(self.job_ids("req_ptwo")), 1)
-        self.assertEqual(self.library(), {asset("P"): True})
+        self.assertEqual(self.library(), {present: True})
 
     def test_identical_output_made_again_is_listed_again(self) -> None:
         """A hide belongs to an asset in one job, not to the content hash for ever."""
+        again, stored = "img_" + "1" * 64, "img_" + "2" * 64
         self._receipt(self.app_a["id"], "req_one")
         media_jobs.create(media_jobs.MediaJob(
             request_id="req_one", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": asset("G"), "media_type": "image/png"},
-                    {"asset_id": asset("S"), "media_type": "image/png"}]), path=self.jobs_db)
-        self._write_asset(asset("S"), ["sha256:alice"])
+            assets=[{"asset_id": again, "media_type": "image/png"},
+                    {"asset_id": stored, "media_type": "image/png"}]), path=self.jobs_db)
+        self._write_asset(stored, ["sha256:alice"])
         self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
-        self.assertEqual(self.library(), {asset("S"): True})
+        self.assertEqual(self.library(), {stored: True})
         # The same bytes are generated again: the file is back and a new job names it.
-        self._write_asset(asset("G"), ["sha256:alice"], prompt="again")
+        self._write_asset(again, ["sha256:alice"], prompt="again")
         self._receipt(self.app_a["id"], "req_two")
-        self._job("req_two", asset("G"))
-        self.assertEqual(self.library(), {asset("S"): True, asset("G"): True})
+        self._job("req_two", again)
+        self.assertEqual(self.library(), {stored: True, again: True})
 
     # --- one transaction -----------------------------------------------------------------
 
