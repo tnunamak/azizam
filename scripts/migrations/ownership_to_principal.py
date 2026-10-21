@@ -240,19 +240,19 @@ def backup_sqlite(source: Path, target: Path) -> None:
 def create_backup(plan: Plan, root: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     root = root / "migration-backups"
-    root.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(root)
     backup = root / f"ownership-to-principal.backup.{stamp}"
-    backup.mkdir(mode=0o700)
+    private_io.ensure_private_dir(backup)
     for db in sorted({change.db for change in plan.db_changes}):
         backup_sqlite(db, backup / "db" / db.name)
     for source in sorted(set(plan.voice_sources) | plan.voice_destinations):
         if source.is_dir():
             destination = backup / "voices" / source.name
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            private_io.ensure_private_dir(destination.parent)
             private_io.copy_private_tree(source, destination)
     for change in plan.meta_changes:
         destination = backup / "cache-images" / change.path.name
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        private_io.ensure_private_dir(destination.parent)
         private_io.atomic_copy_file(change.path, destination)
     return backup
 
@@ -296,7 +296,6 @@ def apply_plan(plan: Plan, data_dir: Path) -> Path | None:
                     else:
                         conn.execute(f"UPDATE {change.table} SET {change.json_column}=? WHERE {change.key_column}=?", (change.value, change.key))
     for change in plan.meta_changes:
-        temporary = change.path.with_suffix(change.path.suffix + ".tmp")
         private_io.atomic_write_text(change.path, change.value)
     for source, destination in plan.voice_sources.items():
         if source.is_dir():

@@ -8,7 +8,6 @@ import mimetypes
 import math
 import os
 import random
-import shutil
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
