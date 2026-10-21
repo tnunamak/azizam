@@ -259,7 +259,6 @@ export default function InvitePage() {
                           type="password"
                           autoComplete="new-password"
                           required
-                          minLength={12}
                           value={password}
                           onChange={(e) => {
                             setPassword(e.target.value);
@@ -267,9 +266,6 @@ export default function InvitePage() {
                           }}
                           disabled={accept.isPending}
                         />
-                        <p className="text-muted-foreground text-xs">
-                          Use at least 12 characters.
-                        </p>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="confirm-password">
@@ -280,7 +276,6 @@ export default function InvitePage() {
                           type="password"
                           autoComplete="new-password"
                           required
-                          minLength={12}
                           value={confirmPassword}
                           onChange={(e) => {
                             setConfirmPassword(e.target.value);

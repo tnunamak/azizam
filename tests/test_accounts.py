@@ -69,7 +69,13 @@ def test_password_scrypt_random_salt_nonplaintext_and_constant_time_compare(monk
     assert all(len(a) == len(b) == 32 for a, b in comparisons)
 
 
-@pytest.mark.parametrize("password", [None, "", "short", "x" * 1025, 123])
+def test_short_passwords_are_accepted(monkeypatch):
+    monkeypatch.setattr(accounts, "_SCRYPT_N", 2 ** 10)
+    for password in ("a", "short", "x" * 11, "x" * 1024):
+        assert accounts.verify_password(password, accounts.hash_password(password))
+
+
+@pytest.mark.parametrize("password", [None, "", "x" * 1025, 123])
 def test_invalid_passwords_rejected_before_kdf(password, monkeypatch):
     monkeypatch.setattr(accounts.hashlib, "scrypt", lambda *args, **kwargs: pytest.fail("invalid password reached KDF"))
     expect_error("invalid_password", lambda: accounts.hash_password(password))
