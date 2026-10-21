@@ -96,7 +96,10 @@
 # fixture isolation, identity diagnostics, output availability and Response ownership.
 # Full hermetic collection: 15387; Vitest: 3051; Playwright: 471 + 3 + 18;
 # offline node:test: 5 compatibility + 82 Pi cases (2026-10-20).
-pytest = 15387
+# Data hygiene followups: +14 orphan/symlink/identity/output cases and
+# +3 activity compaction/replay log cases. Collection before the latter: 15401.
+# Vitest list remains 3051; Playwright lists 471 + 3 + 18; offline Node runs 5 + 82.
+pytest = 15404
 vitest = 3051
 playwright = 492
 

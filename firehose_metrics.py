@@ -46,6 +46,7 @@ from typing import Any, Optional
 # 24h window in seconds.
 _WINDOW_S = 24 * 3600
 _MAX_FUTURE_S = 5 * 60
+_LAST_REPLAY_SKIPPED = 0
 
 _lock = threading.Lock()
 _LOG_LOCK = threading.Lock()
@@ -256,8 +257,11 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
     """
     flush_persisted()
     target = path or _DEFAULT_CACHE_PATH
+    global _LAST_REPLAY_SKIPPED
+    _LAST_REPLAY_SKIPPED = 0
     stats = {"requests_replayed": 0, "events_replayed": 0, "skipped": 0}
     if not target.is_file():
+        print("[firehose] replay requests_replayed=0 events_replayed=0 skipped=0", flush=True)
         return stats
     now = time.time()
     cutoff = now - window_s
@@ -317,6 +321,12 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
     if oldest_kept is not None:
         global _WINDOW_STARTED_AT
         _WINDOW_STARTED_AT = oldest_kept
+    _LAST_REPLAY_SKIPPED = stats["skipped"]
+    print(
+        f"[firehose] replay requests_replayed={stats['requests_replayed']} "
+        f"events_replayed={stats['events_replayed']} skipped={stats['skipped']}",
+        flush=True,
+    )
     return stats
 
 
@@ -327,17 +337,22 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
     """
     flush_persisted()
     target = path or _DEFAULT_CACHE_PATH
-    # The writer and compactor share this lock; no live replacement can be swept.
-    with _LOG_LOCK:
-        for orphan in target.parent.glob(f".{target.name}.*.tmp"):
-            orphan.unlink(missing_ok=True)
-    if not target.is_file():
-        return 0
     now = time.time()
     cutoff = now - window_s
     temporary_path: Optional[str] = None
+    dropped = {"malformed": 0, "future": 0, "expired": 0}
+
+    def drop_summary() -> str:
+        return " ".join(f"dropped_{reason}={count}" for reason, count in dropped.items()) + f" replay_skipped={_LAST_REPLAY_SKIPPED}"
+
     try:
         with _LOG_LOCK:
+            # No live replacement can exist while its writer lock is held.
+            for orphan in target.parent.glob(f".{target.name}.*.tmp"):
+                orphan.unlink(missing_ok=True)
+            if not target.is_file():
+                print(f"[firehose] compaction kept=0 {drop_summary()}", flush=True)
+                return 0
             kept: list[str] = []
             with open(target, "r", encoding="utf-8") as f:
                 for line in f:
@@ -347,11 +362,22 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
                     try:
                         rec = json.loads(serialized)
                         if not isinstance(rec, dict):
+                            dropped["malformed"] += 1
                             continue
-                        timestamp = _valid_timestamp(rec.get("ts") or 0, now)
+                        raw_timestamp = float(rec.get("ts") or 0)
+                        timestamp = _valid_timestamp(raw_timestamp, now)
                     except (TypeError, ValueError, OverflowError):
+                        dropped["malformed"] += 1
                         continue
-                    if timestamp is not None and timestamp >= cutoff:
+                    if timestamp is None:
+                        reason = (
+                            "future" if math.isfinite(now) and math.isfinite(raw_timestamp)
+                            and raw_timestamp > now + _MAX_FUTURE_S else "malformed"
+                        )
+                        dropped[reason] += 1
+                    elif timestamp < cutoff:
+                        dropped["expired"] += 1
+                    else:
                         kept.append(serialized)
 
             with tempfile.NamedTemporaryFile(
@@ -366,9 +392,10 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
             os.replace(temporary_path, target)
             temporary_path = None
             os.chmod(target, 0o600)
+            print(f"[firehose] compaction kept={len(kept)} {drop_summary()}", flush=True)
             return len(kept)
     except Exception as exc:
-        print(f"[firehose] compaction failed: {type(exc).__name__}", flush=True)
+        print(f"[firehose] compaction failed: {type(exc).__name__} {drop_summary()}", flush=True)
         return None
     finally:
         if temporary_path is not None:
