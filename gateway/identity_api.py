@@ -527,17 +527,26 @@ def scene_extras(result: ids.SceneResult) -> dict[str, Any]:
     }
 
 
-def stored_scene_extras(result: ids.SceneResult) -> dict[str, Any]:
-    """Keep async diagnostics without prompt text or free-form person descriptions."""
+def stored_scene_extras(result: ids.SceneResult, request: SceneRequest) -> dict[str, Any]:
+    """Keep async diagnostics, removing prompt echoes from person and warning text."""
+    prompt_texts = [request.prompt, result.prompt_used,
+                    *(person.description for person in request.people)]
+    prompt_texts = [text for text in prompt_texts if text]
+
+    def without_echoes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in row.items()
+             if not (key in {"label", "reason", "message", "param"}
+                     and isinstance(value, str)
+                     and any(text in value for text in prompt_texts)
+                     and not (key == "param" and value in {"prompt", "people", "image"}))}
+            for row in rows
+        ]
+
     extras = scene_extras(result)
     extras.pop("prompt_used")
-    extras["people"] = [{k: v for k, v in person.items() if k not in {"label", "reason"}}
-                        for person in result.people]
-    extras["warnings"] = [
-        {k: v for k, v in warning.items()
-         if k == "code" or (k == "param" and v in {"prompt", "people", "image"})}
-        for warning in result.warnings
-    ]
+    extras["people"] = without_echoes(result.people)
+    extras["warnings"] = without_echoes(result.warnings)
     return extras
 
 
