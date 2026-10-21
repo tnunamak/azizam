@@ -112,7 +112,7 @@ def test_stored_identity_extras_remove_prompt_echoes_only():
     scene.people = [{"label": "PRIVATE_PROMPT_FIXTURE", "photo": 0, "reason": "age-match"}]
     scene.warnings = [{"code": "profile_result", "message": "echo PRIVATE_PROMPT_FIXTURE"},
                       {"code": "pose_rewritten", "param": "prompt", "message": "Choose a clearer pose."}]
-    stored = identity_api.stored_scene_extras(scene, identity_scene.SceneRequest(prompt="PRIVATE_PROMPT_FIXTURE"))
+    stored = identity_api.stored_scene_extras(scene, identity_scene.SceneRequest(photos=[], prompt="PRIVATE_PROMPT_FIXTURE"))
     assert "PRIVATE_PROMPT_FIXTURE" not in json.dumps(stored)
     assert stored["people"] == [{"photo": 0, "reason": "age-match"}]
     assert stored["warnings"][1]["message"] == "Choose a clearer pose."
