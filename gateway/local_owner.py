@@ -66,8 +66,8 @@ def hash_password(
     iteration count lives inside the verifier so we can raise the default
     later without invalidating older accounts.
     """
-    if not isinstance(password, str) or not password:
-        raise ValueError("password must be a non-empty string")
+    if not isinstance(password, str) or not password or len(password) > 1024:
+        raise ValueError("Enter a password of up to 1,024 characters.")
     if iterations < 1_000:
         raise ValueError("iteration count is too low to be safe")
     salt = secrets.token_bytes(_SALT_BYTES)

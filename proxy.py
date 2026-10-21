@@ -17456,6 +17456,13 @@ async def setup_create_local_owner(request: Request):
             create_email=email,
             status_code=400,
         )
+    if len(password) > 1024:
+        return await _setup_page_response(
+            request,
+            create_error="Enter a password of up to 1,024 characters.",
+            create_email=email,
+            status_code=400,
+        )
     if password != confirm:
         return await _setup_page_response(
             request,
