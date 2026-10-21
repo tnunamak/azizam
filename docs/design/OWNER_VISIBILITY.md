@@ -31,7 +31,7 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
   (2 blockers, 6 major, 1 minor). RT2 Bn, Mn, N1 means its finding.
 - **TD**: authorization test design of v2,
   `…/azizam-testdesign-owner-visibility-81ce320.md`. Adopted as the test
-  section: `docs/design/OWNER_VISIBILITY_TESTS.md`, adjusted for v3 (§9.2).
+  section: `docs/design/OWNER_VISIBILITY_TESTS.md`, adjusted through v4 (§9.2).
 - **AP**: `origin/design/access-plans:docs/design/ACCESS_PLANS.md` v4 at
   `545726a7` (plans and migration protocol §4.2). The design remains a
   cross-reference; shipped schema and behavior are checked against main.
@@ -68,7 +68,7 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
 ### 1.1 What is already private
 
 - **Saved prompts and workflows.** `asset_prompts` is keyed by
-  `(asset_id, person_id)` (`gateway/prompt_memory.py:38-48`). Every reader
+  `(asset_id, person_id)` (`gateway/prompt_memory.py:38-48`). Every prompt reader
   takes one person. The Library reads the **viewer's** prompts
   (`gateway/me_media.py:1026`, `gateway/me_media.py:1038-1047`), so another person's item shows
   `prompt: null` and "Picture by {maker}" (`_media_title`, `gateway/me_media.py:1658-1668`).
@@ -76,7 +76,10 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
   (`proxy.py:23751-23765`).
 - **Saved chats.** A Responses row needs the same person **and** the same App
   (or the same appless key) (`_responses_row_visible`,
-  `proxy.py:25886-25888`). There is no owner bypass.
+  `proxy.py:25886-25888`, `gateway/retention.py:472-484`). There is no
+  owner bypass. Current scope code also permits a matching no-person
+  App/credential row; this is a characterization fact, not permission to
+  write new no-person request content under D50/D51 (§3.1).
 - **Custom voices.** One folder per principal key
   (`gateway/custom_voices.py:58-61`), plus legacy owner folders (`gateway/custom_voices.py:135-136`). There is
   no owner bypass.
@@ -109,6 +112,7 @@ like immich". Azizam is unreleased, so this design adds no compatibility shims
 | L9 | Keys on a member's App | `POST /admin/api/apps/{app_id}/keys` (`gateway/admin_runtime.py:620-634`) | A key that reads the App's creations, receipts and jobs; an owner admin key records `created_by=""` | Owner or accountable person (`gateway/admin_runtime.py:358-370`); the owner exception leaves L9 open |
 | L10 | Password reset | `POST /admin/api/people/{user_id}/reset` (`gateway/accounts_api.py:302-308`) | A sign-in link; route default 1 hour (`gateway/accounts_api.py:72-73`), store helper default 7 days (`gateway/accounts.py:473-475`) | Owner; issuer stored (`gateway/admin_store.py:335-338`, `gateway/accounts.py:503-506`), no member Security notice |
 | L11 | Host files | `data/*.db`, `cache/images/*`, job spools, logs | Everything | Host authority. Outside product control |
+| L13 | Per-request retention ledger | `GET /admin/api/requests/{id}/retention/ledger` (`gateway/api.py:965-973`); MCP `requests` (`gateway/mcp_server.py:654-669`) | Backend, resolved and free-text requested model, request timestamps and existence; members cannot read their own through this admin route | `_require_admin` with no request ownership (`proxy.py:14047-14076`); MCP checks admin grant (`proxy.py:14006-14010`) |
 | L12 | Trusted addresses on any App | `POST /admin/api/apps/{app_id}/trusted-addresses` (`gateway/admin_api.py:2096-2117`) | Keyless App access, with no person; owns `app:<id>` content (`gateway/admin_runtime.py:2457-2482`) | Owner can add to any non-session App; store checks no creator/accountable match (`gateway/admin_store.py:2065-2098`) |
 
 Not an exposure today:
@@ -154,8 +158,9 @@ times: `owns_record`, `_asset_access_allowed`, `_video_job_access_allowed`,
 (`gateway/me_media.py:1370-1387`). The rules differ on purpose by resource (§1.3): App
 for creations, person for prompts, person and App for chats.
 
-### 1.5 Tests that encode owner-sees-all (to rewrite)
+### 1.5 Tests that encode owner-sees-all (step 3: rewrite)
 
+- `tests/test_retention_ledger_headless.py:43-73`, `tests/test_retention_ledger_headless.py:78-95`: replace admin ledger access with maker read, owner projection, non-owner-admin 404 and missing-id equivalence; add maker-key/MCP permission cases.
 - `tests/test_me_media.py:480-503`, `tests/test_me_media.py:557-569`, `tests/test_me_media.py:633`, `tests/test_me_media.py:720-727`, `tests/test_me_media.py:892-905`,
   `tests/test_me_media.py:1130-1141`
 - `tests/test_home_api.py:130-172`
@@ -296,7 +301,7 @@ the next reconnect/poll. No permit or epoch is added.
 
 ## 3. Enforcement: one core with typed resources
 
-### 3.1 The module
+### 3.1 The module (step 1; enforced in step 3)
 
 `gateway/content_access.py` replaces the five ownership checks in §1.4 and
 the owner branches in L1-L7. v1 proposed one universal "Own" rule. RT 1
@@ -317,9 +322,13 @@ class Viewer:                     # built once per request from trusted auth
                                   #   a key: its own App;
                                   #   a session: every App the person is accountable for (§2.4 O6),
                                   #   plus user:<person_id>, as today (gateway/me_media.py:1264)
+    trusted_address: str | None  # validated runtime identity, never request body
+    auth_kind: Literal["session", "personal_key", "app_key", "trusted_address", "mcp", "control_plane"]
+    privacy_permission: bool      # session: true; delegated key/grant: explicit maker consent
     is_owner: bool                # role == "owner"; read only by operational()
 
-Kind   = Literal["creation", "prompt", "chat", "voice", "receipt", "job"]
+Kind   = Literal["creation", "prompt", "chat", "request_history", "debug_capture",
+                 "voice", "receipt", "job"]
 Action = Literal["read", "delete", "reuse", "share", "link", "cancel"]
 Access = Own | Shared(share_id, include_prompt) | Deny
 
@@ -338,6 +347,7 @@ fields it already stores:
 | `creation` (bytes, poster, sidecar facts) | `asset_id`, `owner_keys`, `maker_person_ids`, App | sidecar (`proxy.py:6963-6966`, `proxy.py:7110-7113`) |
 | `prompt` (saved prompt, workflow) | `asset_id`, `person_id` | `asset_prompts` key |
 | `chat` (stored Responses) | `person_id`, `app_id` or `owner_key_hash` | `proxy.py:25886-25899` |
+| `request_history`, `debug_capture` | `person_id` (non-null), originating App/key/grant for permission and narrowing policy | RR §4 (`docs/design/REQUEST_RETENTION.md:427-504`); future slice 5/Debug stores |
 | `voice` (custom voice, consent) | principal folder | `gateway/custom_voices.py:58-61`, `gateway/custom_voices.py:135-136` |
 | `receipt` | App principal, `person_id` at submission | receipt row |
 | `job` (and its events) | `owner_key_hash` / `owner_scope`, App | `gateway/media_jobs.py:203-206` |
@@ -372,6 +382,30 @@ Shared for every creation action, so a viewer who has both gets Own and the
 own serializer. A share never selects a prompt: prompt reads are a separate
 `prompt` decision (Self, or the share's maker row when `include_prompt`).
 
+**Request history and Debug (RT3 M2, steps 1 and 3).** Self is mandatory,
+never Own through an App. Browser sessions have the person's privacy
+authority; a personal key or MCP grant also needs that person's explicit
+`privacy_permission`. A delegated credential cannot create this permission
+for itself. Retention `readers=maker_signed_in` may narrow further to the
+browser session. Owner policy can only narrow; it cannot widen beyond the
+maker. `retention.reader_allowed(record, viewer, policy)` calls
+`content_access.decide` first, then applies retention narrowing, expiry and
+erasure. Lists, search, direct reads, export, Run again and content links
+use this same decision. RR slice 5 must not ship its own independent reader
+(`docs/design/REQUEST_RETENTION.md:427-504`,
+`docs/design/REQUEST_RETENTION.md:1712`).
+
+O6's App ownership applies to creations, voices, jobs and receipts only;
+it does not grant history, Debug, prompts or conversations. For D50
+request-content retention, **shared Apps without a person (open-webui,
+daisy) keep only structural receipts under D50 + D51**: keeping their
+request content for the accountable person would widen access past the
+maker. Record `no_person`; a service key or trusted address never acquires
+a maker by looking up its accountable person. This does not change §2's
+creation-ownership policy. Main already names `no_person` as a retention
+reason (`gateway/receipts.py:97-102`); D50/D51 close RR's remaining open
+questions rather than authorize an owner-sees-all option.
+
 **The action matrix.** A cell lists the bases that allow the action. A blank
 cell is Deny. This table is the whole policy. The test oracle in §9.2 is
 written from it independently; it does not call `decide`.
@@ -381,6 +415,8 @@ written from it independently; it does not call `decide`.
 | creation | Own, Shared | Own | Own | Maker | Own → `g=o`; Shared → `g=s` | |
 | prompt | Self; Shared with `include_prompt` reads the **share's maker's** row | Self | Self (`md=full` also needs Self, §3.4) | | | |
 | chat | Self+App | Self+App | Self+App | | | |
+| request_history | Self + privacy permission for delegated credentials | Self + same permission | Self + same permission | | | |
+| debug_capture | Self + privacy permission for delegated credentials | Self + same permission | Self + same permission | | | |
 | voice | Own | Own | Own | | | |
 | receipt | Own | | | | | |
 | job (and its events) | Own | | | | | Own |
@@ -409,8 +445,8 @@ Rules that follow from the matrix:
   callers that decide content (`gateway/me_media.py:729-734`, `gateway/me_make.py:452`,
   `gateway/home_api.py:367-368`, `gateway/user_runtime.py:274`), so they cannot drift apart. The
   other callers (`proxy.py:1999`, `proxy.py:17022`; `gateway/user_runtime.py:220-229`, `gateway/user_runtime.py:465`)
-  list Apps for management and will also list service Apps after the
-  cut-over; that is intended (O1).
+  list Apps for management and already include service Apps after AP v4;
+  that is intended (O1).
 - App key: `app_id` is the key's App; `person_id` comes from
   `person_for_app_credential`, so only a personal App's key made by its owner
   has a person (O5). Current main resolves the key and App in one SELECT
@@ -430,17 +466,17 @@ Rules that follow from the matrix:
   creation made through a key with no person has no maker and cannot be
   shared.
 - Control-plane `service_account` credentials own no content and never reach
-  a content route (runtime auth rejects them, `gateway/admin_runtime.py:2415-2416`).
+  a content route (runtime auth rejects them, `gateway/admin_runtime.py:2411-2416`).
   The cut-over preview counts records whose principal is `service_account:…`;
   any it finds are Unresolved (§10.2 question 2), granted to nobody.
 - Auth is already mandatory: main rejects the removed auth-disabled setting
   (`proxy.py:2114`). Fail-closed migration/version checks remain (§8.2).
 
 
-This is a consolidation, not new machinery. The stored data shape is
-unchanged. The only new input is the `shares` table.
+This is a consolidation, not new machinery. Existing resource identity shapes stay fixed. New inputs are sharing rows and the retention kinds/permission introduced
+with RR slice 5. No second content reader is added.
 
-### 3.2 Every read path uses it
+### 3.2 Every read path uses it (step 3; inventory in step 1)
 
 | Path (from §1.2) | Change |
 |---|---|
@@ -452,7 +488,10 @@ unchanged. The only new input is the `shares` table.
 | L6 Usage | `/me/api/usage/summary` is own only. The owner's per-person usage and storage move to `GET /admin/api/usage` and `GET /admin/api/storage`, in the projection |
 | L7 request log | Built entirely by `project()` (§3.3), including the envelope. New `GET /admin/api/activity/requests/{id}` |
 | L8 status | Delete `recent_videos`, `recent_images` and `recent_renders` (`status_endpoint.py:3978-3981`). `_live_video_jobs` uses the job projection. `key_name` on live jobs, `auth_keys`, per-key request rates and `recent_events` are owner-only |
-| L9 keys on a member's App | Refused at creation, by the route and by the database (§2.4 O4, §3.5); existing ones revoked by the cut-over (§8.1) |
+| L9/L12 keys and trusted addresses | Step 2 refuses additions by anyone except the accountable person, at the route and database; cut-over revokes/removes unproven bindings (§3.5, §8.1) |
+| L13 per-request ledger | `GET /gateway/v1/requests/{id}/retention/ledger` (and `/me` UI adapter) is `content:receipt:read` with Own from the core, checked before ledger lookup. Full ledger follows own receipt detail; owner role adds nothing. Owner operational route returns only §3.3 projection, never `observed.requested_model`, reason or deadline. Non-owner admins get `404 not_found` on that operational route, exactly as for a missing id; their own maker route still works. Replace the old admin path with that owner projection; no alias to full content |
+| No-request-id ledger | `none`: current destination/config facts only, no receipt lookup or observed/request fields; keep the management/discovery gate and prove two-world invariance |
+| History and Debug maker routes | `content:request_history:*` or `content:debug_capture:*` plus retention narrowing (§3.1), never a receipt or App grant; RR slice 5 gates their delivery |
 | Job events | Own, as for the job itself (RT2 M1 removed the conflict), on every surface. The `admin` job audience (`gateway/media_jobs.py:300-311`, a denylist that still includes `assets` and `error`) and the admin event audience (`gateway/media_jobs.py:1382-1397`) are deleted. No owner event view exists in v1 (RT 5). Per-job event sequence numbers stay; household-wide row ids stay hidden (`gateway/media_jobs.py:1404`) |
 | `/gateway/v1/*`, `/v1/videos/*`, `/v1/responses/*`, voices | Call `decide` with the kind and action. Behavior stays the same, by construction: each kind's basis is today's rule |
 | Job content (`/gateway/v1/media/jobs/{id}/content`, `/v1/videos/{id}/content`) | `require(job, "read")`, **and** `require(creation, "link")` for each output before its bytes or URL. An owned job does not vouch for an asset it names |
@@ -463,14 +502,19 @@ That is false: two callbacks touch assets directly, and two read the catalog
 directly (`gateway/mcp_server.py:109-119`, wired at `proxy.py:14777-14800`). Each
 callback has one treatment:
 
-| `McpDeps` callback | Today | v3 |
+| `McpDeps` callback | Today | v4 (step 3) |
 |---|---|---|
 | `authenticate` | `authenticate_request` (`proxy.py:14783`) | Builds the `Viewer`. Every other callback receives that `Viewer`, never a raw `auth` that may be `None` |
 | `call` | In-process REST with the caller's headers (`proxy.py:14599-14604`) | Unchanged. Each call re-authenticates, so the REST route's `decide` applies. Covers `capabilities` speech voices (`gateway/mcp_server.py:428`), `run` submit, `job` poll, wait, content and cancel |
 | `read_asset` (run inputs, `gateway/workflow_call.py:131-148`) | `_asset_access_allowed`: App-owner intersection; with no owners it allows a caller with no identity (`proxy.py:6969-6976`, `proxy.py:14664-14669`) | `require(viewer, creation, "reuse")` before the file is opened. Reuse is Own only, so a share, a guessed id or another person's asset is refused with the same answer as a missing asset. The no-identity branch is deleted |
 | `store_asset` (results, `gateway/mcp_server.py:325`, `gateway/mcp_server.py:340`) | Stores with the caller's principal, mints with `build_signed_asset_url` (`proxy.py:14653-14661`) | Stores with the caller's principal and maker. Mints with `Access=Own`, which holds by construction: the caller's principal was just written. Same minting rule as every other site (§3.4) |
 | `catalog`, `aliases` (discovery, unknown-target suggestions) | Workflow registry and alias config (`proxy.py:14646-14650`) | Classified `none`: they hold operator configuration, not member content. The two-world test (§9.2) proves that discovery output does not change when private data changes. Whether the registry can ever hold a member-made workflow is UNVERIFIED; if it can, discovery moves to `call` |
-| `public_base_url`, `allowed_origins` | Config | `none` |
+| `retention_ledger` | Direct provider; admin-grant gate (`gateway/mcp_server.py:654-669`, `proxy.py:14006-14010`) | With request id: same Own receipt decision/maker ledger or owner projection as L13. Without id: `none`, current facts only. No raw-admin bypass and no existence oracle |
+| `stt_measurement` | Operator callback (`gateway/mcp_server.py:134`, `proxy.py:14785`) | `operational`; preserve operator authorization and typed output; no member content |
+| `rename` (`rename_app`, `rename_key`) | Grant-scoped person mutation (`proxy.py:14618-14643`) | `own-account`; ownership checked before rename, never content authority |
+| `visible`, `owner_visible`, `retention_visible` | Discovery gates (`gateway/mcp_server.py:129-141`) | `none`; whether a tool is listed never authorizes a later content read |
+| `authorization_servers`, `scopes` | OAuth discovery (`gateway/mcp_server.py:132-133`) | `none`; no private request observations |
+| `public_base_url`, `allowed_origins`, `server_version`, `poll_interval` | Config | `none`; include non-callback McpDeps fields in inventory too |
 
 The result URLs that `_assets_from_response` forwards from a core response
 (`gateway/mcp_server.py:327-329`) are minted by the core route, which needs an
@@ -478,7 +522,8 @@ The result URLs that `_assets_from_response` forwards from a core response
 fails its signature.
 
 **MCP cancel (RT2 N1).** `job` with `cancel` polls after cancelling, and a
-successful poll fetches content (`gateway/mcp_server.py:600-606`). v3 returns the
+successful poll fetches content (`gateway/mcp_server.py:579-581`,
+`gateway/mcp_server.py:603-609`). v4 returns the
 cancel result on its own: `{status: "cancel_requested", job_id}` when the
 cancel call succeeds. A later poll or content failure does not turn a
 successful cancel into an error.
@@ -499,7 +544,7 @@ Library is the same member Library (P8): what their Apps made, personal and
 service (O6), and "Shared with me". This also resolves R18 finding
 2. The owner's storage question moves to Usage (§6.1).
 
-### 3.3 The operational projection (a typed, recursive contract)
+### 3.3 The operational projection (step 1 schema; step 3 delivery)
 
 `project()` builds a **new** value from a typed schema. It never copies or
 filters a record. RT 4 showed that a shallow allowlist is not enough:
@@ -542,6 +587,7 @@ back (`gateway/receipt_context.py:20-35`, `gateway/receipt_store.py:386-406`,
 | | `refusal` | `{code: enum}` |
 | | `policy` | `{decision: allow\|deny, reason: enum}` (AP denial codes) |
 | | `resource_decision` | list of `{code, effect, resource_class}`, all enums, as `project_decision(…, "client")` builds them (`gateway/resource_decisions.py:79-96`). The owner audience's `rule` and `observed_at` are dropped |
+| | `retention` | list of `{kind: enum, decision: kept\|not_kept\|failed}` only; no reason, deadline, parts or policy limit. Kind enum expands with RR to include `request_history` and `debug_capture` (`gateway/receipts.py:93-107`) |
 | Receipt list envelope | `coverage_start`, `aggregate_complete`, `unknown_paid_count`, `history_note` | timestamp, boolean, integer, enum (kept from `gateway/me_media.py:1889-1909`, RT 11) |
 | Job | `job_id`, `capability`, `model`, `workflow`, `status`, `phase`, `attempt`, `created_at`, `updated_at`, `latency_ms` | as above |
 | | output quantities | integers: count, width, height, duration seconds, bytes |
@@ -549,8 +595,12 @@ back (`gateway/receipt_context.py:20-35`, `gateway/receipt_store.py:386-406`,
 
 Dropped, for example: `path`, `requested_model`, `accepted_inputs`,
 `rejected_inputs`, `ignored_inputs`, `warnings`, `fallback_reasons`,
-`client_hint`, `source_label`, `request_shape`, LiteLLM ids, job `error`
-text, `assets`, `seed`, `input_hash`, `metadata`.
+`client_hint`, `source_label`, `client_address`, `api_key_name`, `request_shape`, LiteLLM ids, job `error`
+text, `assets`, `seed`, `input_hash`, `metadata`. The current admin receipt
+allowlist includes `client_address` and `api_key_name`
+(`gateway/receipts.py:72-81`); they are deliberately absent here. Ledger
+observations pass through this projection too, never a nested pass-through
+`observed` object (`proxy.py:14074-14076`).
 
 Support without raw errors (RT 11): the owner sees `layer`, `status_code`
 and `terminal_reason`. When `layer` is `unknown`, the owner request detail
@@ -1059,15 +1109,19 @@ fact once per screen. `{Owner}` is the owner's display name.
 
 **Each row ships with the step that makes it true (RT2 M6).** The "Step"
 column names the build step (§12). A row never renders before its step; a
-row with two variants changes when the later step ships. Navigation follows
+row with two variants changes when the later step ships. History wording in Home, Privacy, honest limits and owner Usage is the
+RR slice-5 variant: render the words about saved request history only when
+step 3 AND RR slice 5 enforce it. Before then use the same rows with that
+phrase omitted. Storage and sharing still wait for steps 4 and 5.
+Navigation follows
 the same rule: "Manage sharing" and "Review storage" do not exist before
 their steps.
 
 | Where | Step | Exact copy |
 |---|---|---|
-| Home, first sign-in for a member; once for existing members after the switch | 3 | Title "Your work is private". Body, step 3: "{Owner} sees your usage and spend, not your creations or prompts. Work in shared apps belongs to the app." From step 4: "{Owner} sees your usage, spend and storage, not your creations or prompts. Work in shared apps belongs to the app." Link "What {Owner} can see" (Account > Privacy). Button "OK" |
-| Account > Privacy | 3 | Heading "Privacy". Rows: "Private to you: creations, prompts and saved chats." / "{Owner} sees: when you made something, the model, the app you used, how long it took and what it cost." (from step 4, ending "…what it cost and your storage.") / "Shared apps: work made through an app that several people use, like a chat bot, belongs to that app. The person responsible for the app can see and use it." / from step 5 only: "Shared: only what you share, with the people you choose. Prompts only if you include them." → "Manage sharing". Then the honest-limits sentence |
-| **Honest limits** (Account > Privacy; "What is saved?" in Try) | 3 | "{Owner} runs this gateway and can read the files it stores. {Owner} can also reset your password and sign in as you; Account > Security shows when a reset happened. Azizam keeps your work out of the owner's views, but it isn't end-to-end encrypted. The engine or provider that makes your work receives your prompt." |
+| Home, first sign-in for a member; once for existing members after the switch | 3 | Title "Your work is private". Body, step 3: "{Owner} sees your usage and spend, not your creations, prompts or saved request history. Shared apps without your person identity keep a request record, not request content." From step 4: "{Owner} sees your usage, spend and storage, not your creations, prompts or saved request history. Shared apps without your person identity keep a request record, not request content." Link "What {Owner} can see" (Account > Privacy). Button "OK" |
+| Account > Privacy | 3 | Heading "Privacy". Rows: "Private to you: creations, prompts, saved chats and saved request history." / "{Owner} sees: when you made something, the model, the app you used, how long it took and what it cost." (from step 4, ending "…what it cost and your storage.") / "Shared apps: creations belong to the app, and its responsible person can see and use them. Without your person identity, request content is not saved." / from step 5 only: "Shared: only what you share, with the people you choose. Prompts only if you include them." → "Manage sharing". Then the honest-limits sentence |
+| **Honest limits** (Account > Privacy; "What is saved?" in Try) | 3 | "{Owner} runs this gateway and can read the files it stores, including saved request history. {Owner} can also reset your password and sign in as you; Account > Security shows when a reset happened. Azizam keeps your work out of the owner's views, but it isn't end-to-end encrypted. The engine or provider that makes your work receives your prompt." |
 | Account > Security, after a reset someone else issued (§5) | 3 | "Password changed {time} with a reset link from {Owner}." A self-issued reset: "Password changed {time}." |
 | Library detail | 5 | Button "Share" |
 | Share sheet | 5 | Title "Share this {picture\|video\|audio}". List "With", with each person's name; the owner's row reads "{Name} (owner)". Switch "Include prompt", off by default. Note when off: "They see the {result} and its model. Not your prompt." When on: "They also see: “{prompt}”". With no saved prompt the switch is disabled: "Prompt not saved, so it can't be shared." Footer: "They can download it." Primary "Share with {Name}" / "Share with {n} people" |
@@ -1076,7 +1130,7 @@ their steps.
 | Stop sharing | 5 | "Stop sharing with {Name}? They can't open it after this. Copies they downloaded stay with them." Buttons "Stop sharing" / "Cancel" |
 | Recipient | 5 | Library filter "Shared with me". Caption "From {Name}". Action "Remove from my Library", note "{Name} still has it." Empty state "Nothing is shared with you yet." Stale open "{Name} stopped sharing this." |
 | Recent | 5 | "{Name} shared a {picture} with you." |
-| Owner Usage, per-person view (once, under the person picker) | 3 | "Creations and prompts stay private to each person." |
+| Owner Usage, per-person view (once, under the person picker) | 3 | "Creations, prompts and saved request history stay private to each person." |
 | Owner request detail, someone else's request | 3 | Row "Result" with value "Private to {Name}". When the layer is unknown: "Ask {Name} to share the details." |
 | Invite sheet (owner) | 3 | "{Name} gets a private Library. You see their usage and spend." (from step 4: "…their usage, spend and storage.") |
 | Member Usage, Storage | 4 | "{12.4 GB} stored" / "Review storage". Detail: "No personal limit. Everyone on this server shares its space." |
@@ -1089,19 +1143,38 @@ their steps.
 "Stop sharing" no longer says "They lose access now": "now" overstated what
 revocation can do (RT 7).
 
-### 7.1 Changes to "Don't save this prompt" (UB §4.4)
+### 7.1 Incognito: one control (step 3 with RR slice 5; RT3 M3)
 
-| UB state | Old copy | New copy |
-|---|---|---|
-| Switch off (saving), note | "Saved with the {result}. Only you see it in your Library." | "Saved privately with the {result} in your Library." |
-| Disclosure body | "… This doesn't hide your activity from the owner. …" | "Azizam uses your prompt to make this, then doesn't save it. The {result} and a record of the request (time, model, cost) stay in your account. {Owner} sees that record, not the {result}. The engine or provider that makes it follows its own rules. The {result} itself may contain words from your prompt." |
+D50 replaces "Don't save this prompt" with **Incognito**, for a request or
+a whole chat. Extend Try's existing `forget` state and sessionStorage
+control (`web/src/app/try/page.tsx:1325`,
+`web/src/app/try/page.tsx:1413-1414`) rather than add a second switch.
+One choice suppresses `library_prompt`, `request_history` and
+`conversation` writes; the response still reaches the caller and only the
+structural receipt remains for the request. Explicit Debug capture must
+also obey incognito and never restore a suppressed content copy.
 
-The UB §4.2 sentence "the owner and the engine or provider are outside this
-promise" becomes: "the owner sees the request record, not the prompt; the
-engine or provider is outside this promise". PM's viewer table gains a row,
-"Share recipient: prompt only if included; never workflow download". PM's
-line "Library visibility uses App access" becomes "Library visibility uses
-`content_access`".
+| Surface/state | Exact copy (RR slice-5 gate) |
+|---|---|
+| Try/chat switch | "Incognito" |
+| Off | "Request history is saved privately. You can review or delete it." |
+| On | "This request's prompt, history and conversation won't be saved. A request record with time, model and cost remains." |
+| Whole chat | "Incognito is on for this chat. Its prompts, history and conversation won't be saved." |
+| App/key setting | "Use Incognito for requests from this app/key." Only the accountable person edits it (O4b) |
+| What is saved? | "Incognito stops Azizam saving request content. The engine or provider still receives it and follows its own rules. Your request record remains. Returned results can contain words from your prompt." Then honest limits (§7) |
+
+The same semantic choice applies to Try, chat, per-App/per-key defaults
+and `extensions.com.azizam.prompts: {"mode":"forget"}` on each data-plane
+request. A request may narrow a saving default to incognito; it cannot
+undo a stricter App/key or household `never_keep`. Household controls may
+only narrow. No owner/admin override can save content for someone else.
+
+Update UB §4's prompt-only wording when this behavior ships, not earlier.
+PM's viewer table gains "Share recipient: prompt only if included; never
+workflow download"; its App-access statement points to `content_access`.
+RR's default for request history is on (D50), subject to a person and all
+narrowing/failure checks. There is no independent RR reader or reader
+widening setting (D51).
 
 ## 8. Data and migration
 
@@ -1399,7 +1472,7 @@ the problem; "Rejected" means RT2's change was not taken, with the evidence.
 | M6 | Step-2 copy promises later features and an unassigned recovery event | **Applied.** Confirmed: no "Password changed" event exists in `web/src` or `gateway`. The reset event ships with the switch (§12 step 3). Every copy row has a step; storage and sharing rows and links render only from their steps. Document amendments that define a live promise ship with the step that makes it true | §5, §7, §12 |
 | N1 (minor) | Keep owner control without reopening content | **Applied as a stated limit.** The owner cannot cancel someone else's job in v1; it is an HR Release C dependency with its own audit reason, never a content grant. MCP cancel returns its own result, independent of the later poll | §3.2, §5 |
 | Note: `md=full` | A signed `g=o, md=full` URL carries no person | **No change needed; stated.** Delivery authenticates the fetcher and restores that person's own prompt (`proxy.py:23748-23765`); two makers each get their own; no person in the signature | §3.4 |
-| Note: `service_account` principals | Control-plane principals could own content | Runtime auth rejects them (`gateway/admin_runtime.py:2415-2416`). The cut-over preview counts records with such a principal; any it finds are Unresolved | §3.1, §8.1 |
+| Note: `service_account` principals | Control-plane principals could own content | Runtime auth rejects them (`gateway/admin_runtime.py:2411-2416`). The cut-over preview counts records with such a principal; any it finds are Unresolved | §3.1, §8.1 |
 | Note: step 1 | "Five checks call the final matrix" may change differing rules | The owner-everyone branches and the no-identity branch stay at the call sites in step 1, named for deletion in step 3, so step 1 changes no behavior | §12 |
 | Note: AP permits | The design leaned on `access_epoch` | Removed; per-request authorization is enough (§2.4 Linearization) | §2.4, §3.5 |
 | Consistency check of v3 (Sonnet, before commit) | 5 major, 9 minor; no blocker | Applied: cut-over sets persons before the last back-fill and computes the preview the same way; new databases need triggers and step 4 releases pre-v3 deletions (both corrected by RT3 M6/M8); `user:` principals stay in the session `Viewer`; §6.4 states its error bound, an atomic check-and-lease lock, leases released in `finally`, and admission following the state; database claims reworded (shape, not caller), `NULLIF` app ids, `BEFORE DELETE ON apps`; the two-query auth read argued safe instead of "one query"; test setups that mint keys as a service account added to §1.5; transfer tests deferred; ops restore note moved to step 2; removed-person limit stated (§10.1); Home copy names shared apps | §2.4, §3.1, §3.5, §6.3, §6.4, §7, §8.1, §10.1, §12 |

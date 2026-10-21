@@ -47,7 +47,9 @@ F: former recipient after maker stop, recipient remove, include_prompt downgrade
 H: unauthenticated bearer URL holder; essential signed-delivery actor.
 U: unauthenticated without a bearer URL.
 
-Seed all actor identities from trusted auth fixtures. Request JSON/query parameters claiming person_id, app_id, owner_keys, is_owner, maker or basis must not alter the Viewer. Personal-key created_by matching owner is independently checked. Record/account names must be safe controlled strings distinct from canaries.
+[v4] For A/B/O/D repeat browser session, personal key with and without privacy_permission, and MCP grant with and without that permission. MCP grant Viewer has the person's session App and all accountable Apps, like a session; a personal key still has only its own App. Seed auth_kind and trusted_address from production builders. A valid service/trusted-address identity has no person and can never obtain privacy content through permission alone.
+
+Seed all actor identities from trusted auth fixtures. Request JSON/query parameters claiming person_id, app_id, owner_keys, is_owner, privacy_permission, auth_kind, trusted_address, maker or basis must not alter the Viewer. Personal-key created_by matching owner is independently checked. Record/account names must be safe controlled strings distinct from canaries.
 
 Resources/states:
 own: canonical principal matches actor for creation/voice/receipt/job; Self matches prompt; Self+App matches chat. For N/S own does NOT mean a prompt gains a person.
@@ -68,6 +70,7 @@ creation share = Maker (Own AND exactly one non-null maker equal to Viewer.perso
 prompt read = Self OR exact active share with include_prompt true, reading its authoritative maker's live prompt row.
 prompt delete/reuse = Self only. Share does not authorize md=full or workflow reuse.
 chat read/delete/reuse = non-null Self AND same app_id; appless variant requires the same owner_key_hash. Neither matching person alone nor matching App alone suffices.
+[v4] request_history/debug_capture read/delete/reuse = non-null Self, plus privacy_permission for a personal key or MCP grant; browser session qualifies directly. Apply retention readers narrowing, expiry and erasure after the core floor. All other actions deny; App Own/role/share never grants these kinds. A personal key with permission but different person denies. Maker_signed_in denies delegated reads even with permission.
 voice read/delete/reuse = Own.
 [v3] receipt read = Own; receipt delete/reuse/share/link/cancel denied as core actions.
 [v3] job read/cancel = Own; other actions denied.
@@ -131,8 +134,11 @@ All signed delivery handlers UNVERIFIED here; source exists only as design refer
 P06 Prompt/workflow/md=full:
 Self for own saved prompt/workflow; exact share-maker prompt read only when included; never include workflow download or md=full for Shared. Same App/different person -> 404 prompt; same person/different App -> prompt allowed but chat denied. Include true->false immediately removes prompt from detail/list/q results and any shared title; erasing saved prompt shows "Prompt not saved", no stale cached value. Full-metadata endpoint handlers UNVERIFIED; viewer-specific prompt selection VERIFIED in me_media.
 
-P07 Receipt detail GET /me/api/receipts/{id} and key/MCP receipt lookup:
+P07 (step 3; step-1 classification) Receipt detail GET /me/api/receipts/{id} and key/MCP receipt lookup:
 receipt read oracle; full own view constrained by plan detail, no owner role bypass; share does not grant receipt access; unrelated 404. Owner counterpart GET /admin/api/activity/requests/{id}: 200 projection only when O, including for O's own receipt on this operational endpoint; D/B must be denied by role and disclose no item. Owner role-denial wire status is UNVERIFIED. receipt store methods VERIFIED; HTTP adapters outside allow-list UNVERIFIED.
+
+[v4] Ledger adapters: maker GET /gateway/v1/requests/{id}/retention/ledger and /me UI adapter require content:receipt:read Own before receipt/fact lookup. Maker with allowed receipt detail sees full ledger. The old /admin path becomes owner-only operational projection; O gets no observed.requested_model, private reason/deadline or raw facts envelope. D gets 404 there, including for a real id; D acting as maker on the maker route still works. Foreign known id and unknown id have equal 404 code/body/header class on each forbidden branch. Test the real REST provider and bound MCP requests callback, not just mocked admin auth. Rewrite tests/test_retention_ledger_headless.py expectations (see §10).
+Without request_id, REST/MCP ledger is classified none: current config facts only, no receipt fetch and no observed/request-specific field. The existing management/discovery gate remains; two worlds differing only in receipts and content produce identical output. A permissive retention_visible mock cannot bypass per-request authority.
 
 P08 Usage GET /me/api/usage/summary:
 200 own-only quantities and source lists; owner cannot request member breakdown here. No shared resources create usage authority; S/N key endpoint applicability UNVERIFIED, never silently treat as owner/all.
@@ -150,25 +156,27 @@ P11 Job content/download:
 first require job read AND creation link/read for each output before bytes/URL; do not use an owned job as a confused deputy for a foreign asset seeded into its output. MCP image/audio inline output and video URLs separately tested. Foreign/deleted/unresolved output must be rejected or omitted under a specified response contract without copying its bytes/URL; exact partial-success wire behavior UNVERIFIED and a blocker for that branch. Parent job authorization alone is insufficient.
 
 P12 Job events:
-Own-only target; Q/F/O/D without Own get 404 before events() called; include SSE/poll/cursor/reconnect/replay variants when registered. Closed set of permitted event types; all payloads typed/audience-safe. Assert contiguous per-job seq and absence of household-wide row IDs. Forbidden event request must not repair event sequencing or mutate storage. Midstream revocation semantics need explicit boundary: proposed revalidate each delivered event/reconnect; current design does not specify an in-flight guarantee, so mark unresolved rather than claim it. Read-only snapshot checks cannot prove live-stream revoke. Actual transport registrations UNVERIFIED.
+Own-only target; Q/F/O/D without Own get 404 before events() called; include SSE/poll/cursor/reconnect/replay variants when registered. Closed set of permitted event types; all payloads typed/audience-safe. Assert contiguous per-job seq and absence of household-wide row IDs. Forbidden event request must not repair event sequencing or mutate storage. [v4] Per-request linearization: an already-open stream continues under its original rows until disconnect; there is no per-event revalidation promise. Revoke while streaming, confirm that limit, then assert the next reconnect and MCP poll deny. Do not require that revocation recalls already emitted/in-flight frames. Actual transport registrations UNVERIFIED.
 
 P13 Cancel/delete/reuse/share:
 [v3] denied job cancel leaves status/phase/cancel_requested/result/events unchanged and cancel callback uncalled. Allowed Own job cancel follows existing accepted/cancelled contract; exact HTTP success status UNVERIFIED. MCP job cancel returns {status: cancel_requested, job_id} when the cancel call succeeds; a later poll or content failure does not turn it into an error (OV §3.2).
 Allowed own Library DELETE verifies response success and exact detach of caller's owner/maker/prompt; physical bytes removed only when sole owner and maker; revoke that maker's shares. Shared-only delete returns 404 and does not mutate; recipient removing share is P14, not content delete.
 [v3] Run/reuse foreign/shared-only asset ->404 before read_asset, store_asset, job admission or paid calls. Own reuse allowed, including a session reusing a service App asset it is accountable for; no person prompt access.
-All six actions must be tested directly at core as well as path adapter, including methods not exposed (unsupported HTTP method does not prove core Deny).
+All six actions across all eight kinds must be tested directly at core as well as path adapter, including methods not exposed (unsupported HTTP method does not prove core Deny).
 
 P14 Sharing new target APIs:
 PUT /me/api/media/{asset}/shares/{person}: sole Maker with valid target yields 201 first create, 200 idempotent/update, exactly one active pair; include_prompt default false; title/source not copied from prompt. Other people/owner/admin cannot grant on A's behalf. Source prompt/maker row authoritative even in corrupt competing-row fixture.
 DELETE /me/api/shares/{id}: maker or exact recipient revokes active row, inaccessible other caller gets 404/no mutation. Repeated delete semantics UNVERIFIED (choose idempotent target contract explicitly). GET /me/api/shares?direction=by-me|with-me returns exact authorized rows. GET share-targets includes enabled people's id/display-name/owner flag only; no private fields.
 Sharing list/create/remove unsupported on MCP per design; explicit unsupported error, never empty-success disguised as capability. Entire share API implementation UNVERIFIED.
 
-P15 MCP:
+P15 MCP (step 3; full McpDeps inventory step 1):
 capabilities, run each supported target kind, job poll/wait/content/cancel, direct read_asset/store_asset and each returned signed-link minting path. Use detailed appendix for actual operation names. Keep authenticated context unchanged through dispatch; rejected or missing identity cannot default to privileged context.
 Capabilities/discovery may enumerate public capability descriptions but cannot contain a private receipt, resource count, prompt example, filename, dynamic asset or signed URL. Parameterize O,D,S,N,Q,F,Rk,Rs and seed foreign data in dependencies; public fixture yields exact stable result regardless of private resources.
 Run submits own new work only after authorization of EVERY nested asset reference; combine owned+foreign input, list duplicates, poster refs, alternate MIME/asset ID/URL representations supported by schema. Shared link cannot become input permission. Reader receives trusted Access for reuse, not arbitrary caller-supplied basis.
 Direct returned asset/link: only authorized current output, deny a backend stub returning foreign asset ID/URL; store/mint callbacks require explicit authenticated principal/Access. Check async wait/poll returns and image/audio/video result branches.
 MCP adapters VERIFIED; proxy callback implementations UNVERIFIED. Do not assert full protection based only on route mocks.
+
+[v4] New McpDeps fields: retention_ledger follows P07, stt_measurement is operational, rename_app/rename_key are own-account and grant-scoped. visible, owner_visible, retention_visible, authorization_servers and scopes are none (gates/config), as are public_base_url, allowed_origins, server_version and poll_interval. Classify callback and tool operation separately: a discovery gate never substitutes for content authorization. Test every field in gateway/mcp_server.py:109-141 and actual proxy binding; two-world discovery must hold across grants/roles without exposing request data.
 
 P16 Removed parameters and identity injection:
 every /me registered route with scope,owner,person keys rejects presence with 400 param_not_supported. Cases empty, repeated same/mixed values, scope=a&scope=b, percent-encoded key, extra allowed query alongside it, all/everyone/local-network/another user. No broad query performed; responses have no private markers. In particular current person=local-network detail/download must not work. FastAPI simply ignoring an obsolete argument is a failure. Unknown nonremoved parameters follow existing router policy, UNVERIFIED.
@@ -187,6 +195,12 @@ POST /admin/api/apps/{id}/keys and /me/api/apps/{id}/keys: only App accountable 
 P20 Job event writes and idempotency:
 [v3] Event append is NOT one of the six content_access actions in v2. Keep Own-only existing write authority as a proposed extension requiring explicit inventory classification; Own read/cancel of a job never implicitly grants event append. Client note/progress source and bounded payload validation must be enforced even for owner/admin; lifecycle event types or phase/status claims rejected before mutation. For same request_id, a different owner_scope may not replay or replace another job. Same canonical principal with rotated live key may replay only exact input digest; missing legacy scope/digest cannot prove replay. No denied request allocates seq/event row, mutates progress, consumes reservation or dispatches work. Actual event HTTP routes are UNVERIFIED; storage behavior is confirmed in media_jobs.
 
+P21 [v4] Request history, Debug and incognito (core step 1; step 3 with RR slice 5):
+Run the eight-kind oracle through actual production Viewer builders and retention.reader_allowed: the latter must call content_access.decide, then narrow, not implement another reader. Test list/search/direct read/export/Run again/receipt link adapters for Self and delegated privacy_permission. Owner/admin/accountable-App/Shared never adds authority. Same person with permission on personal key or MCP grant qualifies only while policy permits; maker_signed_in narrows to browser. Attempted reader widening is rejected.
+Default person-attributed history is on under D50. One incognito switch spans Try, chat, whole chat, App/key defaults and per-request extensions.com.azizam.prompts mode=forget. Assert zero prompt/history/conversation/debug content writes, one structural receipt and normal response delivery. Service Apps and trusted-address requests without person produce no_person and only structural receipts, never content assigned to the accountable person. Existing creation ownership stays OV §2. A request cannot override a stricter App/key or household never_keep.
+Only accountable person edits per-App/per-key retention (O4b); O may narrow household never_keep but cannot edit A's App/key content-retention choice or widen readers. Verify allowed edits, denied writes/no effects and concurrent narrowing at the write fence.
+Gate incognito and history wording on step 3 AND RR slice 5. Home notice, Privacy, honest limits and owner Usage render their history variants only then; saved history is named among host-readable files. Try uses the existing forget/sessionStorage state, with no second switch. Keep the privacy notice once-only and test 390 px.
+
 ## 5. Signed metadata and grant abuse suite
 
 Use synthetic known fixtures with marker embedded in PNG/JPEG/WebP/WAV/FLAC/MP3/MP4/WebM/MKV/OGG/M4A metadata and distinct visible-pixel/audio markers. For Shared md=none, decode container metadata and scan raw returned bytes for metadata sentinel; do not demand removal of marker intentionally present in the image/audio content. Include poster metadata separately. GIF share is 409 file_type; no stripper/error fallback may return unstripped bytes. For corrupt/unsupported container, fail closed without exposing original data and log only safe error schema; exact error status needs implementation contract.
@@ -198,7 +212,7 @@ A cache or CDN assertion in unit tests does not prove deployment cache behavior;
 Canary fixture produces unique synthetic values per leak channel, e.g. CANARY_<run>_prompt, _workflow, _chat, _filename, _path, _error, _metadata, _cost, _decision, _source, _requested_model. Use distinctly seeded private asset IDs, poster IDs, file basenames, engine paths and fake signed links. Trusted account/App/catalog display names use safe fixtures so a test does not conflate intentionally disclosed names with private fields.
 
 Plant markers in:
-prompt and workflow rows; saved chat messages/tool output; job error/assets/result metadata/event nested fields; creation filename/sidecar metadata/seed/input_hash/provenance; exception str/repr/args/chain and provider error echo; allowed-key receipt scalar values such as requested_model/client_hint/source_label; nested cost and resource_decision unknown strings/maps/lists; request source/envelope, grouping/facets/filter options, sort labels, cursor or pagination metadata; direct MCP dependency responses and content callback results.
+request_history/debug_capture bodies, ledger observed.requested_model, retention reason/deadline, client_address and api_key_name; prompt and workflow rows; saved chat messages/tool output; job error/assets/result metadata/event nested fields; creation filename/sidecar metadata/seed/input_hash/provenance; exception str/repr/args/chain and provider error echo; allowed-key receipt scalar values such as requested_model/client_hint/source_label; nested cost and resource_decision unknown strings/maps/lists; request source/envelope, grouping/facets/filter options, sort labels, cursor or pagination metadata; direct MCP dependency responses and content callback results.
 Do not plant only forbidden receipt keys: _assert_safe might reject those before the owner projection is exercised. Direct projection fixtures may contain future extra fields; separate store tests assert structural rejection for prompt/input/messages/body/bytes keys.
 
 For every inventoried operational and own-account route as O and D, and every corresponding MIME/HEAD/error/stream variant:
@@ -206,7 +220,7 @@ For every inventoried operational and own-account route as O and D, and every co
 2. Assert no private canary or forbidden private asset/poster ID, signed query marker sig=, /v1/assets/ or equivalent private download URL, filesystem path. Known own/shared content tests are separate: it is incorrect to prohibit intentionally included shared bytes/prompt in O acting as ordinary authorized recipient.
 3. Recursively validate exact schema at every JSON leaf. Opaque id fields must match expected fixture IDs and grammar, not any arbitrary string; enum values from closed sets, timestamps valid, numerics finite/ranged, booleans actual booleans, known names resolved by ID. An asset ID cannot be smuggled into request_id by satisfying generic 'string'.
 4. Compare response for two fixtures differing only in forbidden content. Normalize authorized timestamps/correlation IDs if needed; responses, visible counts/facets/group keys must be identical. This catches content-dependent aggregate labels even when the sentinel is transformed.
-5. Keep valid operational facts: submission person, App, resolved model/workflow, status/layer/terminal reason, cost quality/source/reconciliation, attempt and coverage fields. A requested_model-only receipt must show Unknown model, not canary. Unknown layer presents safe next action, not provider error.
+5. [v4] Retention is exactly [{kind: closed enum, decision: kept|not_kept|failed}], never reason/deadline/parts/limited_by. Keep valid operational facts: submission person, App, resolved model/workflow, status/layer/terminal reason, cost quality/source/reconciliation, attempt and coverage fields. A requested_model-only receipt must show Unknown model, not canary. Unknown layer presents safe next action, not provider error.
 6. Add new arbitrary receipt/job field and nested new cost/decision field: projection omits it until schema intentionally expanded. No source envelope can add it back.
 
 Capture caplog records (message, args, exception info/rendered trace), capsys stdout/stderr, cache/key_activity.jsonl every JSONL line, task/background worker logs and fake provider adapter failures. Scan from before request through awaited test-background completion so late error logs are included. Assert line-by-line no canaries/assets/signed links and safe logs include exception class plus allowed correlation ID, never arbitrary exception text. Test generic Exception AND MCP CallError (message/details branch), job failures, malformed input, cancellation, timeout, storage_full. No full traceback containing private locals/error str. Pure exception-count ratchet is supplementary, not proof.
@@ -273,6 +287,7 @@ tests/privacy/assertions.py
   assert_case(case, response, *, world, before, after, spies) -> None
 
 test_content_access_matrix.py:
+[v4]   test_history_debug_self_privacy_permission; test_retention_reader_calls_core_then_narrows; test_all_eight_kinds_six_actions.
   test_every_kind_action_basis_cell; test_actor_state_cross_product; test_roles_never_add_content_basis; test_null_self_never_matches; test_same_app_different_person; test_same_person_different_app; test_share_not_transitive; test_owned_plus_shared_revocation_keeps_own; test_deleted_and_unresolved_deny.
 test_identity_provenance.py:
 [v3]   test_owner_created_personal_key_self; test_personless_key_no_prompt_chat; test_revoked_auth_live_alias; test_service_migration_prerequisite; test_session_owns_accountable_service_app; test_personal_key_not_own_for_other_apps; test_trusted_viewer_ignores_body_identity.
@@ -283,10 +298,12 @@ test_sharing.py:
 test_signed_grants.py:
   test_every_mint_site_requires_access; test_grant_tamper_matrix; test_next_fetch_revoke_range; test_reshare_old_url_dead; test_poster_cross_asset_binding; test_metadata_containers; test_cache_headers; test_no_legacy_grants; test_byte_read_after_auth; test_bearer_o_lifetime.
 test_receipts_usage_activity.py:
+[v4]   test_retention_kind_decision_only; test_request_ledger_real_provider_owner_admin_maker_matrix; test_current_ledger_never_reads_receipts.
   test_own_receipt_access_plan; test_operational_projection_actor_matrix; test_recursive_schema_and_future_fields; test_submission_person_immutable; test_unknown_model_no_requested_fallback; test_envelope_group_filter_leaks; test_storage_aggregate_only.
 test_jobs_events.py:
   test_job_status_actor_matrix; test_cancel_no_effect_on_deny; test_content_each_asset_authorized; test_events_actor_matrix; test_event_type_closed_set; test_per_job_seq_no_household_ids; test_denied_events_no_repair_write; test_wait_denied_before_poll.
 test_mcp_boundaries.py:
+[v4]   test_mcp_grant_viewer_and_privacy_permission; test_all_mcpdeps_fields_classified; test_ledger_maker_projection_none_and_no_existence_oracle; test_rename_own_account; test_stt_operational_gates_none.
   test_tools_and_subops_registry; test_dispatch_context_preserved; test_capabilities_no_private_data; test_run_nested_asset_reuse_matrix; test_direct_reader_personless_shared_foreign; test_output_store_and_link_access; test_job_poll_wait_content_cancel; test_error_callerror_and_exception_safe.
 test_owner_leak_canaries.py:
   test_every_owner_and_admin_surface_canary; test_two_world_noninterference; test_stdout_stderr_jsonl_and_background; test_error_path_markers; test_new_field_not_implicitly_projected.
@@ -294,6 +311,8 @@ test_migration_bindings_restore.py:
 [v3]   test_switch_verified_before_notice; test_ownership_cutover_preview_apply_verify; test_bad_provenance_exact_revocation; test_null_safe_trigger_transition_matrix; test_issuance_trigger_atomic; test_fresh_schema_has_triggers; test_share_write_single_transaction; test_ops_restore_sql_stops_shares; test_auth_disabled_start_denied; test_reset_event_issuer.
 test_storage_admission_budget.py:
   test_absolute_budget_boundaries; test_small_large_filesystem_counterexamples; test_concurrent_working_set_bound; test_per_device_accounting; test_unknown_pauses; test_no_provider_before_admission; test_running_enospc_not_success; test_cleanup_and_download_still_work.
+test_request_history_incognito.py:
+[v4]   test_d50_default_person_history; test_no_person_structural_only; test_single_incognito_all_surfaces; test_o4b_accountable_settings_household_never_keep_only; test_rr_slice5_copy_gate; test_no_reader_widening.
 test_path_inventory_exports.py:
   test_all_route_methods_classified; test_all_mcp_callbacks_subops_classified; test_closed_job_event_types; test_no_unclassified_export_or_head; test_unsupported_cli_export_claims_absent; test_notification_privacy_gate_requires_evidence.
 
@@ -306,7 +325,7 @@ Execution order for future implementer: independent core oracle; production iden
 U1 content_access, actual route inventory, proxy asset delivery/mint callbacks, prompt/chat/voice/export transport code: outside read scope; must be inspected and implemented before proof.
 [v4] U2 AP schema is source-confirmed on main; binding provenance enforcement remains a step-2 implementation gate. Real v6 upgrade, trusted addresses and trigger order must be executed, not replaced by a mock.
 [v3] U3 RESOLVED (OV §2.4 O6): one App-ownership rule; no Accountable basis.
-[v3] U4 RESOLVED: job events follow job read (Own); share refusal precedence locked (404 before 409). In-flight revocation boundary: per request (OV §2.4 Linearization); a live event stream or MCP wait re-authenticates on each poll or reconnect, and a stream already open finishes its current response.
+[v3] U4 RESOLVED: job events follow job read (Own); share refusal precedence locked (404 before 409). In-flight revocation boundary: per request (OV §2.4 Linearization); each new MCP poll or stream reconnect re-authenticates; an already-open event stream continues until disconnect after a revoke.
 [v4] U5 target specified (OV §3.5): AP NOT NULL/FK already enforce O1; O2/O3/O4 still need post-migration installation, accountable-only binding INSERT, App-scoped immutability and final revocation.
 [v3] U6 RESOLVED (OV §6.4): absolute byte rule with per-job leases; W_max per filesystem remains UNVERIFIED until the build measures it.
 U7 all serializers/migration/triggers/storage APIs not present in reviewed evidence; claimed contract remains intended.
