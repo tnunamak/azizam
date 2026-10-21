@@ -18,6 +18,7 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import os
+from copy import deepcopy
 import hashlib
 import re
 from dataclasses import dataclass
@@ -101,16 +102,17 @@ def compile_litellm_substrate_config(
 
     from gateway.litellm_content import profile
 
+    settings = deepcopy(profile())
     return {
         "model_list": entries,
-        "router_settings": dict(profile()["router_settings"]),
+        "router_settings": settings["router_settings"],
         "litellm_settings": {
             "drop_params": True,
-            **profile()["litellm_settings"],
+            **settings["litellm_settings"],
         },
         "general_settings": {
             "litellm_key_header_name": DEFAULT_LITELLM_KEY_HEADER,
-            **profile()["general_settings"],
+            **settings["general_settings"],
             # Forwards the gateway's cancellation-correlation header
             # (X-Azizam-Request-Id) through to the internal gateway hop
             # behind LiteLLM. LiteLLM does not propagate a cancel signal of

@@ -281,3 +281,10 @@ def test_endpoint_changes_are_disclosed_from_the_effective_registry(monkeypatch)
             'config': {'base_url': address}}}}
     assert content.deployment_status(registry('http://127.0.0.1:4011'))['status'] == 'verified'
     assert content.deployment_status(registry('https://owner-run.example'))['status'] == 'unmanaged'
+
+
+def test_compiled_callback_lists_cannot_mutate_the_expected_profile():
+    compiled = compile_litellm_substrate_config({})
+    compiled['litellm_settings']['callbacks'].append('log_file')
+    assert content.config_problem(compiled) == 'litellm_settings.callbacks'
+    assert compile_litellm_substrate_config({})['litellm_settings']['callbacks'] == []
