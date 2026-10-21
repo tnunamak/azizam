@@ -221,6 +221,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             db_path = work / "data" / "admin.db"
             secret_id = "provider:openrouter:api_key"
             env_name = secret_env_name_for_provider("openrouter", secret_id)
+            (work / "expected-env-name").write_text(env_name)
             _write_registry_json(
                 db_path,
                 {
@@ -311,7 +312,8 @@ def _prepare_start_fixture(work: Path) -> None:
         "os.environ['FAKE_LOG']=str(Path.cwd()/'log.txt')\n"
         "config=Path(args[args.index('--config')+1]).read_text()\n"
         "refs=re.findall(r'os.environ/(AZIZAM_PROVIDER_SECRET_[A-Z0-9]+)',config)\n"
-        "os.environ['EXPECTED_PROVIDER_ENV']=refs[0] if refs else 'UNUSED_PROVIDER_ENV'\n"
+        "expected=Path.cwd()/'expected-env-name'\n"
+        "os.environ['EXPECTED_PROVIDER_ENV']=expected.read_text() if expected.exists() else (refs[0] if refs else 'UNUSED_PROVIDER_ENV')\n"
         "os.execvp('litellm',['litellm',*args])\n"
     )
     (work / "start.sh").chmod(0o755)
