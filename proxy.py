@@ -6710,6 +6710,8 @@ def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = N
     # ``metadata_mode`` is part of the signed message so a client cannot flip a
     # ``none`` URL to ``full`` (the signature covers it).
     suffix = f":md={metadata_mode}" if metadata_mode else ""
+    if family is not None or subject is not None or timing is not None:
+        suffix += ":b=2"
     if family is not None or subject is not None:
         suffix += ":session=" + json.dumps([family, subject], separators=(",", ":"))
     if timing is not None:
@@ -6779,7 +6781,7 @@ def _signed_asset_request_allowed(asset_id: str, expires: int, request: Request,
         return False
     try:
         session = AdminSession(subject=subject, email="", role="none", session_id=family, **json.loads(timing))
-        if not session_policy.is_usable(session, session_policy.load_policy(ADMIN_STORE.path), time.time()):
+        if not session_policy.is_usable(session, session_policy.load_asset_policy(ADMIN_STORE.path), time.time()):
             return False
     except (ValueError, TypeError):
         return False

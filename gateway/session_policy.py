@@ -17,6 +17,8 @@ store is read in ``load_policy`` only.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import threading
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -89,6 +91,31 @@ def stored_setting(path: Path) -> dict[str, int]:
 
 def load_policy(path: Path) -> SessionPolicy:
     return policy_from_setting(stored_setting(path))
+
+
+# One gateway process: saves in this process invalidate after commit; external
+# writers become visible within five seconds. Cache policy, never usability.
+_asset_policy_lock = threading.Lock()
+_asset_policy_cache: tuple[Path, float, SessionPolicy] | None = None
+
+
+def invalidate_asset_policy() -> None:
+    global _asset_policy_cache
+    with _asset_policy_lock:
+        _asset_policy_cache = None
+
+
+def load_asset_policy(path: Path) -> SessionPolicy:
+    global _asset_policy_cache
+    with _asset_policy_lock:
+        now = time.monotonic()
+        if _asset_policy_cache is not None:
+            saved_path, loaded_at, policy = _asset_policy_cache
+            if saved_path == path and 0 <= now - loaded_at < 5.0:
+                return policy
+        policy = load_policy(path)
+        _asset_policy_cache = (path, now, policy)
+        return policy
 
 
 # ---------------------------------------------------------------------------

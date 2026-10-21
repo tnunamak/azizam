@@ -3232,6 +3232,9 @@ def put_operator_setting(
         except Exception:
             conn.rollback()
             raise
+    if str(key).strip() == "session_policy":
+        from gateway.session_policy import invalidate_asset_policy
+        invalidate_asset_policy()
     return record
 
 
@@ -3318,6 +3321,9 @@ def put_operator_setting_with_audit(
         except Exception:
             conn.rollback()
             raise
+    if str(key).strip() == "session_policy":
+        from gateway.session_policy import invalidate_asset_policy
+        invalidate_asset_policy()
     return record
 
 

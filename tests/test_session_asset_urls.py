@@ -511,3 +511,142 @@ def test_full_metadata_etag_changes_with_metadata_and_is_separate_from_clean_del
     assert changed.status_code == 200 and changed.content != first.content
     assert changed.headers["etag"] != first.headers["etag"]
     assert client.get(clean_url).headers["etag"] == clean.headers["etag"]
+
+
+@pytest.mark.parametrize("version", ["", ":b=1", ":b=3"])
+def test_bound_urls_reject_other_message_versions(media, version):
+    import hmac
+    client = owner_client(media)
+    parts = urlsplit(mint(client))
+    query = parse_qs(parts.query)
+    # A valid HMAC under the same key but an older/different message contract.
+    message = (f'{ASSET}:{query["expires"][0]}:md=none{version}:session='
+               + json.dumps([query["family"][0], query["subject"][0]], separators=(",", ":"))
+               + ":lifetime=" + query["session"][0])
+    query["sig"] = [hmac.new(proxy._image_signing_secret(), message.encode(), hashlib.sha256).hexdigest()]
+    assert media.client().get(urlunsplit(parts._replace(query=urlencode(query, doseq=True)))).status_code == 403
+
+
+def test_signin_rules_admin_loss_ends_warm_asset_family(media, monkeypatch):
+    from dataclasses import replace
+    from gateway import admin_store, signin_admin, signin_rules
+    from tests.test_signin_who_can_enter import signed_in, domain_rule
+    owner = owner_client(media)
+    helper, response = signed_in(media, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    assert response.status_code == 302
+    owner_id = cookie_session(owner).subject
+    session = cookie_session(helper)
+    before = signin_admin.World(rules=signin_admin.load_rules(media.path), password=True,
+                               provider=True, issuer=signin_admin.norm_issuer(media.config.issuer))
+    # Still admitted as a member: only apply_changes' lost-admin path ends this family.
+    after = replace(before, rules=signin_rules.parse_rules({"fallback": "closed", "rules": [domain_rule("example.test")]}))
+    monkeypatch.setattr(accounts, "time", SimpleNamespace(time=time.time, monotonic=lambda: 100.0))
+    url = mint(helper)
+    assert media.client().get(url).status_code == 200
+    with admin_store.transaction(media.path) as tx:
+        removed = signin_admin.apply_changes(tx, media.path, before, after, {}, keep_admin_keys=[],
+                                            owner_id=owner_id, end_provider_access=proxy._end_provider_access_in)
+    assert session.subject in [person["id"] for person in removed]
+    assert media.client().get(url).status_code == 403
+
+
+def test_provider_access_end_ends_warm_asset_family(media, monkeypatch):
+    from gateway import admin_store
+    from tests.test_signin_who_can_enter import signed_in
+    owner_client(media)
+    helper, response = signed_in(media, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    assert response.status_code == 302
+    session = cookie_session(helper)
+    monkeypatch.setattr(accounts, "time", SimpleNamespace(time=time.time, monotonic=lambda: 100.0))
+    url = mint(helper)
+    assert media.client().get(url).status_code == 200
+    with admin_store.transaction(media.path) as tx:
+        proxy._end_provider_access_in(tx, session.subject)
+    assert media.client().get(url).status_code == 403
+
+
+@pytest.mark.parametrize("state", ["missing", "symlink", "dangling", "invalid", "unwritable"])
+def test_session_view_key_is_dedicated_private_and_optional(media, monkeypatch, caplog, tmp_path, state):
+    from gateway import secret_store
+    def forbidden(*args, **kwargs):
+        raise AssertionError("session view must never read the provider master key")
+    monkeypatch.setattr(secret_store, "load_or_create_secret_key", forbidden)
+    monkeypatch.setattr(secret_store, "load_secret_key", forbidden)
+    client = owner_client(media)
+    key_path = media.path.parent / ".session_view_secret"
+    target = tmp_path / "target-key"
+    if state == "symlink":
+        target.write_bytes(b"x" * 32)
+        key_path.symlink_to(target)
+    elif state == "dangling":
+        key_path.symlink_to(target)
+    elif state == "invalid":
+        key_path.write_bytes(b"")
+    elif state == "unwritable":
+        def denied(*args, **kwargs):
+            raise PermissionError("synthetic unavailable key directory")
+        monkeypatch.setattr(user_runtime.tempfile, "NamedTemporaryFile", denied)
+    response = client.get("/me/api/session")
+    assert response.status_code == 200 and response.json()["authenticated"] is True
+    if state == "missing":
+        assert len(response.json()["session_view_id"]) == 64
+        assert key_path.stat().st_mode & 0o777 == 0o600
+        assert not (media.path.parent / secret_store.DEFAULT_KEY_FILE).exists()
+    else:
+        assert "session_view_id" not in response.json()
+        assert "Session view id omitted" in caplog.text
+    if state == "symlink":
+        assert target.read_bytes() == b"x" * 32
+    if state == "dangling":
+        assert not target.exists()
+
+
+def test_thumbnail_gallery_reads_policy_once_and_save_applies_immediately(media, monkeypatch):
+    from gateway import admin_store, session_policy
+    client = owner_client(media)
+    forge(media, client, OWNER, issued_ago=3 * 86400, renewed_ago=2 * 86400)
+    url = mint(client, thumbnails.THUMB_MODE)
+    calls = []
+    original = session_policy.load_policy
+    def counted(path):
+        calls.append(path)
+        return original(path)
+    session_policy.invalidate_asset_policy()
+    monkeypatch.setattr(session_policy, "load_policy", counted)
+    monkeypatch.setattr(session_policy, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    anonymous = media.client()
+    for _ in range(10):
+        assert anonymous.get(url).status_code == 200
+    assert calls == [media.path]
+    # Use the production audited policy writer, as Settings > Sessions does.
+    admin_store.put_operator_setting_with_audit(
+        session_policy.SESSION_POLICY_SETTING_KEY, {**session_policy.DEFAULT_SETTING, "idle_timeout_days": 1},
+        updated_by="test-owner", audit_action="operator.sessions.update", audit_actor_kind="user",
+        audit_actor_id="test-owner", audit_actor_label="Owner", audit_target_kind="operator_setting",
+        audit_target_id=session_policy.SESSION_POLICY_SETTING_KEY, path=media.path)
+    assert anonymous.get(url).status_code == 403
+    assert calls == [media.path, media.path]
+
+
+def test_asset_policy_cache_expires_after_five_seconds(media, monkeypatch):
+    from gateway import admin_store, session_policy
+    client = owner_client(media)
+    forge(media, client, OWNER, issued_ago=3 * 86400, renewed_ago=2 * 86400)
+    url = mint(client)
+    clock = [100.0]
+    session_policy.invalidate_asset_policy()
+    monkeypatch.setattr(session_policy, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    assert media.client().get(url).status_code == 200
+    # A separate-process write has no local notification.
+    with admin_store._conn(media.path) as conn:
+        conn.execute("UPDATE operator_settings SET value_json=? WHERE key='session_policy'",
+                     (json.dumps({**session_policy.DEFAULT_SETTING, "idle_timeout_days": 1}),))
+        # The default row may not exist yet.
+        if not conn.total_changes:
+            conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES('session_policy',?,0)",
+                         (json.dumps({**session_policy.DEFAULT_SETTING, "idle_timeout_days": 1}),))
+        conn.commit()
+    clock[0] = 104.99
+    assert media.client().get(url).status_code == 200
+    clock[0] = 105.0
+    assert media.client().get(url).status_code == 403

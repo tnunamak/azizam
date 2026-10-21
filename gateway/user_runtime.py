@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
+import os
+import secrets
+import stat
+import tempfile
+from functools import lru_cache
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway import admin_store, avatars, session_guard, session_policy, secret_store
+from gateway import admin_store, avatars, session_guard, session_policy
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -36,6 +42,45 @@ __all__ = [
     "request_user_access",
     "revoke_user_app_key",
 ]
+
+
+@lru_cache(maxsize=128)
+def _session_view_key(path: Path) -> bytes:
+    """A dedicated persistent key, purpose-separated once per process/store.
+
+    Publish a complete private file without replacing a concurrent winner.
+    Never follow a leaf symlink, including dangling links.
+    """
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
+    if not path.exists() and not path.is_symlink():
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".session-view-") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(secrets.token_bytes(32))
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                os.link(handle.name, path)
+            except FileExistsError:
+                pass
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("session view key must be a regular file")
+        os.fchmod(handle.fileno(), 0o600)
+        key = handle.read(33)
+    if len(key) != 32:
+        raise ValueError("session view key must contain 32 bytes")
+    return hmac.new(key, b"azizam.session-view.v1", hashlib.sha256).digest()
+
+
+def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
+    try:
+        key = _session_view_key(path.parent / ".session_view_secret")
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("Session view id omitted: dedicated key unavailable")
+        return {}
+    return {"session_view_id": hmac.new(key, session.family_id.encode(), hashlib.sha256).hexdigest()}
 
 
 class UserPortalError(ValueError):
@@ -236,11 +281,7 @@ def build_user_portal_snapshot(
     return {
         "authenticated": True,
         # Public per-sign-in epoch, stable across renewal, distinct from every credential.
-        "session_view_id": hmac.new(
-            hmac.new(secret_store.load_or_create_secret_key(path.parent / secret_store.DEFAULT_KEY_FILE),
-                     b"azizam.session-view.v1", hashlib.sha256).digest(),
-            session.family_id.encode(), hashlib.sha256,
-        ).hexdigest(),
+        **_session_view_field(session, path),
         "user": {
             "id": user.get("id"),
             # The stable id the generated avatar is drawn from (a rename keeps the colour), and the
