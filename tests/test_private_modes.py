@@ -7,11 +7,18 @@ import stat
 import sqlite3
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import importlib.util
 
 import pytest
 
-from gateway import admin_store, custom_voices, private_io, providers, thumbnails
+from gateway import (
+    admin_store, category_store, custom_voices, media_jobs, metrics_store,
+    private_io, prompt_metadata_migration, providers, receipt_store, thumbnails,
+)
+import responses_store
 from gateway.engine_protocol import node_info
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +95,44 @@ def test_private_atomic_writer_stages_mode_0600(monkeypatch, tmp_path, permissiv
     assert mode(target) == 0o600
 
 
+def test_private_directory_creation_tolerates_a_concurrent_winner(monkeypatch, tmp_path, permissive_umask) -> None:
+    target = tmp_path / "race" / "private"
+    barrier = threading.Barrier(2)
+    exists = Path.exists
+
+    def synchronized_exists(path):
+        result = exists(path)
+        if path == target and not result:
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(Path, "exists", synchronized_exists)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(private_io.ensure_private_dir, (target, target)))
+    assert results == [target, target]
+    assert mode(target) == 0o700
+
+
+def test_atomic_copy_closes_stage_fd_when_source_open_fails(monkeypatch, tmp_path, permissive_umask) -> None:
+    source = tmp_path / "missing-source"
+    target = tmp_path / "copy" / "target"
+    mkstemp = private_io.tempfile.mkstemp
+    staged_fds = []
+
+    def track_fd(*args, **kwargs):
+        fd, name = mkstemp(*args, **kwargs)
+        staged_fds.append(fd)
+        return fd, name
+
+    monkeypatch.setattr(private_io.tempfile, "mkstemp", track_fd)
+    with pytest.raises(FileNotFoundError):
+        private_io.atomic_copy_file(source, target)
+    assert len(staged_fds) == 1
+    with pytest.raises(OSError):
+        os.fstat(staged_fds[0])
+    assert not list(target.parent.iterdir())
+
+
 def test_thumbnail_file_and_directory_are_private_under_permissive_umask(tmp_path, permissive_umask) -> None:
     from PIL import Image
 
@@ -120,6 +165,52 @@ def test_admin_store_schema_backup_is_private_under_permissive_umask(monkeypatch
     assert mode(admin_store.access_plans_backup_path(db)) == 0o600
 
 
+def test_local_register_backup_precreates_private_sqlite_target(tmp_path, permissive_umask) -> None:
+    from scripts.local.register_service_from_config import _backup
+
+    db = tmp_path / "admin.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE identity (value TEXT)")
+        conn.execute("INSERT INTO identity VALUES ('private')")
+    backup = _backup(db)
+    assert mode(backup) == 0o600
+    assert mode(backup.parent) == 0o700
+
+
+@pytest.mark.parametrize("store", ["media_jobs", "responses", "metrics", "receipts", "providers"])
+def test_content_sqlite_stores_create_private_databases(tmp_path, permissive_umask, store) -> None:
+    db = tmp_path / store / "nested" / f"{store}.db"
+    if store == "media_jobs":
+        media_jobs.init_db(db)
+    elif store == "responses":
+        responses_store.init_db(db)
+    elif store == "metrics":
+        metrics_store.init_db(db)
+    elif store == "receipts":
+        receipt_store.init_db(db)
+    else:
+        providers.ensure_ledger(db)
+    assert mode(db) == 0o600
+    assert mode(db.parent) == 0o700
+    assert mode(db.parent.parent) == 0o700
+
+
+def test_prompt_metadata_migration_database_is_private(tmp_path, permissive_umask) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    state = tmp_path / "state" / "deep" / "migration.db"
+    prompt_metadata_migration.strip_cached_assets(cache, state)
+    assert mode(state) == 0o600
+    assert mode(state.parent) == mode(state.parent.parent) == 0o700
+
+
+def test_category_store_database_is_private(tmp_path, permissive_umask) -> None:
+    path = tmp_path / "category" / "nested" / "categories.db"
+    category_store.CategoryStore(path)
+    assert mode(path) == 0o600
+    assert mode(path.parent) == mode(path.parent.parent) == 0o700
+
+
 def test_provider_migration_backup_is_private_under_permissive_umask(tmp_path, permissive_umask) -> None:
     db = tmp_path / "provider.db"
     with sqlite3.connect(db) as conn:
@@ -150,17 +241,23 @@ def test_mode_report_groups_paths_and_fix_only_changes_fixture_tree(tmp_path, pe
     images = root / "cache" / "images"
     images.mkdir(parents=True)
     (images / "sensitive-name.bin").write_bytes(b"secret")
+    node_info = root / "cache" / "node-info"
+    node_info.mkdir()
+    (node_info / "private-node-name.json").write_text("{}")
     os.chmod(images, 0o777)
     os.chmod(images / "sensitive-name.bin", 0o666)
     command = [sys.executable, str(ROOT / "scripts" / "check-private-modes"), "--root", str(root)]
     report = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
     assert report.returncode == 1
-    assert "cache/images" in report.stdout
+    assert "cache" in report.stdout
     assert "sensitive-name.bin" not in report.stdout
+    assert "private-node-name.json" not in report.stdout
     fixed = subprocess.run([*command, "--fix"], cwd=ROOT, capture_output=True, text=True, check=False)
     assert fixed.returncode == 0
     assert mode(images) == 0o700
     assert mode(images / "sensitive-name.bin") == 0o600
+    assert mode(node_info) == 0o700
+    assert mode(node_info / "private-node-name.json") == 0o600
 
 
 def test_mode_fixer_does_not_follow_symlink_directories(tmp_path, permissive_umask) -> None:
@@ -174,5 +271,30 @@ def test_mode_fixer_does_not_follow_symlink_directories(tmp_path, permissive_uma
     images.symlink_to(outside, target_is_directory=True)
     command = [sys.executable, str(ROOT / "scripts" / "check-private-modes"), "--root", str(root), "--fix"]
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
-    assert result.returncode == 0
+    assert result.returncode == 1
+    assert "cache" in result.stdout
+    assert "errors=1" in result.stdout
     assert mode(private_file) == 0o666
+
+
+def test_mode_report_contains_directory_errors_without_names(tmp_path, monkeypatch, capsys) -> None:
+    script = ROOT / "scripts" / "check-private-modes"
+    spec = importlib.util.spec_from_file_location("check_private_modes", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / "fixture"
+    denied = root / "data" / "sensitive-dir"
+    denied.mkdir(parents=True)
+    open_file = os.open
+
+    def denied_open(path, flags, *args, **kwargs):
+        if Path(path) == denied:
+            raise PermissionError("simulated unreadable directory")
+        return open_file(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", denied_open)
+    assert module.main(["--root", str(root)]) == 1
+    report = capsys.readouterr().out
+    assert "data" in report and "errors=1" in report
+    assert "sensitive-dir" not in report
+    assert "Traceback" not in report
