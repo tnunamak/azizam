@@ -830,24 +830,6 @@
           "link": null
         },
         {
-          "name": "background",
-          "localized_name": "background",
-          "type": "COMBO",
-          "widget": {
-            "name": "background"
-          },
-          "link": null
-        },
-        {
-          "name": "background_color",
-          "localized_name": "background_color",
-          "type": "COLORCODE",
-          "widget": {
-            "name": "background_color"
-          },
-          "link": null
-        },
-        {
           "name": "invert_output",
           "localized_name": "invert_output",
           "type": "BOOLEAN",
@@ -862,6 +844,24 @@
           "type": "BOOLEAN",
           "widget": {
             "name": "refine_foreground"
+          },
+          "link": null
+        },
+        {
+          "name": "background",
+          "localized_name": "background",
+          "type": "COMBO",
+          "widget": {
+            "name": "background"
+          },
+          "link": null
+        },
+        {
+          "name": "background_color",
+          "localized_name": "background_color",
+          "type": "COLORCODE",
+          "widget": {
+            "name": "background_color"
           },
           "link": null
         }
@@ -898,10 +898,10 @@
         1024,
         2,
         0,
-        "Alpha",
-        "#00000000",
         false,
-        true
+        true,
+        "Alpha",
+        "#00000000"
       ]
     }
   ],
