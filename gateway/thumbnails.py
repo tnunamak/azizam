@@ -17,8 +17,13 @@ import tempfile
 import threading
 from pathlib import Path
 
+from PIL import __version__ as PILLOW_VERSION, features
+
 from gateway import private_io
 
+THUMB_QUALITY = 78
+THUMB_METHOD = 4
+THUMB_RECIPE = f"q{THUMB_QUALITY}:m{THUMB_METHOD}:pillow={PILLOW_VERSION}:webp={features.version('webp')}"
 THUMB_EDGE = 480
 THUMB_MODE = "thumb"  # signing mode of a thumbnail URL; no content URL can carry it
 THUMB_MEDIA_TYPE = "image/webp"
@@ -91,7 +96,7 @@ def _make(source: Path, target: Path) -> Path | None:
             os.fchmod(fd, 0o600)
             os.close(fd)
             try:
-                image.save(tmp_name, "WEBP", quality=78, method=4)
+                image.save(tmp_name, "WEBP", quality=THUMB_QUALITY, method=THUMB_METHOD)
                 os.chmod(tmp_name, 0o600)
                 os.replace(tmp_name, target)
             finally:

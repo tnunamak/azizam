@@ -106,6 +106,13 @@ import { markCreationOpened } from "@/components/jobs/opened-creations";
 import { api, queryKeys } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import {
+  folderChangedSentence,
+  folderToConfirm,
+  libraryEvidenceSentence,
+  noneHereSentence,
+  type MediaFolderView,
+} from "@/lib/media-folder";
+import {
   promptMemoryKey,
   promptNotSavedReason,
   tryKeepState,
@@ -165,16 +172,11 @@ interface MediaResponse {
   next_cursor?: string | null;
   models?: string[];
   sources?: MediaSource[];
-  media_folder?: MediaFolderView | null;
 }
 
-// The folder's confirmation state. Only the owner receives where the folder is and what it holds.
-interface MediaFolderView {
-  state: "confirmed" | "unconfirmed" | "mismatch";
-  path?: string;
-  library_items?: number;
-  items_here?: number;
-  uncheckable_items?: number;
+interface RemovalResponse {
+  media_folder?: MediaFolderView | null;
+  removal_plan?: { missing_items: number } | null;
 }
 
 interface MediaSource {
@@ -370,10 +372,14 @@ function validPayload(path: string, value: unknown): boolean {
     return typeof value.download_url === "string" && !!value.download_url.trim();
   if (route === "/me/api/session")
     return typeof value.csrf_token === "string" && !!value.csrf_token;
+  if (route === "/me/api/media" && new URLSearchParams(path.split("?")[1]).get("folder_state") === "1")
+    return (value.media_folder == null || validMediaFolder(value.media_folder)) &&
+      (value.removal_plan == null || (record(value.removal_plan) &&
+        Number.isInteger(value.removal_plan.missing_items) &&
+        (value.removal_plan.missing_items as number) >= 0));
   if (route === "/me/api/media")
     return Array.isArray(value.assets) && value.assets.every(validAsset) &&
       (value.next_cursor == null || typeof value.next_cursor === "string") &&
-      (value.media_folder == null || validMediaFolder(value.media_folder)) &&
       (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
       (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
         record(source) && typeof source.id === "string" && typeof source.label === "string")));
@@ -386,6 +392,83 @@ function validPayload(path: string, value: unknown): boolean {
   if (route === "/me/api/media/confirm-folder") return value.confirmed === true;
   if (route.startsWith("/me/api/media/")) return validAsset(value.asset);
   return false;
+}
+
+// What the Remove missing confirmation says. The media folder is asked about here, at the destructive
+// action, and nowhere else: a folder nobody has confirmed yet may be the wrong disk, and then the files of
+// the whole Library would look missing. The owner's confirmation records the folder and then removes.
+interface RemovalDialog {
+  title: string;
+  body: ReactNode;
+  confirmLabel: string;
+  /** The folder gives no ground to remove anything yet, so the confirmation is not offered. */
+  blocked: boolean;
+}
+function itemCount(count: number) {
+  return `${count} ${count === 1 ? "item" : "items"}`;
+}
+function removalDialog(folder: MediaFolderView | null, own: number): RemovalDialog {
+  const open = folderToConfirm(folder);
+  const label = `Remove ${itemCount(own)}`;
+  const title = `Remove ${own} missing ${own === 1 ? "item" : "items"}?`;
+  if (!open) {
+    return {
+      title,
+      body: own === 1 ? (
+        <>
+          <span className="block">Removes it and its saved prompt from your Library. Receipts stay.</span>
+          <span className="block">The stored file is not touched.</span>
+        </>
+      ) : "Removes them and their saved prompts from your Library. Receipts and every stored file stay.",
+      confirmLabel: label,
+      blocked: false,
+    };
+  }
+  if (open.library_items == null) {
+    return {
+      title: "Can't remove missing items yet",
+      body: "Azizam can't remove missing items until the owner confirms where the Library's files are kept.",
+      confirmLabel: label,
+      blocked: true,
+    };
+  }
+  const path = open.path ?? "the media folder";
+  const checked = open.library_items;
+  const here = open.items_here ?? 0;
+  const changed = open.state === "mismatch"
+    ? <span className="block">{folderChangedSentence(path)}</span>
+    : null;
+  if (checked > 0 && here === 0) {
+    return {
+      title: "Can't remove missing items yet",
+      body: (
+        <>
+          {changed}
+          <span className="block">{noneHereSentence(path, checked)}</span>
+        </>
+      ),
+      confirmLabel: label,
+      blocked: true,
+    };
+  }
+  // The viewer's own count comes first and says it is theirs; the folder evidence is the whole Library's.
+  const yours = `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
+  const evidence = libraryEvidenceSentence(path, checked, here);
+  return {
+    title,
+    body: (
+      <>
+        {changed}
+        <span className="block">
+          {`${yours} Removing ${own !== 1 ? "them deletes their" : "it deletes its"} Library ${own !== 1 ? "entries" : "entry"} and saved ${own !== 1 ? "prompts" : "prompt"}${own === 1 ? "." : "; the stored files are not touched."}`}
+        </span>
+        {own === 1 ? <span className="block">The stored file is not touched.</span> : null}
+        {evidence ? <span className="block">{evidence}</span> : null}
+      </>
+    ),
+    confirmLabel: label,
+    blocked: false,
+  };
 }
 
 const REMOVE_MISSING_PATH = "/me/api/media/remove-missing";
@@ -1121,7 +1204,10 @@ function Preview({
             retryPending.current = false;
             setRetrying(false);
           });
-          void queryClient.invalidateQueries({ queryKey: ["library"] });
+          void queryClient.invalidateQueries({
+            queryKey: ["library"],
+            predicate: (query) => typeof query.queryKey[1] === "object",
+          });
         }}
       />
     );
@@ -2325,7 +2411,6 @@ export default function LibraryPage() {
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
-  const [folderConfirmArmed, setFolderConfirmArmed] = useState(false);
   const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
@@ -2359,6 +2444,14 @@ export default function LibraryPage() {
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
+  const { data: removalState, isPending: removalPending, isError: removalError } = useQuery({
+    queryKey: ["library", "removal"],
+    queryFn: ({ signal }) => mediaRequest<RemovalResponse>(
+      "/me/api/media?folder_state=1&removal_plan=1", { signal },
+    ),
+    staleTime: 30_000,
+    retry: false,
+  });
   const deepLinkedAssetId = searchParams?.get("asset") ?? "";
   function clearFilters() {
     setKind("all");
@@ -2412,7 +2505,9 @@ export default function LibraryPage() {
     queryFn: ({ pageParam, signal }) =>
       mediaRequest<MediaResponse>(
         mediaPath +
-          (pageParam ? `&cursor=${encodeURIComponent(String(pageParam))}` : ""),
+          (pageParam
+            ? `&cursor=${encodeURIComponent(String(pageParam))}`
+            : ""),
         { signal },
       ),
     getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
@@ -2525,15 +2620,8 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
-  // The folder's state comes with the first page of the Library, which every read starts with.
-  const folder = mediaPages[0]?.media_folder ?? null;
-  // An id that cannot be matched to a file is left out of the count, so a Library with only such ids is
-  // unverifiable. Under half the Library here is a partial folder: confirming it takes a second, explicit click.
-  const folderItems = folder?.library_items ?? 0;
-  const folderHere = folder?.items_here ?? 0;
-  const folderUnverifiable = folderItems === 0 && (folder?.uncheckable_items ?? 0) > 0;
-  const folderMostMissing = !folderUnverifiable && folderHere * 2 < folderItems;
-  const folderNeedsSecondClick = folderUnverifiable || folderMostMissing;
+  // Folder evidence is viewer-wide and cached independently of the filtered pages.
+  const folder = removalState?.media_folder ?? null;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -2643,7 +2731,8 @@ export default function LibraryPage() {
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
   // Remove missing items clears the viewer's own entries, whoever is shown.
-  const ownGoneCount = goneAssets.filter(madeByViewer).length;
+  const missingItemCount = removalState?.removal_plan?.missing_items ?? 0;
+  const removal = removalDialog(folder, missingItemCount);
   function returnFocus(assetId: string) {
     // After a delete, the confirmation still holds focus; the page returns
     // focus once it closes (below).
@@ -2660,12 +2749,16 @@ export default function LibraryPage() {
     );
     return () => window.clearTimeout(timer);
   }, [confirming]);
+  const refreshLibrary = () => {
+    void queryClient.invalidateQueries({ queryKey: ["library", "removal"], exact: true });
+    void refetch();
+  };
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
       loadMore();
       return;
     }
-    void refetch();
+    refreshLibrary();
   };
   const deleteMutation = useMutation({
     mutationFn: async (asset: MediaAsset) => {
@@ -2693,7 +2786,7 @@ export default function LibraryPage() {
     onError: (error) => toast.error(failureCopy(error)),
   });
   const removeMissingMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (expectedMissing: number) => {
       const session = await mediaRequest<{ csrf_token: string }>(
         "/me/api/session",
       );
@@ -2702,9 +2795,11 @@ export default function LibraryPage() {
         {
           method: "POST",
           headers: {
+            "content-type": "application/json",
             "x-azizam-user-action": "1",
             "x-azizam-csrf": session.csrf_token,
           },
+          body: JSON.stringify({ expected_missing: expectedMissing }),
         },
         "delete",
       );
@@ -2716,30 +2811,31 @@ export default function LibraryPage() {
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => {
-      if (error instanceof MediaFolderFailure) {
-        setConfirmingRemoval(false);
-        // The folder's state is on the Library read, so the notice follows the server.
-        void queryClient.invalidateQueries({ queryKey: ["library"] });
-      }
+      // The removal may have just recorded the folder; refresh both queries.
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
       toast.error(failureCopy(error));
     },
   });
   const confirmFolderMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (evidence: MediaFolderView) => {
       const session = await mediaRequest<{ csrf_token: string }>("/me/api/session");
       return mediaRequest<{ confirmed: boolean }>(CONFIRM_FOLDER_PATH, {
         method: "POST",
         headers: {
+          "content-type": "application/json",
           "x-azizam-user-action": "1",
           "x-azizam-csrf": session.csrf_token,
         },
+        body: JSON.stringify({
+          items_here: evidence.items_here,
+          library_items: evidence.library_items,
+        }),
       }, "folder");
     },
-    onSuccess: () => {
-      setDeleteAnnouncement("Media folder confirmed. Choose Remove missing items again when you are ready.");
+    onError: (error) => {
       void queryClient.invalidateQueries({ queryKey: ["library"] });
+      toast.error(failureCopy(error));
     },
-    onError: (error) => toast.error(failureCopy(error)),
   });
   const personOptions = canChooseOwner
     ? [
@@ -3091,7 +3187,7 @@ export default function LibraryPage() {
           </div>
         ) : null}
       </div>
-      {!isLoading && !showInitialError && goneAssets.length > 0 ? (
+      {!isLoading && !showInitialError && (goneAssets.length > 0 || missingItemCount > 0 || removalError) ? (
         <section
           id="gone-files"
           aria-label={
@@ -3101,7 +3197,13 @@ export default function LibraryPage() {
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <p className="text-meta" role="status">
-              {goneAssets.length === 1
+              {removalError
+                ? "Couldn't check the whole Library. Try Refresh."
+                : removalPending
+                ? "Checking the whole Library…"
+                : missingItemCount > 0
+                ? `${itemCount(missingItemCount)} missing across your Library.`
+                : goneAssets.length === 1
                 ? goneConfirmed
                   ? "1 file is no longer stored."
                   : "1 file is unavailable."
@@ -3112,7 +3214,7 @@ export default function LibraryPage() {
               <span className="text-muted-foreground">Receipts remain.</span>
             </p>
             <div className="flex flex-wrap items-center gap-x-4">
-              {ownGoneCount > 0 ? (
+              {missingItemCount > 0 ? (
                 <Button
                   variant="link"
                   className="h-auto min-h-6 min-w-6 px-0"
@@ -3124,13 +3226,18 @@ export default function LibraryPage() {
               <Button
                 variant="link"
                 className="h-auto min-h-6 min-w-6 px-0"
-                onClick={() => void refetch()}
+                onClick={refreshLibrary}
               >
                 Refresh library
               </Button>
             </div>
           </div>
-          <details
+          {folder?.state === "mismatch" && folder.path != null ? (
+            <p className="text-meta text-muted-foreground mt-1">
+              {folderChangedSentence(folder.path)}
+            </p>
+          ) : null}
+          {goneAssets.length > 0 ? <details
             className="group mt-2"
             open={goneOpen}
             onToggle={(event) => setGoneOpen(event.currentTarget.open)}
@@ -3146,59 +3253,7 @@ export default function LibraryPage() {
             >
               {goneTiles}
             </div>
-          </details>
-        </section>
-      ) : null}
-      {folder && folder.state !== "confirmed" ? (
-        <section
-          aria-label="Media folder"
-          className="border-border rounded-panel text-meta mt-4 space-y-2 border p-3"
-        >
-          {canChooseOwner ? (
-            <>
-              <p>
-                Azizam needs you to confirm which folder holds the media, once. Missing items can&apos;t be removed until you do.
-                {folder.state === "mismatch"
-                  ? " This folder isn't the one Azizam recorded."
-                  : ""}
-              </p>
-              <p>
-                <code>{folder.path}</code>
-              </p>
-              {folderUnverifiable ? (
-                <p>None of the Library&apos;s items can be checked against a file, so Azizam can&apos;t tell whether this is the media folder. Confirming it is your call.</p>
-              ) : (
-                <p>{`${folderHere} of ${folderItems} Library items have their files here.`}</p>
-              )}
-              {folderMostMissing ? (
-                <p>{`Only ${folderHere} of ${folderItems} items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.`}</p>
-              ) : null}
-              {folderItems > 0 && !folderHere ? (
-                <p>None of the Library&apos;s items have their files in this folder, so Azizam can&apos;t confirm it. Check that the media disk is mounted, then try again.</p>
-              ) : null}
-              {folderNeedsSecondClick && folderConfirmArmed ? (
-                <Button
-                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
-                  onClick={() => confirmFolderMutation.mutate()}
-                >
-                  {folderUnverifiable
-                    ? "Confirm, even though nothing can be checked"
-                    : "Confirm, even though most items are missing"}
-                </Button>
-              ) : (
-                <Button
-                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
-                  onClick={() => (folderNeedsSecondClick
-                    ? setFolderConfirmArmed(true)
-                    : confirmFolderMutation.mutate())}
-                >
-                  This is the right media folder
-                </Button>
-              )}
-            </>
-          ) : (
-            <p>Azizam&apos;s media folder needs the owner to confirm it once. Until then, missing items can&apos;t be removed.</p>
-          )}
+          </details> : null}
         </section>
       ) : null}
       {updating ? (
@@ -3291,20 +3346,18 @@ export default function LibraryPage() {
       <ConfirmDialog
         open={confirmingRemoval}
         onOpenChange={setConfirmingRemoval}
-        title={
-          hasNextPage
-            ? "Remove missing items?"
-            : `Remove ${ownGoneCount} missing ${ownGoneCount === 1 ? "item" : "items"}?`
-        }
-        description={
-          hasNextPage
-            ? "Removes your items whose files are gone, with their prompts, from your Library. Receipts and every stored file stay."
-            : "Removes them and their prompts from your Library. Receipts and every stored file stay."
-        }
-        confirmLabel="Remove"
+        title={removal.title}
+        description={removal.body}
+        confirmLabel={removal.confirmLabel}
+        cancelLabel={removal.blocked ? "Close" : "Cancel"}
+        confirmDisabled={removal.blocked}
         onConfirm={async () => {
+          const expectedMissing = missingItemCount;
+          const folderEvidence = folderToConfirm(folder);
           setDeleteAnnouncement("");
-          await removeMissingMutation.mutateAsync();
+          // An unconfirmed folder is recorded by this same choice, then the removal runs.
+          if (folderEvidence) await confirmFolderMutation.mutateAsync({ ...folderEvidence });
+          await removeMissingMutation.mutateAsync(expectedMissing);
         }}
       />
       <ConfirmDialog

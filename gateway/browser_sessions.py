@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from fastapi import Response
+from fastapi import Request, Response
 
 from gateway import accounts, admin_store, session_policy
 from gateway.admin_oidc import (
@@ -186,6 +186,22 @@ def _revoke_until(session: AdminSession) -> float:
 def end(session: AdminSession, *, path: Path) -> None:
     """Sign this sign-in out, whichever of its ids a copy of the cookie holds, and end the keys bound to it."""
     accounts.revoke_session(session.session_id, int(_revoke_until(session)), family_id=session.family_id, path=path)
+
+
+def end_incoming(request: Request, *, cookie: CookieConfig, signing_key: bytes, path: Path) -> None:
+    """Before issuing a new sign-in, end the live family the browser brought with it.
+
+    A missing or unusable cookie must not prevent sign-in. Read the request's cookie, never
+    the response's: two concurrent sign-ins may each issue a family, but both end the incoming one.
+    """
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return
+    try:
+        session = read(raw, signing_key=signing_key, path=path)
+    except SessionError:
+        return
+    end(session, path=path)
 
 
 def end_everywhere(session: AdminSession, *, path: Path) -> int:

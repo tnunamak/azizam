@@ -55,7 +55,10 @@ test.beforeAll(async ({ baseURL }) => {
 /** A signed-in context; each person signs in once (sign-in is throttled). */
 async function as(browser: Browser, email: string, baseURL: string) {
   if (!states.has(email)) {
-    const ctx = await browser.newContext({ baseURL });
+    const ctx = await browser.newContext({
+      baseURL,
+      storageState: { cookies: [], origins: [] },
+    });
     const page = await ctx.newPage();
     await page.goto("/sign-in/");
     await page.getByLabel("Email", { exact: true }).fill(email);

@@ -523,6 +523,28 @@
    "SAMPLER"
   ]
  },
+ "LTXVAddGuide": {
+  "input": {
+   "optional": {
+    "attention_mask": "MASK",
+    "iclora_parameters": "IC_LORA_PARAMETERS"
+   },
+   "required": {
+    "frame_idx": "INT",
+    "image": "IMAGE",
+    "latent": "LATENT",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING",
+    "strength": "FLOAT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ]
+ },
  "LTXVAddLatentGuide": {
   "input": {
    "optional": {
@@ -597,6 +619,21 @@
    "LATENT"
   ]
  },
+ "LTXVDualCFGGuider": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio_cfg": "FLOAT",
+    "model": "MODEL",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING",
+    "video_cfg": "FLOAT"
+   }
+  },
+  "output": [
+   "GUIDER"
+  ]
+ },
  "LTXVEmptyLatentAudio": {
   "input": {
    "optional": {},
@@ -626,6 +663,19 @@
    "LATENT"
   ]
  },
+ "LTXVLatentUpsampler": {
+  "input": {
+   "optional": {},
+   "required": {
+    "samples": "LATENT",
+    "upscale_model": "LATENT_UPSCALE_MODEL",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
  "LTXVPreprocess": {
   "input": {
    "optional": {},
@@ -648,6 +698,17 @@
   "output": [
    "LATENT",
    "LATENT"
+  ]
+ },
+ "LatentUpscaleModelLoader": {
+  "input": {
+   "optional": {},
+   "required": {
+    "model_name": "COMBO"
+   }
+  },
+  "output": [
+   "LATENT_UPSCALE_MODEL"
   ]
  },
  "LoadImage": {
@@ -1199,6 +1260,24 @@
    "IMAGE"
   ]
  },
+ "MiniMaxH3AddGuide": {
+  "input": {
+   "optional": {
+    "audio": "AUDIO",
+    "audio_vae": "VAE",
+    "image": "IMAGE",
+    "vae": "VAE"
+   },
+   "required": {
+    "frame_idx": "INT",
+    "latent": "LATENT",
+    "positive": "CONDITIONING"
+   }
+  },
+  "output": [
+   "CONDITIONING"
+  ]
+ },
  "MiniMaxH3ImageToVideo": {
   "input": {
    "optional": {
@@ -1283,6 +1362,17 @@
   },
   "output": [
    "STRING"
+  ]
+ },
+ "PrimitiveFloat": {
+  "input": {
+   "optional": {},
+   "required": {
+    "value": "FLOAT"
+   }
+  },
+  "output": [
+   "FLOAT"
   ]
  },
  "PrimitiveInt": {

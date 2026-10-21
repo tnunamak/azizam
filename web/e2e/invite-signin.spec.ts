@@ -24,6 +24,8 @@ test("invited member creates a password account and signs in again", async ({
 
   const guest = await browser.newContext({
     baseURL,
+    // Sign-in ends the incoming session family; never inherit the lane owner.
+    storageState: { cookies: [], origins: [] },
     permissions: ["clipboard-read", "clipboard-write"],
   });
   try {
@@ -40,6 +42,10 @@ test("invited member creates a password account and signs in again", async ({
     await expect(
       firstVisit.getByRole("heading", { name: "Your account is ready" }),
     ).toBeVisible();
+    expect(
+      (await page.request.get("/admin/api/session")).status(),
+      "accepting an invite preserves the lane owner's session",
+    ).toBe(200);
     await expect(
       firstVisit.getByText(/sign in with your email and password/),
     ).toBeVisible();
@@ -79,7 +85,10 @@ test("invited member creates a password account and signs in again", async ({
     ).toBeVisible();
     expect(ownerCalls).toEqual([]);
 
-    const returnVisit = await browser.newContext({ baseURL });
+    const returnVisit = await browser.newContext({
+      baseURL,
+      storageState: { cookies: [], origins: [] },
+    });
     try {
       const signIn = await returnVisit.newPage();
       await signIn.goto("/sign-in/");
@@ -91,6 +100,10 @@ test("invited member creates a password account and signs in again", async ({
         .getByRole("button", { name: "Sign in", exact: true })
         .click();
       await expect(signIn).toHaveURL(/^https?:\/\/[^/]+\/$/);
+      expect(
+        (await page.request.get("/admin/api/session")).status(),
+        "signing in again preserves the lane owner's session",
+      ).toBe(200);
     } finally {
       await returnVisit.close();
     }

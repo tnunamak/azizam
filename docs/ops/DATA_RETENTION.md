@@ -92,23 +92,45 @@ clears the signed-in person's own entries whose file is gone:
   recorded identity is never regenerated, even after every entry is removed.
   The marker is created with `O_EXCL`, so a filesystem without hard links (FAT,
   exFAT, some SMB mounts) works.
-- Existing installs and intentional moves need the owner, once. The Library
-  read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`. Until
-  the folder is confirmed, the owner sees a notice with the folder path, the
-  count "N of M Library items have their files here" and **This is the right
-  media folder** (`POST /me/api/media/confirm-folder`). Members see only that
-  the owner confirms the folder once. Confirmation refuses a folder that holds
-  none of a non-empty Library (409 `media_folder_no_matches`), writes a new
-  marker, records its ID and is audited as `media.folder.confirm`. It removes
-  nothing. Back up the marker with the media and the identity with the
-  database. Never confirm merely to dismiss the notice when the expected disk
-  is absent.
+- Existing installs and intentional moves need the owner, once, and only when
+  they remove something. What a folder holds never confirms it: a partial copy
+  or an old backup can hold most of the Library while the rest sits on the
+  original disk, and Remove missing would then delete those entries. The
+  Library read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`.
+  Nothing asks about it while browsing; missing items stay listed as
+  unavailable. When the owner chooses **Remove missing items** and the folder
+  is not confirmed, the confirmation dialog for that action asks: it names the
+  folder, says how many of the Library's checked items have no file there, and
+  offers **Remove N items**. That one choice calls
+  `POST /me/api/media/confirm-folder` and then removes. A folder that holds none
+  of a non-empty Library cannot be confirmed (409 `media_folder_no_matches`);
+  the dialog tells the owner to check the media disk instead. The Library
+  offers Remove missing only when the viewer-wide `removal_plan.missing_items`
+  from `GET /me/api/media` is positive; filters and whole-Library folder evidence
+  do not decide this count. The removal selects again and reports the actual
+  count. A `mismatch` also shows a warning in the
+  owner's list of unavailable items. Members see no folder detail; if they
+  choose Remove missing they are told Azizam can't remove missing items until
+  the owner confirms where the Library's files are kept. So the owner does not
+  have to wait for their own missing items, Settings shows **Confirm the media
+  folder** (owner only, only while the folder is unconfirmed or changed). It
+  gives the same plain explanation with the whole-Library counts and calls the
+  same `confirm-folder` route, with the same refusal when the folder holds none
+  of the Library's checked items. With only uncheckable entries, Settings warns
+  that Azizam cannot identify the folder from them; an empty Library asks nothing.
+  Confirmation writes a new marker into the folder it checked (the marker is
+  written relative to the opened directory, and refused if that directory is
+  not the one that was listed), records its ID and is audited as
+  `media.folder.confirm`. It removes nothing by itself. Back up the marker with
+  the media and the identity with the database. Never confirm when the expected
+  disk is absent.
 - A file is gone only when nothing in the folder holds its digest under any
   suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
   reads the folder, not the Library listing.
 - A finished job entry is deleted only when every asset its record names is
   gone. Otherwise each gone asset is hidden as that job made it
   (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+- A directory replacement after the final identity check but before the SQLite commit can still go undetected.
 - Prompts, hides and job deletions commit together in the media-jobs database or
   not at all. It never deletes a stored file or a receipt.
 - Removing a person's account deletes their hide rows with their prompts, in one

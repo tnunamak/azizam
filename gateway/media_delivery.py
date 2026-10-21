@@ -16,12 +16,15 @@ side). It never imports ``proxy``.
 from __future__ import annotations
 
 import contextvars
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from fastapi import Request
 from fastapi.responses import Response
+
+from PIL import __version__ as PILLOW_VERSION, features
 
 from gateway import media_metadata, provenance
 
@@ -191,12 +194,23 @@ def deliver_bytes(
     )
 
 
+def encoder_revision() -> str:
+    """Identify delivery tools without launching a subprocess or reading media bytes."""
+    executable = shutil.which("ffmpeg")
+    remuxer = "absent"
+    if executable:
+        stat = Path(executable).stat()
+        remuxer = f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"pillow={PILLOW_VERSION}:jpeg={features.version('jpg')}:webp={features.version('webp')}:remuxer={remuxer}"
+
+
 def ranged_delivery_response(
     request: Request,
     content: bytes,
     *,
     media_type: str,
     cache_control: str = "private, max-age=3600",
+    etag: str | None = None,
 ) -> Response:
     """Return bytes with HTTP Range support for browser media players.
 
@@ -209,6 +223,10 @@ def ranged_delivery_response(
         "cache-control": cache_control,
     }
     range_header = request.headers.get("range")
+    # If-Range requires strong comparison. Dates cannot match without a Last-Modified validator.
+    if_range = request.headers.get("if-range")
+    if etag is not None and if_range is not None and if_range != etag:
+        range_header = None
     if not range_header:
         headers["content-length"] = str(size)
         return Response(content=content, status_code=200, media_type=media_type, headers=headers)

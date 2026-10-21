@@ -300,9 +300,10 @@ def test_prompt_memory_db_fallback_and_markers_are_private(tmp_path, permissive_
     original_replace = os.replace
     scratch_modes = []
 
-    def inspect_replace(source, target):
-        scratch_modes.append(mode(Path(source)))
-        original_replace(source, target)
+    def inspect_replace(source, target, **kwargs):
+        # The marker is written relative to the open folder, so the scratch name is not a full path.
+        scratch_modes.append(stat.S_IMODE(os.stat(source, dir_fd=kwargs["src_dir_fd"]).st_mode))
+        original_replace(source, target, **kwargs)
 
     monkeypatch.setattr(prompt_memory.os, "replace", inspect_replace)
     prompt_memory._write_media_marker(folder, replace=True)

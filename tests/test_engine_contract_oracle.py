@@ -93,7 +93,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    # Freeze the original catalog separately from the data-only additions: three MOSS, two FLUX.2 Klein and one FIBO workflow.
+    # Freeze the original catalog separately from MOSS, FLUX.2 Klein, FIBO and keyframe additions.
     text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
     expected_added = {
         "fibo-2-edit-turbo": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
@@ -103,6 +103,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
         "flux2-klein": ("image", text_to_image),
         "flux2-klein-edit": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
+    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid", "video-ltx-2.5-keyframes"}
+    expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
+                           for name in keyframes})
     added = set(expected_added)
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]

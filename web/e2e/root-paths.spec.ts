@@ -91,7 +91,13 @@ test("local sign-in returns to a receipt deep link", async ({
     await page
       .getByLabel("Password", { exact: true })
       .fill("Portable UI test password 2026");
+    const signedIn = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/auth/api/login") &&
+        response.request().method() === "POST",
+    );
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    expect((await signedIn).status()).toBe(200);
     await expect(page).toHaveURL(/\/usage\/\?receipt=test-receipt$/);
     await expect(
       page.getByRole("heading", { name: "Usage", exact: true }),

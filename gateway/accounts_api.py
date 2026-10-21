@@ -150,14 +150,16 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if origin and urlsplit(origin).netloc != request.url.netloc:
             raise accounts.AccountError("origin_forbidden", "Use the sign-in page on this gateway.", 403)
 
-    def issue(user, payload):
+    def issue(request, user, payload, *, authenticated_at=None):
         path = path_provider()
         names = admin_store.effective_admin_roles("user", user["id"], path=path)
         role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
         cookie, key = cookie_provider(), signing_key_provider()
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path)
+        browser_sessions.end_incoming(request, cookie=cookie, signing_key=key, path=path)
+        session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path,
+                                         authenticated_at=authenticated_at)
         response = JSONResponse(payload)
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
         return response
@@ -185,7 +187,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
         accounts.clear_signin_refusal(str(user["id"]), path=path_provider())
-        return issue(user, {"next": safe_browser_return_to(body.return_to)})
+        return issue(request, user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.post("/auth/api/invite")
     def inspect(request: Request, body: InspectInvite):
@@ -200,6 +202,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         opts, path = options(), path_provider()
         accounts.throttle(client_ip(request), body.email, path=path)
         oidc_user_id = None
+        authenticated_at = None
         if body.password is None:
             session = session_reader(request)
             if not opts["oidc"] or not session:
@@ -214,13 +217,16 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             if invite["email"] and not accounts.oidc_email_verified(user["id"], path=path):
                 raise accounts.AccountError("verified_email_required", "Verify your email with your identity provider first.", 403)
             oidc_user_id = user["id"]
+            # Accepting a plan is no new proof of identity (D40). Preserve unknown and legacy times too.
+            authenticated_at = session.last_authenticated
         elif not opts["built_in"]:
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to accept this invitation.", 403)
         if not signing_key_provider():
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
                                                        path=path, oidc_user_id=oidc_user_id)
-        return issue(user, {"next": "/", "app": app, "credential": credential})
+        return issue(request, user, {"next": "/", "app": app, "credential": credential},
+                     authenticated_at=authenticated_at)
 
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):
