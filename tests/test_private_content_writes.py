@@ -248,6 +248,38 @@ def test_chunked_stt_upload_spool_is_private(monkeypatch, tmp_path, permissive_u
     assert seen == {"file_mode": 0o600, "dir_mode": 0o700}
 
 
+def test_chunked_stt_ffmpeg_output_exists_private_before_execution(monkeypatch, tmp_path, permissive_umask):
+    from gateway import stt_chunking
+    from gateway.engine_protocol.chunked_stt import _RunWire
+    from tests.test_engine_protocol_adapter import _stt_execution
+
+    spool = tmp_path / "spool"
+    workspace = spool / "request"
+    workspace.mkdir(parents=True)
+    source = workspace / "upload.bin"
+    source.write_bytes(b"audio")
+    upload = SimpleNamespace(file=source.open("rb"))
+    execution = _stt_execution(spool_dir=str(spool))
+    cleanup = stt_chunking.SttCleanupOwner()
+    run = SimpleNamespace(
+        execution=execution, workspace=workspace, cleanup=cleanup, resource_lease=None,
+        cancellation_waiters=(), deadline_at=9999999999, on_cancel=lambda: None,
+    )
+    seen = {}
+
+    async def fake_command(command, **_kwargs):
+        output = Path(command[-1])
+        seen["exists"] = output.exists()
+        seen["mode"] = mode(output)
+        write_wav(output)
+
+    monkeypatch.setattr(stt_chunking, "run_media_command", fake_command)
+    result = asyncio.run(_RunWire("test", None, "unused", run).prepared_wav(upload))
+    upload.file.close()
+    assert seen == {"exists": True, "mode": 0o600}
+    assert mode(result) == 0o600
+
+
 def test_prompt_memory_db_fallback_and_markers_are_private(tmp_path, permissive_umask, monkeypatch):
     db = tmp_path / "prompt-state" / "nested" / "prompts.db"
     conn = prompt_memory._connect(db)
