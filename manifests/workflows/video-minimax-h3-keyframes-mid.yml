@@ -9,7 +9,7 @@ purpose: Animate through three pictures, with stereo sound
 description: Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.
 source: local
 trusted: true
-typical_seconds: 135  # parent i2v figure; keyframes not yet timed on this host (see docs/workflows)
+typical_seconds: 120
 inputs:
   prompt:
     label: What to make
