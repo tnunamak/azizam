@@ -78,5 +78,6 @@ requires:
   - role: adapter
     path: rapid_moss/rapid-moss-4step/
   custom_nodes:
+  - RMBG
   - RapidMOSSAdapter
 license: Apache-2.0

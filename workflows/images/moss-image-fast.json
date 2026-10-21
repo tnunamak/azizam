@@ -5,7 +5,19 @@
         "prompt_node": "5",
         "size_node": "10",
         "seed_node": "9",
-        "batch_size_node": "10"
+        "batch_size_node": "10",
+        "background_removal": {
+            "save_node": "14",
+            "plain_image": [
+                "13",
+                0
+            ],
+            "transparent_image": [
+                "15",
+                0
+            ],
+            "rmbg_node": "15"
+        }
     },
     "1": {
         "class_type": "UNETLoader",
@@ -150,6 +162,24 @@
                 "13",
                 0
             ]
+        }
+    },
+    "15": {
+        "class_type": "RMBG",
+        "inputs": {
+            "image": [
+                "13",
+                0
+            ],
+            "model": "RMBG-2.0",
+            "sensitivity": 1.0,
+            "process_res": 1024,
+            "mask_blur": 2,
+            "mask_offset": 0,
+            "invert_output": false,
+            "refine_foreground": true,
+            "background": "Alpha",
+            "background_color": "#00000000"
         }
     }
 }

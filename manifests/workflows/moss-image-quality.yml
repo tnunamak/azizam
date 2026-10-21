@@ -78,6 +78,8 @@ bindings:
       - node: '10'
         input: batch_size
 requires:
+  custom_nodes:
+  - RMBG
   models:
   - role: diffusion_model
     path: diffusion_models/moss_image_sft_bf16.safetensors

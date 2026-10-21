@@ -1,8 +1,8 @@
 {
-  "id": "c5bedf81-2eea-551e-bddc-9df80f253d18",
+  "id": "b29c83b0-5943-5ec0-bebd-7ccdcf8085cf",
   "revision": 0,
-  "last_node_id": 14,
-  "last_link_id": 14,
+  "last_node_id": 15,
+  "last_link_id": 15,
   "nodes": [
     {
       "id": 1,
@@ -697,7 +697,8 @@
           "localized_name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            14
+            14,
+            15
           ],
           "slot_index": 0
         }
@@ -752,6 +753,147 @@
       },
       "widgets_values": [
         "moss-image-fast"
+      ]
+    },
+    {
+      "id": 15,
+      "type": "RMBG",
+      "pos": [
+        2410,
+        162
+      ],
+      "size": [
+        315,
+        290
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "localized_name": "image",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "name": "model",
+          "localized_name": "model",
+          "type": "COMBO",
+          "widget": {
+            "name": "model"
+          },
+          "link": null
+        },
+        {
+          "name": "sensitivity",
+          "localized_name": "sensitivity",
+          "type": "FLOAT",
+          "widget": {
+            "name": "sensitivity"
+          },
+          "link": null
+        },
+        {
+          "name": "process_res",
+          "localized_name": "process_res",
+          "type": "INT",
+          "widget": {
+            "name": "process_res"
+          },
+          "link": null
+        },
+        {
+          "name": "mask_blur",
+          "localized_name": "mask_blur",
+          "type": "INT",
+          "widget": {
+            "name": "mask_blur"
+          },
+          "link": null
+        },
+        {
+          "name": "mask_offset",
+          "localized_name": "mask_offset",
+          "type": "INT",
+          "widget": {
+            "name": "mask_offset"
+          },
+          "link": null
+        },
+        {
+          "name": "background",
+          "localized_name": "background",
+          "type": "COMBO",
+          "widget": {
+            "name": "background"
+          },
+          "link": null
+        },
+        {
+          "name": "background_color",
+          "localized_name": "background_color",
+          "type": "COLORCODE",
+          "widget": {
+            "name": "background_color"
+          },
+          "link": null
+        },
+        {
+          "name": "invert_output",
+          "localized_name": "invert_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_output"
+          },
+          "link": null
+        },
+        {
+          "name": "refine_foreground",
+          "localized_name": "refine_foreground",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "refine_foreground"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "localized_name": "IMAGE",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "localized_name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "MASK_IMAGE",
+          "localized_name": "MASK_IMAGE",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RMBG"
+      },
+      "widgets_values": [
+        "RMBG-2.0",
+        1.0,
+        1024,
+        2,
+        0,
+        "Alpha",
+        "#00000000",
+        false,
+        true
       ]
     }
   ],
@@ -865,6 +1007,14 @@
       13,
       0,
       14,
+      0,
+      "IMAGE"
+    ],
+    [
+      15,
+      13,
+      0,
+      15,
       0,
       "IMAGE"
     ]

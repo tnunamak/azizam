@@ -1,8 +1,8 @@
 {
-  "id": "afee0ae1-9e17-5ae9-a73e-861a6b8d9cb9",
+  "id": "31b6d4cb-4129-5bd1-883c-4199aaece69e",
   "revision": 0,
-  "last_node_id": 11,
-  "last_link_id": 12,
+  "last_node_id": 12,
+  "last_link_id": 13,
   "nodes": [
     {
       "id": 1,
@@ -453,7 +453,8 @@
           "localized_name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            12
+            12,
+            13
           ],
           "slot_index": 0
         }
@@ -617,6 +618,147 @@
       "widgets_values": [
         "flux2-vae.safetensors"
       ]
+    },
+    {
+      "id": 12,
+      "type": "RMBG",
+      "pos": [
+        2015,
+        162
+      ],
+      "size": [
+        315,
+        290
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "localized_name": "image",
+          "type": "IMAGE",
+          "link": 13
+        },
+        {
+          "name": "model",
+          "localized_name": "model",
+          "type": "COMBO",
+          "widget": {
+            "name": "model"
+          },
+          "link": null
+        },
+        {
+          "name": "sensitivity",
+          "localized_name": "sensitivity",
+          "type": "FLOAT",
+          "widget": {
+            "name": "sensitivity"
+          },
+          "link": null
+        },
+        {
+          "name": "process_res",
+          "localized_name": "process_res",
+          "type": "INT",
+          "widget": {
+            "name": "process_res"
+          },
+          "link": null
+        },
+        {
+          "name": "mask_blur",
+          "localized_name": "mask_blur",
+          "type": "INT",
+          "widget": {
+            "name": "mask_blur"
+          },
+          "link": null
+        },
+        {
+          "name": "mask_offset",
+          "localized_name": "mask_offset",
+          "type": "INT",
+          "widget": {
+            "name": "mask_offset"
+          },
+          "link": null
+        },
+        {
+          "name": "background",
+          "localized_name": "background",
+          "type": "COMBO",
+          "widget": {
+            "name": "background"
+          },
+          "link": null
+        },
+        {
+          "name": "background_color",
+          "localized_name": "background_color",
+          "type": "COLORCODE",
+          "widget": {
+            "name": "background_color"
+          },
+          "link": null
+        },
+        {
+          "name": "invert_output",
+          "localized_name": "invert_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_output"
+          },
+          "link": null
+        },
+        {
+          "name": "refine_foreground",
+          "localized_name": "refine_foreground",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "refine_foreground"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "localized_name": "IMAGE",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "localized_name": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "MASK_IMAGE",
+          "localized_name": "MASK_IMAGE",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RMBG"
+      },
+      "widgets_values": [
+        "RMBG-2.0",
+        1.0,
+        1024,
+        2,
+        0,
+        "Alpha",
+        "#00000000",
+        false,
+        true
+      ]
     }
   ],
   "links": [
@@ -713,6 +855,14 @@
       8,
       0,
       9,
+      0,
+      "IMAGE"
+    ],
+    [
+      13,
+      8,
+      0,
+      12,
       0,
       "IMAGE"
     ]
