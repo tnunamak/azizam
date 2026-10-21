@@ -103,7 +103,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
-from gateway import video_subject, thumbnails
+from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
@@ -14318,6 +14318,7 @@ app.include_router(
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
+        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),

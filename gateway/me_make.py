@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.public_failure import PublicFailure, describe, project_job
+from gateway import output_availability
 from gateway.receipts import RouteReceipt, new_request_id
 
 log = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ def add_make_routes(
     media_jobs_path: PathProvider,
     receipts_path: PathProvider,
     runtime: MakeRuntime | None,
+    asset_path_resolver: output_availability.AssetPathResolver | None = None,
 ) -> None:
     """Add the make routes to the person API router (prefix ``/me/api``)."""
 
@@ -193,7 +195,7 @@ def add_make_routes(
             jobs = [] if app is None else media_jobs.recent(
                 limit, app_ids=[str(app["id"])], status=status, path=_resolve(media_jobs_path),
             )
-            return _json({"jobs": [_client_view(job) for job in jobs]})
+            return _json({"jobs": [_client_view(job, asset_path_resolver=asset_path_resolver) for job in jobs]})
         except PublicFailure as exc:
             return _error(exc)
 
@@ -206,7 +208,8 @@ def add_make_routes(
             user, admin_path = resolved
             jobs_path = _resolve(media_jobs_path)
             return _json({"job": _client_view(_own_make_job(job_id, str(user["id"]),
-                                                            admin_path=admin_path, jobs_path=jobs_path))})
+                                                            admin_path=admin_path, jobs_path=jobs_path),
+                                              asset_path_resolver=asset_path_resolver)})
         except PublicFailure as exc:
             return _error(exc)
 
@@ -576,7 +579,8 @@ def _client_job(job_id: str, jobs_path: Path) -> dict[str, Any]:
     return _client_view(job) if job is not None else {}
 
 
-def _client_view(job: Mapping[str, Any]) -> dict[str, Any]:
+def _client_view(job: Mapping[str, Any], *,
+                 asset_path_resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
     """The client's view of a job. A running job whose cancel has not settled
     shows ``cancel_requested``: its work may still be running, but it will
     publish nothing."""
@@ -584,7 +588,7 @@ def _client_view(job: Mapping[str, Any]) -> dict[str, Any]:
     if (job.get("status") == media_jobs.STATUS_RUNNING
             and (job.get("metadata") or {}).get("cancel_requested_at")):
         view["status"] = CANCEL_REQUESTED
-    return view
+    return output_availability.project(view, asset_path_resolver)
 
 
 def _bounded_limit(raw: str | None) -> int:
