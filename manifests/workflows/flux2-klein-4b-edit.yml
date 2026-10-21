@@ -61,7 +61,6 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/flux2-klein-4b-edit.json
-    route_bound_inputs: [seed]
     map:
       prompt:
         - node: "6"

@@ -20003,7 +20003,9 @@ def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: st
         standard_portable_names.update(
             str(name) for name in route_bound if isinstance(name, str) and name
         )
-    return tuple(name for name in mapping.keys() if name not in standard_portable_names)
+    # Route-owned bindings need not declare a public extension input.
+    inputs = manifest.get("inputs") or {}
+    return tuple(name for name in mapping if name in inputs and name not in standard_portable_names)
 
 
 def _manifest_required_route_bound_inputs(
