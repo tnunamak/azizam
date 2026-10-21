@@ -11,12 +11,11 @@ from pathlib import Path
 def ensure_private_dir(path: Path | str) -> Path:
     """Create ``path`` with mode 0700 and tighten that directory if it exists."""
     path = Path(path)
-    for component in (path, *path.parents):
-        try:
-            if stat.S_ISLNK(component.lstat().st_mode):
-                raise NotADirectoryError(component)
-        except FileNotFoundError:
-            pass
+    original = path
+    # Resolve deployment aliases (for example a symlinked home), but never the leaf.
+    path = Path(os.path.realpath(path.parent)) / path.name
+    if path.is_symlink():
+        raise NotADirectoryError(path)
     missing: list[Path] = []
     current = path
     while not current.exists():
@@ -32,7 +31,7 @@ def ensure_private_dir(path: Path | str) -> Path:
         _set_private_directory_mode(directory)
     if path.exists():
         _set_private_directory_mode(path)
-    return path
+    return original
 
 
 def _set_private_directory_mode(path: Path) -> None:

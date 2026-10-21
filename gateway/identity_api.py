@@ -527,6 +527,20 @@ def scene_extras(result: ids.SceneResult) -> dict[str, Any]:
     }
 
 
+def stored_scene_extras(result: ids.SceneResult) -> dict[str, Any]:
+    """Keep async diagnostics without prompt text or free-form person descriptions."""
+    extras = scene_extras(result)
+    extras.pop("prompt_used")
+    extras["people"] = [{k: v for k, v in person.items() if k not in {"label", "reason"}}
+                        for person in result.people]
+    extras["warnings"] = [
+        {k: v for k, v in warning.items()
+         if k == "code" or (k == "param" and v in {"prompt", "people", "image"})}
+        for warning in result.warnings
+    ]
+    return extras
+
+
 def scene_payload(result: ids.SceneResult, item: Mapping[str, Any]) -> dict[str, Any]:
     import time
 

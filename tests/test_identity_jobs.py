@@ -96,8 +96,8 @@ class IdentityJobTests(unittest.TestCase):
         self.assertEqual(payload["attempts"], result().attempts)
         self.assertEqual(payload["seconds"], 1.5)
         self.assertEqual(payload["warnings"], [{"code": "pose_rewritten", "param": "prompt"}])
-        self.assertEqual(payload["refinements"], [{"accepted": True}])
-        self.assertNotIn("people", payload)
+        self.assertEqual(payload["refinements"], result().refinements)
+        self.assertEqual(payload["people"], [{}])
 
         events = media_jobs.events(body["id"], audience="internal", path=self.db)
         self.assertIn("progress", [e.get("event_type") or e.get("type") or e.get("event") for e in events])

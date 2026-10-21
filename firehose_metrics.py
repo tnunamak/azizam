@@ -327,6 +327,10 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
     """
     flush_persisted()
     target = path or _DEFAULT_CACHE_PATH
+    # The writer and compactor share this lock; no live replacement can be swept.
+    with _LOG_LOCK:
+        for orphan in target.parent.glob(f".{target.name}.*.tmp"):
+            orphan.unlink(missing_ok=True)
     if not target.is_file():
         return 0
     now = time.time()

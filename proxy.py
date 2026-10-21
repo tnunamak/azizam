@@ -15225,6 +15225,7 @@ async def _run_identity_job(
                 _ADMISSION_WORKER.reset(worker_token)
             item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
+            asset.update(identity_api.stored_scene_extras(result))
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_SUCCEEDED, progress=100, add_assets=[asset],
                 metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
@@ -15243,6 +15244,12 @@ async def _run_identity_job(
                 "face_too_small": "A reference face is too small; choose a closer photo.",
                 "ambiguous_faces": "Reference faces could not be matched; give each person a face box.",
             }.get(getattr(exc, "code", None), "The identity request could not be completed; check its photos and settings.")
+            # These validation errors contain only fixed copy and numeric limits.
+            if getattr(exc, "code", None) == "invalid_request" and (
+                re.fullmatch(r"people\[\]\.image \d+ has no matching photo", str(exc))
+                or re.fullmatch(r"at most \d+ people are supported", str(exc))
+            ):
+                message = str(exc)
             _identity_job_failed(job_id, message)
         except asyncio.CancelledError:
             _identity_job_failed(job_id, "The gateway stopped before the job finished.")
@@ -20620,7 +20627,8 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                         )
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
-            for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
+            for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                         *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
                 if person_id is None and (before is None or int(path.stat().st_mtime) <= before):
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
@@ -20945,7 +20953,8 @@ def _delete_image_media_job_payload(job_id: str) -> None:
     with _MEDIA_PAYLOAD_LOCK:
         _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
-                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
+                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(f".{job_id}.json.*.tmp")):
             try:
                 path.unlink(missing_ok=True)
             except Exception:
@@ -20964,10 +20973,11 @@ def _prune_orphaned_media_job_payloads() -> int:
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             return removed
         for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
-                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
-            job_id = path.name.split(".json", 1)[0]
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(".mj_*.json.*.tmp")):
+            job_id = path.name.lstrip(".").split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if path.name.endswith(".tmp") or (job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES):
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed
@@ -23446,10 +23456,14 @@ async def gateway_media_job_content(job_id: str, request: Request):
         )
     job = output_availability.project(job, asset_cache_path)
     if job.get("output_state") in {"missing", "unavailable"}:
+        retryable = job["output_state"] == "unavailable"
         return JSONResponse({
-            "error": {"code": "media_job_outputs_missing", "message": "The job's output files are unavailable."},
+            "error": {"type": "server_error",
+                      "code": "media_job_outputs_unavailable" if retryable else "media_job_outputs_missing",
+                      "message": "The job's output files are unavailable."},
             "output_state": job["output_state"], "assets": job["assets"],
-        }, status_code=410)
+        }, status_code=503 if retryable else 410,
+           headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)

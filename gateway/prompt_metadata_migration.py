@@ -28,7 +28,7 @@ CACHE_MUTATION_LOCK = threading.RLock()
 _SCAN_LOCK = threading.Lock()
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _LEGACY_SCRATCH = re.compile(r"^[0-9a-f]{32}\.(?:in|out|probe)\.[a-z0-9]+$")
-_STAGING = re.compile(r"^([0-9a-f]{64})\.([a-z0-9]+)\.tmp$")
+_STAGING = re.compile(r"^\.?([0-9a-f]{64})\.([a-z0-9]+)(?:\.[a-zA-Z0-9_-]+)?\.tmp$")
 _ASSET_ID = re.compile(r"^(?:img|aud|vid)_([0-9a-f]{64})$")
 _DDL = """CREATE TABLE IF NOT EXISTS prompt_metadata_migration (
     path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version INTEGER NOT NULL

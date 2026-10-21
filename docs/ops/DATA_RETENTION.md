@@ -150,6 +150,47 @@ Verification uses temporary stores and an isolated checkout. No live databases
 were inspected or changed. This inventory covers gateway-owned retention;
 external engine history, filesystem cleanup jobs and backups are UNVERIFIED.
 
+## Private files and deployment
+
+New content files, database files and atomic replacement stages use mode `0600`.
+Content directories use mode `0700`. Existing databases keep their current modes
+until the operator migrates them. Symlinked ancestor directories are supported;
+a symlink at the private directory's final component is refused. Staging files
+use `.<filename>.<random>.tmp`. Job deletion, prompt erasure and orphan pruning
+recognize these names as well as legacy `<filename>.tmp` stages. The metadata
+migration removes abandoned media stages after one hour. Firehose compaction
+removes abandoned `.key_activity.jsonl.*.tmp` stages under its writer lock.
+
+Run `scripts/check-private-modes --root /path/to/checkout` to report permissions
+below `data/` and `cache/`. It reports counts, without content filenames. Add
+`--fix` to set regular files to `0600` and directories to `0700`; symlinks are
+refused. Schedule this repair during an operator maintenance window.
+
+Run `scripts/check-missing-outputs --database /path/to/checkpointed/media_jobs.db
+--media-dir /path/to/media` as one command against a stable, checkpointed SQLite
+snapshot. It reports missing successful-job output counts by media kind without
+identifiers or store changes. It refuses a nonempty WAL or a database that changes
+during inspection. Historical job success remains recorded if bytes are gone.
+Content requests return `410` for missing output and `503` with `Retry-After`
+for temporary storage errors.
+
+The unit sets `UMask=0077` for private file creation by the service and its
+children, and `LimitCORE=0` to prevent core dumps from retaining request content.
+**Deployment requires reinstalling the unit:** the installed systemd unit is a
+copy, so editing the checkout alone does not update these settings. From the
+deployed checkout, run:
+
+```sh
+cp azizam.service ~/.config/systemd/user/azizam.service
+systemctl --user daemon-reload
+scripts/safe-restart
+```
+
+Voice reference files (`voice_ref`) are private too. A backend that opens their
+paths must run under the gateway's same Unix UID; a different UID cannot read
+mode-`0600` references or traverse mode-`0700` directories. Use the existing
+uploaded-reference interface when the backend cannot share that UID.
+
 ## Open owner questions
 
 These are owner choices. Until the owner decides, the gateway keeps the data
