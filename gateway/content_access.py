@@ -26,7 +26,8 @@ class Viewer:
     key_hash: str | None = None  # appless credentials only
     owner_keys: frozenset[str] = frozenset()
     is_owner: bool = False
-    privacy_permission: bool = False  # sessions set true; delegated credentials must opt in
+    privacy_permission: bool = False
+    delegated: bool = False  # App keys and MCP grants; sessions are not delegated
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class PromptRecord:
     asset_id: str
     person_id: str | None
     shares: tuple[Share, ...] = ()
+    app_id: str | None = None  # trusted creator App, not current accountability
     available: bool = True
     kind: Literal["prompt"] = field(default="prompt", init=False)
 
@@ -98,6 +100,7 @@ class JobRecord:
 @dataclass(frozen=True)
 class RequestHistoryRecord:
     person_id: str | None
+    app_id: str | None = None
     available: bool = True
     kind: Literal["request_history"] = field(default="request_history", init=False)
 
@@ -105,6 +108,7 @@ class RequestHistoryRecord:
 @dataclass(frozen=True)
 class DebugCaptureRecord:
     person_id: str | None
+    app_id: str | None = None
     available: bool = True
     kind: Literal["debug_capture"] = field(default="debug_capture", init=False)
 
@@ -149,6 +153,19 @@ def _shared(viewer: Viewer, record: CreationRecord | PromptRecord) -> Shared | D
     return DENY
 
 
+def _maker_access(
+    viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord,
+) -> bool:
+    same_app = bool(viewer.app_id and record.app_id == viewer.app_id)
+    if record.person_id is None:
+        # An App-only row is never any person's content, including the App's
+        # accountable person. A privacy grant cannot turn it into Self.
+        return viewer.person_id is None and same_app
+    if not viewer.person_id or record.person_id != viewer.person_id:
+        return False
+    return not viewer.delegated or same_app or viewer.privacy_permission
+
+
 def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
     if not record.available:
         return DENY
@@ -170,26 +187,13 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
                 return OWN
         elif own and action in {"read", "cancel"}:
             return OWN
-    elif isinstance(record, (PromptRecord, ChatRecord)):
-        self = bool(viewer.privacy_permission and viewer.person_id and record.person_id == viewer.person_id)
-        if isinstance(record, PromptRecord):
-            if self and action in {"read", "delete", "reuse"}:
-                return OWN
-            if action == "read" and viewer.privacy_permission:
-                return _shared(viewer, record)
-        elif self and action in {"read", "delete", "reuse"}:
-            if viewer.app_id:
-                same_scope = record.app_id == viewer.app_id
-            else:
-                same_scope = bool(viewer.key_hash and not record.app_id
-                                  and record.owner_key_hash == viewer.key_hash)
-            if same_scope:
-                return OWN
-    elif isinstance(record, (RequestHistoryRecord, DebugCaptureRecord)):
-        if (viewer.privacy_permission and viewer.person_id
-                and record.person_id == viewer.person_id
-                and (action in {"read", "delete"} or (isinstance(record, RequestHistoryRecord) and action == "reuse"))):
+    elif isinstance(record, (PromptRecord, ChatRecord, RequestHistoryRecord, DebugCaptureRecord)):
+        allowed_actions = {"read", "delete"} if isinstance(record, DebugCaptureRecord) else {"read", "delete", "reuse"}
+        if action in allowed_actions and _maker_access(viewer, record):
             return OWN
+        if (isinstance(record, PromptRecord) and action == "read"
+                and (not viewer.delegated or viewer.privacy_permission)):
+            return _shared(viewer, record)
     return DENY
 
 

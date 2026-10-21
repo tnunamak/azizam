@@ -479,16 +479,21 @@ def conversation_row_visible(row: Mapping[str, Any] | None, scope: Mapping[str, 
         return False
     if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
         return False
+    # OWNER_VISIBILITY_STEP3: preserve today's App/legacy-key scope even though
+    # the target matrix allows a person's cross-App reads by session or grant.
+    same_scope = (row.get("app_id") == scope["app_id"] if scope["app_id"] else
+                  not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"])
+    if not same_scope:
+        return False
     if not scope["person_id"]:
-        # OWNER_VISIBILITY_STEP3: legacy personless chats currently match a
-        # personless caller on the same App/key. Self+App requires a person.
-        if scope["app_id"]:
-            return row.get("app_id") == scope["app_id"]
-        return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+        # OWNER_VISIBILITY_STEP3: the legacy appless null-person/key match is
+        # looser than App-maker access, which requires an exact non-null App.
+        return True
     from gateway.content_access import ChatRecord, Own, Viewer, decide
-    # OWNER_VISIBILITY_STEP3: delegated prompt/chat privacy permission is not
-    # enforced today. Remove this unconditional grant when credentials carry it.
-    viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"], privacy_permission=True,
+    # OWNER_VISIBILITY_STEP3: this old scope carries no delegation permission.
+    # Preserve its delegated/appless reads until the caller carries provenance.
+    viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"],
+                    privacy_permission=True, delegated=True,
                     key_hash=scope["owner_key_hash"] if not scope["app_id"] else None)
     content = ChatRecord(row.get("person_id"), row.get("app_id"), row.get("owner_key_hash"))
     return isinstance(decide(viewer, content, "read"), Own)

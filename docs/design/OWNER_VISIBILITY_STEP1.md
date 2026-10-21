@@ -14,18 +14,33 @@ are resolved by the existing trusted callers, outside the pure core.
 | Kind | Read | Delete | Reuse | Share | Link | Cancel |
 |---|---|---|---|---|---|---|
 | creation | Own or Shared | Own | Own | Own and sole Maker | Own or Shared | Deny |
-| prompt | Self with privacy permission, or included share with privacy permission | Self with privacy permission | Self with privacy permission | Deny | Deny | Deny |
-| chat | Self+App with privacy permission | Self+App with privacy permission | Self+App with privacy permission | Deny | Deny | Deny |
+| prompt | Self/App-maker (R4), or included share | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
+| chat | Self/App-maker (R4) | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
 | voice | Own | Own | Own | Deny | Deny | Deny |
 | receipt | Own | Deny | Deny | Deny | Deny | Deny |
 | job | Own | Deny | Deny | Deny | Deny | Own |
-| request_history | Self with privacy permission | Self with privacy permission | Self with privacy permission | Deny | Deny | Deny |
-| debug_capture | Self with privacy permission | Self with privacy permission | Deny | Deny | Deny | Deny |
+| request_history | Self/App-maker (R4) | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
+| debug_capture | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny | Deny |
 
-This includes the lead's 2026-10-20 amendment. Sessions set privacy permission;
-App keys and MCP grants need an explicit grant. App accountability never grants
-prompts, chats, history or debug captures. The new permission has no credential
-storage or issuance surface in this step. No history/debug capture route is added.
+This includes the lead's round-4 refinement on 2026-10-20, which supersedes the
+earlier blanket permission requirement and v3's chat Self+App restriction:
+
+- A session reads its own person's content across Apps without a privacy flag.
+- A delegated Viewer (App key or MCP grant) reads its person's content made by
+  its exact non-null App without the flag. Other App/session origins require
+  privacy_permission. The same identity rule applies to allowed delete/reuse
+  actions; debug_capture never permits reuse.
+- A row with no person belongs to its creator App. Only a caller with no person
+  and the exact same non-null app_id satisfies App-maker; no person, including
+  an accountable owner or a holder of privacy permission, may read that row.
+- Included prompt shares remain read-only. A delegated recipient needs privacy
+  permission; a recipient session does not.
+
+Creator app_id is trusted submission attribution, never an inference from current
+App accountability or an intersection of readable owner keys. O6 still applies
+only to creations, voices, jobs and receipts. The new delegation/permission fields
+have no credential storage or issuance surface in this step; no history/debug
+capture route is added.
 Shares are typed, supplied evidence in pure tests; there is no share store or
 production share resolver yet. Own precedes Shared. An unavailable resource is
 Denied even if a stale share exists. A prompt share selects its maker's row only.
@@ -34,11 +49,11 @@ Denied even if a stale share exists. A prompt share selects its maker's row only
 
 | Source | Current main authority | Viewer identity and principal set | Privacy permission |
 |---|---|---|---|
-| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | True |
-| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Explicit credential permission |
-| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Chat continuation also requires the same non-null person | Explicit credential permission |
-| Trusted address | `admin_runtime.runtime_identity_for_trusted_address` (2457-2482 on main) | `app:<id>`, no person; never the shared network as a person | False; cannot satisfy Self |
-| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Explicit connection permission; session-like identity does not confer permission |
+| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | Not needed (`delegated=False`) |
+| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Only cross-App/session person content needs it (`delegated=True`) |
+| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Person content requires Self and explicit privacy permission | Only cross-App/session person content needs it (`delegated=True`) |
+| Trusted address | `admin_runtime.runtime_identity_for_trusted_address` (2457-2482 on main) | `app:<id>`, no person; never the shared network as a person | False; exact-App App-maker rows only |
+| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Cross-App/session person content needs explicit connection permission (`delegated=True`) |
 | Control-plane service account | Runtime authentication rejects it on content routes | No content Viewer | False |
 | Missing identity | No trusted person, App, credential or principal | No content basis | False |
 
@@ -59,11 +74,15 @@ exceptions rather than moving them into the matrix:
 2. `proxy._asset_access_allowed` and `_video_job_access_allowed` still permit
    absent ownership for a caller with no identity. The video exception was also
    present in r18, but the step-1 build note mentioned only the asset exception.
-3. `retention.conversation_row_visible` still accepts personless same-App/key
-   rows. For rows with a person it calls the core with a temporary privacy grant,
-   preserving delegated reads that currently have no privacy-permission flag.
-   The three authenticated prompt reads in proxy retain the same omission and
-   have their own markers. Browser Library prompt reads remain session reads.
+3. `retention.conversation_row_visible` retains today's narrow App/legacy-key
+   scope before calling the core. Its appless null-person/key match remains a
+   legacy exception; exact-App App-maker access is now part of the R4 matrix.
+   The old scope carries no delegation permission, so its existing delegated
+   reads keep a temporary grant at the call site. `_responses_row_visible`
+   explicitly names this delegation. Key-API prompt reads in
+   `_tracked_video_fields`, `proxy_graph_video_content`, and the key-fetcher
+   md=full restore in `_signed_asset_content_response` have their own markers.
+   Browser Library prompt reads remain session reads.
 4. REST and MCP retention ledgers still accept today's management-role access.
    A request-specific ledger is classified `content:receipt:read`; the ledger
    without a request id is `none`. Step 3 must require Own before reading a
@@ -83,7 +102,7 @@ line references here name current-main symbols rather than stale v3 offsets.
 | Library scope | `_media_scope` moved from 461-480 to 737-759; `_member_media_scope` starts at 761; receipt/job filters moved to 1370/1381 before this branch | Remove the actual Everyone, person and local-network branches; do not edit the old line ranges |
 | Activity scope | `user_runtime.build_user_activity_snapshot` uses `app_ids=None if owner else owned` at 311 and still returns `scope=instance` at 320 | Owner feed and scope label still need removal |
 | Asset/video checks | `_asset_access_allowed` moved to 6969; `_video_job_access_allowed` to 9374 | Preserve signed-delivery checks and both no-identity exceptions until the switch |
-| Responses | `_responses_row_visible` at 25886 delegates to `retention.conversation_row_visible` at 472 | There is already one shared Responses retention/access predicate; change that predicate, not a duplicate in proxy. Null-person equality is a separate legacy exception |
+| Responses | `_responses_row_visible` at 25886 delegates to `retention.conversation_row_visible` at 472 | There is already one shared Responses retention/access predicate; change that predicate, not a duplicate in proxy. Appless null-person/key equality is a separate legacy exception; cross-App session/granted reads are part of the R4 target but are not enabled at the old call site |
 | Receipt/job ownership | `record_ownership.owns_record` uses immutable App attribution first and then the stored key hash; plans, names, parent receipt ids and output asset references are not authority | Preserve explicit-App precedence and historical aliases. Do not let an owned parent vouch for a foreign output |
 | App ownership | Schema 7 and `access_plan_migration.py` already give service Apps a human accountable person; `admin_store.create_app` at 1735 accepts service+person; service-account App ownership column is gone | v3's assertion that service+person cannot exist is obsolete. Do not rerun its old assignment procedure blindly |
 | App creation/constraints | `admin_runtime` no longer turns every human-owned App into personal kind. Existing schema triggers protect session Apps and plan assignments, but v3's complete O2-O4 immutability/issuance trigger set and `ownership_version=1` are absent | Step 2 is not wholly complete merely because AP landed. Verify the current schema and migration before adding the remaining constraints |
@@ -91,6 +110,7 @@ line references here name current-main symbols rather than stale v3 offsets.
 | Key identity | `person_for_app_credential` moved to 2312; personal owner-created keys still get a person, service/personless keys do not. RuntimeIdentity now separates `person_id` from `accountable_person_id` | Never substitute the spending/accountable person for Self |
 | Trusted addresses | Keyless traffic can now authenticate as a configured App with no person, rather than all keyless traffic being absent identity | Keep that App's Own access; never give it prompt/chat/history/debug Self access |
 | MCP OAuth | OAuth grants use the person's session App and record `connection_id`; newer callback fields and tool visibility gates exist | Inventory the real callbacks, including optional ones. Resolve privacy permission from the delegated grant; do not treat OAuth as an unrestricted browser session |
+| Sensitive creator-App attribution | Current `asset_prompts` rows are keyed by asset/person and have no creator app_id. Older chat rows may use only a legacy key hash; future history/debug rows need creator attribution too | Step 3 must resolve or persist trusted creation origin. Do not use current App ownership as proof that an App made a person's prompt; unresolved origins cannot receive the no-flag delegated exemption |
 | Receipt retention/D48 | `receipt_store._filter_for_audience` compares `maker_person_id` with `viewer_person_id`; non-makers get only retention kind/decision, even in admin audience. Receipt serialization now has closed retention kinds/decisions/reasons/parts | Keep this masking. The new owner projection uses the current closed retention vocabulary, without reason/deadline/parts |
 | Receipt admin fields | Admin receipts now include `client_address`, `api_key_name`, `connection_id`, `retention_facts`, and sanitized STT/decision metadata | Drop address/key-name and arbitrary metadata from the owner projection. They must not reappear through an envelope or nested map |
 | Retention ledger | REST current/request-specific ledgers, service/provider/system facts and MCP `requests(action=ledger)` did not exist in v3 | Current global facts are `none`; request-specific evidence requires Own. Management-role access is preserved only as a named exception |

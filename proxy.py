@@ -25898,6 +25898,8 @@ class _PreviousResponseNotFound(Exception):
 
 def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
     """Match the creator person and stable App (or legacy credential) scope (retention.conversation_row_visible)."""
+    # OWNER_VISIBILITY_STEP3: the retention predicate preserves legacy scopes;
+    # pass delegation, creator-App and privacy permission when switching policy.
     return retention.conversation_row_visible(row, _responses_scope(auth_context))
 
 
