@@ -36,6 +36,7 @@ def batch(monkeypatch):
             request=SimpleNamespace(), client=object(), base_workflow=workflow,
             meta=meta or {}, manifest=manifest, workflow_name=name, width=512, height=512,
             n_requested=n, response_format="b64_json", headers={}, fixed_seed=fixed_seed,
+            legacy_seed_field=seed_field,
         ))
         assert response.status_code == status
         run.response = response

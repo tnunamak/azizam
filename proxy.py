@@ -348,6 +348,7 @@ from gateway.litellm_substrate import (
 )
 from gateway.manifests import (
     ManifestError,
+    ManifestIdentity,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -7751,6 +7752,7 @@ async def _generate_images_with_adaptive_batching(
     output_background: Optional[str] = None,
     output_quality: Optional[str] = None,
     output_size: Optional[str] = None,
+    legacy_seed_field: str = "seed",
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -7758,6 +7760,11 @@ async def _generate_images_with_adaptive_batching(
     measure the per-image VRAM cost so subsequent rounds (and subsequent
     requests) can scale up safely. Never exceeds free VRAM minus reserve.
     """
+    try:
+        identity = manifest_identity(dict(manifest)) if manifest is not None else None
+    except ManifestError:
+        return _image_workflow_configuration_error(manifest, workflow_name)
+    batch_limit = ((manifest or {}).get("inputs") or {}).get("batch_size", {}).get("maximum")
     estimate = get_vram_estimate(workflow_name, width, height)
     free_before = await graph_free_vram_bytes(client)
     warnings: list[str] = []
@@ -7808,13 +7815,20 @@ async def _generate_images_with_adaptive_batching(
             # measurement code below.
             batch_target = min(IMAGE_MAX_BATCH_SIZE, images_remaining)
 
+        if isinstance(batch_limit, int) and not isinstance(batch_limit, bool):
+            batch_target = min(batch_target, max(1, batch_limit))
+
         # Build a per-round workflow copy. Re-seed each round so multiple rounds
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
-        round_workflow, round_seed = _reseed_image_workflow(
-            round_workflow, manifest, workflow_name,
-            fixed_seed + seed_offset if fixed_seed is not None else None,
-        )
+        try:
+            round_workflow, round_seed = _reseed_image_workflow(
+                round_workflow, manifest, workflow_name,
+                fixed_seed + seed_offset if fixed_seed is not None else None,
+                meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
+            )
+        except ManifestError:
+            return _image_workflow_configuration_error(manifest, workflow_name)
 
         applied = apply_batch_size(round_workflow, meta, batch_target)
         if not applied and batch_target > 1:
@@ -7853,6 +7867,7 @@ async def _generate_images_with_adaptive_batching(
                     round_workflow = copy.deepcopy(base_workflow)
                     round_workflow, _ = _reseed_image_workflow(
                         round_workflow, manifest, workflow_name, round_seed,
+                        meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
                     )
                     apply_batch_size(round_workflow, meta, 1)
                     err, round_images = await _graph_run_round(
@@ -7908,6 +7923,7 @@ async def _generate_images_with_adaptive_batching(
                     image_transform=image_transform,
                     image_response_headers=image_response_headers,
                     fixed_seed=fixed_seed,
+                    legacy_seed_field=legacy_seed_field,
                     auth_context=auth_context,
                     output_format=output_format,
                     output_compression=output_compression,
@@ -9038,6 +9054,10 @@ async def proxy_graph_image_edit_request(
                 base_workflow=workflow,
                 meta=meta,
                 manifest=manifest,
+                legacy_seed_field=(
+                    "noise_seed" if "noise_seed" in workflow.get(meta.get("seed_node"), {}).get("inputs", {})
+                    else "seed"
+                ),
                 workflow_name=workflow_name_for_batching,
                 width=img_width,
                 height=img_height,
@@ -19299,6 +19319,21 @@ def _gateway_workflow_extension_values(
 
 
 _image_reseed_unavailable: set[str] = set()
+_image_configuration_invalid: set[str] = set()
+
+
+def _image_workflow_configuration_error(manifest, workflow_name: str) -> Response:
+    workflow_id = str((manifest or {}).get("id") or workflow_name)
+    if workflow_id not in _image_configuration_invalid:
+        _image_configuration_invalid.add(workflow_id)
+        print(f"[proxy] workflow '{workflow_id}': invalid image workflow configuration", flush=True)
+    return Response(
+        content=json.dumps({"error": {
+            "message": "The image workflow configuration is invalid.",
+            "type": "api_error", "code": "invalid_workflow_extension",
+        }}),
+        status_code=503, media_type="application/json",
+    )
 
 
 def _reseed_image_workflow(
@@ -19306,8 +19341,19 @@ def _reseed_image_workflow(
     manifest: Mapping[str, Any] | None,
     workflow_name: str,
     seed: int | None,
+    *,
+    meta: Mapping[str, Any] | None = None,
+    legacy_seed_field: str = "seed",
+    identity: ManifestIdentity | None = None,
 ) -> tuple[dict[str, Any], int | None]:
-    """Use the operator's seed mapping, leaving unbound graphs unchanged."""
+    """Use manifest bindings, or the legacy metadata path for graphs without one."""
+    if manifest is None:
+        node = (meta or {}).get("seed_node")
+        if node and node in workflow:
+            if seed is None:
+                seed = random.randint(0, 2**32 - 1)
+            workflow[node].get("inputs", {})[legacy_seed_field] = int(seed)
+            return workflow, int(seed)
     binding = ((manifest or {}).get("bindings") or {}).get(_GRAPH_BINDING) or {}
     mapping = binding.get("map") or {}
     if not mapping.get("seed"):
@@ -19319,7 +19365,7 @@ def _reseed_image_workflow(
         return workflow, None
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
-    return bind_backend_request(dict(manifest), _GRAPH_BINDING, workflow, {"seed": int(seed)}).request, int(seed)
+    return bind_backend_request(dict(manifest), _GRAPH_BINDING, workflow, {"seed": int(seed)}, identity=identity).request, int(seed)
 
 
 async def _run_single_graph_image(
@@ -19335,7 +19381,14 @@ async def _run_single_graph_image(
 ) -> tuple[Response | None, bytes | None]:
     round_workflow = copy.deepcopy(workflow)
     apply_batch_size(round_workflow, dict(meta), 1)
-    round_workflow, _ = _reseed_image_workflow(round_workflow, manifest, label, seed)
+    node = meta.get("seed_node")
+    field = "noise_seed" if "noise_seed" in round_workflow.get(str(node), {}).get("inputs", {}) else "seed"
+    try:
+        round_workflow, _ = _reseed_image_workflow(
+            round_workflow, manifest, label, seed, meta=meta, legacy_seed_field=field,
+        )
+    except ManifestError:
+        return _image_workflow_configuration_error(manifest, label), None
     err, images = await _graph_run_round(
         client,
         round_workflow,

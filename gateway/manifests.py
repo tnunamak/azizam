@@ -162,6 +162,8 @@ def bind_backend_request(
     backend: str,
     backend_request: dict[str, Any],
     accepted_inputs: dict[str, Any],
+    *,
+    identity: ManifestIdentity | None = None,
 ) -> BackendBindingResult:
     """Apply validated inputs and return a receipt-ready binding result.
 
@@ -169,7 +171,7 @@ def bind_backend_request(
     ``ignored`` with a reason. Malformed maps fail fast via :class:`ManifestError`.
     The source ``backend_request`` is not mutated.
     """
-    identity = manifest_identity(manifest)
+    identity = identity if identity is not None else manifest_identity(manifest)
     backend_binding = manifest["bindings"].get(backend)
     if not isinstance(backend_binding, dict):
         raise ManifestError(f"manifest has no binding for backend: {backend}")
