@@ -281,8 +281,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
                 client=object(),  # type: ignore[arg-type]
                 base_workflow=workflow,
                 meta={},
-                seed_node=None,
-                seed_field="seed",
+                manifest=None,
                 workflow_name="fixture",
                 width=512,
                 height=512,
@@ -328,8 +327,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
                 client=object(),  # type: ignore[arg-type]
                 base_workflow={"b": {"inputs": {"batch_size": 1}}},
                 meta=meta,
-                seed_node=None,
-                seed_field="seed",
+                manifest=None,
                 workflow_name="fixture",
                 width=1024,
                 height=1024,
