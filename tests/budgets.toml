@@ -151,8 +151,11 @@
 # Media folder round 3: +6 vitest cases (owner Confirm the media folder action); pytest unchanged. vitest list 3077.
 # Media-folder round 4: measured hermetic collection 15806 (+3 viewer-plan regressions)
 # and vitest list --json 3082 (+3 Library and +2 Settings rendered cases).
-pytest = 15806
-vitest = 3082
+# Media-folder round 5: measured full hermetic collection 15812 and Vitest list 3084.
+# Covers stale evidence refusal, smaller selection, lightweight reads, viewer scope,
+# required action evidence, checked-total grammar and zero-missing evidence.
+pytest = 15812
+vitest = 3084
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
