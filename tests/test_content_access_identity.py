@@ -5,7 +5,8 @@ from unittest.mock import patch
 import proxy
 from gateway import accounts, admin_runtime, admin_store, me_media, ownership
 from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
-from gateway.runtime_auth import AuthContext, hash_api_key
+from gateway.runtime_auth import hash_api_key
+from proxy import AuthContext
 from tests.support.access import store_plan
 from tests.test_mcp_oauth import RESOURCE, World
 

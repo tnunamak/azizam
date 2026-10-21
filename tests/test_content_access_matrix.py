@@ -87,7 +87,7 @@ def oracle_relations(v, row):
                              or (v.auth_kind == "mcp_grant" and origin.auth_kind == "mcp_grant" and v.connection_id and origin.connection_id == v.connection_id)))
     permission = v.auth_kind == "session" or v.privacy_permission
     content_read = ((self_person and (permission or output)) if getattr(row, "person_id", None) is not None else
-                    v.person_id is None and v.auth_kind != "session" and app_match)
+                    v.person_id is None and v.auth_kind in {"app_key", "trusted_address", "service_key"} and app_match)
     share = next((s for s in getattr(row, "shares", ()) if s.active and s.share_id and s.maker_person_id
                   and v.person_id and s.recipient_person_id == v.person_id and
                   ((row.kind == "creation" and row.asset_id in (s.asset_id, s.poster_asset_id)) or

@@ -174,7 +174,7 @@ def _self(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryReco
 
 def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord) -> bool:
     if record.person_id is None:
-        return (viewer.person_id is None and viewer.auth_kind in {"app_key", "trusted_address", "service_key", "mcp_grant"}
+        return (viewer.person_id is None and viewer.auth_kind in {"app_key", "trusted_address", "service_key"}
                 and bool(viewer.app_id) and record.app_id == viewer.app_id)
     if not _self(viewer, record):
         return False

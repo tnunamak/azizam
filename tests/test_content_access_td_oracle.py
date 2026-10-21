@@ -11,7 +11,7 @@ V = (None, "", "a", "b")
 CONN = (None, "", "c1", "c2")
 
 
-@pytest.mark.parametrize("kind,action", product(("prompt", "chat", "request_history", "debug_capture"), ("read", "delete", "reuse", "share", "link", "cancel")))
+@pytest.mark.parametrize("kind,action", tuple(product(("prompt", "chat", "request_history", "debug_capture"), ("read", "delete", "reuse", "share", "link", "cancel"))))
 def test_reviewer_td_oracle_comparisons(kind, action):
     constructors = {"prompt": PromptRecord, "chat": ChatRecord, "request_history": RequestHistoryRecord, "debug_capture": DebugCaptureRecord}
     for person, app, delegation, conn, privacy, key_hash in product(V, V, (None, "app_key", "mcp_grant"), CONN, (False, True), (None, "k")):
