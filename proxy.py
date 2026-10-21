@@ -6976,7 +6976,7 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
         return _asset_owner_key(auth_context) is None
     from gateway.content_access import CreationRecord, Own, Viewer, decide
     return isinstance(decide(
-        Viewer(owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
+        Viewer(auth_kind="service_key", owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
         CreationRecord(asset_id, frozenset(owners)), "read"), Own)
 
 
@@ -9390,7 +9390,7 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
         return _asset_owner_key(auth_context) is None
     from gateway.content_access import JobRecord, Own, Viewer, decide
     return isinstance(decide(
-        Viewer(owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
+        Viewer(auth_kind="service_key", owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
         JobRecord(frozenset({owner})), "read"), Own)
 
 

@@ -17,13 +17,15 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
 
 from gateway import directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
@@ -606,6 +608,15 @@ class _MediaScope:
     user_ids: list[str] | None = None
     owner_keys: frozenset[str] | None = None
     audit_everyone: bool = False
+    _app_viewer: Viewer = field(init=False, repr=False, compare=False)
+    _key_viewer: Viewer = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        # One immutable readable set per scope, reused across every receipt/job.
+        object.__setattr__(self, "_app_viewer", Viewer(auth_kind="service_key", person_id=self.viewer_person_id,
+                           owner_keys=frozenset(f"app:{app_id}" for app_id in (self.app_ids or ()))))
+        object.__setattr__(self, "_key_viewer", Viewer(auth_kind="service_key", person_id=self.viewer_person_id,
+                           owner_keys=self.owner_keys or frozenset()))
 
 
 def _actor_from_request(
@@ -1375,17 +1386,16 @@ def _record_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope, *, jo
         return True
     if record is None:
         return False
-    from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
     if record.get("app_id"):
         principals = frozenset({f"app:{record['app_id']}"})
         # The existing Library scope treats an explicit App as authoritative.
-        readable = frozenset(f"app:{app_id}" for app_id in scope.app_ids)
+        viewer = scope._app_viewer
     else:
         owner = record.get("owner_key_hash")
         principals = frozenset({owner}) if isinstance(owner, str) else frozenset()
-        readable = scope.owner_keys or frozenset()
+        viewer = scope._key_viewer
     content = JobRecord(principals) if job else ReceiptRecord(principals)
-    return isinstance(decide(Viewer(person_id=scope.viewer_person_id, owner_keys=readable), content, "read"), Own)
+    return isinstance(decide(viewer, content, "read"), Own)
 
 
 def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> bool:

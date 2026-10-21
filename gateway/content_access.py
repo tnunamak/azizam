@@ -1,4 +1,4 @@
-"""Pure content policy from OWNER_VISIBILITY v3, section 3.1.
+"""Pure content policy from OWNER_VISIBILITY v4.2 at c6968dc8, section 3.1.
 
 Roles grant an operational view, never content. Callers supply trusted identity
 and resolved share rows; this module performs no storage reads or side effects.
@@ -27,8 +27,18 @@ class Viewer:
     owner_keys: frozenset[str] = frozenset()
     is_owner: bool = False
     privacy_permission: bool = False
-    delegation: Literal["app_key", "mcp_grant"] | None = None  # sessions are not delegated
+    auth_kind: Literal["session", "app_key", "mcp_grant", "trusted_address", "service_key"] = field(kw_only=True)
+    credential_id: str | None = None
+    trusted_address: str | None = None
     connection_id: str | None = None  # trusted MCP grant, never the shared session App
+
+
+@dataclass(frozen=True)
+class ContentOrigin:
+    """Trusted writer attribution; missing origin is legacy and never OwnOutput."""
+    auth_kind: Literal["session", "app_key", "mcp_grant"]
+    credential_id: str | None = None
+    connection_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +70,7 @@ class PromptRecord:
     shares: tuple[Share, ...] = ()
     app_id: str | None = None  # trusted creator App, not current accountability
     available: bool = True
-    connection_id: str | None = None  # trusted creating grant; legacy/browser rows have none
+    origin: ContentOrigin | None = None
     kind: Literal["prompt"] = field(default="prompt", init=False)
 
 
@@ -70,7 +80,7 @@ class ChatRecord:
     app_id: str | None = None
     owner_key_hash: str | None = None
     available: bool = True
-    connection_id: str | None = None
+    origin: ContentOrigin | None = None
     kind: Literal["chat"] = field(default="chat", init=False)
 
 
@@ -105,7 +115,7 @@ class RequestHistoryRecord:
     person_id: str | None
     app_id: str | None = None
     available: bool = True
-    connection_id: str | None = None
+    origin: ContentOrigin | None = None
     kind: Literal["request_history"] = field(default="request_history", init=False)
 
 
@@ -114,7 +124,7 @@ class DebugCaptureRecord:
     person_id: str | None
     app_id: str | None = None
     available: bool = True
-    connection_id: str | None = None
+    origin: ContentOrigin | None = None
     kind: Literal["debug_capture"] = field(default="debug_capture", init=False)
 
 
@@ -158,19 +168,28 @@ def _shared(viewer: Viewer, record: CreationRecord | PromptRecord) -> Shared | D
     return DENY
 
 
-def _maker_access(
-    viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord,
-) -> bool:
-    same_app = bool(viewer.app_id and record.app_id == viewer.app_id)
-    own_outputs = (bool(viewer.connection_id and record.connection_id == viewer.connection_id)
-                   if viewer.delegation == "mcp_grant" else same_app)
+def _self(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord) -> bool:
+    return bool(viewer.person_id and record.person_id == viewer.person_id)
+
+
+def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord) -> bool:
     if record.person_id is None:
-        # An App-only row is never any person's content, including the App's
-        # accountable person. A privacy grant cannot turn it into Self.
-        return viewer.person_id is None and same_app and own_outputs
-    if not viewer.person_id or record.person_id != viewer.person_id:
+        return (viewer.person_id is None and viewer.auth_kind in {"app_key", "trusted_address", "service_key", "mcp_grant"}
+                and bool(viewer.app_id) and record.app_id == viewer.app_id)
+    if not _self(viewer, record):
         return False
-    return viewer.delegation is None or own_outputs or viewer.privacy_permission
+    if viewer.auth_kind == "session" or viewer.privacy_permission:
+        return True
+    origin = record.origin
+    if origin is None:
+        return False
+    if viewer.auth_kind == "app_key":
+        return (origin.auth_kind == "app_key" and bool(origin.credential_id)
+                and bool(viewer.app_id) and record.app_id == viewer.app_id)
+    if viewer.auth_kind == "mcp_grant":
+        return (origin.auth_kind == "mcp_grant" and bool(viewer.connection_id)
+                and origin.connection_id == viewer.connection_id)
+    return False
 
 
 def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
@@ -194,13 +213,34 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
                 return OWN
         elif own and action in {"read", "cancel"}:
             return OWN
-    elif isinstance(record, (PromptRecord, ChatRecord, RequestHistoryRecord, DebugCaptureRecord)):
-        allowed_actions = {"read", "delete"} if isinstance(record, DebugCaptureRecord) else {"read", "delete", "reuse"}
-        if action in allowed_actions and _maker_access(viewer, record):
+    elif isinstance(record, PromptRecord):
+        if action == "read":
+            if _content_read(viewer, record):
+                return OWN
+            if viewer.auth_kind == "session" or viewer.privacy_permission:
+                return _shared(viewer, record)
+        elif action == "delete" and _self(viewer, record):
             return OWN
-        if (isinstance(record, PromptRecord) and action == "read"
-                and (viewer.delegation is None or viewer.privacy_permission)):
-            return _shared(viewer, record)
+        elif action == "reuse" and _self(viewer, record) and _content_read(viewer, record):
+            return OWN
+    elif isinstance(record, ChatRecord):
+        if action == "read" and _content_read(viewer, record):
+            return OWN
+        if action in {"delete", "reuse"} and _self(viewer, record):
+            same_scope = (bool(viewer.app_id) and record.app_id == viewer.app_id if record.app_id else
+                          bool(viewer.key_hash) and record.owner_key_hash == viewer.key_hash)
+            if same_scope:
+                return OWN
+    elif isinstance(record, RequestHistoryRecord):
+        if action == "read" and _content_read(viewer, record):
+            return OWN
+        if (action in {"delete", "reuse"} and _self(viewer, record)
+                and (viewer.auth_kind == "session" or viewer.privacy_permission)):
+            return OWN
+    elif isinstance(record, DebugCaptureRecord):
+        if (action in {"read", "delete"} and _self(viewer, record)
+                and (viewer.auth_kind == "session" or viewer.privacy_permission)):
+            return OWN
     return DENY
 
 
