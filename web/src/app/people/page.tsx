@@ -721,6 +721,11 @@ export default function PeoplePage() {
                     .join(" · ")}
                   trailing={
                     <>
+                      {owner && plan.used_by && !plan.used_by.people.length && !plan.used_by.apps.length && (
+                        <Button variant="outline" onClick={() => setTab("people")}>
+                          Assign people
+                        </Button>
+                      )}
                       {owner && (
                         <Button
                           variant="outline"
@@ -1178,7 +1183,7 @@ function usedByLabel(plan: AccessPlan): string | null {
     used.people.length ? `${used.people.length} ${used.people.length === 1 ? "person" : "people"}` : null,
     used.apps.length ? `${used.apps.length} ${used.apps.length === 1 ? "app" : "apps"}` : null,
   ].filter(Boolean);
-  return parts.length ? `Used by ${parts.join(" and ")}` : "Not used yet";
+  return parts.length ? `Used by ${parts.join(" and ")}` : "No one is on this plan yet";
 }
 function Confirmation({
   title,

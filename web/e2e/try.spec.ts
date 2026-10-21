@@ -109,6 +109,10 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const catalog = await catalogResponse;
   expect(catalog.ok(), `catalog HTTP ${catalog.status()}`).toBe(true);
+  const accountPlan = (await catalog.json()).access_plan;
+  expect(accountPlan?.name).toBeTruthy();
+  await expect(page.getByText(`Your access plan: ${accountPlan.name}.`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people/?tab=plans");
   await waitForCatalog(page);
   const response = await chatResponse;
   expect(response.request().postDataJSON().model).not.toBe("");

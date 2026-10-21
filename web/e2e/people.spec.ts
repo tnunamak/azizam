@@ -350,6 +350,45 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
 
+for (const width of [390, 1440])
+test(`an unused plan leads to assigning a person at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await mock(page, "seeded");
+  const unused = {
+    ...plan, id: "plan-new", name: "New category plan",
+    plan: { ...plan.plan, id: "plan-new", name: "New category plan" },
+    used_by: { people: [], apps: [], invites: 0 },
+  };
+  const choice = { id: unused.id, name: unused.name, summary: planSummary };
+  let assigned = false;
+  await page.route("**/admin/api/access-plans", (route) => fulfilJson(route, {
+    access_plans: [{ ...unused, used_by: { people: assigned ? [person.id] : [], apps: [], invites: 0 } }],
+  }));
+  await page.route("**/admin/api/people", (route) => fulfilJson(route, {
+    people: [{ ...person, ...(assigned ? { plan_id: unused.id, plan_name: unused.name } : {}) }],
+    access_plans: [planChoice, choice],
+  }));
+  await page.route(`**/admin/api/people/${person.id}`, async (route) => {
+    expect(route.request().method()).toBe("PATCH");
+    expect(route.request().postDataJSON()).toEqual({ access_plan: unused.id });
+    assigned = true;
+    await fulfilJson(route, { ok: true });
+  });
+  await page.goto("/people/?tab=plans");
+  await expect(page.getByText("No one is on this plan yet", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Assign people", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
+  await page.getByRole("menuitem", { name: "Change access plan" }).click();
+  await page.getByRole("combobox", { name: "Access plan", exact: true }).click();
+  await page.getByRole("option", { name: unused.name, exact: true }).click();
+  await page.getByRole("button", { name: "Save access plan" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByText(unused.name, { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Access plans", exact: true }).click();
+  await expect(page.getByText(/Used by 1 person/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Assign people", exact: true })).toHaveCount(0);
+});
+
 test("people lane editing sends the whole plan document", async ({
   page,
 }) => {

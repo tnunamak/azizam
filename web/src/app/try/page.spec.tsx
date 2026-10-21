@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
+  promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => mocks.params }));
 vi.mock("@/lib/account-api", () => ({
@@ -22,6 +23,7 @@ vi.mock("@/lib/account-api", () => ({
     session: mocks.session,
     tryKey: mocks.tryKey,
     revokeKey: mocks.revokeKey,
+    promptMemory: mocks.promptMemory,
   },
 }));
 const response = (body: unknown, ok = true) =>
@@ -53,6 +55,7 @@ beforeEach(() => {
     value: () => {},
   });
   mocks.params = new URLSearchParams();
+  mocks.promptMemory.mockResolvedValue({ prompt_memory: null });
   vi.stubGlobal("fetch", fetchMock);
   fetchMock
     .mockReset()

@@ -16276,8 +16276,9 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     # Blocking SQLite and file work runs on a worker thread so a slow disk
     # cannot stall every other request on the event loop.
     auth_contexts = await asyncio.to_thread(_session_catalog_auth_contexts, session, user_snapshot)
+    account_plan = (user_snapshot.get("user") or {}).get("access_plan")
     if not auth_contexts:
-        return build_models_catalog(alias_views={}, capabilities=[])
+        return {**build_models_catalog(alias_views={}, capabilities=[]), "access_plan": account_plan}
 
     def load_catalog_inputs() -> tuple[dict[str, Any], Mapping[str, Any], list[list[Any]]]:
         activity = build_user_activity_snapshot(
@@ -16341,6 +16342,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
 
     catalog = await asyncio.to_thread(assemble_catalog)
+    # Try labels the account plan that produced this list, including no assignment.
+    catalog["access_plan"] = account_plan
     # The browser has a session, not a public API key. Carry the configured
     # voice contract on each already-authorized speech row so it can choose
     # a voice before creating its temporary Try key.
