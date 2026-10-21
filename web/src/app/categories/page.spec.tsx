@@ -56,13 +56,19 @@ const presetList: Preset[] = [
 const active = (snapshot: Snapshot) => ({ revision: 4, parent_revision: 3, active_counter: 4, snapshot, created_at: NOW, activated_at: NOW, author: "usr_owner", reason: "x" });
 
 type Posted = { path: string; body: { base_revision?: number | null; expected_active_revision?: number | null; reason?: string; snapshot?: Snapshot } };
-function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, refreshed, failActivation = false, presets = presetList }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError; refreshed?: Snapshot; failActivation?: boolean; presets?: Preset[] } = {}) {
+function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, refreshed, failActivation = false, presets = presetList, appsFail = false }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError; refreshed?: Snapshot; failActivation?: boolean; presets?: Preset[]; appsFail?: boolean } = {}) {
   const posted: Posted[] = [];
   vi.spyOn(api.users, "list").mockResolvedValue([]);
-  vi.spyOn(api.apps, "list").mockResolvedValue([]);
+  const apps = vi.spyOn(api.apps, "list");
+  if (appsFail) apps.mockRejectedValue(new Error("Apps unavailable"));
+  else apps.mockResolvedValue([{
+    id: "app-personal", name: "Personal", kind: "personal", owner_user_id: "person-family",
+    accountable_person: null, access_plan: "person", same_as_person: true,
+    access_plan_name: "Family", effective_access_plan_id: "plan_family", created_at: 0, disabled_at: null,
+  }]);
   vi.spyOn(api.accessPlans, "list").mockResolvedValue([
-    { id: "plan_family", name: "Family", created_at: 0, updated_at: 0, plan: {} as never, summary: null },
-    { id: "plan_guest", name: "Guest", created_at: 0, updated_at: 0, plan: {} as never, summary: null },
+    { id: "plan_family", name: "Family", created_at: 0, updated_at: 0, plan: {} as never, summary: null, used_by: { people: ["River", "Alex"], apps: [], invites: 0 } },
+    { id: "plan_guest", name: "Guest", created_at: 0, updated_at: 0, plan: {} as never, summary: null, used_by: { people: [], apps: [], invites: 3 } },
   ]);
   const fetchCategory = vi.mocked(adminFetch);
   fetchCategory.mockImplementation((async (path: string, init?: AdminFetchInit) => {
@@ -97,13 +103,28 @@ it("lists each category with its meaning, who can see it and what is in it", asy
   mount();
   const experimental = await screen.findByRole("region", { name: "Experimental" });
   expect(within(experimental).getByText("Still being built.")).toBeVisible();
-  expect(await within(experimental).findByText(/You, and people and apps on Family/)).toBeVisible();
+  expect(await within(experimental).findByText(/You; allowed plans: Family \(2 people, 1 app\)/)).toBeVisible();
   expect(within(experimental).getByText("Tile maker")).toBeVisible();
   expect(within(experimental).getByText("Workflow")).toBeVisible();
   const adult = screen.getByRole("region", { name: "Adult" });
   expect(within(adult).getByText("For adults only.")).toBeVisible();
   expect(within(adult).getByText("Only you")).toBeVisible();
   expect(within(adult).getByText("Nothing in Adult yet")).toBeVisible();
+});
+
+it("counts each category plan's people and effective apps, and says when no one is assigned", async () => {
+  const snapshot = rules();
+  snapshot.categories.experimental.visible_to = ["plan_family", "plan_guest"];
+  mount({ snapshot });
+  const region = await screen.findByRole("region", { name: "Experimental" });
+  expect(await within(region).findByText("You; allowed plans: Family (2 people, 1 app), Guest (0 people, 0 apps; no one assigned)")).toBeVisible();
+});
+
+it("does not turn an unavailable app count into an empty-plan claim", async () => {
+  mount({ appsFail: true });
+  const region = await screen.findByRole("region", { name: "Experimental" });
+  expect(await within(region).findByText("You; allowed plans: Family (assignment counts unavailable)")).toBeVisible();
+  expect(within(region).queryByText(/no one assigned/)).toBeNull();
 });
 
 it("opens the category named in the address, where Check access links to it, and ignores one that is gone", async () => {
@@ -316,7 +337,7 @@ it("words who can see a category, and names a plan that was removed", () => {
   const name = (id: string) => (id === "plan_family" ? "Family" : "a removed access plan");
   expect(visibilityText(category("a", "A", "", null), name)).toBe("Everyone who can use the gateway");
   expect(visibilityText(category("a", "A", "", []), name)).toBe("Only you");
-  expect(visibilityText(category("a", "A", "", ["plan_family", "gone"]), name)).toBe("You, and people and apps on Family, a removed access plan");
+  expect(visibilityText(category("a", "A", "", ["plan_family", "gone"]), name)).toBe("You; allowed plans: Family, a removed access plan");
 });
 
 it("adds a preset only once and keeps the owner's edits to an existing category", () => {

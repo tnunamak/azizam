@@ -93,9 +93,10 @@
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
 # Plan visibility: +1 real-session catalog/key reassignment regression,
-# +3 Try plan-context cases, +2 phone/desktop assignment journeys.
+# +3 Try plan-context cases, +2 category assignment-count cases,
+# +2 phone/desktop assignment journeys.
 pytest = 15320
-vitest = 3054
+vitest = 3056
 playwright = 494
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

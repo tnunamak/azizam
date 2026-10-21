@@ -51,6 +51,7 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
   onSaved: () => Promise<unknown> | void; adding: boolean; onAddingChange: (open: boolean) => void; picking: boolean; onPickingChange: (open: boolean) => void;
 }) {
   const { data: plans, isError: plansError, refetch: plansRefetch } = useQuery({ queryKey: queryKeys.accessPlans, queryFn: api.accessPlans.list });
+  const { data: apps, isError: appsError } = useQuery({ queryKey: ["apps"], queryFn: api.apps.list, retry: false });
   const [dialog, setDialog] = useState<Dialogs>(null);
   // Check access links to /categories?category=<id>: open that category's editor once,
   // when the rules have loaded. The requested id is held in state, read from the address once.
@@ -67,7 +68,17 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
   const [status, setStatus] = useState("");
   const snapshot = active?.snapshot ?? emptySnapshot();
   const categories = plainCategories(snapshot);
-  const planName = (id: string) => !plans ? "…" : plans.find((plan) => plan.id === id)?.name ?? "a removed access plan";
+  const planName = (id: string) => {
+    if (!plans || plansError) return "access plans unavailable";
+    const plan = plans.find((plan) => plan.id === id);
+    if (!plan) return "a removed access plan";
+    if (!apps && !appsError) return plan.name + " (loading assignments…)";
+    if (!plan.used_by || !apps || appsError) return plan.name + " (assignment counts unavailable)";
+    const people = plan.used_by.people.length;
+    // The effective plan includes Apps set to "Same as its person".
+    const appCount = apps.filter((app) => app.effective_access_plan_id === id).length;
+    return `${plan.name} (${people} ${people === 1 ? "person" : "people"}, ${appCount} ${appCount === 1 ? "app" : "apps"}${!people && !appCount ? "; no one assigned" : ""})`;
+  };
   const categoryDialog = adding ? { kind: "category" as const, id: null } : dialog;
 
   // The category being edited was deleted elsewhere: leave its editor and say why.

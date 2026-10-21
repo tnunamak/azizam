@@ -18,11 +18,19 @@ async function accessible(page: Page, width: number) {
 
 for (const width of widths) {
   // Writes the shared category store, so it runs with the other global-state cases.
-  test(`add a category, file an item, move it out at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page }) => {
+  test(`add a category, file an item, move it out at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
     const name = `Labs ${width}`;
+    const session = await (await request.get("/admin/api/session")).json();
+    const headers = { "x-azizam-csrf": session.actor.csrf_token };
+    const plans = (await (await request.get("/admin/api/access-plans")).json()).access_plans;
+    const document = { ...plans[0].plan, name: `${name} access` };
+    delete document.id;
+    const created = await request.post("/admin/api/access-plans", { headers, data: document });
+    expect(created.ok()).toBe(true);
+    const unused = (await created.json()).access_plan;
     await page.goto("/categories/");
     await expect(page.getByRole("heading", { name: "Categories", level: 1 })).toBeVisible();
     await page.getByRole("button", { name: "Add category" }).first().click();
@@ -35,6 +43,13 @@ for (const width of widths) {
     await expect(section.getByText("Only you", { exact: true })).toBeVisible();
     await expect(section.getByText("Not ready yet.", { exact: true })).toBeVisible();
     await expect(section.getByText(`Nothing in ${name} yet`)).toBeVisible();
+
+    await section.getByRole("button", { name: `Edit ${name}` }).click();
+    const edit = page.getByRole("dialog", { name: `Edit ${name}` });
+    await edit.getByRole("radio", { name: /Me and chosen access plans/ }).click();
+    await edit.getByRole("checkbox", { name: unused.name, exact: true }).check();
+    await edit.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(section.getByText(`You; allowed plans: ${unused.name} (0 people, 0 apps; no one assigned)`, { exact: true })).toBeVisible();
 
     await section.getByRole("button", { name: `Add items to ${name}` }).click();
     const items = page.getByRole("dialog", { name: `Add items to ${name}` });
@@ -58,6 +73,8 @@ for (const width of widths) {
     await page.getByRole("dialog", { name: `Edit ${name}` }).getByRole("button", { name: "Delete category" }).click();
     await page.getByRole("dialog", { name: `Delete ${name}?` }).getByRole("button", { name: "Delete category" }).click();
     await expect(page.getByRole("region", { name, exact: true })).toHaveCount(0);
+    const deleted = await request.delete(`/admin/api/access-plans/${unused.id}`, { headers });
+    expect(deleted.ok()).toBe(true);
 
     // The bundled starter categories come from the gateway, not from the page.
     await page.getByRole("button", { name: "Start from a preset" }).click();
