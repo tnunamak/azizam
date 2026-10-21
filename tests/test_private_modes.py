@@ -102,12 +102,17 @@ def test_thumbnail_file_and_directory_are_private_under_permissive_umask(tmp_pat
 
 
 def test_admin_store_schema_backup_is_private_under_permissive_umask(monkeypatch, tmp_path, permissive_umask) -> None:
+    class Report:
+        @staticmethod
+        def as_dict():
+            return {}
+
     db = tmp_path / "admin.db"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE schema_version (version INTEGER)")
     conn.execute("INSERT INTO schema_version VALUES (6)")
     conn.commit()
-    monkeypatch.setattr("gateway.access_plan_migration.migrate", lambda _conn: None)
+    monkeypatch.setattr("gateway.access_plan_migration.migrate", lambda _conn: Report())
     try:
         admin_store._migrate_to_access_plans(conn)
     finally:
