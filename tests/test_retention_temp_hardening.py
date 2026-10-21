@@ -103,6 +103,19 @@ def test_metadata_migration_sweeps_orphans_even_in_a_bounded_selected_run(tmp_pa
     assert result.complete
 
 
+def test_metadata_sweep_spares_young_stage_and_removes_old_one(tmp_path):
+    young = tmp_path / ".metadata-clean-young"
+    young.write_bytes(b"another process is replacing this")
+    _age(young, seconds=60)
+    old = tmp_path / ".metadata-clean-old"
+    old.write_bytes(b"orphaned stage")
+    _age(old)
+    result = migration.strip_cached_assets(tmp_path, tmp_path / "state.db")
+    assert young.read_bytes() == b"another process is replacing this"
+    assert not old.exists()
+    assert result.complete
+
+
 def test_metadata_orphan_sweep_never_follows_symlinks(tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
