@@ -122,12 +122,11 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # W5 adds GET /admin/api/engine-protocols for installed description metadata.
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
-    # The three MOSS workflows and the three keyframe video workflows add catalog
-    # schemas, never routes or policy. Removing precisely these additions must
-    # recover the data-hygiene document, which adds the reviewed missing/retryable
-    # output responses.
+    # The MOSS, FLUX.2 Klein and keyframe workflows add catalog schemas, never routes or policy.
+    # Removing precisely these additions must recover the data-hygiene document,
+    # which adds the reviewed missing/retryable output responses.
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality",
+             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()

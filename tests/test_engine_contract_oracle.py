@@ -93,16 +93,20 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    # Freeze the original catalog separately from the data-only additions: three MOSS image
-    # workflows and three keyframe video workflows.
-    moss = {"moss-image", "moss-image-fast", "moss-image-quality"}
-    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid", "video-ltx-2.5-keyframes"}
-    added = moss | keyframes
-    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == {
-        **{name: ("image", {"input_modalities": ["text"], "output_modalities": ["image"]}) for name in moss},
-        **{name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
-           for name in keyframes},
+    # Freeze the original catalog separately from the data-only additions: three MOSS and two FLUX.2 Klein workflows.
+    text_to_image = {"input_modalities": ["text"], "output_modalities": ["image"]}
+    expected_added = {
+        "moss-image": ("image", text_to_image),
+        "moss-image-fast": ("image", text_to_image),
+        "moss-image-quality": ("image", text_to_image),
+        "flux2-klein": ("image", text_to_image),
+        "flux2-klein-edit": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
+    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid", "video-ltx-2.5-keyframes"}
+    expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
+                           for name in keyframes})
+    added = set(expected_added)
+    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]
 
     app = FastAPI()

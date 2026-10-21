@@ -141,8 +141,9 @@ CREATE TABLE IF NOT EXISTS access_plans (
 );
 
 -- Every App has an accountable person (owner_user_id) and one assignment:
--- an access plan id, or 'person' ("Same as its person"). NULL is only the
--- state after a failed assignment write, and denies every request.
+-- an access plan id, or 'person' ("Same as its person"). NULL denies every
+-- request. It is left by a failed assignment write (a browser-session App is
+-- repaired on the next sign-in) or by deleting the plan of an inactive App.
 CREATE TABLE IF NOT EXISTS apps (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -1615,6 +1616,16 @@ def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] 
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
             conn.execute("UPDATE account_links SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
             conn.execute("UPDATE account_access SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+        # Every App still on the plan is inactive here (the App is disabled, or its
+        # person is disabled or removed). A browser-session App returns to its
+        # creation default, the person's own plan, which any App the person
+        # creates reaches anyway. Every other App gets NULL, which denies until
+        # the owner assigns a plan.
+        conn.execute(
+            "UPDATE apps SET access_plan = 'person' WHERE access_plan = ? "
+            "AND id IN (SELECT app_id FROM session_apps)", (plan_id,),
+        )
+        conn.execute("UPDATE apps SET access_plan = NULL WHERE access_plan = ?", (plan_id,))
         conn.execute("DELETE FROM signin_rule_plans WHERE plan_id = ?", (plan_id,))
         conn.execute("DELETE FROM access_plans WHERE id = ?", (plan_id,))
         conn.commit()
@@ -1721,7 +1732,7 @@ def _check_app_assignment(conn: sqlite3.Connection, access_plan: str | None) -> 
 
 
 def set_app_access_plan(app_id: str, access_plan: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
-    """Assign an app a plan id or 'person'. No operation clears an assignment."""
+    """Assign an app a plan id or 'person'. Only deleting a plan clears an assignment."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         _check_app_assignment(conn, access_plan)
@@ -1982,7 +1993,7 @@ def update_app(
     audit: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Rename an App or change its assignment. An assignment is never cleared.
+    """Rename an App or change its assignment. This never clears an assignment.
 
     ``name`` is already cleaned (``clean_name``); a name another of the person's active Apps has, or the Try
     page's, raises ``NameRejected``. ``owner_user_id`` makes the write apply only to that person's App (``None``

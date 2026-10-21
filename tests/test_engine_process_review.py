@@ -22,6 +22,10 @@ from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixtu
     owner_and_admin,
 )
 
+# A start that should succeed returns as soon as the fixture is ready; the wide
+# limit only matters on a loaded host (a 2 s limit flaked at load 40).
+READY_S = 15
+
 
 class Probe:
     """Readiness observation whose answer the test controls."""
@@ -49,7 +53,7 @@ def test_failed_probe_never_stops_an_engine_with_active_requests(tmp_path):
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True, observations=probe)
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 1)
+        assert await driver.ensure_ready(svc, READY_S)
         pid = state_pid(tmp_path)
         driver.request_started(svc)
         probe.ready = False
@@ -59,7 +63,7 @@ def test_failed_probe_never_stops_an_engine_with_active_requests(tmp_path):
         os.killpg(pid, 0)  # the stream's process group is still alive
         driver.request_finished(svc)
         probe.ready = True
-        assert await driver.ensure_ready(svc, 1) is True
+        assert await driver.ensure_ready(svc, READY_S) is True
         assert state_pid(tmp_path) == pid
 
     try:
@@ -85,11 +89,11 @@ def test_unhealthy_live_engine_is_replaced_by_the_restart_policy_after_drain(tmp
     holder["driver"] = driver
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 1)
+        assert await driver.ensure_ready(svc, READY_S)
         old = state_pid(tmp_path)
         first["pid"] = old
         driver._observations = Probe(ready)
-        assert await driver.ensure_ready(svc, 1) is True
+        assert await driver.ensure_ready(svc, READY_S) is True
         assert state_pid(tmp_path) != old
         assert len(driver._starts["fixture"]) == 2
 
@@ -125,7 +129,7 @@ def test_client_disconnect_during_cold_start_keeps_engine_and_budget(tmp_path):
         pid = state_pid(tmp_path)
         assert len(driver._starts["fixture"]) == 1
         release.set()
-        assert await driver.ensure_ready(svc, 3) is True
+        assert await driver.ensure_ready(svc, READY_S) is True
         assert state_pid(tmp_path) == pid
         assert len(driver._starts["fixture"]) == 1
 
@@ -210,7 +214,7 @@ def test_state_directory_and_files_are_private(tmp_path):
     driver = ProcessDriver(state_dir=state_dir, commands_allowed=lambda: True)
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 2)
+        assert await driver.ensure_ready(svc, READY_S)
         await asyncio.sleep(0.1)
 
     try:
@@ -567,11 +571,11 @@ def test_turning_commands_off_blocks_new_starts_but_leaves_a_running_engine_alon
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: allowed["on"])
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 2)
+        assert await driver.ensure_ready(svc, READY_S)
         pid = state_pid(tmp_path)
         allowed["on"] = False
         assert await driver.status(svc) == "running"
-        assert await driver.ensure_ready(svc, 2) is True  # still served, never respawned
+        assert await driver.ensure_ready(svc, READY_S) is True  # still served, never respawned
         assert state_pid(tmp_path) == pid
         driver.stop(svc)  # an explicit stop is still possible
         assert await driver.status(svc) == "stopped"
@@ -899,7 +903,7 @@ def test_adopted_engine_keeps_a_working_stdout_after_the_gateway_lets_go(tmp_pat
                            observations=Probe())
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 2)
+        assert await driver.ensure_ready(svc, READY_S)
         child = driver._children["fixture"]
         for pipe in (child.stdout, child.stderr):  # what a gateway restart does to its end of a pipe
             if pipe:
@@ -930,7 +934,7 @@ def test_an_unwritable_log_does_not_stop_the_engine_from_starting(tmp_path):
     svc = _owned(tmp_path, _ticker(tmp_path), str(marker))
     driver = ProcessDriver(state_dir=state, commands_allowed=lambda: True, observations=Probe())
     try:
-        assert run(driver.ensure_ready(svc, 2)) is True
+        assert run(driver.ensure_ready(svc, READY_S)) is True
         assert _wait_for(lambda: marker.exists() and int(marker.read_text() or 0) > 2)
         assert not Path(str(marker) + ".err").exists()
     finally:
@@ -955,7 +959,7 @@ def test_secrets_in_argv_are_redacted_from_the_log(tmp_path):
                            observations=Probe())
     log = tmp_path / "state" / "fixture.log"
     try:
-        assert run(driver.ensure_ready(svc, 2))
+        assert run(driver.ensure_ready(svc, READY_S))
         assert _wait_for(lambda: log.exists() and b"visible-model" in log.read_bytes())
         text = log.read_text()
         for secret in ("sk-live-0123456789", "tok-abcdef-9876", "hunter2hunter2"):
@@ -978,7 +982,7 @@ def test_log_rotates_instead_of_truncating(tmp_path):
     log = tmp_path / "state" / "fixture.log"
     rotated = tmp_path / "state" / "fixture.log.1"
     try:
-        assert run(driver.ensure_ready(svc, 2))
+        assert run(driver.ensure_ready(svc, READY_S))
         assert _wait_for(lambda: log.exists() and b"done" in log.read_bytes())
         assert rotated.exists(), "an over-limit log was truncated, not rotated"
         assert len(log.read_bytes()) <= 1024 and len(rotated.read_bytes()) <= 1024

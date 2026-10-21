@@ -149,7 +149,11 @@
 # counted with scripts/run-hermetic-pytest.sh --collect-only -q on the two files.
 # Keyframes round 2: +2 cases for integer binding declarations and rejection before
 # asset resolution. Full hermetic collection measured 15845 (replaces the prior two-file estimate).
-pytest = 15845
+# Plan deletion review round 1: +3 (inactive session App returns to its person; disabled-person App; same-as-person blocker) -> 15572.
+# Retired eight image workflows and the Ideogram prompt tests (-30), then +2 Klein 9B parity cases; --collect-only -q on 2026-10-21: 15539.
+# Train r88: 15797 + 5 (review-gap and plan-deletion cases) - 28 (retired legacy image workflows, +2 Klein 9B parity) = 15774.
+# Train r88 test gaps: +2 plan-deletion blockers (enabled-App-only, sign-in-rule-only) -> 15776.
+pytest = 15824
 vitest = 3068
 playwright = 502
 
