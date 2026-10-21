@@ -679,10 +679,10 @@ function codeSnippets(request: RequestInfo) {
     const curlFields = fields.map(
       ([name, value]) => `  --form-string ${shellQuote(`${name}=${value}`)}`,
     );
-    const curlFiles = files.map(
-      (file) =>
-        `  -F ${shellQuote(`${file.field}=@"${file.examplePath.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"${file.type ? `;type=${file.type}` : ""}`)}`,
-    );
+    const curlFiles = files.map((file) => {
+      const path = file.examplePath.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+      return `  -F ${shellQuote(`${file.field}=@"${path}"${file.type ? `;type=${file.type}` : ""}`)}`;
+    });
     const pythonFiles = files
       .map(
         (file) =>

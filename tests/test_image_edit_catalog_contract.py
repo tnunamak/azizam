@@ -107,7 +107,7 @@ def test_adapter_request_keeps_repeated_parts_in_manifest_order(record):
     inputs = {name: "data:image/png;base64," + base64.b64encode(payloads[name]).decode()
               for name in reversed(names)}
     sync = _execution(record, None)["sync"]
-    built = asyncio.run(build_request(lambda *_args: None, None, None, {}, sync, inputs, wrap_intent=None))
+    built = asyncio.run(build_request(lambda *_args: None, None, None, {"intent": record.intent}, sync, inputs, wrap_intent=None))
     assert [(field, content) for field, (_, content, _) in built.files] == [
         ("image[]", payloads[name]) for name in names]
 

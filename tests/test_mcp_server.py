@@ -59,7 +59,7 @@ CATALOG = [
         "qwen-edit", "image.edit", aliases=["image", "image-edit"], required=["prompt", "source_image"],
         props={"prompt": {"type": "string"}, "source_image": {"type": "string"}},
         sync={"method": "POST", "path": "/v1/images/edits", "content_type": "multipart/form-data", "model": "qwen-edit",
-              "fields": {"prompt": {"in": "form", "field": "prompt"}, "source_image": {"in": "file", "field": "image"}}},
+              "fields": {"prompt": {"in": "form", "field": "prompt"}, "source_image": {"in": "file", "field": "image[]"}}},
     ),
     _entry(
         "sfx", "audio.generate", aliases=["sfx"], required=["prompt"], recommended="async",
