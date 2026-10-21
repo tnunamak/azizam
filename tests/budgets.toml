@@ -159,7 +159,9 @@
 # Prompt-binding followups: replace 17 graph hashes with 14 scoped manifest lint
 # cases and one synthetic rejection case.
 # Full hermetic --collect-only -q measured 15823 on 2026-10-21.
-pytest = 15776
+# Train r89: full hermetic --collect-only -q measured 15804 on 2026-10-21.
+# Web is unchanged from r88; retain its Vitest ceiling (3068).
+pytest = 15804
 vitest = 3068
 playwright = 502
 
