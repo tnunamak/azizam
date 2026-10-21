@@ -194,7 +194,7 @@ def test_family_memo_uses_the_session_verdict_and_lasts_at_most_five_seconds(med
     assert media.client().get(url).status_code == 403
 
 
-@pytest.mark.parametrize("change", ["family", "subject", "remove_binding"])
+@pytest.mark.parametrize("change", ["family", "subject", "remove_binding", "session", "remove_timing"])
 def test_family_binding_cannot_be_changed_or_removed(media, change):
     client = owner_client(media)
     parts = urlsplit(mint(client))
@@ -202,6 +202,8 @@ def test_family_binding_cannot_be_changed_or_removed(media, change):
     if change == "remove_binding":
         query.pop("family")
         query.pop("subject")
+    elif change == "remove_timing":
+        query.pop("session")
     else:
         query[change] = ["another-session"]
     url = urlunsplit(parts._replace(query=urlencode(query, doseq=True)))
@@ -259,7 +261,7 @@ def test_session_view_id_is_public_stable_across_rotation_and_changes_on_new_sig
 
 
 @pytest.mark.parametrize("mode", ["none", thumbnails.THUMB_MODE])
-@pytest.mark.parametrize("setting,age", [("absolute_lifetime_days", {"issued_ago": 3 * 86400}),
+@pytest.mark.parametrize("setting,age", [("absolute_lifetime_days", {"issued_ago": 3 * 86400, "renewed_ago": 0}),
                                           ("idle_timeout_days", {"issued_ago": 3 * 86400, "renewed_ago": 2 * 86400})])
 def test_current_lifetime_policy_rejects_previously_minted_urls(media, mode, setting, age):
     client = owner_client(media)
@@ -351,3 +353,33 @@ def test_session_etags_hash_only_variant_identity_not_delivered_bytes(media, mon
         assert again.headers["etag"] == response.headers["etag"]
         assert client.get(url, headers={"if-none-match": response.headers["etag"]}).status_code == 304
     assert responses[0].headers["etag"] != responses[1].headers["etag"]
+
+
+@pytest.mark.parametrize("setting,age", [("absolute_lifetime_days", {"issued_ago": 3 * 86400, "renewed_ago": 0}),
+                                          ("idle_timeout_days", {"issued_ago": 3 * 86400, "renewed_ago": 2 * 86400})])
+def test_cookie_free_try_url_checks_its_minting_cookie_against_current_policy(media, setting, age):
+    client = owner_client(media)
+    forge(media, client, OWNER, **age)
+    key = user_runtime.ensure_try_session_key(cookie_session(client), path=media.path)["api_key"]
+    url = mint(media.client(), key=key)
+    assert media.client().get(url).status_code == 200
+    set_policy(media, **{setting: 1, "idle_timeout_days": 1})
+    assert media.client().get(url).status_code == 403
+
+
+def test_try_key_upgrade_keeps_binding_without_inventing_cookie_timestamps(media):
+    from gateway import admin_runtime, admin_store
+    client = owner_client(media)
+    key = user_runtime.ensure_try_session_key(cookie_session(client), path=media.path)
+    stored = admin_store.get_credential(key["id"], path=media.path)
+    assert "session_timing_json" not in key
+    assert "session_timing_json" not in admin_runtime._sanitize_credential(stored)
+    with accounts.connection(media.path) as conn:
+        conn.execute("ALTER TABLE credentials DROP COLUMN session_timing_json")
+    admin_store.init_db(media.path)
+    assert admin_store.get_credential(key["id"], path=media.path)["session_timing_json"] is None
+    url = mint(media.client(), key=key["api_key"])
+    assert parse_qs(urlsplit(url).query)["family"] == [cookie_session(client).family_id]
+    assert media.client().get(url).status_code == 403
+    # A matching signed cookie can still provide the real lifetime facts after upgrade.
+    assert media.client().get(mint(client, key=key["api_key"])).status_code == 200
