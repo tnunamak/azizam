@@ -16,7 +16,8 @@ from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # no
 
 
 EDIT_RECORDS = [record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
-                if record.intent == "image.edit"]
+                if record.intent == "image.edit"
+                and _execution(record, None)["sync"]["path"] == "/v1/images/edits"]
 assert EDIT_RECORDS, "no image.edit manifests discovered"
 
 
@@ -42,6 +43,7 @@ def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fak
     parts = [(part["input"], part.get("field", key)) for key, part in example["files"].items()]
     fake = fake_upstreams.asgi(scenario_from_data({
         "protocol": "comfyui", "name": "catalog-edit-uploads",
+        "provenance": {"source": "hand-written", "reference": "ComfyUI POST /upload/image"},
         "exchanges": [{
             "id": f"picture-{index}", "required": index < len(names),
             "match": {"method": "POST", "path": "/upload/image"},
