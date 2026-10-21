@@ -71,7 +71,7 @@ it("lists each access plan as one row with its summary and counts on the second 
   ]);
   expect(rows[0]).toHaveTextContent("Chat and images. Local models only. No paid providers.");
   expect(rows[0]).toHaveTextContent("Used by 2 people and 1 app");
-  expect(rows[1]).toHaveTextContent("Not used yet");
+  expect(rows[1]).toHaveTextContent("No one is on this plan yet");
 });
 
 const viewer = (role: Viewer["role"]): Viewer => ({
@@ -129,4 +129,8 @@ it("offers the owner New, Edit and Delete for access plans", async () => {
   await user.click(screen.getByRole("button", { name: "Actions for Family" }));
   expect(await screen.findByRole("menuitem", { name: "Edit access plan" })).toBeVisible();
   expect(screen.getByRole("menuitem", { name: "Delete access plan" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  const unused = screen.getByRole("heading", { name: "Creative" }).closest("li")!;
+  await user.click(within(unused).getByRole("button", { name: "Assign people" }));
+  expect(screen.getByRole("tab", { name: "People", exact: true })).toHaveAttribute("aria-selected", "true");
 });

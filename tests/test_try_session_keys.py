@@ -160,3 +160,46 @@ def test_try_key_route_reuses_the_key_and_sign_out_revokes_it(browser, member):
     assert signed_out.status_code == 200, signed_out.text
     assert credential(member.db, key["id"])["revoked_at"] is not None
     assert browser.client.post("/me/api/try-key", headers=browser.headers, json={}).status_code == 401
+
+
+def test_try_catalog_names_the_current_person_plan_and_applies_category_grants(browser, member, monkeypatch, tmp_path):
+    """Changing a person's assignment updates both the catalog and an existing Try key."""
+    from unittest.mock import AsyncMock
+
+    import proxy
+    from gateway import category_enforcement
+    from gateway.capabilities import Capability
+    from gateway.runtime_auth import evaluate_and_apply, make_policy_request
+    from tests.support.access import store_plan
+    from tests.test_category_visibility import activate, rules
+
+    old = store_plan("Everything", path=member.db)
+    new = store_plan("Everything and categories", path=member.db)
+    path = tmp_path / "categories.db"
+    activate(path, rules(experimental_visible_to=[new["id"]]))
+    category_enforcement.configure(path)
+    monkeypatch.setattr(proxy, "_gateway_catalog_base", lambda: ({}, [
+        Capability(intent="chat.completions", backend="svc", model="plain"),
+        Capability(intent="chat.completions", backend="svc", model="exp-flow"),
+    ]))
+    monkeypatch.setattr(proxy, "_gateway_catalog_finish", lambda registry, base, remote: base)
+    monkeypatch.setattr(proxy, "_gateway_aliases_provider", lambda: {})
+    monkeypatch.setattr(proxy, "_models_catalog_health_evidence", AsyncMock(return_value={}))
+    monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", AsyncMock(return_value={}))
+    monkeypatch.setattr(proxy, "_status_payload_with_service_rows", AsyncMock(return_value={}))
+    monkeypatch.setattr(proxy, "_runtime_availability_evidence", lambda *args, **kw: {})
+    key = browser.client.post("/me/api/try-key", headers=browser.headers, json={}).json()["credential"]
+    try:
+        for plan, expected in [(None, set()), (old, {"plain"}), (new, {"plain", "exp-flow"})]:
+            accounts.change_person(member.user["id"], "test", plan_id=plan["id"] if plan else None, path=member.db)
+            response = browser.client.get("/me/api/models/catalog")
+            assert response.status_code == 200
+            catalog = response.json()
+            assert (catalog["access_plan"]["id"] if catalog["access_plan"] else None) == (plan["id"] if plan else None)
+            assert {row["id"] for row in catalog["models"]} == expected
+            identity = runtime_identity_for_app_credential_hash(hash_api_key(key["api_key"]), path=member.db)
+            assert identity is not None
+            decision = evaluate_and_apply(identity, make_policy_request(intent="chat.completions", model="exp-flow"))
+            assert decision.allowed == (plan is new)
+    finally:
+        category_enforcement.configure(None)
