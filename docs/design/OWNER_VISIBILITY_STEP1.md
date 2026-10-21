@@ -149,12 +149,13 @@ line references here name current-main symbols rather than stale v3 offsets.
 `owner_projection.py` builds receipt, job, storage and receipt-list values with
 recursive closed schemas. Receipt labels use the trusted maker_person_id when
 supplied with the internal stored record. That field is stored by RouteReceipt
-but omitted from client, admin and internal audience serializers; a receipt read
-through those audiences has no person label. Step 3 must provide trusted maker
-attribution before serving this projection, without inferring it from the App's
+but omitted from client and admin serializers; those audiences have no person
+label. Step 3 must use the internal audience's stored maker attribution before
+serving this projection, without inferring it from the App's
 current owner. This step adds no receipt write path or audience field.
-The projection reads terminal_reason and status_code from the supplied admin or
-internal audience. Client receipts omit them, so those values stay unavailable.
+The projection reads promoted terminal_reason and status_code from the admin
+audience, or sanitizes them from the internal metadata. Client receipts omit
+them, so those values stay unavailable.
 Route comes from remote, the provider path or provider-native protocol; provider
 comes from backend and a trusted provider lookup. Queue, execution and first-output
 durations come from the phase timestamps; absent or reversed phases stay unavailable.

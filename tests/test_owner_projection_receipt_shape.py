@@ -76,14 +76,14 @@ def test_projection_derives_fields_from_real_receipt_writer(tmp_path):
     assert shown.provider == "provider:a"
     assert (shown.queue_ms, shown.execution_ms, shown.first_output_ms) == (1, 2, 1)
     assert (shown.terminal_reason, shown.status_code) == ("completed", 200)
-    # maker_person_id exists in the writer's internal blob, but no audience
-    # carries it. Step 3 must supply trusted maker attribution separately.
+    # Admin/client omit the maker; the internal audience preserves its stored
+    # attribution. Step 3 must use that source, never the App's current owner.
     assert shown.person is None
     for audience in ("client", "admin", "internal"):
         row = receipt_store.get(stored["request_id"], audience=audience, path=tmp_path / "receipts.db")
-        assert "maker_person_id" not in row
+        assert ("maker_person_id" in row) == (audience == "internal")
         projected = project("receipt", row, names=names)
-        assert projected.person is None
+        assert (projected.person.id if projected.person else None) == ("person:a" if audience == "internal" else None)
         assert (projected.terminal_reason, projected.status_code) == (("unknown", None) if audience == "client" else ("completed", 200))
 
 

@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from gateway.capability_ids import INTENT_CAPABILITIES
 from gateway.discovery_metadata import PUBLIC_PROTOCOLS, _load_protocol_frontend_records
 from gateway.resource_decisions import CALLER_REASONS
-from gateway.receipts import RETENTION_KINDS, RETENTION_DECISIONS, REFUSAL_CODES
+from gateway.receipts import RETENTION_KINDS, RETENTION_DECISIONS, REFUSAL_CODES, sanitize_admin_metadata
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 RequestId = Annotated[str, StringConstraints(pattern=r"^req_[0-9a-f]{32}$")]
@@ -253,8 +253,8 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
     """Project trusted record identity/quantities; unknown free text never falls back.
 
     Use an admin/internal audience to retain terminal_reason and status_code.
-    maker_person_id is stored internally but omitted from all receipt audiences;
-    step 3 must resolve that trusted attribution before serving a person label.
+    maker_person_id is available internally, but omitted from admin/client reads;
+    step 3 must use that trusted stored attribution before serving a person label.
     Never substitute the App's current accountable person for the maker.
     """
     common = {
@@ -283,8 +283,10 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
     if kind != "receipt":
         raise ValueError("unknown operational record kind")
     route = _receipt_route(record)
-    reason = _enum(record.get("terminal_reason"), get_args(Terminal), "unknown")
-    status_code = _number(record.get("status_code"), integer=True)
+    # Admin promotes these facts; internal receipts retain them in metadata.
+    terminal = sanitize_admin_metadata(_mapping(record.get("metadata")))
+    reason = _enum(record.get("terminal_reason", terminal.get("terminal_reason")), get_args(Terminal), "unknown")
+    status_code = _number(record.get("status_code", terminal.get("status_code")), integer=True)
     usage = _mapping(record.get("usage"))
     cost = _mapping(record.get("cost"))
     reasons = _mapping(record.get("resource_decision")).get("reasons", ())
