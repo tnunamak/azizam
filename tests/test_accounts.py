@@ -367,7 +367,7 @@ def test_invite_accept_accepts_one_character_password(account_db, account_client
 def test_password_reset_rejects_password_outside_boundary(account_db, account_client, fast_password_work, password):
     path, _ = account_db
     client, _ = account_client
-    user = invited_member(account_db)
+    user, _, _ = invited_member(account_db)
     _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
     response = client.post("/auth/api/password-reset", json={"token": token, "password": password})
     assert response.status_code == 400
@@ -377,7 +377,7 @@ def test_password_reset_rejects_password_outside_boundary(account_db, account_cl
 def test_password_reset_accepts_one_character_password(account_db, account_client, fast_password_work):
     path, _ = account_db
     client, _ = account_client
-    user = invited_member(account_db)
+    user, _, _ = invited_member(account_db)
     _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
     response = client.post("/auth/api/password-reset", json={"token": token, "password": "x"})
     assert response.status_code == 200
