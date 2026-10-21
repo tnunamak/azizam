@@ -572,6 +572,7 @@ def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
     db_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
     backup = access_plans_backup_path(db_file)
     if not backup.exists():
+        secure_state_path(backup)
         target = sqlite3.connect(str(backup))
         try:
             conn.backup(target)

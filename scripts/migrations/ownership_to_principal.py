@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 from gateway.ownership import principal_key_for_credential
 from gateway.custom_voices import owner_dir_name as owner_dir
+from gateway import private_io
 
 
 def readonly_connection(path: Path) -> sqlite3.Connection:
@@ -229,7 +230,9 @@ def build_plan(data_dir: Path, cache_dir: Path, admin_db: Path) -> Plan:
 
 
 def backup_sqlite(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(target.parent)
+    if not target.exists():
+        private_io.create_private_file(target)
     with closing(readonly_connection(source)) as read, closing(sqlite3.connect(target)) as write:
         read.backup(write)
 
@@ -246,21 +249,21 @@ def create_backup(plan: Plan, root: Path) -> Path:
         if source.is_dir():
             destination = backup / "voices" / source.name
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(source, destination)
+            private_io.copy_private_tree(source, destination)
     for change in plan.meta_changes:
         destination = backup / "cache-images" / change.path.name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(change.path, destination)
+        private_io.atomic_copy_file(change.path, destination)
     return backup
 
 
 def apply_voice_move(source: Path, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(destination)
     for kind in ("voices", "consents"):
         old_kind, new_kind = source / kind, destination / kind
         if not old_kind.is_dir():
             continue
-        new_kind.mkdir(exist_ok=True)
+        private_io.ensure_private_dir(new_kind)
         for record in list(old_kind.iterdir()):
             target = new_kind / record.name
             if not target.exists():
@@ -294,8 +297,7 @@ def apply_plan(plan: Plan, data_dir: Path) -> Path | None:
                         conn.execute(f"UPDATE {change.table} SET {change.json_column}=? WHERE {change.key_column}=?", (change.value, change.key))
     for change in plan.meta_changes:
         temporary = change.path.with_suffix(change.path.suffix + ".tmp")
-        temporary.write_text(change.value, encoding="utf-8")
-        temporary.replace(change.path)
+        private_io.atomic_write_text(change.path, change.value)
     for source, destination in plan.voice_sources.items():
         if source.is_dir():
             apply_voice_move(source, destination)
