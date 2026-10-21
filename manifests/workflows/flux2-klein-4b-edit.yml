@@ -47,6 +47,11 @@ inputs:
     type: number
     minimum: 0
     maximum: 20
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
   denoise:
     label: change strength
     help: Lower values preserve more of the original.
@@ -84,6 +89,9 @@ bindings:
       guidance:
         - node: "26"
           input: guidance
+      seed:
+        - node: "25"
+          input: noise_seed
       denoise:
         - node: "49"
           input: denoise
