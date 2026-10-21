@@ -1204,7 +1204,10 @@ function Preview({
             retryPending.current = false;
             setRetrying(false);
           });
-          void queryClient.invalidateQueries({ queryKey: ["library"] });
+          void queryClient.invalidateQueries({
+            queryKey: ["library"],
+            predicate: (query) => typeof query.queryKey[1] === "object",
+          });
         }}
       />
     );
@@ -2441,7 +2444,7 @@ export default function LibraryPage() {
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
-  const { data: removalState } = useQuery({
+  const { data: removalState, isPending: removalPending, isError: removalError } = useQuery({
     queryKey: ["library", "removal"],
     queryFn: ({ signal }) => mediaRequest<RemovalResponse>(
       "/me/api/media?folder_state=1&removal_plan=1", { signal },
@@ -2746,12 +2749,16 @@ export default function LibraryPage() {
     );
     return () => window.clearTimeout(timer);
   }, [confirming]);
+  const refreshLibrary = () => {
+    void queryClient.invalidateQueries({ queryKey: ["library", "removal"], exact: true });
+    void refetch();
+  };
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
       loadMore();
       return;
     }
-    void refetch();
+    refreshLibrary();
   };
   const deleteMutation = useMutation({
     mutationFn: async (asset: MediaAsset) => {
@@ -3180,7 +3187,7 @@ export default function LibraryPage() {
           </div>
         ) : null}
       </div>
-      {!isLoading && !showInitialError && (goneAssets.length > 0 || missingItemCount > 0) ? (
+      {!isLoading && !showInitialError && (goneAssets.length > 0 || missingItemCount > 0 || removalError) ? (
         <section
           id="gone-files"
           aria-label={
@@ -3190,7 +3197,11 @@ export default function LibraryPage() {
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <p className="text-meta" role="status">
-              {missingItemCount > 0
+              {removalError
+                ? "Couldn't check the whole Library. Try Refresh."
+                : removalPending
+                ? "Checking the whole Library…"
+                : missingItemCount > 0
                 ? `${itemCount(missingItemCount)} missing across your Library.`
                 : goneAssets.length === 1
                 ? goneConfirmed
@@ -3215,7 +3226,7 @@ export default function LibraryPage() {
               <Button
                 variant="link"
                 className="h-auto min-h-6 min-w-6 px-0"
-                onClick={() => void refetch()}
+                onClick={refreshLibrary}
               >
                 Refresh library
               </Button>

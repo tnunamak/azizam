@@ -158,7 +158,7 @@
 # skips evidence/plan work; same-folder evidence drift refuses confirmation).
 # Full Vitest list measured 3086 (+2: filter reuse; click snapshot across refetch).
 pytest = 15814
-vitest = 3086
+vitest = 3091  # Round 7: five Library refresh/retry/status regressions; full Vitest list measured.
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

@@ -2344,6 +2344,65 @@ describe("Library items whose files are gone", () => {
     );
   }
 
+  test("Refresh library refreshes the viewer-wide removal plan", async () => {
+    const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
+    routeRemoval(removed);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("folder_state=1&removal_plan=1"))).toHaveLength(2));
+  });
+
+  test("retained listing retry refreshes the viewer-wide removal plan", async () => {
+    let listings = 0;
+    let plans = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input) => {
+      if (String(input).includes("folder_state=1")) {
+        plans += 1;
+        return Response.json({ removal_plan: { missing_items: 3 } });
+      }
+      listings += 1;
+      return listings === 2 ? new Response("failed", { status: 503 }) : list([newGone("gone", "Gone")]);
+    }));
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(plans).toBe(3));
+    await waitFor(() => expect(listings).toBe(3));
+  });
+
+  test("holds the filtered missing line until the whole Library check settles", async () => {
+    let resolvePlan!: (response: Response) => void;
+    const plan = new Promise<Response>((resolve) => { resolvePlan = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).includes("folder_state=1")
+      ? plan : list([newGone("gone", "Gone")])));
+    renderLibrary();
+    expect(await screen.findByText("Checking the whole Library…")).toBeVisible();
+    expect(screen.queryByText("1 file is unavailable.", { exact: false })).toBeNull();
+    await act(async () => resolvePlan(Response.json({ removal_plan: { missing_items: 3 } })));
+    expect(await screen.findByText("3 items missing across your Library.", { exact: false })).toBeVisible();
+  });
+
+  test("shows a whole Library check error with a Refresh recovery", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).includes("folder_state=1")
+      ? new Response("failed", { status: 503 }) : list([])));
+    renderLibrary();
+    expect(await screen.findByText("Couldn't check the whole Library. Try Refresh.", { exact: false })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh library" })).toBeVisible();
+  });
+
+  test("tile media retry refreshes the listing without requesting folder state", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("retry-tile", "Retry tile")]) : undefined);
+    const { queryClient } = renderLibrary();
+    const image = await screen.findByRole("img", { name: "Retry tile" });
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    fireEvent.error(image);
+    const before = vi.mocked(fetch).mock.calls.length;
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.slice(before).some(([path]) => String(path).startsWith("/me/api/media?"))).toBe(true));
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    expect(vi.mocked(fetch).mock.calls.slice(before).some(([path]) => String(path).includes("folder_state"))).toBe(false);
+  });
+
   test("Remove missing items asks first, then removes only the missing ones", async () => {
     const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
     routeRemoval(removed);
