@@ -15239,7 +15239,14 @@ async def _run_identity_job(
         except identity_api.IdentityUnavailable:
             _identity_job_failed(job_id, "The face service could not be started.")
         except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
-            _identity_job_failed(job_id, str(exc))
+            # Exception text can quote the request's person labels or descriptions.
+            message = {
+                "no_face": "no face was found in a reference photo; choose a clearer photo.",
+                "same_face": "Two people point at the same face; give each person a different box.",
+                "face_too_small": "A reference face is too small; choose a closer photo.",
+                "ambiguous_faces": "Reference faces could not be matched; give each person a face box.",
+            }.get(getattr(exc, "code", None), "The identity request could not be completed; check its photos and settings.")
+            _identity_job_failed(job_id, message)
         except asyncio.CancelledError:
             _identity_job_failed(job_id, "The gateway stopped before the job finished.")
             raise
