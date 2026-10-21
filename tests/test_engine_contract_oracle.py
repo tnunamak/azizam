@@ -93,11 +93,12 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
-    # Freeze the original catalog separately from the three data-only additions.
-    added = {"moss-image", "moss-image-fast", "moss-image-quality"}
+    # Freeze the original catalog separately from the four data-only additions.
+    added = {"moss-image", "moss-image-fast", "moss-image-quality", "fibo-2-edit-turbo"}
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == {
-        name: ("image", {"input_modalities": ["text"], "output_modalities": ["image"]})
-        for name in added
+        **{name: ("image", {"input_modalities": ["text"], "output_modalities": ["image"]})
+           for name in added - {"fibo-2-edit-turbo"}},
+        "fibo-2-edit-turbo": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
     model_surface = [row for row in model_surface if row[0] not in added]
 
