@@ -33,6 +33,36 @@ def test_live_data_child_environment_is_clean(tmp_path, monkeypatch):
     assert env["UI_E2E_ALLOWED_PORTS"] == ""
 
 
+def test_ui_fixture_activity_log_stays_in_owned_state_with_hostile_parent_path(tmp_path, monkeypatch):
+    from scripts.ui import live_data_seed
+
+    hostile_path = tmp_path.parent / "hostile-key-activity.jsonl"
+    monkeypatch.setenv("AZIZAM_KEY_ACTIVITY_LOG", str(hostile_path))
+    env = live_data_seed._env(tmp_path, 18182, 18183, tmp_path / "config.yml")
+    state_log = tmp_path / "key_activity.jsonl"
+
+    assert env["AZIZAM_KEY_ACTIVITY_LOG"] == str(state_log)
+    subprocess.run(
+        [sys.executable, "-c", "import firehose_metrics as f; f.record_request('fixture', '/synthetic', 200, 1); f.flush_persisted()"],
+        cwd=tmp_path, env=env, check=True,
+    )
+    assert state_log.is_file()
+    assert not hostile_path.exists()
+
+    repo = live_data_seed.REPO
+    serve = (repo / "scripts/ui/serve.py").read_text(encoding="utf-8")
+    assert "'AZIZAM_KEY_ACTIVITY_LOG': 'key_activity.jsonl'" in serve
+    assert "env[name] = str(state / filename)" in serve
+
+    fixture_gateway = (repo / "scripts/ui/fixture_gateway.py").read_text(encoding="utf-8")
+    activity_override = 'os.environ["AZIZAM_KEY_ACTIVITY_LOG"] = os.path.join(os.getcwd(), "key_activity.jsonl")'
+    assert activity_override in fixture_gateway
+    assert fixture_gateway.index(activity_override) < fixture_gateway.index("import proxy")
+
+    fresh_instance = (repo / "tests/e2e/fresh_instance.py").read_text(encoding="utf-8")
+    assert 'env["AZIZAM_KEY_ACTIVITY_LOG"] = str(root / "key_activity.jsonl")' in fresh_instance
+
+
 def test_live_data_proxy_uses_guard_with_exact_fixture_ports(tmp_path):
     from scripts.ui import live_data_seed
 
