@@ -7,10 +7,12 @@ import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
 import * as session from "@/components/shell/session";
 import { ApiError } from "@/lib/api";
 
-vi.mock("./status-client", () => ({ StatusClient: () => <p>Owner status</p> }));
+vi.mock("./status-client", () => {
+  return { StatusClient: () => <p>Owner status</p> };
+});
 // Capability states come from the shared model, which reads the Home snapshot.
 const home = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
-vi.mock("@/app/home/home-api", () => ({
+vi.mock("@/app/_home/home-api", () => ({
   homeApi: {
     home: async () => ({
       authenticated: true,
@@ -74,7 +76,7 @@ const snapshot: Snapshot = {
       status: "failed",
       intent: "image.generate",
       created_at: null,
-      href: "/ui/usage/?receipt=my-failed-request",
+      href: "/usage/?receipt=my-failed-request",
     },
   ],
   help: "Ask the owner if an allowed capability is unavailable.",
@@ -108,11 +110,10 @@ describe("member Status diagnosis", () => {
       screen.queryByText("Ask the owner", { exact: true }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
-    const receipt = screen.getByRole("link", { name: "View request receipt" });
+    // The visible capability and state name the link (WCAG 2.5.3); the id stays out.
+    const receipt = screen.getByRole("link", { name: /Images.*Failed/ });
     expect(receipt).toHaveAttribute("href", snapshot.receipts[0].href);
-    // The visible capability and state describe the link; the id stays out.
-    expect(receipt).toHaveAccessibleDescription(/Images.*Failed/);
-    expect(receipt).not.toHaveAccessibleDescription(/my-failed-request/);
+    expect(receipt).not.toHaveAccessibleName(/my-failed-request/);
     await user.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Flux", { exact: true })).toBeVisible();
     expect(screen.getByText(/Names you can use/)).toBeInTheDocument();
@@ -243,7 +244,7 @@ describe("member Status diagnosis", () => {
     mount();
     expect(
       await screen.findByRole("link", { name: "Sign in" }),
-    ).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
+    ).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
     expect(status).toHaveBeenCalledOnce();
   });
   it("renders the loading state until the scoped request resolves", async () => {
@@ -317,9 +318,9 @@ it("keeps the owner's own requests alongside the household status", async () => 
   vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
   serve(snapshot);
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
-  expect(screen.getByText("Owner status")).toBeVisible();
+  expect(await screen.findByText("Owner status")).toBeVisible();
   expect(await screen.findByRole("heading", { name: "Your latest requests" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "View request receipt" })).toHaveAttribute("href", snapshot.receipts[0].href);
+  expect(screen.getByRole("link", { name: /Failed/ })).toHaveAttribute("href", snapshot.receipts[0].href);
   expect(screen.queryByRole("heading", { name: "What you can use" })).toBeNull();
   // The owner is not told to ask the owner or to check their app connection here.
   expect(screen.queryByText(/Check your connection|if it does not recover|before the limit resets/)).toBeNull();

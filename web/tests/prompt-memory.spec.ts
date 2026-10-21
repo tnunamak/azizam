@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   isShorter,
+  isKnownRetention,
+  isRetention,
   keyPromptNote,
   purgeStatus,
   promptNotSavedReason,
@@ -10,6 +10,7 @@ import {
   tryKeepState,
   withForget,
   withinCap,
+  setRetentionContract,
   type MemberPromptMemory,
 } from "@/lib/prompt-memory";
 
@@ -42,6 +43,27 @@ describe("prompt memory rules", () => {
     expect(withinCap("never", "never")).toBe(true);
     expect(withinCap("never", "1_year")).toBe(false);
     expect(withinCap("1_year", "1_year")).toBe(true);
+    expect(withinCap("3_months", "1_year")).toBe(true);
+  });
+
+  it("compares a known saved period even when it is no longer offered", () => {
+    setRetentionContract({
+      choices: [
+        { id: "never", seconds: null },
+        { id: "3_months", seconds: 7_776_000 },
+      ],
+      known_unoffered: [{ id: "1_year", seconds: 31_536_000 }],
+      defaults: {
+        default_remember: true,
+        never_keep: false,
+        retention_cap: "never",
+        remember: true,
+        retention: "never",
+      },
+    });
+    expect(isKnownRetention("1_year")).toBe(true);
+    expect(isRetention("1_year")).toBe(false);
+    expect(isShorter("3_months", "1_year")).toBe(true);
     expect(withinCap("3_months", "1_year")).toBe(true);
   });
 
@@ -103,6 +125,11 @@ describe("withForget", () => {
 });
 
 describe("purgeStatus", () => {
+  it("reports a startup deadline repair that has not finished", () => {
+    expect(purgeStatus({ pending: true, deadline_repair_pending: true })).toBe(
+      "Saved prompts haven't been shortened to the current limits yet. Azizam keeps retrying.",
+    );
+  });
   it("is silent when nothing is pending", () => {
     expect(purgeStatus(undefined)).toBeNull();
     expect(
@@ -163,11 +190,6 @@ it("shows the full backend key description", () => {
     }),
   ).toBe("Chat requests may save a conversation until it is deleted.");
 });
-it("names database erasure as pending", () => {
-  expect(purgeStatus({ pending: true, database_pending: true })).toContain(
-    "Prompt deletion hasn't finished",
-  );
-});
 
 describe("prompt memory copy", () => {
   it("names disabled prompt keeping without guessing missing-prompt reasons", () => {
@@ -207,26 +229,10 @@ describe("prompt memory copy", () => {
       "Some older files still contain prompts. Azizam keeps retrying. 12 files left.",
     );
     expect(
-      purgeStatus({ pending: true, metadata_stripping: { status: "retrying" } }),
+      purgeStatus({
+        pending: true,
+        metadata_stripping: { status: "retrying" },
+      }),
     ).toBe("Some older files still contain prompts. Azizam keeps retrying.");
-  });
-
-  it("keeps Library missing-prompt copy neutral and preserves known reasons", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/app/library/page.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("? `No saved prompt. ${notSavedReason}`");
-    expect(source).toContain(': "No saved prompt"}');
-  });
-
-  it("states Library deletion scope and that downloaded copies stay", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/app/library/page.tsx"),
-      "utf8",
-    );
-    expect(source).toContain(
-      'description="Removes this creation from your Library. Downloaded copies stay."',
-    );
   });
 });

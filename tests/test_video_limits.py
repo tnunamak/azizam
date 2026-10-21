@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.workflow_openapi import ROOT_EXTENSION
 
@@ -67,7 +68,7 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         cfg["videos"]["max_total_seconds"] = 33
         for patcher in (
             patch.object(proxy, "config", cfg),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy.app, "openapi_schema", None),
         ):
             patcher.start()

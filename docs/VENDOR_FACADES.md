@@ -4,7 +4,7 @@ Status: implementation snapshot, 2026-10-03.
 
 This document describes the vendor-shaped front doors that exist in the gateway today. It is not a roadmap. Check `proxy.py` before changing it: most facades are registered there and delegate into pure translators under `gateway/`.
 
-The common rule is the same for all facades: they translate vendor protocol shapes into existing gateway routes. Auth, app profile policy, route receipts and backend selection stay in the core gateway path. When a vendor feature would require owning model files, hosted vendor tools, or a protocol engine the gateway does not have, the facade returns an explicit error.
+The common rule is the same for all facades: they translate vendor protocol shapes into existing gateway routes. Auth, app access plan policy, route receipts and backend selection stay in the core gateway path. When a vendor feature would require owning model files, hosted vendor tools, or a protocol engine the gateway does not have, the facade returns an explicit error.
 
 ## Anthropic Messages
 
@@ -66,7 +66,7 @@ DELETE /api/delete             DELETE /ollama/api/delete
 
 The read and inference routes translate Ollama request and response bodies in `gateway/protocols/ollama.py`. Chat and generate use the gateway chat path. Embed and embeddings use the gateway embeddings path. Streaming returns Ollama NDJSON. Empty chat or generate requests act as Ollama load or unload probes and do not call the chat backend.
 
-Auth uses the normal gateway API key handling. The discovery routes can be made bearer-free only when `auth.ollama_compat_discovery` or `OLLAMA_COMPAT_DISCOVERY` enables that behavior. Runtime policy is evaluated with Ollama-specific protocol names such as `ollama.chat`, `ollama.generate`, `ollama.embeddings` and `ollama.models`.
+Auth uses the normal gateway API key handling. Ollama discovery has no separate keyless mode. A missing key returns `401 key_required` unless an owner added the client address to an App under **Apps & keys → app menu → Trusted addresses**. A sent key always wins, so a placeholder such as `loopback` returns `401 key_invalid`. `X-Forwarded-For` counts only from `auth.trusted_proxies`. Runtime policy is evaluated with Ollama-specific protocol names such as `ollama.chat`, `ollama.generate`, `ollama.embeddings` and `ollama.models`.
 
 Known limits:
 
@@ -144,7 +144,7 @@ The last five POST routes return `501` with a reason.
 
 The A1111 facade is a thin subset for clients such as SillyTavern that expect Stable Diffusion WebUI routes at the host root. `txt2img` maps the active A1111 checkpoint to a synchronous `image.generate` workflow and calls `/v1/images/generations` in process. The response returns base64 images and an A1111-style `info` string. Per-key session state remembers the selected checkpoint.
 
-Auth accepts the normal gateway `Authorization: Bearer` and `x-api-key` forms. It also accepts SillyTavern-style Basic auth and treats the password, or the whole decoded string when no colon is present, as the gateway API key. The core image request is forwarded with that key as a bearer token, so normal app profile policy and receipts still apply.
+Auth accepts the normal gateway `Authorization: Bearer` and `x-api-key` forms. It also accepts SillyTavern-style Basic auth and treats the password, or the whole decoded string when no colon is present, as the gateway API key. The core image request is forwarded with that key as a bearer token, so normal app access plan policy and receipts still apply.
 
 Known limits:
 
@@ -198,21 +198,27 @@ GET    /.well-known/oauth-protected-resource/mcp
 GET    /.well-known/oauth-protected-resource
 GET    /mcp
 DELETE /mcp
+GET    /.well-known/oauth-authorization-server
+GET    /oauth/authorize
+POST   /oauth/token
+POST   /oauth/register
+POST   /oauth/revoke
 ```
 
 `GET /mcp` and `DELETE /mcp` return `405`.
 
-The MCP facade is a Streamable HTTP JSON-RPC endpoint. It supports the 2026-07-28 stateless revision and legacy handshake revisions 2025-11-25, 2025-06-18 and 2025-03-26. It exposes three generated meta-tools: `capabilities`, `run` and `job`.
+The MCP facade is a Streamable HTTP JSON-RPC endpoint. It supports the 2026-07-28 stateless revision and legacy handshake revisions 2025-11-25, 2025-06-18 and 2025-03-26. It exposes three generated meta-tools, `capabilities`, `run` and `job`, and two small management tools, `rename_app` and `rename_key`.
 
-Tool calls dispatch in process to existing gateway routes with the caller's credentials. `capabilities` reads the workflow catalog and stable aliases. `run` starts a workflow or the speech route. `job` polls, waits for or cancels a media job. Media results are returned as MCP `resource_link` blocks with signed asset URLs.
+Tool calls dispatch in process to existing gateway routes with the caller's credentials. `capabilities` reads the workflow catalog and stable aliases. `run` starts a workflow or the speech route. `job` polls, waits for or cancels a media job. Media results are returned as MCP `resource_link` blocks with signed asset URLs. `rename_app` and `rename_key` give one of the signed-in person's own apps or keys a new name (by its current name, or its id when two share a name). They work only for a client the person signed in to (an OAuth connection) and only when that consent included renaming: the grant records the `mcp:rename` scope, which a client cannot ask for and which connections made before it existed lack. Those answer with a tool error that tells the person to disconnect the client on the Connect page and connect it again. An App key is refused. A rename changes a label, not a credential, so it asks for no recent confirmation. They change nothing else: keys and access stay.
 
-Auth uses bearer API keys in headers. Missing credentials return a `WWW-Authenticate` challenge pointing at the protected-resource metadata route. Browser origins must be same-origin unless configured in `mcp.allowed_origins`.
+Auth accepts an API key or an OAuth access token in the `Authorization` header. Missing or rejected credentials return `401` with a `WWW-Authenticate` challenge that names the protected-resource metadata and the `mcp` scope. The metadata names the gateway's own authorization server, so clients that cannot send a header (ChatGPT, Claude.ai) sign the person in instead; see `docs/design/MCP_AUTHORIZATION.md`. A browser `Origin` must be the saved public address or listed in `mcp.allowed_origins`.
 
 Known limits:
 
-- There is no server-sent event stream on `GET /mcp`; all responses are plain JSON.
+- There is no server-sent event stream on `GET /mcp` and no legacy HTTP+SSE transport; all responses are plain JSON.
+- Prompts, resources, completion, logging, sampling, elicitation and tasks are not offered.
 - The server does not mint an `Mcp-Session-Id`.
-- Only the three meta-tools are exposed. It does not generate one tool per workflow.
+- Only three meta-tools (plus the two rename tools) are exposed. It does not generate one tool per workflow.
 - Feature limits come from the core route that a tool calls, and are returned as tool errors.
 
 Evidence:

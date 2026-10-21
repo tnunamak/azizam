@@ -20,15 +20,13 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, providers, sqlite_startup
 from gateway.admin_api import AdminAuthError
-from gateway.admin_runtime import person_for_app_credential
+from gateway.admin_runtime import access_for_person, identity_from_access_row, person_for_app_credential
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
 from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
 from gateway.model_presentation import (product_capability, capability_presentation,
                                         group_product_capabilities, product_status_summary)
-from gateway.policy import DEFAULT_PROFILE
 from gateway.request_source import gateway_ui_request
-from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.service_registry import is_remote_provider_config
 from gateway.user_runtime import (
@@ -46,22 +44,30 @@ def _error(exc: UserPortalError | AdminAuthError) -> JSONResponse:
 
 
 def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
-              default_profile_id: str | None, path: Path, *, person_id: str | None = None) -> RuntimeIdentity | None:
-    """Resolve access without marking a key used by a read-only Home request."""
-    profile_id = (credential or {}).get("profile_id") or app.get("default_profile_id") or default_profile_id
-    profile = DEFAULT_PROFILE
-    if profile_id:
-        record = admin_store.get_profile(str(profile_id), path=path)
-        if record is None:
-            return None
-        try:
-            profile = load_profile(record.get("profile"), default_id=str(profile_id))
-        except ProfileLoadError:
-            return None
-    return RuntimeIdentity(name=str(app.get("name") or "Your access"),
-                           key_hash=str((credential or {}).get("hash") or ""),
-                           profile=profile, app_id=app.get("id"),
-                           person_id=person_for_app_credential(app, credential) if credential is not None else person_id)
+              path: Path, *, person_id: str, rows: Mapping[str, Mapping[str, Any]] | None = None,
+              ) -> RuntimeIdentity | None:
+    """Resolve an App's access without marking a key used by a read-only Home request.
+
+    ``rows`` holds the access rows of a whole listing, read in one query.
+    """
+    if rows is not None:
+        row = rows.get(str(app["id"]))
+    else:
+        with admin_store.runtime_auth_connection(path) as conn:
+            row = admin_store.runtime_access_row(conn, app_id=str(app["id"]))
+    if row is None:
+        return None
+    identity = identity_from_access_row(
+        row, key_hash=str((credential or {}).get("hash") or ""), name=str(app.get("name") or "Your access"),
+        person_id=person_for_app_credential(app, credential) if credential is not None else person_id,
+    )
+    return None if identity.denial else identity
+
+
+def _new_app_identity(path: Path, *, person_id: str) -> RuntimeIdentity:
+    """A new App of this person is "Same as my access plan" (design §2.9)."""
+    return RuntimeIdentity(name="Your access", key_hash="", access=access_for_person(person_id, path=path),
+                           person_id=person_id, accountable_person_id=person_id)
 
 
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
@@ -87,15 +93,23 @@ def _external_client_evidence(receipts_path: Path) -> tuple[dict[str, Any], bool
     Only a recorded source proves it: new UI tests carry gateway-ui and
     internal hops never qualify. Legacy receipts predate source attribution,
     so their origin is unknown and they cannot complete the step.
+
+    The newest external request is found by walking the receipts newest first, so it costs
+    what it takes to reach recent traffic, not the size of the history. Whether an older
+    request has no source is asked only when none was observed, the one case that uses it.
     """
+    source = "json_extract(receipt_json, '$.source_kind')"
+    # The unary plus keeps SQLite from choosing the parent_request_id index, which would
+    # find every top-level receipt and sort them; it then walks the created_at index.
+    where = "status = 'succeeded' AND +parent_request_id IS NULL"
     with sqlite_startup.connect_readonly(receipts_path) as conn:
-        observed, unattributed = conn.execute(
-            "SELECT MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IN ('app', 'local-network') "
-            "THEN created_at END), "
-            "MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IS NULL THEN created_at END) "
-            "FROM receipts WHERE status = 'succeeded' AND parent_request_id IS NULL"
-        ).fetchone()
-    return {"recorded": observed is not None, "source": "receipt", "observed_at_s": observed}, unattributed is not None
+        row = conn.execute(
+            f"SELECT created_at FROM receipts WHERE {where} AND {source} IN ('app', 'local-network') "
+            "ORDER BY created_at DESC LIMIT 1").fetchone()
+        observed = row[0] if row else None
+        unattributed = observed is None and conn.execute(
+            f"SELECT EXISTS(SELECT 1 FROM receipts WHERE {where} AND {source} IS NULL)").fetchone()[0] == 1
+    return {"recorded": observed is not None, "source": "receipt", "observed_at_s": observed}, unattributed
 
 
 def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
@@ -140,9 +154,9 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             return replace(resolved, policy_available=upstream.policy_available,
                            policy_sources=upstream.policy_sources,
                            policy_reasons=upstream.policy_reasons)
-        return capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
+        return capability_with_policy_view(resolved, identity.access, request=make_policy_request(
             protocol=_PROTOCOLS.get(product_capability(cap), "openai.chat"),
-            intent=cap.intent, model=model, backend=concrete.backend,
+            intent=cap.intent, model=model, requested_model=cap.model, backend=concrete.backend,
             workflow=concrete.workflow, capability_exposure=concrete.exposure,
             capability_trust_tier=concrete.trust_tier,
             capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags),
@@ -153,7 +167,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         if "alias" not in cap.tags or not targets:
             if (cap.intent, cap.model) in alias_names:
                 continue  # Public aliases take precedence over same-named models.
-            if cap.workflow and cap.model is None and identity.profile.models is not None:
+            if cap.workflow and cap.model is None and identity.access.lists_items:
                 cap = target_policy(cap, cap.workflow)
             out.append(cap)
             continue
@@ -191,7 +205,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             continue
         concrete = matches[0]
         out.append(target_policy(cap, target, concrete))
-    if identity.profile.models is not None:
+    if identity.access.lists_items:
         # A model-less endpoint alone cannot prove that a constrained key has
         # any usable target. Require a permitted named capability or a logical
         # model declared by the service's routing data.
@@ -286,9 +300,8 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
 
 
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
-                       require_action, csrf_token, default_profile_id, capabilities,
+                       require_action, csrf_token, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
-                       inherited_profile_id_for_app=None, self_service_enabled=lambda: True,
                        spend_ledger_path: Callable[[], Path | None] = lambda: None,
                        availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
                        workflow_records: Callable[[], Any] = lambda: ()) -> APIRouter:
@@ -299,7 +312,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     ``workflow_records`` lets those workflows project from their engines.
 
     ``spend_ledger_path`` returns the provider spend ledger that cap
-    enforcement uses; without it, plan spend is reported as unknown.
+    enforcement uses; without it, spend against a cap is reported as unknown.
     """
     router = APIRouter()
 
@@ -308,7 +321,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         backends = [dict(row) for row in status.get("backends", []) if isinstance(row, Mapping)]
         # Probe responses can exist for disabled services. Their enablement
         # remains authoritative in the registry, even when an endpoint answers.
-        services = store.get_service_registry().get("services") or {}
+        services = (await asyncio.to_thread(store.get_service_registry)).get("services") or {}
         known = {str(row.get("service_id") or row.get("key") or row.get("name")) for row in backends}
         for service_id, service in services.items():
             if not isinstance(service, Mapping) or service_id in known:
@@ -324,70 +337,81 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.get("/me/api/home", include_in_schema=False)
     async def home(request: Request):
         try:
-            session = require_session(request)
-            inherited = default_profile_id(session)
-            account = build_user_portal_snapshot(session, default_profile_id=inherited, path=store.path)
+            session = (await asyncio.to_thread(require_session, request))
+            account = await asyncio.to_thread(build_user_portal_snapshot, session, path=store.path)
             if not account.get("authenticated"):
                 raise UserPortalError("login_required", "Sign in to view Home.", status_code=401)
         except UserPortalError as exc:
             return _error(exc)
-        registry = store.get_service_registry()
+        registry = await asyncio.to_thread(store.get_service_registry)
         status_payload = await live_status_payload()
-        injected = status_payload.get("_availability_evidence")
-        availability_evidence = (
-            dict(injected)
-            if isinstance(injected, Mapping)
-            else availability_evidence_snapshot(
-                service_records=registry,
-                status_payload=status_payload,
-                receipt_store_path=receipts_path(),
+
+        # Everything below is synchronous SQLite and file work. Run it on a
+        # worker thread so a slow disk cannot stall the gateway's event loop.
+        def build_home() -> JSONResponse:
+            injected = status_payload.get("_availability_evidence")
+            availability_evidence = (
+                dict(injected)
+                if isinstance(injected, Mapping)
+                else availability_evidence_snapshot(
+                    service_records=registry,
+                    status_payload=status_payload,
+                    receipt_store_path=receipts_path(),
+                )
             )
-        )
-        alias_views = aliases()
-        rows_registry = availability_services(registry)
-        records = tuple(workflow_records())
-        allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
-        credential_aliases: dict[str, list[dict[str, Any]]] = {}
-        owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
-        for app in owned_apps:
-            if app.get("disabled_at"):
-                continue
-            credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
-            for credential in credentials or [None]:
-                app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
-                identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
-                if identity is None:
-                    continue
-                scoped = _resolved_capabilities(identity, capabilities, registry)
-                if credential is not None:
-                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
-                for cap in scoped:
-                    if cap.policy_available:
-                        allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
-        new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
-        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
-        for cap in new_caps:
-            if cap.policy_available:
-                allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
-        alias_rows = _alias_rows(rows, alias_views)
-        rows = group_product_capabilities(rows)
-        summary = product_status_summary(rows)
-        base = (public_base_url(request) or "").rstrip("/")
-        activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
-        gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
-        # The person's own plan: the access plan their keys inherit. Spend is
-        # the plan's total across everyone on it, because the caps are shared.
-        plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
-        plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
-                      if plan_identity is not None else None)
-        return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
-                      "csrf_token": csrf_token(session), "public_base_url": base,
-                      "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
-                      "aliases": alias_rows, "credential_aliases": credential_aliases,
-                      "new_app_aliases": new_app_aliases, "status": summary,
-                      "receipts": activity["receipts"], "creations": None})
+            alias_views = aliases()
+            rows_registry = availability_services(registry)
+            records = tuple(workflow_records())
+            allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
+            credential_aliases: dict[str, list[dict[str, Any]]] = {}
+            owned_apps = [app for app in admin_store.list_apps_for_user(session.subject, path=store.path)
+                          if not app.get("disabled_at")]
+            # Keys and access rows for every app are read in one query each, so
+            # the number of statements does not grow with the number of apps or keys.
+            credentials_by_app = admin_store.list_active_credentials_for_apps(
+                [str(app["id"]) for app in owned_apps], path=store.path)
+            with admin_store.runtime_auth_connection(store.path) as conn:
+                access_rows = admin_store.runtime_access_rows(conn, [str(app["id"]) for app in owned_apps])
+            for app in owned_apps:
+                credentials = credentials_by_app.get(str(app["id"]), [])
+                for credential in credentials or [None]:
+                    identity = _identity(app, credential, store.path, person_id=session.subject, rows=access_rows)
+                    if identity is None:
+                        continue
+                    scoped = _resolved_capabilities(identity, capabilities, registry)
+                    if credential is not None:
+                        credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
+                    for cap in scoped:
+                        if cap.policy_available:
+                            allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+            new_identity = _new_app_identity(store.path, person_id=session.subject)
+            new_caps = _resolved_capabilities(new_identity, capabilities, registry)
+            new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
+            for cap in new_caps:
+                if cap.policy_available:
+                    allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+            rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
+            alias_rows = _alias_rows(rows, alias_views)
+            rows = group_product_capabilities(rows)
+            summary = product_status_summary(rows)
+            base = (public_base_url(request) or "").rstrip("/")
+            activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
+            gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
+            # The person's own spending against their plan's caps (their total
+            # across every App they answer for); null when they have no plan.
+            person_plan = new_identity.access.person_plan
+            plan_spend = (providers.counter_spend(person_plan.caps, column="person_id", subject_id=session.subject,
+                                                  path=spend_ledger_path())
+                          if person_plan is not None else None)
+            return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
+                          "has_access_plan": new_identity.access.complete,
+                          "csrf_token": csrf_token(session), "public_base_url": base,
+                          "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
+                          "aliases": alias_rows, "credential_aliases": credential_aliases,
+                          "new_app_aliases": new_app_aliases, "status": summary,
+                          "receipts": activity["receipts"], "creations": None})
+
+        return await asyncio.to_thread(build_home)
 
     @router.get("/me/api/status", include_in_schema=False)
     async def member_status(request: Request):
@@ -411,7 +435,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                          "availability": {"evidence": dict(evidence)}})
         receipts = [{**{key: row.get(key) for key in ("request_id", "status", "intent")},
                      "created_at": row.get("created_at", row.get("_stored_at")),
-                     "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}
+                     "href": f"/usage/?receipt={quote(str(row['request_id']), safe='')}"}
                     for row in snapshot["receipts"]]
         return _json({"scope": "member", "gateway": snapshot["gateway"], "status": snapshot["status"], "capabilities": rows,
                       "receipts": receipts,
@@ -420,10 +444,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/admin/api/setup-evidence", include_in_schema=False)
     async def setup_evidence(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -457,7 +481,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/me/api/connection-test", include_in_schema=False)
     async def connection_test(request: Request):
         try:
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -477,8 +501,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             if credential.get("expires_at") is not None and int(credential["expires_at"]) <= int(time.time()):
                 raise UserPortalError("credential_not_found", "API key not found for this account", status_code=404)
             app = admin_store.get_app(credential["app_id"], path=store.path)
-            inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else default_profile_id(session)
-            identity = _identity(app, credential, inherited, store.path, person_id=session.subject)
+            identity = _identity(app, credential, store.path, person_id=session.subject)
             if identity is None:
                 raise UserPortalError("credential_unavailable", "This key's access plan is unavailable.", status_code=403)
         except UserPortalError as exc:
@@ -517,10 +540,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/admin/api/setup-dismiss", include_in_schema=False)
     async def dismiss_setup(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -534,51 +557,56 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.get("/admin/api/setup-progress", include_in_schema=False)
     async def setup_progress(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
         except AdminAuthError as exc:
             return _error(exc)
-        registry = store.get_service_registry()
+        registry = await asyncio.to_thread(store.get_service_registry)
         status_payload = await live_status_payload()
-        injected = status_payload.get("_availability_evidence")
-        availability_evidence = (
-            dict(injected)
-            if isinstance(injected, Mapping)
-            else availability_evidence_snapshot(
-                service_records=registry,
-                status_payload=status_payload,
-                receipt_store_path=receipts_path(),
+
+        # The evidence reads below are blocking SQLite: build the answer on a worker thread.
+        def build_progress() -> JSONResponse:
+            injected = status_payload.get("_availability_evidence")
+            availability_evidence = (
+                dict(injected)
+                if isinstance(injected, Mapping)
+                else availability_evidence_snapshot(
+                    service_records=registry,
+                    status_payload=status_payload,
+                    receipt_store_path=receipts_path(),
+                )
             )
-        )
-        services = registry.get("services", [])
-        if isinstance(services, Mapping):
-            services = [{"id": key, **row} for key, row in services.items()]
-        connected = any(
-            service.get("enabled", True)
-            and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
-            for service in services
-        )
-        succeeded = _has_success(receipts_path())
-        evidence = _setup_evidence(store.path, context.subject)
-        external_client, unattributed_use = _external_client_evidence(receipts_path())
-        app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
-        invited = _invitation_created(store.path)
-        steps = [
-            {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
-            {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/ui/admin/services/"},
-            {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/ui/home/#connect"},
-            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
-            {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/ui/people/"},
-        ]
-        dismissed = "checklist_dismissed" in evidence
-        evidence["observed_external_client"] = external_client
-        evidence.setdefault("checklist_dismissed", {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
-        evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
-        for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
-            evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
-        return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
-                      "dismissed": dismissed, "steps": steps, "evidence": evidence})
+            services = registry.get("services", [])
+            if isinstance(services, Mapping):
+                services = [{"id": key, **row} for key, row in services.items()]
+            connected = any(
+                service.get("enabled", True)
+                and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
+                for service in services
+            )
+            succeeded = _has_success(receipts_path())
+            evidence = _setup_evidence(store.path, context.subject)
+            external_client, unattributed_use = _external_client_evidence(receipts_path())
+            app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
+            invited = _invitation_created(store.path)
+            steps = [
+                {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
+                {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/engines/"},
+                {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/#connect"},
+                {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/#connect"},
+                {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/people/"},
+            ]
+            dismissed = "checklist_dismissed" in evidence
+            evidence["observed_external_client"] = external_client
+            evidence.setdefault("checklist_dismissed", {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
+            evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
+            for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
+                evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
+            return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
+                          "dismissed": dismissed, "steps": steps, "evidence": evidence})
+
+        return await asyncio.to_thread(build_progress)
 
     return router
 

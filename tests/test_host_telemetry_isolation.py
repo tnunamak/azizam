@@ -25,16 +25,25 @@ class HostTelemetryIsolationTests(unittest.TestCase):
             k: os.environ.get(k)
             for k in ("AZIZAM_HOST_TELEMETRY_DISABLED", "AZIZAM_DISK_PARTITIONS")
         }
+        import status_endpoint
 
-    def tearDown(self) -> None:
+        # reload() rebinds the shared module in place; restore its entry
+        # bindings (not a fresh reload) so later tests see the same functions.
+        entry_bindings = vars(status_endpoint).copy()
+        self.addCleanup(self._restore_module, status_endpoint, entry_bindings)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self) -> None:
         for key, value in self._orig_env.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-        import status_endpoint
 
-        importlib.reload(status_endpoint)
+    @staticmethod
+    def _restore_module(module, bindings: dict) -> None:
+        vars(module).clear()
+        vars(module).update(bindings)
 
     def _reload_with_env(self, **env: str):
         for key in ("AZIZAM_HOST_TELEMETRY_DISABLED", "AZIZAM_DISK_PARTITIONS"):
@@ -76,3 +85,13 @@ class HostTelemetryIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Runs after the class above in file order; captured when this file is imported.
+import status_endpoint as _status_endpoint  # noqa: E402
+
+_ENTRY_RUN = _status_endpoint._run
+
+
+def test_the_shared_module_keeps_its_entry_bindings_after_the_class() -> None:
+    assert _status_endpoint._run is _ENTRY_RUN

@@ -65,3 +65,48 @@ for (const [label, broken] of [
 		await verifyRepair(broken);
 	});
 }
+
+test("healthy catalogs are not quarantined and other providers survive write and delete", async (t) => {
+	const { mkdtemp, writeFile, readFile, readdir, rm } = await import("node:fs/promises");
+	const { tmpdir } = await import("node:os");
+	const { createRepairingModelsStore } = await import("../src/models-store.ts");
+	const dir = await mkdtemp(join(tmpdir(), "pi-valid-store-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const path = join(dir, "models-store.json");
+	const model = {
+		id: "cached",
+		name: "Cached",
+		provider: "azizam",
+		api: "openai-completions" as const,
+		baseUrl: "http://gateway.test/v1",
+		reasoning: false,
+		input: ["text"] as ("text" | "image")[],
+		contextWindow: 128000,
+		maxTokens: 8192,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	const azizam = { models: [model], checkedAt: 123 };
+	const other = { models: [{ ...model, id: "other-model", provider: "other" }], checkedAt: 456 };
+	const original = JSON.stringify({ azizam, other }, null, 2) + "\n";
+	await writeFile(path, original, { mode: 0o600 });
+	const store = await createRepairingModelsStore(path);
+	const quarantines = async () => (await readdir(dir)).filter((name) => name.startsWith("models-store.json.corrupt-"));
+
+	const loaded = await store.read("azizam");
+	assert.deepEqual(loaded?.models, azizam.models);
+	assert.equal(await readFile(path, "utf8"), original);
+	assert.deepEqual(await quarantines(), []);
+
+	const replacement = { models: [{ ...model, id: "replacement", name: "Replacement" }], checkedAt: 789 };
+	await store.write("azizam", replacement);
+	const afterWrite = JSON.parse(await readFile(path, "utf8"));
+	assert.deepEqual(afterWrite.azizam.models, replacement.models);
+	assert.deepEqual(afterWrite.other, other);
+	assert.deepEqual(await quarantines(), []);
+
+	await store.delete("azizam");
+	const afterDelete = JSON.parse(await readFile(path, "utf8"));
+	assert.equal(Object.hasOwn(afterDelete, "azizam"), false);
+	assert.deepEqual(afterDelete.other, other);
+	assert.deepEqual(await quarantines(), []);
+});

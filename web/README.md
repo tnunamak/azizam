@@ -1,7 +1,12 @@
 # Gateway UI
 
 Next.js 15, React 19 and Tailwind v4 export static files to `web/out`.
-The gateway serves them under `/ui/`; no Node server is needed in production.
+The gateway serves them at the origin root: Home is `/`, other pages are
+`/<page>/` (for example `/library/`) and assets are under `/_next/static/`. No
+Node server is needed in production. `gateway/ui_pages.json` lists every page
+and who may open it (`public`, `member` or `admin`); the gateway, the shell and
+the sign-in return-path check all read it, and a component test keeps it equal
+to the `src/app/**/page.tsx` directories.
 
 The foundation has a role-aware shell, light and dark themes, and Radix-based
 shadcn components. Apps & keys uses the signed-in person's `/me/api/*` endpoints.
@@ -32,8 +37,8 @@ Test state and cookies stay in ignored directories. Screenshots are saved to
 `test-results/screens/`; the HTML report is in `test-results/report/`.
 
 `npm run test:all` runs the component tests and then the production journey.
-`/ui/design/` is the component reference; `/ui/gallery/` links to it.
+`/design/` is the component reference.
 
-For local development, `npm run dev` starts Next. Its default development-only
-API rewrites target the gateway on port 5000. Implementation lanes should use
+For local development, `npm run dev` starts Next. A development-only fallback
+rewrite sends every path Next does not serve to the gateway on port 5000. Implementation lanes should use
 the isolated browser harness instead of the running operator service.

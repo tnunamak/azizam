@@ -146,3 +146,36 @@ def test_git_code_package_is_indexed_but_not_imported_as_registry_data(
         "test-demo-protocol-translator",
     ]
     assert index_record["requires_code_trust"] is True
+
+
+def test_code_package_review_and_index_never_execute_referenced_code(tmp_path: Path) -> None:
+    package_dir = tmp_path / "package"
+    shutil.copytree(CODE_PACKAGE, package_dir)
+    markers = []
+    for filename in ("demo_adapter.py", "demo_translator.py"):
+        marker = tmp_path / (filename + ".executed")
+        markers.append(marker)
+        code = package_dir / "code" / filename
+        original = code.read_text(encoding="utf-8")
+        code.write_text(
+            original
+            + "\nfrom pathlib import Path as _SentinelPath\n"
+            + f"_SentinelPath({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+
+    source = {"type": "local_directory", "path": str(package_dir)}
+    review = validate_extension_package_source(source)
+    assert review["ok"] is True, review["errors"]
+    assert review["requires_code_trust"] is True
+    index = package_index_record(review, source=source)
+    records = imported_registry_records(review)
+
+    assert index["requires_code_trust"] is True
+    assert records == {
+        "services": {},
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    assert all(not marker.exists() for marker in markers)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { homeApi } from "@/app/home/home-api";
+import { homeApi } from "@/app/_home/home-api";
 
 /**
  * Who looks after this gateway, from `/me/api/home` (`gateway.owner_name`),

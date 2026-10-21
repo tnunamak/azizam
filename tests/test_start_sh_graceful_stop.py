@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.secret_store import delete_provider_secret, put_provider_secret
@@ -39,37 +40,29 @@ FAKE_PROXY = textwrap.dedent(
 FAKE_LITELLM = textwrap.dedent(
     """\
     #!/bin/bash
-    echo "litellm started" >> "$FAKE_LOG"
+    # The handler must exist before the marker the harness waits for.
     trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    if [ -n "${AZIZAM_PRIVATE_TMPDIR_LOCK_FD:-}" ] && [ -e "/proc/$$/fd/$AZIZAM_PRIVATE_TMPDIR_LOCK_FD" ]; then
+      echo "litellm holds the private temporary directory lock" >> "$FAKE_LOG"
+    fi
+    echo "litellm started" >> "$FAKE_LOG"
     while true; do sleep 0.1; done
     """
 )
 
 FAKE_LITELLM_RECORD_ENV = textwrap.dedent(
     """\
-    #!/usr/bin/env python3
-    import hashlib
-    import os
-    import signal
-    import sys
-    import time
-
-    log = os.environ["FAKE_LOG"]
-    env_name = os.environ["EXPECTED_PROVIDER_ENV"]
-    value = os.environ.get(env_name)
-    digest = hashlib.sha256(value.encode()).hexdigest() if value else "missing"
-    with open(log, "a", encoding="utf-8") as handle:
-        handle.write(f"litellm started {digest} argv={' '.join(sys.argv)}\\n")
-        handle.flush()
-
-    def on_term(*_):
-        with open(log, "a", encoding="utf-8") as handle:
-            handle.write("litellm terminated\\n")
-        raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, on_term)
-    while True:
-        time.sleep(0.1)
+    #!/bin/bash
+    env_name="$EXPECTED_PROVIDER_ENV"
+    value="${!env_name}"
+    if [[ -n "$value" ]]; then
+      digest="$(printf '%s' "$value" | sha256sum | cut -d' ' -f1)"
+    else
+      digest=missing
+    fi
+    trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    printf 'litellm started %s argv=%s\\n' "$digest" "$0 $*" >> "$FAKE_LOG"
+    while true; do sleep 0.1; done
     """
 )
 
@@ -82,6 +75,7 @@ HARNESS = textwrap.dedent(
       grep -q "proxy started" "$FAKE_LOG" 2>/dev/null && grep -q "litellm started" "$FAKE_LOG" 2>/dev/null && break
       sleep 0.1
     done
+    grep -q "litellm started" "$FAKE_LOG" 2>/dev/null || { echo "startup markers never appeared" >&2; kill -TERM "$pid"; exit 97; }
     kill -TERM "$pid"
     wait "$pid"
     echo "start.sh exit=$?" >> "$FAKE_LOG"
@@ -103,6 +97,32 @@ WATCHER_HARNESS = textwrap.dedent(
 
 
 class StartScriptGracefulStopTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # start.sh empties the gateway's private temporary directory, which must be on disk; the hermetic temp dir is RAM.
+        self.private = Path(tempfile.mkdtemp(prefix="start-private-", dir=os.environ["HERMETIC_HOST_DISK_DIR"])) / "private-tmp"
+        self.private.mkdir(mode=0o700)
+        patcher = patch.dict(os.environ, {"AZIZAM_PRIVATE_TMPDIR": str(self.private)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.private.parent, ignore_errors=True)
+
+    def test_the_private_temporary_directory_is_emptied_before_the_proxy_starts_and_handed_to_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            _prepare_start_fixture(work)
+            (self.private / "left-by-a-crash").write_text("old audio")
+            (work / "proxy.py").write_text(
+                "import os\n"
+                "names = ('TMPDIR', 'TMP', 'TEMP', 'AZIZAM_PRIVATE_TMPDIR')\n"
+                "print([os.environ[name] for name in names], os.listdir(os.environ['TMPDIR']))\n"
+            )
+            _write_python_wrapper(work / "bin" / "python3")
+            _write_awk_wrapper(work / "bin" / "awk")
+            env = {**os.environ, "AZIZAM_MANAGE_LITELLM": "false", "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+            result = subprocess.run(["/bin/bash", f"{work.name}/start.sh"], cwd=work.parent, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str([str(self.private)] * 4) + " ['.owner.lock']")
+
     def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
@@ -160,10 +180,15 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             awk.write_text("#!/bin/bash\nexec cut -d' ' -f1\n")
             awk.chmod(awk.stat().st_mode | stat.S_IXUSR)
             log = work / "log.txt"
+            # Without a registry the sidecar never launches LiteLLM, so the
+            # harness would wait out its whole startup loop on ambient state.
+            db_path = work / "data" / "admin.db"
+            _write_registry_json(db_path, {"services": {}})
             env = {
                 **os.environ,
                 "FAKE_LOG": str(log),
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+                "AZIZAM_ADMIN_DB": str(db_path),
                 "AZIZAM_LITELLM_RELOAD_INTERVAL": "1",
                 "DATABASE_URL": "",
             }
@@ -185,6 +210,8 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 f"LiteLLM stopped before the proxy finished: {lines}",
             )
             self.assertIn("start.sh exit=0", lines)
+            # A LiteLLM that outlives the gateway must not keep the next launch from claiming the directory.
+            self.assertNotIn("litellm holds the private temporary directory lock", lines)
 
     def test_litellm_restarts_when_provider_secret_rotates_and_deletes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,6 +318,9 @@ def _prepare_start_fixture(work: Path) -> None:
 
 
 def _write_python_wrapper(path: Path) -> None:
+    # When the harness configures the DB path, avoid a cold Python process for
+    # this simple lookup. The real provider-sidecar fingerprint and run
+    # commands still execute below.
     path.write_text(
         "#!/bin/bash\n"
         'if [[ $1 == -c && $2 == *find_spec* ]]; then echo "$PWD/schema.prisma"; exit 0; fi\n'
@@ -300,6 +330,7 @@ def _write_python_wrapper(path: Path) -> None:
         '  if [[ ${FAKE_PRISMA_GENERATE_EXIT:-0} != 0 ]]; then exit "$FAKE_PRISMA_GENERATE_EXIT"; fi\n'
         '  touch venv/.fake-prisma-client; exit 0\n'
         'fi\n'
+        'if [[ $1 == -m && $2 == gateway.provider_sidecar && $3 == db-path && ${AZIZAM_ADMIN_DB:-} == /* ]]; then echo "$AZIZAM_ADMIN_DB"; exit 0; fi\n'
         f"exec {os.environ.get('PYTHON', os.sys.executable)!r} \"$@\"\n"
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -339,10 +370,27 @@ def _write_registry_json(db_path: Path, registry: dict[str, object]) -> None:
 def _wait_for_log(path: Path, needle: str) -> None:
     import time
 
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if path.exists() and needle in path.read_text(encoding="utf-8"):
             return
         time.sleep(0.05)
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     raise AssertionError(f"timed out waiting for {needle!r}; log was {content!r}")
+
+
+def test_wait_for_log_accepts_reload_event_after_ten_seconds(tmp_path, monkeypatch):
+    import time
+
+    log = tmp_path / "reload.log"
+    clock = [0.0]
+
+    def advance(seconds):
+        clock[0] += seconds
+        if clock[0] >= 15:
+            log.write_text("litellm started rotated-secret-hash\n", encoding="utf-8")
+
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "sleep", advance)
+    _wait_for_log(log, "rotated-secret-hash")
+    assert 15 <= clock[0] < 16, "return as soon as the observable event arrives"

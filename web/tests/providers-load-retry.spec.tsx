@@ -16,7 +16,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["/admin/api/providers/-/catalog", "/admin/api/profiles"])(
+it.each(["/admin/api/providers/-/catalog", "/admin/api/access-plans"])(
   "shows the existing error and retries failed %s metadata",
   async (failedPath) => {
     let failing = true;
@@ -28,7 +28,7 @@ it.each(["/admin/api/providers/-/catalog", "/admin/api/profiles"])(
             { status: 503 },
           )
         : Response.json(
-            path.includes("profiles") ? { plans: [] } : { providers: [] },
+            path.includes("access-plans") ? { access_plans: [] } : { providers: [] },
           );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -55,9 +55,9 @@ it.each(["/admin/api/providers/-/catalog", "/admin/api/profiles"])(
 
 it.each([
   ["/admin/api/providers/-/catalog", false],
-  ["/admin/api/profiles", false],
+  ["/admin/api/access-plans", false],
   ["/admin/api/providers/-/catalog", true],
-  ["/admin/api/profiles", true],
+  ["/admin/api/access-plans", true],
 ] as const)(
   "recovers failed %s metadata inside Add provider (already open: %s)",
   async (failedPath, alreadyOpen) => {
@@ -84,8 +84,8 @@ it.each([
                 },
               ],
             }
-          : path.endsWith("/profiles")
-            ? { plans: [{ id: "test-plan", name: "Test plan" }] }
+          : path.endsWith("/access-plans")
+            ? { access_plans: [{ id: "test-plan", name: "Test plan" }] }
             : path.endsWith("/-/test")
               ? {
                   ok: true,
@@ -150,7 +150,6 @@ it.each([
         }),
       ).toBeDisabled();
       expect(dialog.queryByLabelText("Search providers")).toBeNull();
-      expect(dialog.queryByLabelText("Allow Test plan")).toBeNull();
       failing = false;
       fireEvent.click(dialog.getByRole("button", { name: "Retry providers" }));
       await waitFor(() => expect(dialog.queryByRole("alert")).toBeNull());
@@ -161,7 +160,7 @@ it.each([
         !alreadyOpen,
       );
       if (alreadyOpen) {
-        expect(dialog.getByLabelText("Allow Test plan")).toBeInTheDocument();
+        expect(dialog.getByText(/No access plan includes a new provider/)).toBeInTheDocument();
         expect(
           dialog.getByRole("button", { name: "Save provider" }),
         ).toBeEnabled();
@@ -191,7 +190,7 @@ async function renderProviderRegression(checkResponse: unknown, existing = false
         providers: [{ id: "test", name: "Test provider", base_url: "https://example.test" }],
       });
     }
-    if (path.endsWith("/profiles")) return Response.json({ plans: [] });
+    if (path.endsWith("/access-plans")) return Response.json({ access_plans: [] });
     if (init?.method && init.method !== "GET") return Response.json({});
     return Response.json({
       providers: existing ? [{ id: "test", name: "Test provider", caps: { daily_usd: 5, monthly_usd: 50 } }] : [],
@@ -421,7 +420,7 @@ it("saves only the selected model row and refreshes clean drafts without losing 
       return Response.json({ actor: { csrf_token: "test-csrf" } });
     }
     if (path.endsWith("/catalog")) return Response.json({ providers: [] });
-    if (path.endsWith("/profiles")) return Response.json({ plans: [] });
+    if (path.endsWith("/access-plans")) return Response.json({ access_plans: [] });
     if (path.endsWith("/test/models") && init?.method === "PUT") {
       // Like the real endpoint, the body replaces the whole model list.
       const body = JSON.parse(String(init.body));
@@ -519,7 +518,7 @@ it("treats a saved price typed as 9.0 as clean once the server stores 9", async 
       return Response.json({ actor: { csrf_token: "test-csrf" } });
     }
     if (path.endsWith("/catalog")) return Response.json({ providers: [] });
-    if (path.endsWith("/profiles")) return Response.json({ plans: [] });
+    if (path.endsWith("/access-plans")) return Response.json({ access_plans: [] });
     if (path.endsWith("/test/models") && init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       models = body.models.map((saved: {
@@ -575,9 +574,9 @@ async function renderProviderOverview(count = 1, unknownSpend = false) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const path = String(input);
     if (path.endsWith("/catalog")) return Response.json({ providers: [] });
-    if (path.endsWith("/profiles")) {
+    if (path.endsWith("/access-plans")) {
       return Response.json({
-        plans: [
+        access_plans: [
           { id: "family", name: "Family plan" },
           { id: "guests", name: "Guest plan" },
         ],
@@ -598,7 +597,7 @@ async function renderProviderOverview(count = 1, unknownSpend = false) {
           { id: "enabled-model", enabled: true },
           { id: "disabled-model", enabled: false },
         ],
-        allowed_plans: ["family"],
+        access_plans: [{ id: "family", name: "Family plan" }],
       })),
     });
   });
@@ -643,7 +642,7 @@ it("shows a single provider's state, spend, enabled models and allowed plans bef
     expect(scope.getByText("USD 12.00 of USD 50.00")).toBeVisible();
     expect(scope.getByText("Family plan")).toBeVisible();
     expect(fetchMock.mock.calls.map(([input]) => String(input)).sort()).toEqual([
-      "/admin/api/profiles",
+      "/admin/api/access-plans",
       "/admin/api/providers",
       "/admin/api/providers/-/catalog",
     ]);
@@ -682,6 +681,55 @@ it("keeps multiple providers as collapsed management rows", async () => {
       expect(scope.getByText("Family plan")).toBeVisible();
       expect(scope.getByRole("button", { name: "Edit caps" })).toBeVisible();
     }
+  } finally {
+    client.clear();
+  }
+});
+
+// Moved from the integrated-missing-screens browser matrix: the provider list's
+// seeded and failed states, with the shapes that spec intercepted.
+async function renderProvidersList(listResponse: () => Response) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/admin/api/providers")) return listResponse();
+      return Response.json(path.includes("profiles") ? { plans: [] } : { providers: [] });
+    }),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ProvidersPage />
+    </QueryClientProvider>,
+  );
+  return client;
+}
+
+it("lists a configured provider by name", async () => {
+  const client = await renderProvidersList(() =>
+    Response.json({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", enabled: true, reachable: true, key_set: true, spend_usd: 1.25, cap_usd: 10 },
+      ],
+    }),
+  );
+  try {
+    expect(await screen.findByRole("heading", { name: "OpenRouter" })).toBeVisible();
+    expect(screen.queryByText("No providers yet")).toBeNull();
+  } finally {
+    client.clear();
+  }
+});
+
+it("offers Retry providers when the provider list cannot load", async () => {
+  const client = await renderProvidersList(() =>
+    Response.json({ error: { message: "Provider API unavailable" } }, { status: 503 }),
+  );
+  try {
+    expect(await screen.findByRole("button", { name: "Retry providers" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Provider API unavailable");
+    expect(screen.queryByText("No providers yet")).toBeNull();
   } finally {
     client.clear();
   }

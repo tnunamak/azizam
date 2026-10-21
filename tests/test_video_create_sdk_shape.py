@@ -11,11 +11,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from starlette.requests import Request
 
@@ -23,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from test_video_remix_replace import NEW_ID, RemixReplaceBase  # noqa: E402
 
 
 def _multipart_request(parts: list[tuple[str, bytes, dict[str, str] | None]]) -> Request:
@@ -124,72 +123,46 @@ class VideoCreateMultipartParsingTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(encoded), png_bytes)
         self.assertTrue(upload_closed, "multipart upload must be closed after normalization")
 
-    def test_handler_does_not_400_on_multipart_content_type(self) -> None:
-        # Regression: the live probe was getting `{"error": {"message":
-        # "Invalid JSON body"}}` because the handler called request.json() on
-        # a multipart body. With ComfyUI disabled we should now see the
-        # service-unavailable branch (503), NOT the JSON-parse 400.
-        request = _multipart_request(
-            [
-                ("prompt", b"hello", None),
-                ("model", b"sora-2", None),
-            ]
+
+class VideoCreateRealSdkTests(RemixReplaceBase):
+    """The real openai-python client talks to the real app over a fake ComfyUI."""
+
+    def test_real_sdk_create_submits_multipart_and_parses_gateway_response(self) -> None:
+        import openai
+
+        sdk = openai.OpenAI(
+            base_url="http://testserver/v1",
+            api_key="test",
+            http_client=self.client,
+            max_retries=0,
         )
-
-        async def run() -> object:
-            with patch.object(proxy, "COMFY_ENABLED", False):
-                return await proxy.proxy_comfy_video_create(
-                    request,
-                    auth_context=None,  # type: ignore[arg-type]
-                )
-
-        response = asyncio.run(run())
-
-        self.assertEqual(response.status_code, 503)
-        payload = json.loads(response.body.decode("utf-8"))
-        self.assertNotEqual(
-            payload.get("error", {}).get("message"),
-            "Invalid JSON body",
-        )
-
-
-class VideoCreateResponseEnvelopeTests(unittest.TestCase):
-    """The create response must parse cleanly as the SDK's ``Video`` model."""
-
-    def test_response_envelope_matches_sdk_video_model(self) -> None:
-        # Use the openai SDK directly to validate the on-the-wire envelope. If
-        # the SDK is not installed in this environment, skip — the proxy keeps
-        # working either way; we just can't pin the contract here.
         try:
-            from openai.types.video import Video
-        except Exception:  # pragma: no cover - SDK optional in some venvs
-            self.skipTest("openai SDK not installed")
+            video = sdk.videos.create(
+                model="sora-2",
+                prompt="a red kite over the sea",
+                seconds="4",
+                size="1280x720",
+            )
+        finally:
+            sdk.close()
 
-        # Construct the exact dict the handler emits for a 5-second 720p job.
-        # Mirrors proxy.proxy_comfy_video_create:6698+ after the SDK-shape fix.
-        payload = {
-            "id": "video_abc",
-            "object": "video",
-            "model": "video-ltx-2.3-distilled",
-            "status": "queued",
-            "progress": 0,
-            "created_at": 1_700_000_000,
-            "expires_at": 1_700_086_400,
-            "size": "1280x720",
-            "seconds": "5",
-            "actual_seconds": 5.0,
-        }
-
-        parsed = Video.model_construct(**payload)
-
-        # The SDK uses model_construct() under the hood — these are the fields
-        # the probe and downstream code actually depend on.
-        self.assertEqual(parsed.id, "video_abc")
-        self.assertEqual(parsed.object, "video")
-        self.assertEqual(parsed.status, "queued")
-        self.assertEqual(parsed.progress, 0)
-        self.assertEqual(parsed.seconds, "5")
-        self.assertEqual(parsed.size, "1280x720")
+        self.assertEqual(len(self.comfy.submitted), 1)
+        self.assertEqual(self.comfy.uploads, [])
+        graph = self.comfy.submitted[0]
+        self.assertEqual(graph["5"]["inputs"]["text"], "a red kite over the sea")
+        self.assertEqual(graph["20"]["inputs"]["value"], 1280)
+        self.assertEqual(graph["21"]["inputs"]["value"], 704)
+        self.assertEqual(graph["22"]["inputs"]["value"], 97)
+        self.assertEqual(video.id, NEW_ID)
+        self.assertEqual(video.object, "video")
+        self.assertEqual(video.model, "sora-2")
+        self.assertEqual(video.status, "queued")
+        self.assertEqual(video.progress, 0)
+        self.assertIsInstance(video.created_at, int)
+        self.assertEqual(video.size, "1280x704")
+        self.assertEqual(video.seconds, "4")
+        self.assertAlmostEqual(video.actual_seconds, 97 / 24, places=3)
+        self.assertIsNone(video.remixed_from_video_id)
 
 
 if __name__ == "__main__":  # pragma: no cover

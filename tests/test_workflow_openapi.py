@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.workflow_openapi import (  # noqa: E402
     ROOT_EXTENSION,
@@ -49,20 +50,25 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(self.registry.errors, [])
         self.assertGreaterEqual(len(self.registry.records()), 24)
 
+    def owned_by_routes(self, workflow_id: str) -> set[str]:
+        """Inputs a route of the workflow sets itself, from the catalog's own field map."""
+        execution = self.catalog[workflow_id]["execution"]
+        return {name for route in (execution["sync"], execution["async"]) if route
+                for name, where in route["fields"].items() if where["in"] == "none"}
+
     def test_every_manifest_has_typed_inputs(self) -> None:
         for record in self.registry.records():
             with self.subTest(workflow=record.id):
                 self.assertIn(record.id, self.catalog)
                 schema = self.schema_of(record.id)
-                self.assertEqual(
-                    sorted(schema["properties"]), sorted(record.manifest["inputs"])
-                )
+                owned = self.owned_by_routes(record.id)
+                settable = {n: s for n, s in record.manifest["inputs"].items() if n not in owned}
+                # A route-set input is never advertised; every other manifest input is.
+                self.assertEqual(sorted(schema["properties"]), sorted(settable))
                 self.assertIs(schema["additionalProperties"], False)
-                wanted = sorted(
-                    n for n, s in record.manifest["inputs"].items() if s.get("required")
-                )
+                wanted = sorted(n for n, s in settable.items() if s.get("required"))
                 self.assertEqual(sorted(schema.get("required", [])), wanted)
-                for name, spec in record.manifest["inputs"].items():
+                for name, spec in settable.items():
                     prop = schema["properties"][name]
                     if spec["type"] == "asset":
                         self.assertTrue(prop["x-azizam-asset"])
@@ -84,14 +90,14 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(len(inputs), len(self.registry.records()))
 
     def test_catalog_matches_gateway_workflows_endpoint(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             listing = self.client.get("/gateway/v1/workflows").json()["workflows"]
         self.assertEqual(sorted(w["id"] for w in listing), sorted(self.catalog))
         for item in listing:
             self.assertEqual(self.catalog[item["id"]]["intent"], item["intent"])
 
     def test_catalog_workflows_match_capability_rows(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False), \
+        with authenticated(), \
              patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         names = {
@@ -189,7 +195,10 @@ class WorkflowOpenApiTests(unittest.TestCase):
         """A request built from the catalog's field map validates against the schema."""
         for record in self.registry.records():
             sample = {}
+            owned = self.owned_by_routes(record.id)
             for name, spec in record.manifest["inputs"].items():
+                if name in owned:
+                    continue
                 if spec["type"] == "asset":
                     if spec.get("required"):
                         sample[name] = "data:image/png;base64,AAAA"
@@ -247,7 +256,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertIn("sfx", sfx["aliases"])
 
     def test_typical_seconds_flow_from_manifest_to_both_surfaces(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             listing = {
                 w["id"]: w
                 for w in self.client.get("/gateway/v1/workflows").json()["workflows"]
@@ -275,16 +284,43 @@ class WorkflowOpenApiTests(unittest.TestCase):
         skill = self.client.get("/.well-known/skills/azizam-gateway/SKILL.md").text
         self.assertIn("x-azizam-workflows", skill)
         self.assertIn("execution.fields", skill)
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             meta = self.client.get("/.well-known/azizam").json()
         self.assertEqual(meta["links"]["workflow_catalog"], "/openapi.json#x-azizam-workflows")
 
     def test_augment_is_idempotent_on_a_bare_spec(self) -> None:
+        import copy
+
         bare = {"openapi": "3.1.0", "info": {"title": "FastAPI", "version": "1"}, "paths": {}}
-        out = augment_openapi(bare, self.registry.records(), None)
-        self.assertEqual(out["info"]["title"], "Azizam")
-        self.assertEqual(validate_openapi(out), [])
+        records = tuple(self.registry.records())
+        first = augment_openapi(bare, records, None)
+        self.assertIs(first, bare)
+        self.assertEqual(first["info"]["title"], "Azizam")
+        self.assertEqual(validate_openapi(first), [])
+        snapshot = copy.deepcopy(first)
+        second = augment_openapi(first, records, None)
+        self.assertIs(second, first)
+        self.assertEqual(second, snapshot)
+        self.assertEqual(validate_openapi(second), [])
+        self.assertEqual(
+            [row["id"] for row in second[ROOT_EXTENSION]],
+            sorted(record.id for record in records),
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_workflow_input_schema_copies_mutable_constraints_independently():
+    from types import SimpleNamespace
+    from gateway.workflow_openapi import workflow_inputs_schema
+
+    record = SimpleNamespace(id="image.generate.copy-test", manifest={"inputs": {
+        "mode": {"type": "string", "enum": ["fast", "quality"], "default": "fast"},
+    }})
+    first = workflow_inputs_schema(record)
+    first["properties"]["mode"]["enum"].append("invalid")
+    second = workflow_inputs_schema(record)
+    assert record.manifest["inputs"]["mode"]["enum"] == ["fast", "quality"]
+    assert second["properties"]["mode"]["enum"] == ["fast", "quality"]

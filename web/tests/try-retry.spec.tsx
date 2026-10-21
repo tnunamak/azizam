@@ -61,7 +61,7 @@ it("a failed result offers Edit and run again, which repeats nothing", async () 
   const user = userEvent.setup();
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Request failed")).toBeVisible();
@@ -96,14 +96,19 @@ it.each(["model", "workflow"])(
     render(<TryPage />);
     if (section === "workflow")
       await user.click(screen.getByRole("tab", { name: "Workflow" }));
-    const retry = await screen.findByRole("button", {
-      name: `Retry ${section} catalog`,
-    });
+    expect(
+      await screen.findByText(
+        section === "workflow"
+          ? "Workflows couldn’t be loaded"
+          : "Models couldn’t be loaded",
+      ),
+    ).toBeVisible();
+    const retry = screen.getByRole("button", { name: "Retry" });
     failing = false;
     fetchMock.mockClear();
     await user.click(retry);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
         section === "workflow" ? "Working workflow" : "Chat model",
       ),
     );
@@ -143,12 +148,14 @@ it.each([
     const user = userEvent.setup();
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
     );
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("Provider unavailable")).toBeVisible();
-    expect(screen.getByText("HTTP 503")).toBeVisible();
-    expect(screen.getByText("42 ms")).toBeVisible();
+    // Status and time are technical: folded, not in the card (PF-006).
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).not.toBeVisible();
+    await user.click(screen.getByText("Technical details"));
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).toBeVisible();
     if (source === "missing") {
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
     } else {
@@ -167,8 +174,7 @@ it.each([
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(1);
-    expect(screen.getByText("HTTP 503")).toBeVisible();
-    expect(screen.getByText("42 ms")).toBeVisible();
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).toBeInTheDocument();
   } finally {
     clock.mockRestore();
   }
@@ -186,10 +192,10 @@ it.each([false, true, undefined])("honors workflow availability %s in the picker
   const user = userEvent.setup();
   render(<TryPage />);
   await user.click(screen.getByRole("tab", { name: "Workflow" }));
-  await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow"));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow"));
   const run = screen.getByRole("button", { name: "Run" });
   if (available === false) {
-    expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow · Unavailable");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow · Unavailable");
     expect(run).toBeDisabled();
     expect(run.nextElementSibling).toHaveTextContent(reason);
     expect(screen.getByText(reason)).toBeVisible();
@@ -197,7 +203,7 @@ it.each([false, true, undefined])("honors workflow availability %s in the picker
     expect(account.tryKey).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   } else {
-    expect(screen.getByRole("combobox")).not.toHaveTextContent("Unavailable");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Unavailable");
     expect(run).toBeEnabled();
     expect(screen.queryByText(reason)).toBeNull();
   }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
+import subprocess
 import sys
 import textwrap
 import unittest
@@ -210,13 +210,15 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         self.assertNotIn("source_path", raw)
 
     def test_router_does_not_import_proxy(self) -> None:
-        # Importing the api module must not pull in proxy.py. We snapshot the
-        # sys.modules state, drop any cached copy, re-import, and assert proxy
-        # is still not present afterwards.
-        sys.modules.pop("proxy", None)
-        sys.modules.pop("gateway.api", None)
-        importlib.import_module("gateway.api")
-        self.assertNotIn("proxy", sys.modules)
+        # Importing the api module must not pull in proxy.py. A fresh interpreter
+        # gives a clean sys.modules without evicting the modules other tests hold.
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); import gateway.api; "
+             "sys.exit(1 if 'proxy' in sys.modules else 0)", str(ROOT)],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_custom_prefix_is_honored(self) -> None:
         registry = _build_registry()
@@ -648,12 +650,12 @@ class GatewayReceiptsEndpointTests(unittest.TestCase):
     def test_explicit_providers_override_store_path(self) -> None:
         captured: dict[str, Any] = {}
 
-        def lister(*, audience, limit, app_profile=None, since_s=None):
+        def lister(*, audience, limit, app_profile=None, since_s=None, viewer_person_id=None):
             captured["audience"] = audience
             captured["limit"] = limit
             return [{"request_id": "stub", "status": "ok"}]
 
-        def getter(request_id, *, audience):
+        def getter(request_id, *, audience, viewer_person_id=None):
             captured["get_audience"] = audience
             return {"request_id": request_id, "status": "ok"}
 

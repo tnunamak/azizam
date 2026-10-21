@@ -1,5 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const seededCatalog = {
   schema_version: 1,
@@ -53,7 +55,7 @@ const seededCatalog = {
       recent_receipts: [
         {
           request_id: "req_1",
-          href: "/r/req_1",
+          href: "/usage/?receipt=req_1",
           status: "succeeded",
           latency_ms: 820,
         },
@@ -88,7 +90,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -246,7 +248,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -286,7 +288,7 @@ const emptyCatalog = {
 
 async function routeCatalog(page: Page, payload: unknown, status = 200) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ status, json: payload }),
+    fulfilJson(route, payload, { status }),
   );
 }
 
@@ -303,7 +305,7 @@ async function preparePage(
     localStorage.setItem("theme", value);
   }, theme);
   await routeCatalog(page, payload, status);
-  const response = await page.goto("/ui/models/");
+  const response = await page.goto("/models/");
   expect(response?.status()).toBe(200);
   await expect(
     page.getByRole("heading", { name: "Models", exact: true }),
@@ -322,158 +324,76 @@ async function assertNoSeriousAxe(page: Page) {
 }
 
 async function assertNoOverflow(page: Page) {
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-    "Models page must fit the viewport",
-  ).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      { message: "Models page must fit the viewport" },
+    )
+    .toBe(true);
 }
 
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390] as const) {
-    test(`models seeded catalog: ${theme} at ${width}px`, async ({ page }) => {
-      await preparePage(page, theme, width, seededCatalog);
-      await expect(
-        page.getByRole("button", { name: "Copy model name chat" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "Make a picture", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "Choose an option", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "Read text aloud", exact: true }),
-      ).toBeVisible();
-      await expect(page.getByText(/Other options/)).toHaveCount(0);
-      const chat = page.getByRole("rowgroup", { name: "Chat models" });
-      const chatFacts = chat.getByRole("list", { name: "Model facts" });
-      if (width < 640) {
-        // A phone row is two lines (task, then alias); the facts are in Details.
-        await expect(chatFacts).toHaveCount(0);
-      } else {
-        await expect(chatFacts.getByText("Reasoning")).toBeVisible();
-        await expect(chatFacts.getByText("Vision")).toBeVisible();
-        await expect(chatFacts.getByRole("listitem").first()).toHaveText(
-          "text, image→totext",
-        );
-      }
-      await expect(
-        page.getByRole("button", { name: "Copy model name image" }),
-      ).toBeVisible();
-      // Rows make no local-cost claim; the page note below the table may.
-      await expect(
-        page
-          .getByLabel("Available model names")
-          .getByText("Local · no provider charge", { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole("button", { name: "No provider charge", exact: true }),
-      ).toHaveAttribute("aria-pressed", "true");
-      await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
-      await expect(
-        page.getByText("Ready to start", { exact: true }),
-      ).toBeVisible();
-      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
-      await expect(
-        page.getByText("Ready to start when you make a request."),
-      ).toHaveCount(0);
-      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
-      const decision = page.getByRole("rowgroup", { name: "Choose an option models" });
-      await decision.getByRole("button", { name: "Details" }).click();
-      await expect(
-        page
-          .getByRole("dialog")
-          .getByText("Ready to start when you make a request."),
-      ).toBeVisible();
-      await page.keyboard.press("Escape");
-      const speech = page.getByRole("rowgroup", { name: "Speech models" });
-      await speech.getByRole("button", { name: "Details" }).click();
-      await expect(
-        page.getByRole("dialog").getByText("Unknown", { exact: true }),
-      ).toHaveCount(0);
-      await page.keyboard.press("Escape");
-      await expect(
-        page.getByText("Paid · $0.04 per image", { exact: true }),
-      ).toBeVisible();
-      await assertNoOverflow(page);
-      await assertNoSeriousAxe(page);
-      await page.screenshot({
-        path: `test-results/screens/models-seeded-${theme}-${width}.png`,
-        fullPage: width !== 390,
-      });
-    });
+// Display states, copy, filters and details are asserted in vitest
+// (src/app/models/models-seeded-catalog.spec.tsx). The browser keeps what
+// jsdom cannot compute: real layout at 390 px, theme contrast (axe), overflow.
+// One representative per concept, not per route x theme x width.
+test("models seeded catalog: dark at 390px keeps rows on two lines, fits and passes axe", async ({
+  page,
+}) => {
+  await preparePage(page, "dark", 390, seededCatalog);
+  await expect(
+    page.getByRole("button", { name: "Copy model name chat" }),
+  ).toBeVisible();
+  // A phone row folds its facts into one line under the name; the desktop
+  // line is hidden.
+  const chat = page.locator('li[data-model="chat"]');
+  await expect(chat.locator("p.sm\\:hidden")).toBeVisible();
+  await expect(chat.locator("p[title]")).toBeHidden();
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
+  await page.screenshot({
+    path: "test-results/screens/models-seeded-dark-390.png",
+  });
+});
 
-    test(`models empty catalog: ${theme} at ${width}px`, async ({ page }) => {
-      await preparePage(page, theme, width, emptyCatalog);
-      await expect(page.getByText("No models are available yet")).toBeVisible();
-      await assertNoOverflow(page);
-      await assertNoSeriousAxe(page);
-      await page.screenshot({
-        path: `test-results/screens/models-empty-${theme}-${width}.png`,
-        fullPage: width !== 390,
-      });
-    });
-
-    test(`models error catalog: ${theme} at ${width}px`, async ({ page }) => {
-      await preparePage(
-        page,
-        theme,
-        width,
-        { error: { message: "Unavailable for this test" } },
-        503,
-      );
-      await expect(
-        page.getByText("Models catalog could not be loaded. Try again."),
-      ).toBeVisible();
-      await assertNoOverflow(page);
-      await assertNoSeriousAxe(page);
-      await page.screenshot({
-        path: `test-results/screens/models-error-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    });
-  }
-}
-
-test("models filters, snippets, table and detail sheet work", async ({
+test("models seeded catalog: light at 1440px shows row facts and passes axe", async ({
   page,
 }) => {
   await preparePage(page, "light", 1440, seededCatalog);
-  await page.getByPlaceholder("Search model names or providers").fill("image");
+  // The row's second line carries the chat tags in words.
+  const chat = page.locator('li[data-model="chat"]');
+  await expect(chat.locator("p[title]")).toContainText("Thinks through questions");
+  await expect(chat.locator("p[title]")).toContainText("Understands images");
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
+  await page.screenshot({
+    path: "test-results/screens/models-seeded-light-1440.png",
+    fullPage: true,
+  });
+});
+
+test("models empty catalog: dark at 1440px passes axe", async ({ page }) => {
+  await preparePage(page, "dark", 1440, emptyCatalog);
+  await expect(page.getByText("No models are available yet")).toBeVisible();
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
+});
+
+test("models error catalog: light at 390px fits and passes axe", async ({
+  page,
+}) => {
+  await preparePage(
+    page,
+    "light",
+    390,
+    { error: { message: "Unavailable for this test" } },
+    503,
+  );
   await expect(
-    page.getByRole("button", { name: "Copy model name image" }),
+    page.getByText("We couldn't load the models. Try again."),
   ).toBeVisible();
-  await expect(
-    page.getByText("Best default for short conversations"),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Paid" }).click();
-  await expect(
-    page.getByRole("button", { name: "No provider charge", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("No models match these filters")).toBeVisible();
-  await page.getByRole("button", { name: "Paid" }).click();
-  await page.getByRole("button", { name: "Details" }).first().click();
-  const imageDetails = page.getByRole("dialog");
-  await expect(imageDetails.getByText("Example request")).toBeVisible();
-  await expect(
-    imageDetails.getByText(/\/v1\/images\/generations/),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /All models/ }).click();
-  await expect(
-    page.getByRole("button", { name: "All models", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByRole("table")
-      .locator("code")
-      .filter({ hasText: "provider/image-fast" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Details" }).first().click();
-  const sheet = page.getByRole("dialog");
-  await expect(sheet).toBeVisible();
-  await expect(sheet).not.toContainText("Typical time");
-  await expect(sheet).not.toContainText("Not measured yet");
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
 });

@@ -19,11 +19,11 @@ Run a gateway, connect engines and providers, and give people access.
 
 | Task | Guide |
 | --- | --- |
-| Start and claim a new instance | [First-run setup](FIRST_RUN_SETUP.md) |
+| Start and claim a new instance | [First-run setup](FIRST_RUN_SETUP.md), including the [bare-metal install](FIRST_RUN_SETUP.md#bare-metal-install-no-docker) and [connecting an engine](FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) |
 | Operate, back up, upgrade or troubleshoot | [Operator guide](guides/OPERATOR.md) |
 | Understand which settings apply live | [Configuration ownership](CONFIG_SOURCE_OF_TRUTH.md), [bootstrap configuration](../CONFIG.md) |
 | Configure paid models and resolve charges | [Remote providers](REMOTE_PROVIDERS.md), [reconciliation](ops/PROVIDER_RECONCILIATION.md) |
-| Share access and publish safely | [Accounts and invites](PEOPLE_AND_ACCOUNTS.md), [reverse proxy](REVERSE_PROXY.md), [security policy](../SECURITY.md) |
+| Share access and publish safely | [Accounts and invites](PEOPLE_AND_ACCOUNTS.md), [sign-in sessions](ops/SIGN_IN_SESSIONS.md), [reverse proxy](REVERSE_PROXY.md), [security policy](../SECURITY.md) |
 
 ## Member
 
@@ -61,7 +61,7 @@ Start with [Contributing](../CONTRIBUTING.md), [Code of Conduct](../CODE_OF_COND
 | Area | Reference |
 | --- | --- |
 | Product intent | [Product strategy](PRODUCT_STRATEGY.md) |
-| Engine integrations | [Engine knowledge boundary](design/ENGINE_KNOWLEDGE_BOUNDARY.md), [registry design](design/ENGINE_REGISTRY_DESIGN.md), [transforms](design/ENGINE_TRANSFORMS_DESIGN.md) |
+| Engine integrations | [Engine contract](design/ENGINE_CONTRACT.md) (current), [owned processes](design/ENGINE_PROCESS_DRIVER.md), [engine knowledge boundary](design/ENGINE_KNOWLEDGE_BOUNDARY.md), [transforms](design/ENGINE_TRANSFORMS_DESIGN.md), [registry design](design/ENGINE_REGISTRY_DESIGN.md) (partly superseded by the engine contract) |
 | UI and API boundaries | [UI steering](design/WEB_UI_STEERING.md), [UI cutover](design/UI_CUTOVER.md), [web API contract](design/web-api-contract.md) |
 | Compatibility verification | [SDK harness](SDK_COMPATIBILITY_HARNESS.md), [portable browser checks](../scripts/ui/README.md) |
 | Scope and unfinished work | [Known work](KNOWN_WORK.md), [scope](SLVP_SCOPE.md) |

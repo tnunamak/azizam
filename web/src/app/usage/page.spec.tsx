@@ -7,7 +7,135 @@ import { ViewerContext } from "@/components/shell/session";
 import UsagePage from "./page";
 import { Requests } from "../activity/requests";
 import WorkflowsPage from "../workflows/page";
+import { Money } from "@/components/product/money";
+import { sourceGroups, usageCsv } from "./source-options";
 
+
+test("Usage CSV preserves exact values and quotes commas, quotes and newlines", () => {
+  expect(usageCsv([{
+    date: "2026-10-01",
+    app: 'Writer, "team"',
+    modelName: "Model\nName",
+    requests: 2,
+    spendUsd: 0.000123,
+  }])).toBe('date,app,model name,requests,spend in USD\r\n2026-10-01,"Writer, ""team""","Model\nName",2,0.000123\r\n');
+});
+
+test("Usage CSV distinguishes missing costs from zero and supports empty views", () => {
+  expect(usageCsv([])).toBe("date,app,model name,requests,spend in USD\r\n");
+  expect(usageCsv([
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: null },
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: 0 },
+  ])).toContain(",,,1,\r\n,,,1,0\r\n");
+});
+
+test("Usage CSV makes spreadsheet formulas inert", () => {
+  const cases = [
+    ["=1+1", "'=1+1"],
+    ["+1+1", "'+1+1"],
+    ["-1+1", "'-1+1"],
+    ["@SUM(A1)", "'@SUM(A1)"],
+    ["\t=1+1", "'\t=1+1"],
+    ["\r=1+1", "\"'\r=1+1\""],
+    ["\n=1+1", "\"'\n=1+1\""],
+    ['=HYPERLINK("target","label")', "\"'=HYPERLINK(\"\"target\"\",\"\"label\"\")\""],
+    ["+SUM(1,2)\r\n", "\"'+SUM(1,2)\r\n\""],
+    ["plain=+@-", "plain=+@-"],
+    ["'=1+1", "'=1+1"],
+  ];
+  for (const [value, expected] of cases) {
+    expect(usageCsv([{
+      date: value,
+      app: value,
+      modelName: value,
+      requests: 1,
+      spendUsd: 0,
+    }]), JSON.stringify(value)).toBe(
+      "date,app,model name,requests,spend in USD\r\n" +
+      [expected, expected, expected, "1", "0"].join(",") + "\r\n",
+    );
+  }
+});
+
+test("Usage downloads only loaded receipts with display names and no extra fetch", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:usage"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  try {
+    renderUsage({
+      requests: 100,
+      truncated: true,
+      receipts: [{
+        request_id: "csv-one", created_at: "2026-10-01T12:00:00Z",
+        source_label: 'Writer, "team"', resolved_model: "chat-model",
+        cost_usd: 0.000123,
+      }],
+    });
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    expect(screen.getByText(/Recent receipts only; excludes requests not loaded/)).toBeVisible();
+    await waitFor(() => expect(button).toBeEnabled());
+    const calls = vi.mocked(fetch).mock.calls.length;
+    await userEvent.setup().click(button);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(click).toHaveBeenCalledOnce();
+    expect(blobs).toHaveLength(1);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain('2026-10-01T12:00:00.000Z,"Writer, ""team""",');
+    expect(csv).toContain(",1,0.000123\r\n");
+    expect(csv).not.toContain(",100,");
+    expect(document.querySelector('a[download="usage-loaded-receipts.csv"]')).toBeNull();
+  } finally {
+    click.mockRestore();
+  }
+});
+
+
+test("Usage CSV follows the selected app rather than the previous loaded view", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:filtered"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  let request = 0;
+  try {
+    renderUsage({}, async () => Response.json({
+      requests: 1, media_count: 0,
+      sources: [{ id: "app-two", label: "Second app", kind: "app", requests: 1 }],
+      receipts: [{
+        request_id: String(++request),
+        source_label: request === 1 ? "Old app" : "Second app",
+        resolved_model: "friendly-model", cost_usd: 0,
+      }],
+    }));
+    await screen.findByRole("button", { name: "Download CSV" });
+    const user = userEvent.setup();
+    screen.getByRole("combobox", { name: "App or connection" }).focus();
+    await user.keyboard(" ");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(request).toBe(2));
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain(",Second app,");
+    expect(csv).not.toContain("Old app");
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("source=app-two"))).toBe(true);
+  } finally {
+    click.mockRestore();
+  }
+});
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <>{children}</>,
   Bar: ({ dataKey, stackId, fill }: { dataKey: string; stackId?: string; fill: string }) =>
@@ -17,7 +145,8 @@ vi.mock("recharts", () => ({
   CartesianGrid: () => null,
   Tooltip: () => null,
   XAxis: () => null,
-  YAxis: () => null,
+  YAxis: ({ tickFormatter }: { tickFormatter?: (value: number) => string }) =>
+    tickFormatter ? <span data-testid="usage-count-axis">{tickFormatter(0)} · {tickFormatter(1)} · {tickFormatter(1000)}</span> : null,
 }));
 function renderUsage(
   summary: Record<string, unknown>,
@@ -66,12 +195,17 @@ test.each(["owner", "member"] as const)("Usage shows full-period failures in the
     failed_requests: 3,
     receipts: Array.from({ length: 50 }, (_, index) => ({ request_id: `recent-${index}`, status: "succeeded" })),
   }, undefined, {}, role);
-  const label = await screen.findByText("Failed", { selector: "dt" });
+  const label = await screen.findByText("Failed requests", { selector: "dt" });
   const stat = label.closest<HTMLElement>('[data-slot="stat"]')!;
-  expect(within(stat).getByText("3 · 2%")).toBeVisible();
+  expect(within(stat).getByText("3 requests · 2% of requests")).toBeVisible();
   const strip = label.closest('[data-slot="stat-strip"]')!;
   expect(strip.querySelectorAll('[data-slot="stat"]')).toHaveLength(4);
   expect(strip.lastElementChild).toBe(stat);
+  expect(within(strip as HTMLElement).getByText("150 requests")).toBeVisible();
+  expect(within(strip as HTMLElement).getByText("0 media items")).toBeVisible();
+  expect(within(strip as HTMLElement).getByText("Spend this month (USD)")).toBeVisible();
+  expect(within(strip as HTMLElement).getByText("Images, videos and audio this month")).toBeVisible();
+  expect(within(stat).getByText("This month")).toBeVisible();
   expect(screen.queryByRole("button", { name: /Receipt details for/ })).not.toBeInTheDocument();
 });
 
@@ -80,31 +214,31 @@ test.each([undefined, null])("Usage keeps absent failure totals Unknown despite 
     failed_requests: failed,
     receipts: [{ request_id: "recent-failure", status: "failed" }],
   });
-  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  const stat = (await screen.findByText("Failed requests", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
   expect(within(stat).getByText("Unknown")).toBeVisible();
-  expect(within(stat).queryByText("0 · 0%")).not.toBeInTheDocument();
+  expect(within(stat).queryByText("0 requests · 0% of requests")).not.toBeInTheDocument();
 });
 
 test("Usage marks a failure count above zero with the warning badge", async () => {
   renderUsage({ requests: 20, failed_requests: 2 });
-  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
-  expect(within(stat).getByText("2 · 10%")).toBeVisible();
+  const stat = (await screen.findByText("Failed requests", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("2 requests · 10% of requests")).toBeVisible();
   const badge = stat.querySelector('[data-slot="badge"]');
   expect(badge).toBeNull();
-  expect(within(stat).getAllByText("Failed")).toHaveLength(1);
+  expect(within(stat).getAllByText("Failed requests")).toHaveLength(1);
 });
 
 test("Usage keeps zero failures quiet", async () => {
   renderUsage({ failed_requests: 0 });
-  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
-  expect(within(stat).getByText("0 · 0%")).toBeVisible();
+  const stat = (await screen.findByText("Failed requests", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("0 requests · 0% of requests")).toBeVisible();
   expect(stat.querySelector('[data-slot="badge"]')).toBeNull();
 });
 
 test("Usage does not divide a failure share by zero", async () => {
   renderUsage({ requests: 0, media_count: 1, failed_requests: 0 });
-  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
-  expect(within(stat).getByText("0 · Unknown")).toBeVisible();
+  const stat = (await screen.findByText("Failed requests", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("0 requests · share unknown")).toBeVisible();
 });
 
 test.each([0, 4])(
@@ -117,7 +251,7 @@ test.each([0, 4])(
       spend_measured_requests: 0,
       spend_total_requests: 4,
     });
-    expect(await screen.findByText("Spend")).toBeVisible();
+    expect(await screen.findByText("Spend this month (USD)")).toBeVisible();
     expect(screen.getByText("Cost not recorded")).toBeVisible();
     expect(screen.getByText(/Costs recorded for 0 of 4 requests/)).toBeVisible();
     expect(screen.getByText(/4 paid requests have unknown cost/)).toBeVisible();
@@ -127,13 +261,13 @@ test.each([
   {
     unknown: 2,
     measured: 2,
-    label: "Spend",
+    label: "Spend this month (USD)",
     detail: /2 paid requests have unknown cost/,
   },
   {
     unknown: 0,
     measured: 4,
-    label: "Spend",
+    label: "Spend this month (USD)",
     detail: /Costs recorded for 4 of 4 requests/,
   },
 ])(
@@ -154,7 +288,7 @@ test.each([
 test("USAGE-01 does not claim complete coverage without measurement counts", async () => {
   renderUsage({ paid_requests: 4, remote_spend: 0 });
   expect(
-    await screen.findByText("Spend"),
+    await screen.findByText("Spend this month (USD)"),
   ).toBeVisible();
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.getByText(/We don't know how many request costs were recorded./)).toBeVisible();
@@ -167,8 +301,8 @@ test("Usage exposes the compact filters and named dense model table", async () =
   expect(table).toHaveAttribute("data-dense");
   expect(within(table).getByRole("columnheader", { name: "Task and model" })).toBeVisible();
   expect(within(table).getByRole("row", { name: /Chat/ })).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Person" })).toHaveAttribute("data-size", "sm");
-  expect(screen.getByRole("combobox", { name: "Source" })).toHaveAttribute("data-size", "sm");
+  expect(screen.getByRole("combobox", { name: "Whose usage" })).toHaveAttribute("data-size", "sm");
+  expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveAttribute("data-size", "sm");
 });
 
 test("USAGE-02 chart table includes each active capability and daily total", async () => {
@@ -184,7 +318,7 @@ test("USAGE-02 chart table includes each active capability and daily total", asy
     within(table)
       .getAllByRole("columnheader")
       .map((cell) => cell.textContent),
-  ).toEqual(["Date", "Chat", "Make a picture", "Total"]);
+  ).toEqual(["Date", "Chat", "Make a picture", "Daily total"]);
   const rows = within(table).getAllByRole("row").slice(1);
   expect(
     rows.map((row) =>
@@ -193,8 +327,8 @@ test("USAGE-02 chart table includes each active capability and daily total", asy
         .map((cell) => cell.textContent),
     ),
   ).toEqual([
-    ["2", "1", "3"],
-    ["Unknown", "4", "4"],
+    ["2 requests", "1 request", "3 requests"],
+    ["Unknown", "4 requests", "4 requests"],
   ]);
 
 });
@@ -209,7 +343,7 @@ test("USAGE-03 anonymous people have distinct safe labels and retain filter IDs"
   });
   await screen.findByText("Requests");
   const user = userEvent.setup();
-  screen.getByRole("combobox", { name: "Person" }).focus();
+  screen.getByRole("combobox", { name: "Whose usage" }).focus();
   await user.keyboard("{Enter}");
   const options = await screen.findAllByRole("option");
   const labels = options.map((option) => option.textContent ?? "");
@@ -245,7 +379,7 @@ test.each([
   const user = userEvent.setup();
   const labels = suffixes.map((suffix) => `Mira · ${suffix}`);
   for (const [index, label] of labels.entries()) {
-    const filter = screen.getByRole("combobox", { name: "Person" });
+    const filter = screen.getByRole("combobox", { name: "Whose usage" });
     filter.focus();
     await user.keyboard("{Enter}");
     const option = await screen.findByRole("option", { name: label });
@@ -262,7 +396,7 @@ test.each([
         new URL(String(url), "https://azizam.test").searchParams.get("person") === `person-00${index + 1}`,
       ),
     ).toBe(true);
-    expect(await screen.findByRole("combobox", { name: "Person" })).toHaveTextContent(label);
+    expect(await screen.findByRole("combobox", { name: "Whose usage" })).toHaveTextContent(label);
   }
 });
 
@@ -277,12 +411,12 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  const unknown = screen.getByRole("button", { name: "Receipt details for Chat request" });
+  const unknown = screen.getByRole("button", { name: /Receipt details for Chat request/ });
   expect(within(unknown).getByText("Cost not recorded")).toBeInTheDocument();
-  const zero = screen.getByRole("button", { name: "Receipt details for Image request" });
+  const zero = screen.getByRole("button", { name: /Receipt details for Image request/ });
   expect(within(zero).queryByText("Cost not recorded")).not.toBeInTheDocument();
   expect(within(zero).getByText("$0.00")).toBeInTheDocument();
-  const local = screen.getByRole("button", { name: "Receipt details for Video request" });
+  const local = screen.getByRole("button", { name: /Receipt details for Video request/ });
   expect(within(local).getByText("No provider charge")).toBeInTheDocument();
   // A model row with no locality evidence says Cost not recorded, never blank.
   expect(screen.getAllByText("Cost not recorded")).toHaveLength(4);
@@ -310,10 +444,10 @@ test("Usage announces loading with the shared Busy status and no invented totals
   renderUsage({}, () => pending.promise);
   expect(screen.getByRole("status")).toHaveTextContent("Loading usage…");
   expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
-  expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
+  expect(screen.queryByText("No requests this month")).not.toBeInTheDocument();
   await act(async () => pending.resolve(Response.json({ media_count: 0, requests: 0 })));
-  expect(await screen.findByText("No requests in this period")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/ui/apps/");
+  expect(await screen.findByText("No requests this month")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/apps");
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
@@ -324,7 +458,7 @@ test("Usage reports an Unknown load failure with a shared callout and retry", as
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByRole("heading", { name: "Usage could not be loaded" })).toBeVisible();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
+  expect(screen.queryByText("No requests this month")).not.toBeInTheDocument();
   await userEvent.setup().click(within(alert).getByRole("button", { name: "Retry usage" }));
   expect(screen.getByRole("status")).toHaveTextContent("Loading usage…");
   await act(async () => retry.resolve(Response.json({ media_count: 0, requests: 4, remote_spend: 1.25 })));
@@ -341,7 +475,7 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
     if (calls === 1) return Promise.resolve(Response.json({ media_count: 0, requests, remote_spend: null }));
     return calls === 2 ? refresh.promise : retry.promise;
   });
-  const cachedLabel = requests ? "Cost not recorded" : "No requests in this period";
+  const cachedLabel = requests ? "Cost not recorded" : "No requests this month";
   expect(await screen.findByText(cachedLabel)).toBeVisible();
   act(() => { void client.invalidateQueries({ queryKey: ["usage"] }); });
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Refreshing usage…"));
@@ -390,14 +524,15 @@ test("Usage preserves exact path IDs for distinct catalog names and receipt look
   }, undefined, { models: [{ id: GGUF, title: "Main chat" }, { id: other, title: "Backup chat" }] });
   expect(await screen.findByTitle("Main chat")).toBeVisible();
   expect(await screen.findByTitle("Backup chat")).toBeVisible();
-  expect(within(modelRow("Main chat")).getByText("2")).toBeVisible();
-  expect(within(modelRow("Backup chat")).getByText("1")).toBeVisible();
+  expect(within(modelRow("Main chat")).getByText("2 requests")).toBeVisible();
+  expect(within(modelRow("Backup chat")).getByText("1 request")).toBeVisible();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "View recent requests" }));
-  await user.click(await screen.findByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(await screen.findByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = screen.getByRole("dialog");
-  expect(within(sheet).getByText("Requested model").nextElementSibling).toHaveTextContent("Backup chat");
-  expect(within(sheet).getByText("Served model").nextElementSibling).toHaveTextContent("Main chat");
+  // No fallback was recorded: the name used points at the model that ran.
+  expect(within(sheet).getByText("Name used").nextElementSibling).toHaveTextContent("Backup chat");
+  expect(within(sheet).getByText("Model", { exact: true }).nextElementSibling).toHaveTextContent("Main chat");
 });
 
 test.each(["owner", "member"] as const)("Usage formats fallback names and protects technical paths for %s", async (role) => {
@@ -406,7 +541,7 @@ test.each(["owner", "member"] as const)("Usage formats fallback names and protec
   }, undefined, { models: [{ id: GGUF, title: "Fallback chat" }] }, role);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  await user.click(await screen.findByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(await screen.findByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = screen.getByRole("dialog");
   await waitFor(() => expect(within(sheet).getByText("Model").nextElementSibling).toHaveTextContent("Fallback chat"));
   expect(within(sheet).queryByText("Declared fallback")).not.toBeInTheDocument();
@@ -479,7 +614,7 @@ test("Usage model rows read as names, never as a path on the gateway host", asyn
     undefined,
     { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] },
   );
-  await screen.findByText("Top models by requests");
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
   expect(document.body.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\//);
   const chat = modelRow("Qwen3.8 27B Uncensored");
   expect(chat).toBeTruthy();
@@ -499,7 +634,7 @@ test("Usage reads text to speech as Read text aloud, music as Make music or soun
       { model: "song-maker", capability: "audio", requests: 7, paid_requests: 0, unknown_paid_requests: 0 },
     ],
   });
-  await screen.findByText("Top models by requests");
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
   expect(within(modelRow("Kokoro")).getByText("Read text aloud")).toBeVisible();
   expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
   expect(within(modelRow("Song Maker")).getByText("Make music or sounds")).toBeVisible();
@@ -515,14 +650,14 @@ test("Usage model Spend cell is Local, an amount or Cost not recorded", async ()
       { model: "partial", capability: "video", requests: 10, remote_spend: 0.5, paid_requests: 2, unknown_paid_requests: 1 },
     ],
   });
-  await screen.findByText("Top models by requests");
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
   expect(within(modelRow("Local Chat")).getByText("Cost not recorded")).toBeVisible();
   expect(within(modelRow("Zero Chat")).getByText("$0.00")).toBeVisible();
   expect(within(modelRow("Paid Image")).getByText("$0.25")).toBeVisible();
   expect(within(modelRow("Mystery")).getByText("Cost not recorded")).toBeVisible();
   const partial = modelRow("Partial");
   expect(within(partial).getByText("$0.50")).toBeVisible();
-  expect(within(partial).getByText("partial")).toBeVisible();
+  expect(within(partial).getByText("Some costs missing")).toBeVisible();
   expect(screen.queryByText(/Local: no provider charge\./)).not.toBeInTheDocument();
   expect(screen.queryByText(/Unavailable: the provider cost was not recorded\./)).not.toBeInTheDocument();
   // No row is blank in the Spend column.
@@ -560,7 +695,7 @@ test("Usage receipts show host paths only in owner technical details", async () 
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
   expect(document.body.textContent).not.toMatch(/\/media\/|AI Models/);
-  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = screen.getByRole("dialog");
   expect(sheet.textContent).toContain("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
   expect(sheet.textContent).toContain(GGUF);
@@ -573,18 +708,16 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
       { id: "app:idle", label: "Idle app", requests: 0, disabled: false, created_at: 50 },
       { id: "app:old2", label: "Temp triage", requests: 5, disabled: true, created_at: 200 },
       { id: "app:small", label: "Small app", requests: 2, disabled: false, created_at: 10 },
-      { id: "local-network", label: "Local network · no key", requests: 700, disabled: false, created_at: null },
       { id: "app:big", label: "Big app", requests: 90, disabled: false, created_at: 20 },
     ],
   });
-  await screen.findByText("Top models by requests");
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
   const user = userEvent.setup();
-  screen.getByRole("combobox", { name: "Source" }).focus();
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
   await user.keyboard("{Enter}");
   const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
   expect(labels).toEqual([
-    "All sources",
-    "Local network · no key",
+    "All apps and connections",
     "Big app",
     "Small app",
     "Temp triage (1)",
@@ -594,6 +727,35 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
   expect(screen.getByText("Turned off or no requests")).toBeVisible();
 });
 
+test("Usage Source list offers each sign-in connection by client name, apart from apps, and filters by it", async () => {
+  renderUsage({
+    sources: [
+      { id: "app:session", kind: "app", label: "Azizam", requests: 12, disabled: false, created_at: 5 },
+      { id: "connection:mcg_1", kind: "connection", label: "ChatGPT", requests: 40, disabled: false, created_at: 30 },
+      { id: "connection:mcg_2", kind: "connection", label: "Old client", requests: 3, disabled: true, created_at: 10 },
+      { id: "connection:mcg_3", kind: "connection", label: "Claude", requests: 0, disabled: false, created_at: 20 },
+    ],
+  });
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
+  const user = userEvent.setup();
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await user.keyboard("{Enter}");
+  const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(labels).toEqual([
+    "All apps and connections",
+    "Azizam",
+    "ChatGPT",
+    "Old client (disconnected)",
+    "Claude",
+  ]);
+  expect(screen.getByText("Connected with sign-in")).toBeVisible();
+  await user.click(screen.getByRole("option", { name: "ChatGPT" }));
+  await waitFor(() =>
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("source=connection%3Amcg_1")),
+    ).toBe(true),
+  );
+});
 
 test("Usage daily bars use recorded totals without stacking and preserve overfull counts", async () => {
   renderUsage({
@@ -601,6 +763,7 @@ test("Usage daily bars use recorded totals without stacking and preserve overful
   });
   const chart = await screen.findByTestId("usage-chart");
   expect(JSON.parse(chart.getAttribute("data-values")!)).toEqual([{ label: "Oct 1", total: 4 }]);
+  expect(screen.getByTestId("usage-count-axis")).toHaveTextContent("0 requests · 1 request · 1,000 requests");
   const bars = screen.getAllByTestId("usage-bar");
   expect(bars).toHaveLength(1);
   expect(bars[0]).toHaveAttribute("data-key", "total");
@@ -609,8 +772,8 @@ test("Usage daily bars use recorded totals without stacking and preserve overful
   expect(screen.getByText(/On 1 day the task counts add to more than the recorded total/)).toBeVisible();
   await userEvent.setup().click(screen.getByText("View daily totals"));
   const daily = screen.getByRole("table", { name: "Requests by day and task" });
-  expect(within(daily).getByText("4 (task counts add to 7)")).toBeInTheDocument();
-  expect(within(daily).getByText("3")).toBeInTheDocument();
+  expect(within(daily).getByText("4 requests (task counts add to 7 requests)")).toBeInTheDocument();
+  expect(within(daily).getByText("3 requests")).toBeInTheDocument();
 });
 
 test("Usage By task combines model counts and cost, sorts by count and shows period share", async () => {
@@ -625,12 +788,12 @@ test("Usage By task combines model counts and cost, sorts by count and shows per
   const table = await screen.findByRole("table", { name: "By task" });
   expect(table).toHaveAttribute("data-dense");
   expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent))
-    .toEqual(["Task", "Requests", "Share", "Spend"]);
+    .toEqual(["Task", "Requests", "Share of requests (%)", "Spend (USD)"]);
   expect(within(table).getAllByRole("row").slice(1).map((row) =>
     within(row).getAllByRole("cell").map((cell) => cell.textContent),
   )).toEqual([
-    ["Chat", "7", "70%", "$1.00"],
-    ["Make a picture", "3", "30%", "$0.50"],
+    ["Chat", "7 requests", "70%", "$1.00"],
+    ["Make a picture", "3 requests", "30%", "$0.50"],
   ]);
 });
 
@@ -647,7 +810,7 @@ test("Usage By task keeps missing and partial costs distinct from known local co
   const table = await screen.findByRole("table", { name: "By task" });
   const chat = within(table).getByRole("row", { name: /Chat/ });
   expect(within(chat).getByText("$0.50")).toBeVisible();
-  expect(within(chat).getByText("partial")).toBeVisible();
+  expect(within(chat).getByText("Some costs missing")).toBeVisible();
   const picture = within(table).getByRole("row", { name: /Make a picture/ });
   expect(within(picture).getByText("Cost not recorded")).toBeVisible();
   expect(within(picture).queryByText("$0.00")).not.toBeInTheDocument();
@@ -669,13 +832,15 @@ test.each(["success", "succeeded", "ok"])("COPY-11 usage completion once (%s)", 
   renderUsage({ receipts: [{ request_id: "completed", capability: "chat", status }] });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getAllByText("Completed")).toHaveLength(1);
   expect(sheet.queryByText("The gateway completed this request.")).toBeNull();
 });
 
 test.each([
+  ["rejected", "Rejected", "This request was not allowed."],
+  ["accepted", "Accepted", "This request was accepted. Its result was not recorded here."],
   ["in_progress", "In progress", "The request was still running when this receipt was recorded."],
   ["timed_out", "Timed out", "The request timed out before we recorded a result. Try again."],
   ["incomplete", "Outcome not recorded", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
@@ -683,10 +848,85 @@ test.each([
   renderUsage({ receipts: [{ request_id: "context", capability: "chat", status }] });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getAllByText(label)).toHaveLength(1);
   expect(sheet.getByText(summary)).toBeVisible();
+});
+
+test("a rejected receipt gives the recorded 403 reason in plain words", async () => {
+  renderUsage({
+    receipts: [{ request_id: "refused", capability: "chat", status: "rejected", metadata: { status_code: 403 } }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
+  expect(within(screen.getByRole("dialog")).getByText(
+    "This request was rejected because it did not have permission. Check this person's access plan and the app's access.",
+  )).toBeVisible();
+});
+
+test("the receipt coverage note says when the view holds only the most recent receipts", async () => {
+  renderUsage({ retention_days: 30, truncated: true });
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Receipt coverage"));
+  expect(screen.getByText("Receipts are kept for 30 days.")).toBeVisible();
+  expect(screen.getByText("This view is limited to the most recent stored receipts.")).toBeVisible();
+});
+
+test("a summary without retention_days never claims receipts are kept until deleted", async () => {
+  renderUsage({ coverage_start: "2026-10-01T00:00:00Z" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Receipt coverage"));
+  expect(screen.getByText(/Coverage starts/)).toBeVisible();
+  expect(screen.queryByText(/Receipts are kept/)).toBeNull();
+});
+
+test("an empty period names the retention window in the receipts hint", async () => {
+  renderUsage({ requests: 0, media_count: 0, retention_days: 90 });
+  expect(await screen.findByText("No requests this month")).toBeVisible();
+  expect(screen.getByText(/Request receipts are kept for 90 days/)).toBeVisible();
+});
+
+test("choosing a source sends it as the source filter of the usage summary", async () => {
+  renderUsage({ sources: [{ id: "app-a", label: "Open WebUI" }] });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      new URL(String(url), "https://azizam.test").searchParams.get("source") === "app-a")).toBe(true),
+  );
+});
+
+test("choosing a source keeps the selected person in the usage summary request", async () => {
+  renderUsage({
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "Whose usage" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => {
+      const params = new URL(String(url), "https://azizam.test").searchParams;
+      return params.get("person") === "person-a" && params.get("source") === null;
+    })).toBe(true),
+  );
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => {
+      const params = new URL(String(url), "https://azizam.test").searchParams;
+      return params.get("person") === "person-a" && params.get("source") === "app-a"
+        && params.get("period") === "month";
+    })).toBe(true),
+  );
 });
 
 test.each([undefined, "provider", "opaque_stage"])("COPY-08 usage failure uncertainty (%s)", async (stage) => {
@@ -695,7 +935,7 @@ test.each([undefined, "provider", "opaque_stage"])("COPY-08 usage failure uncert
   });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getByText("We couldn't tell where this stopped. Try again.")).toBeVisible();
   expect(sheet.getAllByText("Failed")).toHaveLength(1);
@@ -716,7 +956,7 @@ test("COPY-17 usage spend and task labels", async () => {
   await screen.findByRole("table", { name: "Models" });
   for (const name of ["By task", "Models"]) {
     const table = within(screen.getByRole("table", { name }));
-    expect(table.getByRole("columnheader", { name: "Spend" })).toBeVisible();
+    expect(table.getByRole("columnheader", { name: "Spend (USD)" })).toBeVisible();
     expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
     expect(table.getByText("Sort search results")).toBeVisible();
     expect(table.getByText("Transcribe a recording")).toBeVisible();
@@ -727,14 +967,14 @@ test("COPY-17 usage spend and task labels", async () => {
 test.each([undefined, null, "", "   ", false, true, -1, "NaN"])("PF-040 rejects missing or invalid required totals: %s", async (value) => {
   renderUsage({}, async () => Response.json({ requests: value, media_count: 0, receipts: [{ request_id: "one" }] }));
   expect(await screen.findByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
-  expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
+  expect(screen.queryByText("No requests this month")).not.toBeInTheDocument();
 });
 
 test.each([null, "", " ", false, true, -1])("PF-040 preserves unknown model and failed counts: %s", async (value) => {
   renderUsage({ failed_requests: value, by_model: [{ model: "test", capability: "chat", requests: value }] });
   const models = await screen.findByRole("table", { name: "Models" });
   expect(within(models).getByText("Unknown")).toBeVisible();
-  const stat = screen.getByText("Failed", { selector: "dt" }).closest<HTMLElement>('[data-slot="stat"]')!;
+  const stat = screen.getByText("Failed requests", { selector: "dt" }).closest<HTMLElement>('[data-slot="stat"]')!;
   expect(within(stat).getByText("Unknown")).toBeVisible();
 });
 
@@ -747,15 +987,22 @@ test.each([false, true])("PF-045 shows requested and served models only when dif
   renderUsage({ receipts: [{ request_id: "routing", capability: "chat", requested_model: "alpha", resolved_model: different ? "beta" : "alpha", stage: "private_stage", error_code: "private_code", fallback_model: "gamma" }] });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = within(screen.getByRole("dialog"));
   expect(Boolean(sheet.queryByText("A different model was used."))).toBe(different);
   expect(Boolean(sheet.queryByText("Requested model"))).toBe(different);
-  expect(Boolean(sheet.queryByText("Served model"))).toBe(different);
+  expect(Boolean(sheet.queryByText("Model used"))).toBe(different);
   expect(Boolean(sheet.queryByText("Model", { exact: true }))).toBe(!different);
   const technical = sheet.getByText("Technical details").closest("details")!;
   expect(technical).not.toHaveAttribute("open");
   expect(technical).toHaveTextContent("private_stage");
+  expect(sheet.getByText("Open Technical details to see how this request was handled, if recorded.")).toBeVisible();
+  const plain = screen.getByRole("dialog").cloneNode(true) as HTMLElement;
+  plain.querySelectorAll("details").forEach((node) => node.remove());
+  expect(plain.textContent).not.toMatch(/receipt id|request id|upstream|routing|provider slug|alias|served model/i);
+  await user.click(sheet.getByText("Technical details"));
+  expect(technical).toHaveAttribute("open");
+  expect(within(technical).getByText("Request ID: routing")).toBeVisible();
 });
 
 
@@ -769,6 +1016,500 @@ test.each([null, "", false])("PF-040 an invalid daily total stays unknown: %s", 
 
 test("PF-040 accepts explicit numeric strings including genuine zero", async () => {
   renderUsage({ requests: "2", media_count: "0", failed_requests: "0" });
-  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
-  expect(within(stat).getByText("0 · 0%")).toBeVisible();
+  const stat = (await screen.findByText("Failed requests", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("0 requests · 0% of requests")).toBeVisible();
+});
+
+// ---- Moved from the usage browser spec (e2e/usage.spec.ts) ----
+// The summary the browser spec intercepted.
+const seededSummary = {
+  requests: 4,
+  media_count: 1,
+  remote_spend: 0.023,
+  remote_spend_available: true,
+  paid_requests: 3,
+  spend_measured_requests: 3,
+  spend_total_requests: 4,
+  retention_days: null,
+  coverage_start: "2026-10-01T00:00:00Z",
+  coverage_note: "Provider spend is available for matched receipts.",
+  by_day: [
+    { date: "2026-10-01", chat: 1, image: 1 },
+    { date: "2026-10-02", chat: 1, embeddings: 1 },
+  ],
+  by_model: [
+    { model: "demo-chat", capability: "chat", requests: 2, remote_spend: 0.01 },
+    { model: "image", capability: "image", requests: 1, remote_spend: 0.013 },
+  ],
+  receipts: [
+    {
+      request_id: "req_demo_chat",
+      accepted_at_ms: 1790870400000,
+      requested_model: "demo-chat",
+      resolved_model: "demo-chat",
+      intent: "chat",
+      capability: "chat",
+      status: "success",
+      latency_ms: 104,
+      remote_spend: null,
+    },
+  ],
+};
+
+test("Usage lists a receipt by display name and keeps the raw model id in Technical details", async () => {
+  renderUsage(seededSummary);
+  const user = userEvent.setup();
+  expect(await screen.findByRole("heading", { name: "Usage" })).toBeVisible();
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
+  await user.click(screen.getByText("Receipt coverage", { exact: true }));
+  expect(screen.getByText("Receipts are kept until you delete them.")).toBeVisible();
+  expect(screen.getByText("Coverage starts Oct 1, 2026.")).toBeVisible();
+  expect(screen.getByText("Provider spend is available for matched receipts.")).toBeVisible();
+  expect(screen.getAllByText("Demo Chat").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("columnheader", { name: "Typical time" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  const receipt = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  expect(receipt).toHaveTextContent("104 ms");
+  expect(receipt.querySelector("p.font-medium")).toHaveTextContent(/^Chat request$/);
+  expect(within(receipt).getByText("Demo Chat")).toHaveAttribute("title", "Demo Chat");
+  await user.click(receipt);
+  const sheet = within(screen.getByRole("dialog", { name: "Request receipt" }));
+  expect(sheet.getByText("Demo Chat")).toBeVisible();
+  expect(sheet.getByText("104 ms")).toBeVisible();
+  await user.click(sheet.getByText("Technical details", { exact: true }));
+  const technical = sheet.getByText("Technical details").closest("details")!;
+  expect(technical).toHaveTextContent("request_id");
+  expect(technical).toHaveTextContent("requested_model");
+  expect(technical).toHaveTextContent('"demo-chat"');
+});
+
+test("Usage omits the model line when only the capability is known", async () => {
+  renderUsage({
+    ...seededSummary,
+    by_model: [{ model: null, capability: "transcribe", requests: 6, remote_spend: null }],
+  });
+  const row = within(await screen.findByRole("table", { name: "Models" })).getByRole("row", {
+    name: /Transcribe a recording/,
+  });
+  expect(row.querySelector("code")).toBeNull();
+  expect(row).not.toHaveTextContent("Unknown model");
+});
+
+test("Usage failed load shows the error callout, no placeholder summary, and recovers on retry", async () => {
+  let failed = true;
+  renderUsage({}, async () => {
+    if (failed) {
+      failed = false;
+      return Response.json({ error: { message: "Unavailable for this test" } }, { status: 503 });
+    }
+    return Response.json(seededSummary);
+  });
+  expect(await screen.findByText("Usage could not be loaded", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Unknown · Usage unavailable", { exact: true })).toBeNull();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry usage" }));
+  expect((await screen.findAllByText("Demo Chat")).length).toBeGreaterThan(0);
+});
+
+test("Usage seeded view shows Spend and the Receipts panel once receipts are opened", async () => {
+  renderUsage(seededSummary);
+  expect(await screen.findByRole("heading", { name: "Usage" })).toBeVisible();
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
+  expect(screen.queryByLabelText("Loading your account")).toBeNull();
+  expect(screen.getAllByText("Spend (USD)", { exact: true }).length).toBeGreaterThan(0);
+  await userEvent.setup().click(screen.getByRole("button", { name: "View recent requests" }));
+  expect(screen.getByText("Recent request receipts", { exact: true })).toBeVisible();
+});
+
+test("Usage labels unavailable remote spend as Cost not recorded, never $0", async () => {
+  renderUsage({
+    ...seededSummary,
+    remote_spend: 0,
+    remote_spend_available: false,
+    paid_requests: 0,
+    spend_measured_requests: 0,
+    spend_total_requests: 4,
+  });
+  const spend = within(await screen.findByLabelText("This month"))
+    .getByText("Spend this month (USD)", { exact: true })
+    .closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(spend).toHaveTextContent("Cost not recorded");
+  expect(spend).not.toHaveTextContent("$0");
+});
+
+test("Usage person filter does not promote an email-shaped name or label to a person name", async () => {
+  renderUsage({
+    ...seededSummary,
+    people: [
+      { id: "person-email", name: "person@example.test" },
+      { id: "person-second", label: "second@example.test" },
+    ],
+  });
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
+  const user = userEvent.setup();
+  screen.getByRole("combobox", { name: "Whose usage" }).focus();
+  await user.keyboard("{Enter}");
+  const people = await screen.findAllByRole("option", { name: /^Person name not recorded/ });
+  expect(people).toHaveLength(2);
+  const labels = people.map((option) => option.textContent ?? "");
+  expect(new Set(labels).size).toBe(2);
+  expect(labels.join(" ")).not.toContain("@example.test");
+  expect(screen.queryByRole("option", { name: "person@example.test" })).toBeNull();
+  await user.click(people[1]);
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("person=person-second")),
+  ).toBe(true);
+});
+
+const phoneSummary = {
+  ...seededSummary,
+  requests: 8264,
+  by_model: [
+    { model: GGUF, capability: "chat", requests: 3402, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: null, capability: "transcribe", requests: 2322, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "Qwen3 (Q4)", capability: "chat", requests: 505, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "default", capability: "chat", requests: 408, remote_spend: 0, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "decide-quality", capability: "decide", requests: 377, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "paid-remote-model", capability: "image", requests: 300, remote_spend: null, paid_requests: 0, unknown_paid_requests: 4 },
+  ],
+  by_day: [
+    { date: "2026-10-01", chat: 5, image: 1, audio: 2, transcribe: 3, decide: 4, embeddings: 5 },
+    { date: "2026-10-02", chat: 1 },
+  ],
+  receipts: [{ ...seededSummary.receipts[0], requested_model: "default", resolved_model: GGUF }],
+};
+
+test("Usage model table shows names, never a path or packing tag, and a Cost in every row", async () => {
+  renderUsage(phoneSummary, undefined, { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] });
+  const table = await screen.findByRole("table", { name: "Models" });
+  await waitFor(() => expect(table).toHaveTextContent("Careful choices"));
+  expect(table.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);
+  expect(table.textContent).not.toMatch(/Q4 K M|Q4_K_M/);
+  expect(table).toHaveTextContent("Qwen3.8 27B Uncensored");
+  expect(table).toHaveTextContent("Transcribe a recording");
+  expect(within(table).getByTitle("Qwen3.8 27B Uncensored")).toBeVisible();
+  expect(table.querySelector('[title*="gguf" i], [title*="Q4_K_M"]')).toBeNull();
+  // One header row and the five busiest models (the sixth is cut); none is blank in the Spend column.
+  const rows = within(table).getAllByRole("row");
+  expect(rows).toHaveLength(6);
+  for (const row of rows.slice(1)) {
+    expect(within(row).getAllByRole("cell").at(-1)!.textContent!.trim()).toMatch(/^(Cost not recorded|\$[\d.]+)/);
+  }
+  expect(table).toHaveTextContent("$0.00");
+  expect(screen.queryByText("Local: no provider charge.")).toBeNull();
+  // The legend uses the names Home and Try use, inside a visible disclosure.
+  await userEvent.setup().click(screen.getByText("View daily totals", { exact: true }));
+  expect(screen.getAllByText("Make a picture").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Choose an option").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Decisions", { exact: true })).toBeNull();
+  expect(screen.queryByText("Embeddings", { exact: true })).toBeNull();
+});
+
+const manySources = [
+  { id: "app:1", label: "tim.nunamaker@gmail.com personal access with a rather long name", kind: "app", requests: 90, disabled: false, created_at: 1 },
+  ...Array.from({ length: 20 }, (_, index) => ({
+    id: `app:tmp${index}`,
+    label: index < 3 ? "Temporary empathy Jev triage" : `copy-triage-17911237${index}`,
+    kind: "app",
+    requests: index < 3 ? 6 : 1,
+    disabled: true,
+    created_at: 1000 + index,
+  })),
+  ...Array.from({ length: 6 }, (_, index) => ({
+    id: `app:live${index}`,
+    label: `Household app ${index}`,
+    kind: "app",
+    requests: 20 - index,
+    disabled: false,
+    created_at: 100 + index,
+  })),
+];
+
+test("Usage Source list ranks busy apps first, numbers same-named apps and puts turned-off apps last", async () => {
+  renderUsage({ ...phoneSummary, sources: manySources });
+  await screen.findByText("Request counts and recorded spend this month, busiest models first");
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await userEvent.setup().keyboard("{Enter}");
+  const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(labels.slice(0, 4)).toEqual([
+    "All apps and connections",
+    "tim.nunamaker@gmail.com personal access with a rather long name",
+    "Household app 0",
+    "Household app 1",
+  ]);
+  expect(labels.filter((label) => label?.startsWith("Temporary empathy"))).toEqual([
+    "Temporary empathy Jev triage (1)",
+    "Temporary empathy Jev triage (2)",
+    "Temporary empathy Jev triage (3)",
+  ]);
+  expect(labels.indexOf("Household app 5")).toBeLessThan(
+    labels.indexOf("Temporary empathy Jev triage (1)"),
+  );
+  expect(screen.getByText("Turned off or no requests")).toBeVisible();
+});
+
+test("Usage tells a partial total from a missing breakdown and from a genuine zero", async () => {
+  let partial = true;
+  renderUsage({}, async () =>
+    Response.json(
+      partial
+        ? { requests: null, media_count: 0 }
+        : { requests: 2, media_count: 0, by_day: [], by_model: [], receipts: [] },
+    ),
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
+  expect(screen.queryByText("No requests this month")).toBeNull();
+  partial = false;
+  await user.click(screen.getByRole("button", { name: "Retry usage" }));
+  expect(await screen.findByText("Daily totals weren’t recorded for these requests.")).toBeVisible();
+  expect(screen.getByText("Model totals weren’t recorded.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  expect(screen.getByText("No receipts are available for this view.")).toBeVisible();
+  expect(screen.queryByText("$0.00")).toBeNull();
+});
+
+test.each([0.25, null])("HONEST-1 receipt cost stays visible on phones: %s", async (cost) => {
+  renderUsage({ receipts: [{ request_id: "phone", capability: "chat", cost_usd: cost }] });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "View recent requests" }));
+  const row = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  const price = within(row).getByText(cost === null ? "Cost not recorded" : "$0.25");
+  expect(price.closest(".hidden")).toBeNull();
+  expect(price.closest(".min-w-0.flex-1")).not.toBeNull();
+});
+
+test.each(["owner", "member"] as const)("HONEST-2 Everyone identifies people only for owners: %s", async (role) => {
+  renderUsage({ receipts: [
+    { request_id: "named", capability: "chat", person_label: "Mira" },
+    { request_id: "unnamed", capability: "image", person_label: "   " },
+  ] }, undefined, {}, role);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "View recent requests" }));
+  const named = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  const unnamed = screen.getByRole("button", { name: /Receipt details for Image request/ });
+  if (role === "owner") {
+    expect(within(named).getByText("Mira")).toBeVisible();
+    expect(named).toHaveAccessibleName("Receipt details for Chat request · Mira");
+    expect(within(unnamed).getByText("Person not recorded")).toBeVisible();
+    expect(unnamed).toHaveAccessibleName("Receipt details for Image request · Person not recorded");
+    const user = userEvent.setup();
+    screen.getByRole("combobox", { name: "Whose usage" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("option", { name: "You" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Receipt details for Chat request" })).not.toHaveTextContent("Mira"));
+  } else {
+    expect(named).not.toHaveTextContent("Mira");
+    expect(unnamed).not.toHaveTextContent("Person not recorded");
+    expect(named).toHaveAccessibleName("Receipt details for Chat request");
+  }
+});
+
+test("HONEST-3 Usage amounts add up without rounding tiny costs to zero", async () => {
+  renderUsage({
+    remote_spend: 0.028,
+    by_model: [
+      { model: "a", capability: "chat", requests: 1, cost_usd: 0.014 },
+      { model: "b", capability: "chat", requests: 1, cost_usd: 0.014 },
+    ],
+    receipts: [
+      { request_id: "a", capability: "chat", cost_usd: 0.014 },
+      { request_id: "b", capability: "chat", cost_usd: 0.014 },
+      { request_id: "tiny", capability: "image", cost_usd: 0.0000001 },
+    ],
+  });
+  const month = await screen.findByLabelText("This month");
+  expect(within(month).getByText("$0.028")).toBeVisible();
+  expect(within(month).getByText("Spend this month (USD)")).toBeVisible();
+  for (const name of ["By task", "Models"]) {
+    const table = screen.getByRole("table", { name });
+    expect(within(table).getByRole("columnheader", { name: "Spend (USD)" })).toBeVisible();
+    if (name === "By task") expect(within(table).getByText("$0.028")).toBeVisible();
+    else expect(within(table).getAllByText("$0.014")).toHaveLength(2);
+  }
+  await userEvent.setup().click(screen.getByRole("button", { name: "View recent requests" }));
+  const rows = screen.getAllByRole("button", { name: /Receipt details for Chat request/ });
+  expect(rows.map((row) => within(row).getByText("$0.014").textContent)).toEqual(["$0.014", "$0.014"]);
+  expect(rows.reduce((sum, row) => sum + Number(within(row).getByText("$0.014").textContent!.slice(1)), 0)).toBe(0.028);
+  const tiny = screen.getByRole("button", { name: /Receipt details for Image request/ });
+  expect(within(tiny).getByText("<$0.0001")).toBeVisible();
+  expect(tiny).not.toHaveTextContent("$0.000000");
+});
+
+test("HONEST-4 source suffixes reserve existing names and preserve ids and order", () => {
+  const sources = [
+    { id: "a", label: "Daisy", kind: "app", requests: 3, disabled: false, createdAt: 1 },
+    { id: "b", label: "Daisy", kind: "app", requests: 2, disabled: false, createdAt: 2 },
+    { id: "c", label: "Daisy (1)", kind: "app", requests: 1, disabled: false, createdAt: 3 },
+  ];
+  const options = sourceGroups(sources).active;
+  expect(new Set(options.map((option) => option.label)).size).toBe(3);
+  expect(options).toEqual([
+    { id: "a", label: "Daisy (2)" },
+    { id: "b", label: "Daisy (3)" },
+    { id: "c", label: "Daisy (1)" },
+  ]);
+  expect(sourceGroups([...sources].reverse()).active).toEqual(options);
+});
+
+test.each([
+  { speech: null, voice: 2 },
+  { voice: 2, speech: null },
+])("HONEST-5 null capability aliases stay unknown in either order: %j", async (aliases) => {
+  renderUsage({ by_day: [
+    { date: "2026-10-01", total: 2, capabilities: aliases },
+    { date: "2026-10-02", total: 1, voice: 1 },
+  ] });
+  await userEvent.setup().click(await screen.findByText("View daily totals"));
+  const table = screen.getByRole("table", { name: "Requests by day and task" });
+  const row = within(table).getByRole("row", { name: /2026-10-01/ });
+  expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Unknown", "2 requests"]);
+});
+
+test("HONEST-3 Money keeps other pages' default formatting", () => {
+  const { container } = render(<><Money amount={0.014} /><Money amount={0.0000001} /></>);
+  expect(container.textContent).toBe("$0.01$0.00");
+});
+
+test("Usage reconciles an unexplained daily remainder into Other without changing the total", async () => {
+  renderUsage({ requests: 9, by_day: [{ date: "2026-10-01", total: 9, chat: 2, image: 3 }] });
+  const chart = await screen.findByTestId("usage-chart");
+  expect(JSON.parse(chart.getAttribute("data-values")!)).toEqual([{ label: "Oct 1", total: 9 }]);
+  await userEvent.setup().click(screen.getByText("View daily totals"));
+  const table = screen.getByRole("table", { name: "Requests by day and task" });
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent))
+    .toEqual(["Date", "Chat", "Make a picture", "Other", "Daily total"]);
+  expect(within(table).getAllByRole("row").slice(1).map((row) =>
+    within(row).getAllByRole("cell").map((cell) => cell.textContent),
+  )).toEqual([["2 requests", "3 requests", "4 requests", "9 requests"]]);
+});
+
+test("Usage receipt duration changes units at one second and precision at ten seconds", async () => {
+  renderUsage({ receipts: [999, 1000, 1250, 10000].map((duration_ms) => ({
+    request_id: `duration-${duration_ms}`, capability: "chat", duration_ms,
+  })) });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "View recent requests" }));
+  const receipts = screen.getAllByRole("button", { name: /^Receipt details for Chat request/ });
+  for (const [index, duration] of ["999 ms", "1.0 s", "1.3 s", "10 s"].entries()) {
+    expect(within(receipts[index]).getByText(duration, { exact: true })).toBeVisible();
+  }
+});
+
+test("Usage By task keeps a mixed known and unknown request aggregate and share unknown", async () => {
+  renderUsage({
+    requests: 10,
+    by_model: [
+      { model: "known-chat", capability: "chat", requests: 4, cost_usd: 0.25 },
+      { model: "unknown-chat", capability: "chat", requests: null, cost_usd: 0.5 },
+    ],
+  });
+  const table = await screen.findByRole("table", { name: "By task" });
+  const row = within(table).getByRole("row", { name: /Chat/ });
+  expect(within(row).getAllByRole("cell").map((cell) => cell.textContent))
+    .toEqual(["Chat", "Unknown", "Unknown", "$0.75"]);
+});
+
+test("Usage filtered empty state clears both filters and returns to the period empty state", async () => {
+  renderUsage({
+    requests: 0, media_count: 0,
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("No requests this month");
+  screen.getByRole("combobox", { name: "Whose usage" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await screen.findByText("No requests match these filters this month");
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await screen.findByText("No requests match these filters this month");
+  expect(screen.queryByRole("link", { name: "Connect an app" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByText("No requests this month")).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Whose usage" })).toHaveTextContent("Everyone");
+  expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveTextContent("All apps and connections");
+  expect(screen.getByRole("link", { name: "Connect an app" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+});
+
+test("Usage changing person resets a previously selected source in picker and request", async () => {
+  renderUsage({
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "App or connection" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveTextContent("Open WebUI"));
+  screen.getByRole("combobox", { name: "Whose usage" }).focus();
+  await user.keyboard("{Enter}");
+  vi.mocked(fetch).mockClear();
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await waitFor(() => {
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/usage/summary"));
+    expect(urls).toHaveLength(1);
+    const params = new URL(urls[0], "https://azizam.test").searchParams;
+    expect(params.get("person")).toBe("person-a");
+    expect(params.get("source")).toBeNull();
+  });
+  expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveTextContent("All apps and connections");
+});
+
+test("NUMBERS totals reconcile complete model rows with task and month totals", async () => {
+  const models = [
+    { model: "first", capability: "chat", requests: 1001, cost_usd: 0.014 },
+    { model: "second", capability: "image", requests: 7, cost_usd: 0.125 },
+    { model: "third", capability: "chat", requests: 23, cost_usd: 0.028 },
+  ];
+  const requests = models.reduce((sum, row) => sum + row.requests, 0);
+  const spend = models.reduce((sum, row) => sum + row.cost_usd, 0);
+  renderUsage({ requests, remote_spend: spend, by_model: models });
+  const tasks = await screen.findByRole("table", { name: "By task" });
+  const cells = within(tasks).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent!));
+  expect(cells).toEqual([
+    ["Chat", "1,024 requests", "99.3%", "$0.042"],
+    ["Make a picture", "7 requests", "0.7%", "$0.125"],
+  ]);
+  const month = screen.getByLabelText("This month");
+  const renderedRequests = cells.reduce((sum, row) => sum + Number(row[1].replaceAll(",", "").split(" ")[0]), 0);
+  const renderedSpend = cells.reduce((sum, row) => sum + Number(row[3].slice(1)), 0);
+  expect(renderedRequests).toBe(requests);
+  expect(renderedSpend).toBeCloseTo(spend, 8);
+  expect(within(month).getByText("1,031 requests")).toBeVisible();
+  expect(within(month).getByText("$0.167")).toBeVisible();
+});
+
+test("NUMBERS USD spend preserves sub-cent precision in summary and model rows", async () => {
+  renderUsage({
+    requests: 3, remote_spend: 0.0042,
+    by_model: [
+      { model: "tiny", capability: "chat", requests: 2, cost_usd: 0.0042 },
+      { model: "free", capability: "image", requests: 1, cost_usd: 0 },
+    ],
+  });
+  const month = await screen.findByLabelText("This month");
+  expect(within(month).getByText("Spend this month (USD)")).toBeVisible();
+  expect(within(month).getByText("$0.0042")).toBeVisible();
+  const models = screen.getByRole("table", { name: "Models" });
+  expect(within(models).getByRole("columnheader", { name: "Spend (USD)" })).toBeVisible();
+  const rows = within(models).getAllByRole("row").slice(1);
+  expect(within(rows[0]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.0042$/);
+  expect(within(rows[1]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.00$/);
+});
+
+test("NUMBERS busiest models sort numerically before top-five truncation and expansion", async () => {
+  const counts = [2, 10, 3, 100, 1, 20, 0];
+  renderUsage({ requests: 136, by_model: counts.map((requests, index) => ({
+    model: `model-${index}`, capability: "chat", requests, cost_usd: 100 - requests,
+  })) });
+  const table = await screen.findByRole("table", { name: "Models" });
+  const visibleCounts = () => within(table).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell")[1].textContent);
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "View all 7 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests", "1 request", "0 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Show top 5 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
 });

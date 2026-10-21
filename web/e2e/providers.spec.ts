@@ -1,11 +1,7 @@
-import {
-  test,
-  expect,
-  type APIRequestContext,
-  type Page,
-  type Route,
-} from "@playwright/test";
+import { type APIRequestContext, type Page, type Route } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const catalog = {
   providers: [
@@ -36,19 +32,37 @@ const catalog = {
   ],
 };
 
+// GET /admin/api/access-plans: a plan's Paid providers are in its document.
+const planDocument = (name: string, paid: string[]) => ({
+  name,
+  can_use: { chat: { items: "all" } },
+  direct_engine_access: { engines: [], operations: [] },
+  paid_providers: paid,
+  provider_fallback: false,
+  caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+  can_load_models: true,
+  receipt_detail: "basic",
+  media_metadata: "none",
+});
 const plans = {
-  plans: [
+  access_plans: [
     {
       id: "local",
       name: "Local only",
-      description: "No paid providers",
-      paid_allowed: false,
+      created_at: 1710000000,
+      updated_at: 1710000000,
+      plan: { ...planDocument("Local only", []), id: "local" },
+      summary: "No paid providers",
+      used_by: { people: [], apps: [], invites: 0 },
     },
     {
       id: "paid",
       name: "Paid cloud",
-      description: "Can use selected paid providers",
-      paid_allowed: true,
+      created_at: 1710000000,
+      updated_at: 1710000000,
+      plan: { ...planDocument("Paid cloud", ["openrouter"]), id: "paid" },
+      summary: "Can use selected paid providers",
+      used_by: { people: [], apps: [], invites: 0 },
     },
   ],
 };
@@ -74,7 +88,7 @@ const seededProviders = {
         pending_reconciliation_count: 1,
       },
       caps: { daily_usd: 5, monthly_usd: 50 },
-      allowed_plans: [],
+      access_plans: ["paid"],
       recommendations: [
         {
           message:
@@ -115,226 +129,56 @@ async function setViewport(
     theme,
   );
 }
-
+// Display states, request bodies and the add/credential wizard are asserted in
+// vitest (src/app/providers/providers-states.spec.tsx). The browser keeps
+// real layout at 390 px, axe per state and the real-gateway journey.
 async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
-  let saved = false;
-  let savedModels = false;
-  let savedCaps = false;
-  let savedPlans = false;
-  let reconciled = false;
-  let reconciled42 = false;
-  await page.route("**/__provider-test-flags", (route: Route) =>
-    route.fulfill({ json: { savedModels, savedCaps, savedPlans, reconciled } }),
-  );
-  await page.route("**/admin/api/profiles", (route: Route) =>
-    route.fulfill({ json: plans }),
+  await page.route("**/admin/api/access-plans", (route: Route) =>
+    fulfilJson(route, plans),
   );
   await page.route("**/admin/api/providers**", (route: Route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/admin/api/providers/-/catalog") {
-      return route.fulfill({ json: catalog });
-    }
-    if (path === "/admin/api/providers/-/test") {
-      expect(route.request().postDataJSON()).toMatchObject({
-        preset_id: "openrouter",
-        provider_id: "openrouter",
-        key_mode: "secret",
-        api_key: "sk-or-browser-test",
-        base_url: "https://openrouter.ai/api/v1",
-        models: [],
-      });
-      return route.fulfill({
-        json: {
-          ok: true,
-          message: "Listed 2 models from OpenRouter.",
-          models: [
-            {
-              id: "openrouter/anthropic/claude-sonnet-4.5",
-              name: "Claude Sonnet 4.5",
-              upstream_model: "anthropic/claude-sonnet-4.5",
-              context: "200k context",
-              price: {
-                input_usd_per_million_tokens: 3,
-                output_usd_per_million_tokens: 15,
-              },
-            },
-            {
-              id: "openrouter/unknown-new-model",
-              name: "Unknown new model",
-              context: "Context not reported",
-              price_input: "",
-              price_output: "",
-            },
-          ],
-        },
-      });
+      return fulfilJson(route, catalog);
     }
     if (path === "/admin/api/providers/openrouter/reconciliation") {
-      expect(route.request().method()).toBe("GET");
-      return route.fulfill({
-        json: {
-          reconciliations: reconciled
-            ? []
-            : [
-                ...(reconciled42
-                  ? []
-                  : [
-                      {
-                        id: 42,
-                        provider: "openrouter",
-                        profile_id: "paid",
-                        status: "needs_reconciliation",
-                        estimated_usd: "0.015",
-                        actual_usd: null,
-                        cost_source: "estimated",
-                        created_at: 1710000000,
-                        settled_at: null,
-                        request_id: "req_pending_42_abcdefghijklmnopqrstuvwxyz",
-                        generation_id:
-                          "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
-                      },
-                    ]),
-                {
-                  id: 43,
-                  provider: "openrouter",
-                  profile_id: "paid",
-                  status: "needs_reconciliation",
-                  estimated_usd: "0.000001234",
-                  actual_usd: null,
-                  cost_source: "estimated",
-                  created_at: 1710000001,
-                  settled_at: null,
-                  request_id: "req_pending_43",
-                  generation_id: "gen_pending_43",
-                },
-              ],
-        },
-      });
-    }
-    if (path === "/admin/api/providers/openrouter/reconciliation/42") {
-      reconciled42 = true;
-      expect(route.request().method()).toBe("POST");
-      expect(route.request().postDataJSON()).toEqual({
-        actual_usd: "0.000001234",
-      });
-      return route.fulfill({
-        json: {
-          reconciliation: {
-            id: 42,
-            status: "settled",
-            actual_usd: "0.000001234",
-          },
-        },
-      });
-    }
-    if (path === "/admin/api/providers/openrouter/reconciliation/43") {
-      reconciled = true;
-      expect(route.request().method()).toBe("POST");
-      expect(route.request().postDataJSON()).toEqual({ actual_usd: "0" });
-      return route.fulfill({
-        json: {
-          reconciliation: { id: 43, status: "settled", actual_usd: "0.00" },
-        },
-      });
-    }
-    if (path === "/admin/api/providers/openrouter/models") {
-      savedModels = true;
-      const body = route.request().postDataJSON();
-      expect(route.request().method()).toBe("PUT");
-      expect(body.models[0]).toMatchObject({
-        id: "openrouter/anthropic/claude-sonnet-4.5",
-        name: "Claude Sonnet 4.5",
-        enabled: false,
-        price: { output_usd_per_million_tokens: 12 },
-      });
-      return route.fulfill({
-        json: { provider: seededProviders.providers[0] },
-      });
-    }
-    if (path === "/admin/api/providers/openrouter/caps") {
-      savedCaps = true;
-      expect(route.request().method()).toBe("PUT");
-      expect(route.request().postDataJSON()).toEqual({
-        daily_usd: 7,
-        monthly_usd: 70,
-      });
-      return route.fulfill({
-        json: { provider: seededProviders.providers[0] },
-      });
-    }
-    if (path === "/admin/api/providers/openrouter/allowed-plans") {
-      savedPlans = true;
-      expect(route.request().method()).toBe("PUT");
-      expect(route.request().postDataJSON()).toEqual({
-        allowed_plans: ["paid"],
-      });
-      return route.fulfill({
-        json: { provider: seededProviders.providers[0] },
-      });
+      return fulfilJson(route, {
+          reconciliations: [
+            {
+              id: 42,
+              provider: "openrouter",
+              app_id: "app-paid",
+              person_id: "person-owner",
+              status: "needs_reconciliation",
+              estimated_usd: "0.015",
+              actual_usd: null,
+              cost_source: "estimated",
+              created_at: 1710000000,
+              settled_at: null,
+              request_id: "req_pending_42_abcdefghijklmnopqrstuvwxyz",
+              generation_id: "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
+            },
+          ],
+        });
     }
     if (path !== "/admin/api/providers") return route.continue();
-    if (route.request().method() === "POST") {
-      saved = true;
-      const body = route.request().postDataJSON();
-      expect(body).toMatchObject({
-        preset_id: "openrouter",
-        provider_id: "openrouter",
-        key_mode: "secret",
-        api_key: "sk-or-browser-test",
-        allowed_plans: [],
-      });
-      expect(body.models[0]).toEqual({
-        id: "openrouter/anthropic/claude-sonnet-4.5",
-        name: "Claude Sonnet 4.5",
-        upstream_model: "anthropic/claude-sonnet-4.5",
-        enabled: true,
-        price: {
-          input_usd_per_million_tokens: 3,
-          output_usd_per_million_tokens: 15,
-        },
-      });
-      return route.fulfill({
-        json: { provider: seededProviders.providers[0] },
-      });
-    }
     if (state === "error") {
-      return route.fulfill({
-        status: 503,
-        json: { error: { message: "Provider API unavailable" } },
-      });
+      return fulfilJson(route, { error: { message: "Provider API unavailable" } }, { status: 503 });
     }
-    return route.fulfill({
-      json: saved || state === "seeded" ? seededProviders : { providers: [] },
-    });
+    return fulfilJson(route, state === "seeded" ? seededProviders : { providers: [] });
   });
-  await page.route("**/me/api/models/catalog", (route: Route) =>
-    route.fulfill({
-      json: {
-        models: saved ? [{ id: "openrouter/anthropic/claude-sonnet-4.5" }] : [],
-      },
-    }),
-  );
-  await page.route("**/openai/v1/chat/completions", (route: Route) =>
-    route.fulfill({
-      status: 403,
-      json: {
-        error: {
-          code: "paid_provider_not_allowed",
-          message:
-            "Paid provider OpenRouter is not allowed by this access plan.",
-        },
-      },
-    }),
-  );
 }
 
 async function inspect(page: Page, name: string) {
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-    `${name} must not overflow horizontally`,
-  ).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      { message: `${name} must not overflow horizontally` },
+    )
+    .toBe(true);
   const axe = await new AxeBuilder({ page }).analyze();
   expect(
     axe.violations
@@ -349,390 +193,50 @@ async function inspect(page: Page, name: string) {
   });
 }
 
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390] as const) {
-    for (const state of ["seeded", "empty", "error"] as const) {
-      test(`providers ${state}: ${theme} ${width}`, async ({ page }) => {
-        await setViewport(page, theme, width);
-        await routeProviders(page, state);
-        await page.goto("/ui/providers/");
-        await expect(
-          page.getByRole("heading", { name: "Providers" }),
-        ).toBeVisible();
-        if (state === "seeded") {
-          await expect(
-            page.getByRole("heading", { name: "OpenRouter" }),
-          ).toBeVisible();
-          await page.getByText("Manage", { exact: true }).click();
-          await expect(
-            page.getByRole("cell", {
-              name: "openrouter/anthropic/claude-sonnet-4.5",
-            }),
-          ).toBeVisible();
-        } else if (state === "empty") {
-          await expect(
-            page.getByText(/Add one provider, then choose its models/),
-          ).toBeVisible();
-          await expect(
-            page.getByRole("button", { name: "Add provider" }).first(),
-          ).toBeVisible();
-        } else {
-          await expect(
-            page.getByRole("button", { name: "Retry providers" }),
-          ).toBeVisible();
-        }
-        await inspect(page, `providers-${state}-${theme}-${width}`);
-      });
+// One axe/overflow representative per state; together they cover both themes
+// and both widths.
+for (const [state, theme, width] of [
+  ["seeded", "light", 1440],
+  ["seeded", "dark", 390],
+  ["empty", "light", 390],
+  ["error", "dark", 1440],
+] as const) {
+  test(`providers ${state}: ${theme} ${width}`, async ({ page }) => {
+    await setViewport(page, theme, width);
+    await routeProviders(page, state);
+    await page.goto("/providers/");
+    await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
+    if (state === "seeded") {
+      await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
+      await page.getByText("Manage", { exact: true }).click();
+      await expect(
+        page.getByRole("cell", { name: "openrouter/anthropic/claude-sonnet-4.5" }),
+      ).toBeVisible();
+    } else if (state === "empty") {
+      await expect(
+        page.getByText(/Add one provider, then choose its models/),
+      ).toBeVisible();
+    } else {
+      await expect(
+        page.getByRole("button", { name: "Retry providers" }),
+      ).toBeVisible();
     }
-  }
+    await inspect(page, `providers-${state}-${theme}-${width}`);
+  });
 }
 
-test("providers detail edits models caps and plans through real admin paths", async ({
-  page,
-}) => {
+test("providers reconciliation dialog: dark 390", async ({ page }) => {
+  await setViewport(page, "dark", 390);
   await routeProviders(page, "seeded");
-  await page.goto("/ui/providers/");
-  await page.getByText("Manage", { exact: true }).click();
-  await page.getByRole("button", { name: "Edit models" }).click();
-  await page
-    .getByLabel("Enable openrouter/anthropic/claude-sonnet-4.5")
-    .click();
-  await page
-    .getByLabel("openrouter/anthropic/claude-sonnet-4.5 managed output price")
-    .fill("12");
-  await page.getByRole("button", { name: "Save models" }).click();
-  await page.getByRole("button", { name: "Edit caps" }).click();
-  await page.getByLabel("OpenRouter daily cap (USD)").fill("7");
-  await page.getByLabel("OpenRouter monthly cap (USD)").fill("70");
-  await page.getByRole("button", { name: "Save caps" }).click();
-  await page.getByRole("button", { name: "Edit access plans" }).click();
-  await page.getByLabel("Allow Paid cloud for OpenRouter").click();
-  await page.getByRole("button", { name: "Save access plans" }).click();
-  const flags = await page.evaluate(() =>
-    fetch("/__provider-test-flags").then((response) => response.json()),
-  );
-  expect(flags).toEqual({
-    savedModels: true,
-    savedCaps: true,
-    savedPlans: true,
-    reconciled: false,
-  });
-});
-
-test("providers reconcile pending charges before removal", async ({ page }) => {
-  await routeProviders(page, "seeded");
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByText("Manage", { exact: true }).click();
   await expect(page.getByText("1 charge needs checking")).toBeVisible();
+  await inspect(page, "providers-reconciliation-card-dark-390");
   await page.getByRole("button", { name: "Check charges" }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "req_pending_42_abcdefghijklmnopqrstuvwxyz",
   );
-  await expect(page.getByRole("dialog")).toContainText(
-    "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
-  );
-  await expect(page.getByText("USD 0.015")).toBeVisible();
-  await expect(page.getByText("USD 0.000001234")).toBeVisible();
-  const firstActual = page.getByLabel(
-    "Verified actual charge for charge 42",
-  );
-  await expect(firstActual).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Record actual" }).first(),
-  ).toBeDisabled();
-  await firstActual.fill("0.000001234");
-  await page.getByRole("button", { name: "Record actual" }).first().click();
-  await expect(page.getByText("Charge #42")).toBeHidden();
-  const zeroActual = page.getByLabel(
-    "Verified actual charge for charge 43",
-  );
-  await expect(zeroActual).toHaveValue("");
-  await zeroActual.fill("0");
-  const zeroButton = page
-    .getByRole("button", { name: "Record actual" })
-    .first();
-  await expect(zeroButton).toBeEnabled();
-  await zeroButton.click();
-  await expect(
-    page.getByText("No charges need checking."),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
-  const flags = await page.evaluate(() =>
-    fetch("/__provider-test-flags").then((response) => response.json()),
-  );
-  expect(flags.reconciled).toBe(true);
-});
-
-for (const theme of ["light", "dark"] as const) {
-  test(`providers reconciliation dialog: ${theme} 390`, async ({ page }) => {
-    await setViewport(page, theme, 390);
-    await routeProviders(page, "seeded");
-    await page.goto("/ui/providers/");
-    await page.getByText("Manage", { exact: true }).click();
-    await expect(page.getByText("1 charge needs checking")).toBeVisible();
-    await inspect(page, `providers-reconciliation-card-${theme}-390`);
-    await page.getByRole("button", { name: "Check charges" }).click();
-    await expect(page.getByRole("dialog")).toContainText(
-      "req_pending_42_abcdefghijklmnopqrstuvwxyz",
-    );
-    await inspect(page, `providers-reconciliation-dialog-${theme}-390`);
-  });
-}
-
-type ProviderTestRequest = Record<string, unknown>;
-
-function providerTestResponse(providerId: string) {
-  const label = providerId === "openrouter" ? "OpenRouter" : "Generic OpenAI";
-  return {
-    ok: true,
-    message: `Listed 1 model from ${label}.`,
-    models: [
-      {
-        id: `${providerId}/anthropic/claude-sonnet-4.5`,
-        name: "Claude Sonnet 4.5",
-        upstream_model: "anthropic/claude-sonnet-4.5",
-        price: {
-          input_usd_per_million_tokens: 3,
-          output_usd_per_million_tokens: 15,
-        },
-      },
-    ],
-  };
-}
-
-async function routeProviderCredentialSecurity(
-  page: Page,
-  options: { delayOpenRouterCheck?: () => Promise<void> } = {},
-) {
-  const checks: ProviderTestRequest[] = [];
-  await page.route("**/admin/api/profiles", (route: Route) =>
-    route.fulfill({ json: plans }),
-  );
-  await page.route("**/admin/api/providers**", async (route: Route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/admin/api/providers/-/catalog") {
-      return route.fulfill({ json: catalog });
-    }
-    if (path === "/admin/api/providers/-/test") {
-      const body = route.request().postDataJSON() as ProviderTestRequest;
-      checks.push(body);
-      if (body.provider_id === "openrouter" && options.delayOpenRouterCheck) {
-        await options.delayOpenRouterCheck();
-      }
-      return route.fulfill({
-        json: providerTestResponse(String(body.provider_id)),
-      });
-    }
-    if (path === "/admin/api/providers") {
-      return route.fulfill({ json: { providers: [] } });
-    }
-    return route.continue();
-  });
-  return checks;
-}
-
-async function openAddProvider(page: Page) {
-  await page.goto("/ui/providers/");
-  await page.getByRole("button", { name: "Add provider" }).first().click();
-}
-
-async function chooseCatalogProvider(page: Page, search: string, name: RegExp) {
-  await page.getByLabel("Search providers").fill(search);
-  await page.getByRole("button", { name }).click();
-}
-
-test("providers add OpenRouter and keep paid access gated", async ({
-  page,
-}) => {
-  await routeProviders(page, "empty");
-  await page.goto("/ui/providers/");
-  await page.getByRole("button", { name: "Add provider" }).first().click();
-  await page.getByLabel("Search providers").fill("openrouter");
-  await page.getByRole("button", { name: /OpenRouter/ }).click();
-  await expect(page.getByLabel("Provider base URL")).toHaveValue(
-    "https://openrouter.ai/api/v1",
-  );
-  await page.getByLabel("Provider API key").fill("sk-or-browser-test");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await expect(
-    page.getByText("Listed 2 models from OpenRouter."),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Next" }).click();
-  await expect(
-    page.getByText("openrouter/anthropic/claude-sonnet-4.5"),
-  ).toBeVisible();
-  await expect(page.getByText("openrouter/unknown-new-model")).toBeVisible();
-  await page.getByRole("button", { name: "Next" }).click();
-  await expect(
-    page.getByText(
-      "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
-    ),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Save provider" }).click();
-  await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
-  await page.getByText("Manage", { exact: true }).click();
-  await expect(
-    page.getByRole("cell", { name: "openrouter/anthropic/claude-sonnet-4.5" }),
-  ).toBeVisible();
-
-  const models = await page.evaluate(() =>
-    fetch("/me/api/models/catalog").then((response) => response.json()),
-  );
-  expect(models).toEqual({
-    models: [{ id: "openrouter/anthropic/claude-sonnet-4.5" }],
-  });
-  const denied = await page.evaluate(() =>
-    fetch("/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "openrouter/anthropic/claude-sonnet-4.5",
-        messages: [{ role: "user", content: "hello" }],
-      }),
-    }).then(async (response) => ({
-      status: response.status,
-      body: await response.json(),
-    })),
-  );
-  expect(denied).toMatchObject({
-    status: 403,
-    body: { error: { code: "paid_provider_not_allowed" } },
-  });
-});
-
-test("providers clear pasted key when switching provider before Check provider connection", async ({
-  page,
-}) => {
-  const checks = await routeProviderCredentialSecurity(page);
-  await openAddProvider(page);
-  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
-  await page.getByLabel("Provider API key").fill("sk-provider-a-secret");
-  await page.getByRole("button", { name: "Back" }).click();
-  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
-  await expect(page.getByLabel("Provider API key")).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Check provider connection" }),
-  ).toBeDisabled();
-
-  await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await expect(
-    page.getByText("Listed 1 model from Generic OpenAI."),
-  ).toBeVisible();
-
-  expect(checks).toHaveLength(1);
-  expect(checks[0]).toMatchObject({
-    provider_id: "generic-openai",
-    key_mode: "secret",
-    api_key: "sk-provider-b-secret",
-  });
-  expect(JSON.stringify(checks[0])).not.toContain("sk-provider-a-secret");
-});
-
-test("providers clear environment reference when switching provider before Check provider connection", async ({
-  page,
-}) => {
-  const checks = await routeProviderCredentialSecurity(page);
-  await openAddProvider(page);
-  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
-  await page.getByRole("button", { name: "Use environment variable" }).click();
-  await page.getByLabel("Environment variable").fill("OPENROUTER_A_KEY");
-  await page.getByRole("button", { name: "Back" }).click();
-  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
-  await expect(page.getByLabel("Environment variable")).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Check provider connection" }),
-  ).toBeDisabled();
-
-  await page.getByLabel("Environment variable").fill("GENERIC_B_KEY");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await expect(
-    page.getByText("Listed 1 model from Generic OpenAI."),
-  ).toBeVisible();
-
-  expect(checks).toHaveLength(1);
-  expect(checks[0]).toMatchObject({
-    provider_id: "generic-openai",
-    key_mode: "env",
-    api_key_env: "GENERIC_B_KEY",
-  });
-  expect(JSON.stringify(checks[0])).not.toContain("OPENROUTER_A_KEY");
-});
-
-test("providers clear credentials when base URL changes before Check provider connection", async ({
-  page,
-}) => {
-  const checks = await routeProviderCredentialSecurity(page);
-  await openAddProvider(page);
-  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
-  await page.getByLabel("Provider API key").fill("sk-before-base-change");
-  await page
-    .getByLabel("Provider base URL")
-    .fill("https://alt-openrouter.example/v1");
-  await expect(page.getByLabel("Provider API key")).toHaveValue("");
-  await expect(
-    page.getByRole("button", { name: "Check provider connection" }),
-  ).toBeDisabled();
-
-  await page.getByLabel("Provider API key").fill("sk-after-base-change");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await expect(page.getByText("Listed 1 model from OpenRouter.")).toBeVisible();
-
-  expect(checks).toHaveLength(1);
-  expect(checks[0]).toMatchObject({
-    provider_id: "openrouter",
-    api_key: "sk-after-base-change",
-    base_url: "https://alt-openrouter.example/v1",
-  });
-  expect(JSON.stringify(checks[0])).not.toContain("sk-before-base-change");
-});
-
-test("providers ignore stale provider connection check results after provider switch", async ({
-  page,
-}) => {
-  let releaseOpenRouter!: () => void;
-  const openRouterCanFinish = new Promise<void>((resolve) => {
-    releaseOpenRouter = resolve;
-  });
-  const checks = await routeProviderCredentialSecurity(page, {
-    delayOpenRouterCheck: () => openRouterCanFinish,
-  });
-  await openAddProvider(page);
-  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
-  await page.getByLabel("Provider API key").fill("sk-provider-a-secret");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
-  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
-  releaseOpenRouter();
-  await page.waitForTimeout(100);
-
-  await expect(
-    page.getByRole("button", { name: "Check provider connection" }),
-  ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
-  await expect(page.getByText("Listed 1 model from OpenRouter.")).toHaveCount(
-    0,
-  );
-
-  await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
-  await page.getByRole("button", { name: "Check provider connection" }).click();
-  await expect(
-    page.getByText("Listed 1 model from Generic OpenAI."),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Next" }).click();
-  await expect(
-    page.getByText("generic-openai/anthropic/claude-sonnet-4.5"),
-  ).toBeVisible();
-
-  expect(checks).toHaveLength(2);
-  expect(checks[0]).toMatchObject({
-    provider_id: "openrouter",
-    api_key: "sk-provider-a-secret",
-  });
-  expect(checks[1]).toMatchObject({
-    provider_id: "generic-openai",
-    api_key: "sk-provider-b-secret",
-  });
+  await inspect(page, "providers-reconciliation-dialog-dark-390");
 });
 
 async function clearOpenRouterProvider(
@@ -753,12 +257,6 @@ async function clearOpenRouterProvider(
         .catch(() => undefined);
     }
   }
-  await request
-    .put("/admin/api/providers/openrouter/allowed-plans", {
-      headers,
-      data: { allowed_plans: [] },
-    })
-    .catch(() => undefined);
   await request
     .delete("/admin/api/providers/openrouter/key", {
       headers,
@@ -786,7 +284,7 @@ async function removeSeededOpenRouterProvider(
   ).toBe(false);
 }
 
-test("providers real backend OpenRouter journey keeps paid access denied until allowed", async ({
+test("providers real backend OpenRouter journey keeps paid access denied until allowed", { tag: "@global-state" }, async ({
   page,
   request,
   baseURL,
@@ -797,51 +295,56 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     "x-azizam-csrf": session.actor.csrf_token,
   };
   const unique = Date.now().toString(36);
-  let profile: { id: string } | undefined;
-  let observerProfile: { id: string } | undefined;
+  let plan: { id: string } | undefined;
+  let observerPlan: { id: string } | undefined;
   let app: { id: string } | undefined;
   let observerApp: { id: string } | undefined;
+  // A paid route needs both the app's plan and its accountable person's plan
+  // (design §2.6). The owner's plan is restored afterwards.
+  const people = await (await request.get("/admin/api/people")).json();
+  const owner = people.people.find((p: { role: string }) => p.role === "owner");
+  const ownerPlan = (await (await request.get("/admin/api/access-plans")).json())
+    .access_plans.find((p: { id: string }) => p.id === owner.plan_id);
+  expect(ownerPlan, "the owner holds a plan").toBeTruthy();
+  const document = (name: string, paid: string[]) => ({
+    name,
+    can_use: { chat: { items: "all" } },
+    direct_engine_access: { engines: [], operations: [] },
+    paid_providers: paid,
+    provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: "2.00", usd_per_month: null },
+    can_load_models: true,
+    receipt_detail: "full",
+    media_metadata: "none",
+  });
+  const putPlan = async (id: string, doc: Record<string, unknown>) => {
+    const response = await request.put(`/admin/api/access-plans/${id}`, { headers, data: doc });
+    expect(response.status(), await response.text()).toBe(200);
+  };
   try {
     await clearOpenRouterProvider(request, headers);
     await removeSeededOpenRouterProvider(request, headers);
     const port = Number(new URL(baseURL!).port);
 
-    const profileResponse = await request.post("/admin/api/profiles", {
+    const planResponse = await request.post("/admin/api/access-plans", {
       headers,
-      data: {
-        name: `Provider denied plan ${unique}`,
-        profile: {
-          id: `provider-denied-${unique}`,
-          protocols: ["openai"],
-          remote: { providers: [], budget_usd_per_day: "2.00" },
-          status_visibility: { level: "full" },
-        },
-      },
+      data: document(`Provider denied plan ${unique}`, []),
     });
-    expect(profileResponse.status()).toBe(201);
-    ({ profile } = await profileResponse.json());
-    const users = await (await request.get("/admin/api/users")).json();
-    const observerProfileResponse = await request.post("/admin/api/profiles", {
+    expect(planResponse.status(), await planResponse.text()).toBe(201);
+    ({ access_plan: plan } = await planResponse.json());
+    const observerPlanResponse = await request.post("/admin/api/access-plans", {
       headers,
-      data: {
-        name: `Provider observer plan ${unique}`,
-        profile: {
-          id: `provider-observer-${unique}`,
-          protocols: ["openai"],
-          remote: { providers: ["openrouter"], budget_usd_per_day: "2.00" },
-          status_visibility: { level: "full" },
-        },
-      },
+      data: document(`Provider observer plan ${unique}`, ["openrouter"]),
     });
-    expect(observerProfileResponse.status()).toBe(201);
-    ({ profile: observerProfile } = await observerProfileResponse.json());
+    expect(observerPlanResponse.status(), await observerPlanResponse.text()).toBe(201);
+    ({ access_plan: observerPlan } = await observerPlanResponse.json());
     const observerAppResponse = await request.post("/admin/api/apps", {
       headers,
       data: {
         name: `Provider observer app ${unique}`,
         kind: "personal",
-        owner_user_id: users.users[0].id,
-        profile_id: observerProfile!.id,
+        owner_user_id: owner.id,
+        access_plan: observerPlan!.id,
       },
     });
     expect(observerAppResponse.status()).toBe(201);
@@ -851,8 +354,8 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       data: {
         name: `Provider test app ${unique}`,
         kind: "personal",
-        owner_user_id: users.users[0].id,
-        profile_id: profile!.id,
+        owner_user_id: owner.id,
+        access_plan: plan!.id,
       },
     });
     expect(appResponse.status()).toBe(201);
@@ -864,7 +367,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     expect(keyResponse.status()).toBe(201);
     const { credential } = await keyResponse.json();
 
-    await page.goto("/ui/providers/");
+    await page.goto("/providers/");
     await page.getByRole("button", { name: "Add provider" }).first().click();
     await page.getByLabel("Search providers").fill("openrouter");
     await page.getByRole("button", { name: /OpenRouter/ }).click();
@@ -888,9 +391,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     ).toHaveValue("15.000000");
     await page.getByRole("button", { name: "Next" }).click();
     await expect(
-      page.getByText(
-        "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
-      ),
+      page.getByText(/No access plan includes a new provider/),
     ).toBeVisible();
     await page.getByRole("button", { name: "Save provider" }).click();
     await expect(
@@ -968,23 +469,24 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       error: { code: "remote_provider_not_allowed" },
     });
 
-    const allowResponse = await request.put(
-      "/admin/api/providers/openrouter/allowed-plans",
-      {
-        headers,
-        data: { allowed_plans: [observerProfile!.id, profile!.id] },
-      },
-    );
-    expect(allowResponse.status()).toBe(200);
+    // Allow it: add OpenRouter to the app's plan and to the owner's plan.
+    await putPlan(plan!.id, document(`Provider denied plan ${unique}`, ["openrouter"]));
+    await putPlan(ownerPlan.id, {
+      ...ownerPlan.plan,
+      id: undefined,
+      paid_providers: [...ownerPlan.plan.paid_providers, "openrouter"],
+    });
 
-    await page.goto("/ui/models/");
+    await page.goto("/models/");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
-    await page.getByRole("button", { name: /All models/ }).click();
-    await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+    // Every model name is listed; none hides behind a control.
+    const sonnet = page
+      .locator("li[data-model]")
+      .filter({ hasText: "Claude Sonnet 4.5" })
+      .first();
+    await expect(sonnet).toBeVisible();
     await expect(
-      page.getByRole("cell", {
-        name: /Paid · \$3 input \/ \$15 output per 1M tokens/,
-      }),
+      sonnet.getByTitle(/\$3 input \/ \$15 output per 1M tokens/),
     ).toBeVisible();
 
     const allowed = await request.post("/openai/v1/chat/completions", {
@@ -1029,7 +531,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       error: { code: "provider_needs_reconciliation" },
     });
 
-    await page.goto("/ui/providers/");
+    await page.goto("/providers/");
     await page.getByText("Manage", { exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Check charges" }),
@@ -1052,7 +554,8 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await page.getByRole("button", { name: "Record actual" }).click();
     const reconcileResponse = await reconcilePost;
     expect(reconcileResponse.status()).toBe(200);
-    expect(await reconcileResponse.json()).toMatchObject({
+    const settled = await reconcileResponse.json();
+    expect(settled).toMatchObject({
       reconciliation: { status: "settled", actual_usd: "0.000001234" },
     });
     await expect(
@@ -1064,7 +567,8 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       "/admin/api/providers/openrouter/reconciliation",
     );
     expect(afterReconcile.status()).toBe(200);
-    expect(await afterReconcile.json()).toMatchObject({ reconciliations: [] });
+    const remaining = await afterReconcile.json();
+    expect(remaining).toMatchObject({ reconciliations: [] });
 
     const unblocked = await request.post("/openai/v1/chat/completions", {
       headers: { authorization: `Bearer ${credential.api_key}` },
@@ -1080,26 +584,13 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await removeSeededOpenRouterProvider(request, headers).catch(
       () => undefined,
     );
-    if (app?.id) {
+    // Apps are turned off, never deleted, so the two test plans stay listed.
+    for (const id of [app?.id, observerApp?.id].filter(Boolean)) {
       await request
-        .delete(`/admin/api/apps/${app.id}`, { headers })
+        .delete(`/admin/api/apps/${id}`, { headers })
         .catch(() => undefined);
     }
-    if (observerApp?.id) {
-      await request
-        .delete(`/admin/api/apps/${observerApp.id}`, { headers })
-        .catch(() => undefined);
-    }
-    if (profile?.id) {
-      await request
-        .delete(`/admin/api/profiles/${profile.id}`, { headers })
-        .catch(() => undefined);
-    }
-    if (observerProfile?.id) {
-      await request
-        .delete(`/admin/api/profiles/${observerProfile.id}`, { headers })
-        .catch(() => undefined);
-    }
+    await putPlan(ownerPlan.id, { ...ownerPlan.plan, id: undefined }).catch(() => undefined);
   }
 });
 
@@ -1109,8 +600,7 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
   await setViewport(page, "light", 390);
   await routeProviders(page, "empty");
   await page.route("**/admin/api/providers/-/catalog", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         providers: [
           // The longest real preset name, URL and billing labels.
           {
@@ -1127,10 +617,9 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
             ],
           },
         ],
-      },
-    }),
+      }),
   );
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByRole("button", { name: "Add provider" }).first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Search providers")).toBeVisible();
@@ -1140,35 +629,9 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
         .filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1)
         .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 50)}`),
     );
-  expect(await overflowing()).toEqual([]);
+  await expect.poll(overflowing).toEqual([]);
   await dialog.getByRole("button", { name: /Google Gemini/ }).click();
   await expect(dialog.getByLabel("Provider base URL")).toBeVisible();
-  expect(await overflowing()).toEqual([]);
+  await expect.poll(overflowing).toEqual([]);
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport();
-});
-
-test("providers replace a saved key in a masked dialog", async ({ page }) => {
-  await routeProviders(page, "seeded");
-  let sentKey: unknown = null;
-  await page.route("**/admin/api/providers/openrouter/key", (route: Route) => {
-    sentKey = route.request().postDataJSON()?.api_key;
-    return route.fulfill({ json: { key_status: { state: "set" } } });
-  });
-  const nativeDialogs: string[] = [];
-  page.on("dialog", (dialog) => {
-    nativeDialogs.push(dialog.type());
-    void dialog.dismiss();
-  });
-  await page.goto("/ui/providers/");
-  await page.getByText("Manage", { exact: true }).click();
-  await page.getByRole("button", { name: "More actions for OpenRouter" }).click();
-  await page.getByRole("menuitem", { name: /Replace key/ }).click();
-  const dialog = page.getByRole("dialog", { name: "Replace key for OpenRouter" });
-  const input = dialog.getByLabel("New provider key");
-  await expect(input).toHaveAttribute("type", "password");
-  await input.fill("fake-replacement-key");
-  await dialog.getByRole("button", { name: "Replace key" }).click();
-  await expect(dialog).toBeHidden();
-  expect(sentKey).toBe("fake-replacement-key");
-  expect(nativeDialogs).toEqual([]);
 });

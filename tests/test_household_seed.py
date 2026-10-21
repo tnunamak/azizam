@@ -50,13 +50,13 @@ def _receipts(tmp_path):
         ]
 
 
-def _spend(tmp_path, profile_id, since):
+def _spend(tmp_path, provider, since):
     with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
         return sum(
             Decimal(row[0])
             for row in conn.execute(
-                "SELECT actual_usd FROM provider_spend WHERE profile_id=? AND created_at>=?",
-                (profile_id, since),
+                "SELECT actual_usd FROM provider_spend WHERE provider=? AND created_at>=?",
+                (provider, since),
             )
         )
 
@@ -131,7 +131,7 @@ def test_household_consistency(tmp_path):
     assert json.loads((tmp_path / "images" / f"{digest}.meta.json").read_text())["asset_id"] == posters[0]
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert {row[0] for row in conn.execute("SELECT name FROM profiles")} == {
+        assert {row[0] for row in conn.execute("SELECT name FROM access_plans")} == {
             "Everyone",
             "Teen",
             "Builder",
@@ -156,22 +156,22 @@ def test_household_consistency(tmp_path):
         )
         teen = json.loads(
             conn.execute(
-                "SELECT profile_json FROM profiles WHERE name='Teen'"
+                "SELECT plan_json FROM access_plans WHERE name='Teen'"
             ).fetchone()[0]
         )
-        assert "claude-sonnet" not in teen["models"]
-        assert teen["remote"]["providers"] == []
-        from gateway.policy import PolicyRequest, evaluate
-        from gateway.profiles import load_profile_from_entry
+        assert teen["paid_providers"] == []
+        from gateway.access_plans import plan_from_document
+        from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 
+        teen_plan = plan_from_document(teen, plan_id="teen")
         assert evaluate(
-            load_profile_from_entry({"profile": teen}),
-            PolicyRequest(remote_provider="household-remote"),
+            EffectiveAccess(person_plan=teen_plan, app_plan=teen_plan),
+            PolicyRequest(intent="chat.completions", remote_provider="household-remote"),
         ).denied
+    _check_default_household_edge_cases_and_realism(tmp_path, manifest)
 
 
-def test_default_household_edge_cases_and_realism(tmp_path):
-    manifest = _seed(tmp_path)
+def _check_default_household_edge_cases_and_realism(tmp_path, manifest):
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         names = [row[0] for row in conn.execute("SELECT display_name FROM users")]
         app_names = [row[0] for row in conn.execute("SELECT name FROM apps")]
@@ -207,8 +207,7 @@ def test_default_household_edge_cases_and_realism(tmp_path):
     assert manifest["scenario_details"] == {}
 
 
-def test_running_scenario(tmp_path):
-    manifest = _seed(tmp_path, "running")
+def _check_running_scenario(tmp_path, manifest):
     receipts = dict((r["request_id"], r) for _, r in _receipts(tmp_path))
     live = {rid for rid, r in receipts.items() if r["status"] == "in_progress"}
     assert live == set(manifest["scenario_details"]["in_progress_receipts"])
@@ -233,13 +232,16 @@ def test_running_scenario(tmp_path):
 
 def test_budget_exhausted_scenario(tmp_path):
     manifest = _seed(tmp_path, "budget-exhausted")
+    _check_budget_scenario(tmp_path, manifest)
+    _check_budget_history_respects_every_applicable_cap(tmp_path)
+
+
+def _check_budget_scenario(tmp_path, manifest):
     details = manifest["scenario_details"]
-    with sqlite3.connect(tmp_path / "admin.db") as conn:
-        profile_id = conn.execute("SELECT id FROM profiles WHERE name='Everyone'").fetchone()[0]
     month_start = int(datetime.fromtimestamp(FIXED_NOW, timezone.utc).replace(day=1, hour=0, minute=0, second=0).timestamp())
     # Both windows the gateway enforces are at or over their cap.
-    assert _spend(tmp_path, profile_id, FIXED_NOW - 86400) >= Decimal(1)
-    assert _spend(tmp_path, profile_id, month_start) >= Decimal(8)
+    assert _spend(tmp_path, "household-remote", FIXED_NOW - 86400) >= Decimal(1)
+    assert _spend(tmp_path, "household-remote", month_start) >= Decimal(8)
     receipts = [r for _, r in _receipts(tmp_path)]
     charged = {
         r["request_id"]: Decimal(r["cost"]["usd"])
@@ -264,6 +266,11 @@ def test_budget_exhausted_scenario(tmp_path):
 
 def test_provider_down_scenario(tmp_path):
     manifest = _seed(tmp_path, "provider-down")
+    _check_provider_down_scenario(tmp_path, manifest)
+    _check_provider_outage_has_no_paid_successes(tmp_path, manifest)
+
+
+def _check_provider_down_scenario(tmp_path, manifest):
     details = manifest["scenario_details"]
     assert details["last_success_at"] == FIXED_NOW - 4 * 3600
     assert "503" in details["error"] and set(details["affected_models"]) == {"claude-sonnet", "gpt-mini"}
@@ -416,13 +423,8 @@ def test_household_model_declarations_override_language_discovery():
         )
 
 
-def test_budget_history_respects_every_applicable_cap(tmp_path):
-    _seed(tmp_path, "budget-exhausted")
+def _check_budget_history_respects_every_applicable_cap(tmp_path):
     with sqlite3.connect(tmp_path / "admin.db") as conn:
-        profiles = {
-            ident: json.loads(document)["remote"]
-            for ident, document in conn.execute("SELECT id,profile_json FROM profiles")
-        }
         settings = json.loads(conn.execute(
             "SELECT value_json FROM operator_settings WHERE key='provider_admin'"
         ).fetchone()[0])
@@ -433,13 +435,10 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
             continue
         month = int(datetime.fromtimestamp(ts, timezone.utc).replace(
             day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
-        profile = profiles[receipt["app_profile"]]
         provider = settings["providers"][receipt["backend"]]["caps"]
         global_caps = settings["global_caps"]
         exhausted = False
         for matches, daily, monthly in (
-            (lambda r: r["app_profile"] == receipt["app_profile"],
-             profile["budget_usd_per_day"], profile["budget_usd_per_month"]),
             (lambda r: r["backend"] == receipt["backend"],
              provider["daily_usd"], provider["monthly_usd"]),
             (lambda r: True, global_caps["daily_usd"], global_caps["monthly_usd"]),
@@ -453,9 +452,8 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
             paid.append((ts, receipt))
         elif receipt["metadata"].get("status_code") == 429:
             rejected += 1
-            # The base household also has an independent per-request rejection.
-            estimate = Decimal(receipt["usage"]["prompt_tokens"]) * Decimal("0.000003")
-            assert exhausted or estimate > Decimal(profile["max_usd_per_request"])
+            # The base household also has one seeded rejection of its own.
+            assert exhausted or not receipt["request_id"].startswith("req_household_budget")
             assert receipt["status"] == "rejected"
             assert receipt["usage"]["completion_tokens"] == 0
             assert Decimal(receipt["cost"]["usd"]) == 0
@@ -469,8 +467,7 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
     assert ledger == {r["request_id"]: Decimal(r["cost"]["usd"]) for _, r in paid}
 
 
-def test_provider_outage_has_no_paid_successes(tmp_path):
-    manifest = _seed(tmp_path, "provider-down")
+def _check_provider_outage_has_no_paid_successes(tmp_path, manifest):
     details = manifest["scenario_details"]
     affected = [
         r for ts, r in _receipts(tmp_path)
@@ -498,7 +495,7 @@ def repeated_household_seeds(tmp_path):
     return paths
 
 
-def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
+def test_running_scenario_and_its_health_timings_are_varied_and_repeatable(repeated_household_seeds):
     def timings(path):
         with sqlite3.connect(path / "metrics.db") as conn:
             return conn.execute(
@@ -506,6 +503,8 @@ def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
                 "WHERE metric='service_latency_ms' ORDER BY ts,tags"
             ).fetchall()
 
+    first_dir = repeated_household_seeds[0]
+    _check_running_scenario(first_dir, json.loads((first_dir / "household-manifest.json").read_text()))
     first, second = map(timings, repeated_household_seeds)
     assert first == second
     for backend in {row[1] for row in first}:
@@ -524,7 +523,7 @@ def test_capture_isolation_restarts_before_each_try_and_checks_state_identity():
     )[0]
     steps = [
         "await stopServer();",
-        "await rm(manifestPath, { force: true });",
+        "await removeIfPresent(rm, manifestPath);",
         "server = startServer();",
         "const seed = await readySeed();",
         "await newContext(seed,",
@@ -594,3 +593,27 @@ assert time.time_ns() == fixed * 1_000_000_000
          str(tmp_path), str(FIXED_NOW)],
         check=True, capture_output=True, timeout=30,
     )
+
+
+def test_household_cache_is_already_clean_so_no_background_migration_rewrites_it(tmp_path):
+    """The migration that strips pre-upgrade files must find nothing to do.
+
+    A seeded file the server's startup migration rewrites later changes its size
+    under any browser test that read the Library listing first (a listing said
+    44934 bytes, the download then sent 44574).
+    """
+    from gateway import prompt_metadata_migration
+
+    _seed(tmp_path)
+    cache = tmp_path / "images"
+    before = {path.name: path.read_bytes() for path in cache.iterdir()}
+    result = prompt_metadata_migration.strip_cached_assets(
+        cache, tmp_path / "check-migration.db"
+    )
+    assert result.complete, result.errors
+    after = {path.name: path.read_bytes() for path in cache.iterdir()}
+    assert [name for name in before if before[name] != after[name]] == []
+    # The server's own progress record, next to the media jobs, already says so.
+    with sqlite3.connect(tmp_path / "prompt_metadata_migration.db") as conn:
+        recorded = conn.execute("SELECT COUNT(*) FROM prompt_metadata_migration").fetchone()[0]
+    assert recorded == result.scanned

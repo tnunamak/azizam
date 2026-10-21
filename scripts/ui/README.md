@@ -19,26 +19,17 @@ Both children are stopped and temporary state is removed on exit.
 The default gateway/engine ports are 18180/18181. Override `UI_E2E_PORT` only within
 18000–18998. `UI_E2E_PYTHON` selects a dependency-installed interpreter when `venv`
 is absent. `UI_E2E_STATE_ROOT` can select another disk-backed temporary parent.
+`UI_E2E_FIRST_RUN=1` starts the gateway on the shipped `first-run.yml` (no backends,
+no owner, no seed) for `web/e2e/first-run.spec.ts`, which `playwright.config.ts` runs
+as the `chromium-first-run` project on `UI_E2E_PORT + 70`.
 
 Screenshots: `web/test-results/screens/`, named by route, theme and width.
 Failures include traces under `web/test-results/artifacts/`. All artifacts and
 browser cookies are ignored by Git.
 
-The container packaging check builds the UI from source, then proves Home,
-sign-in, owner claim, the admin redirect and Status against fresh private state:
-
-```sh
-docker build -t azizam-cutover-check .
-python3 scripts/ui/check-cutover-container.py
-```
-
-Its host port defaults to 18192 and must stay within 18000–18999. The test
-container is stopped and its temporary data directory is removed on exit.
-
 After the screenshot tour, use `scripts/ui/collect_screens.py --destination
 <review-directory> --since <run-start-unix-seconds>` to exclude earlier captures.
-Compatibility admin routes reuse their destination's screenshot matrix. Retired
-admin pages and fixtures are excluded even if their old screenshots remain.
+Retired pages and fixtures are excluded even if their old screenshots remain.
 
 For the seeded household review, run `scripts/ui/design-review-capture [output-directory]`
 from any directory. It starts the isolated `serve.py`

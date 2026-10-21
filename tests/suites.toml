@@ -1,0 +1,67 @@
+# What the gate does not run, each entry checked by scripts/ci/policy.py
+# (docs/design/TEST_STRATEGY.md 3.2, 6, 7 T0.4). An entry that no longer
+# matches the run (the file now runs, the case no longer skips) fails the
+# policy too, so these lists only shrink. Measured on 2026-10-12 (seed 4242).
+
+# Test files that no gate step runs. Each needs an expires_on; after it the
+# gate fails until the file runs in a gate step or is deleted. None are left;
+# a new test file that no tier runs fails the policy until it is wired in or
+# listed below.
+
+# Files that `scripts/test-scheduled` runs instead of the gate (TEST_STRATEGY.md
+# 1.3). `task` is a task that script knows (scripts/ci/policy.py SCHEDULED_TASKS).
+# test-scheduled reads these entries to decide what to run, and a nightly that
+# records no case for a listed file is INCOMPLETE, never green.
+[[scheduled]]
+path = "tests/compat/node/anthropic.test.mjs"
+task = "sdk-probes"
+reason = "Node SDK compatibility probe; needs a running gateway, so the nightly runs it on a disposable 18xxx instance over the fake upstream"
+
+[[scheduled]]
+path = "tests/compat/node/ollama.test.mjs"
+task = "sdk-probes"
+reason = "Node SDK compatibility probe; needs a running gateway, so the nightly runs it on a disposable 18xxx instance over the fake upstream"
+
+[[scheduled]]
+path = "tests/compat/node/openai.test.mjs"
+task = "sdk-probes"
+reason = "Node SDK compatibility probe; needs a running gateway, so the nightly runs it on a disposable 18xxx instance over the fake upstream"
+
+[[scheduled]]
+path = "tests/compat/node/vercel-ai-sdk.test.mjs"
+task = "sdk-probes"
+reason = "Node SDK compatibility probe; needs a running gateway, so the nightly runs it on a disposable 18xxx instance over the fake upstream"
+
+[[scheduled]]
+path = "web/e2e/sweep/sweep.spec.ts"
+task = "sweep"
+reason = "Quality sweep over every route, state, width and theme; playwright.sweep.config.ts runs it, too slow for the gate"
+
+# Files that need real upstreams or real credentials: never in the gate or the
+# scheduled tier (TEST_STRATEGY.md 1.4). They skip unless their env opt-in is set.
+[[live]]
+path = "integrations/pi/test/live.test.ts"
+reason = "smoke test against a real gateway and a real key (AZIZAM_LIVE_TEST=1); every other Pi test runs in the gate"
+
+
+# Gate cases that skip. A new skip fails the gate.
+[[skip]]
+framework = "pytest"
+case = "tests/test_decisions_api.py::test_official_typesafe_sdk_works_offline_against_facade"
+reason = "typesafe_sdk is not in the hermetic lock"
+
+[[skip]]
+framework = "pytest"
+case = "tests/test_engine_contract_runtime.py::test_windows_process_driver_fails_closed_without_job_object"
+reason = "Windows Job Object semantics; runs only on Windows"
+
+[[skip]]
+framework = "pytest"
+case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
+reason = "the sandbox hides the live database by design"
+
+# Gate cases that xfail. A new xfail fails the gate.
+[[xfail]]
+framework = "pytest"
+case = "tests/test_comfy_workflow_metadata_catalog.py::test_workflow_derives_a_complete_ui_graph[workflows/audio/tangoflux.json]"
+reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when the gap closes"

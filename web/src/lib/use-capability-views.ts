@@ -13,8 +13,8 @@ import {
   type RequestSignal,
   type Verdict,
 } from "@/lib/capability-state";
-import { homeApi, type HomeSnapshot } from "@/app/home/home-api";
-import { capabilityTiles } from "@/app/home/presentation";
+import { homeApi, type HomeSnapshot } from "@/app/_home/home-api";
+import { capabilityTiles } from "@/app/_home/presentation";
 import { appPlumbingCapabilities } from "@/lib/terms";
 
 /** People see these names (VOICE glossary); the gateway's own titles still match. */
@@ -131,7 +131,15 @@ export interface CapabilityViewsResult {
  * Every surface's capability states, for the person looking. Owners add the
  * engine, provider and household request evidence; members use their own.
  */
-export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
+export function useCapabilityViews(
+  owner: boolean,
+  options: { deferOwnerChecks?: boolean } = {},
+): CapabilityViewsResult {
+  // The shell asks on every page, but the page's own data matters first: while
+  // deferred, the owner's engine, provider and request checks wait and the
+  // verdict stays "pending", so the pill reads "Checking" rather than guessing.
+  const deferred = owner && options.deferOwnerChecks === true;
+  const ownerChecks = owner && !deferred;
   const {
     data: homeData,
     isPending: homePending,
@@ -152,16 +160,16 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
   } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
-    enabled: owner,
+    enabled: ownerChecks,
     refetchInterval: 60_000,
   });
   const { data: registryData } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
-    enabled: owner,
+    enabled: ownerChecks,
   });
-  const providers = useOptionalProviderStatus(owner);
-  const activity = useActivitySample(owner);
+  const providers = useOptionalProviderStatus(ownerChecks);
+  const activity = useActivitySample(ownerChecks);
   const home =
     homeData && homeData.authenticated
       ? (homeData as HomeSnapshot)
@@ -194,6 +202,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
           observation: unreachable.has(service.service_id) ? "down" : service.observation,
           tone: unreachable.has(service.service_id) ? "bad" : service.tone,
           inUse: service.in_use ?? null,
+          startsOnDemand: service.starts_on_demand === true,
           lastError: service.last_error,
           isProvider: providerIds.has(service.service_id),
           checkedAt: backendChecks.get(service.service_id) ?? null,
@@ -227,7 +236,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
     views,
     verdict: verdictFor(views),
     requests,
-    isPending: homePending,
+    isPending: homePending || deferred,
     isError: homeError,
     ownerHealthMissing: owner && (statusError || !health?.observation_available),
     ownerHealthError: owner && statusError,

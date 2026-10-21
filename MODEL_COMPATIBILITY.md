@@ -11,7 +11,7 @@ to local TTS, STT, or ComfyUI workflows.
 The endpoint defines the operation. For LLM-shaped OpenAI routes, `model` is a
 required LiteLLM model group or gateway-declared local role. The gateway may
 activate a configured local target before calling LiteLLM, but it does not
-forward these routes directly to Tabby, Kobold, or an embeddings server.
+forward these routes directly to Kobold or an embeddings server.
 
 Examples:
 
@@ -49,11 +49,33 @@ convenience model name means, for every API (chat, embeddings, images, image
 edits, videos, speech, transcriptions, audio generate). It has two layers:
 stable names such as `fast`, `image`, `tts-fast` (which never change
 meaning) and ordered globs for OpenAI names (`gpt-4o-mini*` -> `fast`). The
-resolver runs before LiteLLM and before the media routes, so policy and
-receipts see the concrete target. Full table and discovery endpoints:
-`docs/LOCAL_CLIENT_RECIPES.md` ("Model aliases"). The category heuristics
-below only decide which OpenAI names are *wrong* for an endpoint (400); they no
-longer choose targets for names that `model_aliases` covers.
+resolver runs before LiteLLM and before the media routes. Full table and
+discovery endpoints: `docs/LOCAL_CLIENT_RECIPES.md` ("Model aliases"). The
+category heuristics below only decide which OpenAI names are *wrong* for an
+endpoint (400); they no longer choose targets for names that `model_aliases`
+covers.
+
+### An alias and the model behind it
+
+An alias is a name that points at a model (`fast` -> `default-fast`, `decide`
+-> engine `decider-2b` -> model `decider-2b-v11`). Every surface treats the two
+as one thing with several names:
+
+- **Listing.** Every name a caller can send is one row on the Models page and
+  one entry in `/v1/models`. Aliases carry `azizam_alias` and
+  `azizam_resolves_to`. A Models row has `same_model_as`: the other listed names
+  that reach the same model. A wildcard pattern such as `jev-*` cannot be listed,
+  so its row in `model_aliases.<operation>.openai` publishes literal names with
+  `names: [...]` (data, not code).
+- **Plans.** A plan may grant the alias (it then allows requests made through
+  that name) or the model (it then allows every name that reaches it). The plan
+  editor offers models and engine slots, not alias names.
+- **Categories.** Owner category rules follow the model. A restricted category
+  hides the model behind every name for it. Decision, speech and transcription
+  requests are judged on the engine slot the name resolves to, like chat.
+- **Receipts.** A receipt keeps both names: `requested_model` is what the
+  caller sent, `resolved_model` is what ran. The Activity sheet shows a banner
+  only when a fallback served the request.
 
 ## Speech formats
 
@@ -128,7 +150,7 @@ POST /v1/embeddings
 
 They do not depend on the generic backend-native catch-all. If LiteLLM is not
 configured, disabled, or unavailable, they return a protocol-shaped error rather
-than falling through to Tabby, Kobold, or the embedding server.
+than falling through to Kobold or the embedding server.
 
 `GET /v1/models` is intentionally stricter than secondary discovery projections:
 if the LiteLLM model catalog cannot be reached, `/v1/models` returns `503

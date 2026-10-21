@@ -62,6 +62,9 @@ export function errorCopy(
       "Your access is no longer available. Ask the gateway owner to check your access.",
       "owner-help",
     );
+  // A stale session, not an ended one: the person can still confirm it is them.
+  if (code === "reauth_required")
+    return result("Confirm it’s you to continue.", "retry");
   if (
     status === 401 ||
     ["session_expired", "authentication_required"].includes(code)
@@ -85,6 +88,12 @@ export function errorCopy(
   if (status === 429)
     return result(
       "The gateway is limiting requests. Wait before trying again.",
+      "retry",
+    );
+  // The write is stored; only the live reload failed, so the owner re-applies.
+  if (code === "registry_saved_not_applied")
+    return result(
+      "Your change is saved, but the gateway is still running the previous settings. Open Status and choose Apply again.",
       "retry",
     );
   if (status !== null && status >= 500)

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[5]
 PORT = 18420
 ENGINE_PORT = 18421
 STATE = ROOT / ".ui-e2e-state/gw-copy-shared-real"
-module = runpy.run_path(str(ROOT / "web/src/app/home/audit-tests/gate-you-real-copy-boot.py"))
+module = runpy.run_path(str(ROOT / "web/src/app/_home/audit-tests/gate-you-real-copy-boot.py"))
 context = module["prepare"].__globals__
 context.update(STATE=STATE, DATA=STATE / "data", PRIVATE=STATE / "runtime",
                OUT=STATE / "results", GATEWAY_PORT=PORT, SIDECAR_PORT=ENGINE_PORT,

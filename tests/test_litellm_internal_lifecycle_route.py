@@ -14,6 +14,12 @@ from starlette.requests import Request
 import proxy
 
 
+# Hang guard, not an oracle: every wait below is on an event the test is about, so the guard
+# only turns a real hang into a failure and never decides pass/fail for a correct run. In-process
+# steps take milliseconds; a stall measured at load 51 was 0.27 s, so 30 s is >100x that.
+_HANG_GUARD_S = 30.0
+
+
 def _migrated_model_policy_config() -> dict:
     config = copy.deepcopy(proxy.config)
     for service in (config.get("backends") or {}).values():
@@ -590,9 +596,9 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
                     _internal_current_request(receiver)
                 )
             )
-            await asyncio.wait_for(task.started.wait(), timeout=0.25)
+            await asyncio.wait_for(task.started.wait(), timeout=_HANG_GUARD_S)
             receiver.abort.set()
-            response = await asyncio.wait_for(route_task, timeout=0.25)
+            response = await asyncio.wait_for(route_task, timeout=_HANG_GUARD_S)
 
         self.assertEqual(response.status_code, 499)
         self.assertEqual(receiver.body_deliveries, 1)
@@ -618,7 +624,7 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
                 proxy.internal_litellm_current_chat_completions(
                     _internal_current_request(receiver)
                 ),
-                timeout=0.25,
+                timeout=_HANG_GUARD_S,
             )
 
         self.assertEqual(response.status_code, 200)

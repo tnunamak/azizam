@@ -1,6 +1,6 @@
 """Translation layer between OpenAI Responses API and Chat Completions API.
 
-The proxy's downstream backends (llama-server, TabbyAPI) speak Chat
+The proxy's downstream backends speak Chat
 Completions. We expose the newer Responses API by translating at the proxy
 boundary.
 
@@ -59,6 +59,8 @@ import secrets
 import time
 from typing import Any, Optional
 
+from gateway import client_errors
+
 
 HOSTED_TOOL_TYPES = {
     "web_search",
@@ -79,6 +81,10 @@ HOSTED_TOOL_TYPES = {
 }
 
 
+class UpstreamShapeError(ValueError):
+    """The upstream's reply has a shape the translation refuses. The message is ours; no upstream text is in it."""
+
+
 class ResponsesTranslationError(Exception):
     """400-class error raised during translation."""
 
@@ -87,6 +93,9 @@ class ResponsesTranslationError(Exception):
         self.message = message
         self.code = code
         self.param = param
+
+
+UPSTREAM_UNREADABLE = "The upstream's reply could not be read."
 
 
 def new_response_id() -> str:
@@ -836,9 +845,9 @@ def _custom_tool_input(arguments: str) -> str:
     try:
         value = json.loads(arguments)
     except (ValueError, TypeError) as error:
-        raise ValueError("Upstream custom tool arguments must be a JSON object with one string input field.") from error
+        raise UpstreamShapeError("Upstream custom tool arguments must be a JSON object with one string input field.") from error
     if not isinstance(value, dict) or set(value) != {"input"} or not isinstance(value["input"], str):
-        raise ValueError("Upstream custom tool arguments must be a JSON object with one string input field.")
+        raise UpstreamShapeError("Upstream custom tool arguments must be a JSON object with one string input field.")
     return value["input"]
 
 
@@ -848,9 +857,9 @@ def _tool_call_item(*, item_id: str, call_id: str, name: str, arguments: str,
         try:
             value = json.loads(arguments) if status == "completed" else {}
         except (ValueError, TypeError) as error:
-            raise ValueError("Upstream tool_search arguments must be a JSON object.") from error
+            raise UpstreamShapeError("Upstream tool_search arguments must be a JSON object.") from error
         if not isinstance(value, dict):
-            raise ValueError("Upstream tool_search arguments must be a JSON object.")
+            raise UpstreamShapeError("Upstream tool_search arguments must be a JSON object.")
         return {"id": item_id, "type": "tool_search_call", "call_id": call_id,
                 "status": status, "execution": "client", "arguments": value}
     custom = name in custom_names
@@ -1113,7 +1122,8 @@ class StreamTranslator:
         self._finished = False
 
         # Output bookkeeping
-        self._reasoning: Optional[dict] = None  # index, id, text parts, closed
+        self._reasoning: Optional[dict] = None  # newest segment: index, id, text parts, closed
+        self._reasoning_items: dict[int, dict] = {}  # every segment, by output index
         self._message_index: Optional[int] = None
         self._message_id: Optional[str] = None
         self._message_text: list[str] = []
@@ -1200,6 +1210,10 @@ class StreamTranslator:
         """Retain failure state and emit a documented flat error event."""
         if self._done_sent or self._error:
             return []
+        # A code is one of the fixed lists and a param names a field of the caller's request (decision D45); the
+        # message is the caller's to make from our own words, never an upstream's.
+        code = code if code in client_errors.ERROR_CODES else "server_error"
+        param = param if isinstance(param, str) and param in self.original_request else None
         # Response.error has a narrower code enum than the flat error event.
         response_code = "rate_limit_exceeded" if code == "rate_limit_exceeded" else "server_error"
         self._error = {"code": response_code, "message": message}
@@ -1213,7 +1227,8 @@ class StreamTranslator:
 
     def _reasoning_delta(self, text: str) -> list[bytes]:
         events: list[bytes] = []
-        if self._reasoning is None:
+        # A closed item is immutable: reasoning that follows output starts a new item.
+        if self._reasoning is None or self._reasoning["closed"]:
             idx = len(self._output_order)
             self._reasoning = {
                 "index": idx,
@@ -1221,6 +1236,7 @@ class StreamTranslator:
                 "text": [],
                 "closed": False,
             }
+            self._reasoning_items[idx] = self._reasoning
             self._output_order.append(("reasoning", idx))
             events.append(sse_pack("response.output_item.added", {
                 "type": "response.output_item.added",
@@ -1350,8 +1366,8 @@ class StreamTranslator:
                 entry["call_id"] = tc_id
             elif tc_id:
                 entry["call_id"] = tc_id
-            if name and not entry["name"]:
-                entry["name"] = name
+            if name:
+                entry["name"] += name
         return out_events, self._tool_calls[tc_index]
 
     @staticmethod
@@ -1411,11 +1427,9 @@ class StreamTranslator:
         if not isinstance(chunk, dict):
             return self.fail("Malformed upstream stream frame.")
         if chunk.get("error") is not None:
-            error = chunk["error"]
-            if isinstance(error, dict):
-                return self.fail(str(error.get("message") or "Upstream stream failed."),
-                                 code=str(error.get("code") or "server_error"), param=error.get("param"))
-            return self.fail(str(error))
+            # The upstream's words are not passed on: our sentence for its code, the code and param only when allowed.
+            fields = client_errors.stream_error(chunk["error"], request_fields=self.original_request)
+            return self.fail(fields["message"], code=fields["code"] or "server_error", param=fields["param"])
         if not self._valid_cc_chunk(chunk):
             return self.fail("Malformed upstream stream frame.")
         if "model" in chunk and isinstance(chunk["model"], str):
@@ -1518,7 +1532,7 @@ class StreamTranslator:
                         arguments=entry["arguments"], custom_names=self._custom_names, tool_mapping=self._tool_mapping,
                     )
             except ValueError as error:
-                events.extend(self.fail(str(error), code="upstream_error"))
+                events.extend(self.fail(str(error) if isinstance(error, UpstreamShapeError) else UPSTREAM_UNREADABLE, code="upstream_error"))
         self._finished = True
         events.extend(self._close_reasoning())
 
@@ -1647,10 +1661,10 @@ class StreamTranslator:
         full_text = "".join(self._message_text)
         for kind, key in self._output_order:
             if kind == "reasoning":
-                if self._reasoning is not None:
-                    output.append(_reasoning_item(
-                        self._reasoning["id"], "".join(self._reasoning["text"])
-                    ))
+                reasoning = self._reasoning_items[key]
+                output.append(_reasoning_item(
+                    reasoning["id"], "".join(reasoning["text"])
+                ))
             elif kind == "message":
                 if self._message_id is None:
                     continue

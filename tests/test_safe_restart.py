@@ -8,6 +8,8 @@ import json
 import os
 import time
 import shutil
+import subprocess
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,7 +58,9 @@ class World:
         self.health_after_restart: list = [200]
         self.public_health: list = [200]
         self.restarted = False
+        self.running = True
         self.systemctl_code = 0
+        self.unit_check_code = 0
         self.llama_slots: list = [[{"is_processing": False}]]
         self.post_restart_snapshot = snap()
         self.sleeps = 0
@@ -101,8 +105,15 @@ class World:
 
     def run(self, cmd, timeout):
         self.commands.append(list(cmd))
+        if cmd[2] == "cat":
+            return self.unit_check_code
+        if cmd[2] == "stop":
+            if self.systemctl_code == 0:
+                self.running = False
+            return self.systemctl_code
         self.restarted = True
         if self.systemctl_code == 0:
+            self.running = True
             self.draining = False if cmd[-1] == "azizam" else self.draining
         return self.systemctl_code
 
@@ -208,7 +219,7 @@ class SafeRestartTests(unittest.TestCase):
         world = World()
         world.drain_status = 404
         code = world.invoke("--force")
-        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertEqual(code, sr.EXIT_UNCONFIRMED, world.text)
         self.assertEqual(len(world.commands), 1)
         self.assertIn("WITHOUT draining", world.text)
         self.assertIn("will be cut", world.text)
@@ -251,19 +262,27 @@ class SafeRestartTests(unittest.TestCase):
     def test_waits_for_the_public_proxy_to_mark_the_gateway_up(self) -> None:
         world = World()
         world.public_health = [503, 503, 200]
-        self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
-        public = [c for c in world.calls if c[1] == "https://ai.vivid.fish/health"]
+        self.assertEqual(world.invoke("--public-url", "https://ai.example.test"), sr.EXIT_OK, world.text)
+        public = [c for c in world.calls if c[1] == "https://ai.example.test/health"]
         self.assertEqual(len(public), 3)
         self.assertIn("public health is OK", world.text)
 
-    def test_public_health_timeout_warns_without_failing(self) -> None:
+    def test_public_health_timeout_is_unconfirmed(self) -> None:
         world = World()
         world.public_health = [503]
-        self.assertEqual(world.invoke("--public-timeout", "4"), sr.EXIT_OK, world.text)
+        self.assertEqual(world.invoke("--public-url", "https://ai.example.test", "--public-timeout", "4"), sr.EXIT_UNCONFIRMED, world.text)
         self.assertIn("did not return 200", world.text)
         empty = World()
         self.assertEqual(empty.invoke("--public-url", ""), sr.EXIT_OK)
         self.assertFalse([c for c in empty.calls if c[1].startswith("https://")])
+
+    def test_public_check_is_off_by_default_and_says_how_to_enable_it(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AZIZAM_PUBLIC_URL", None)
+            world = World()
+            self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
+        self.assertFalse([c for c in world.calls if c[1].startswith("https://")])
+        self.assertIn("public health check skipped: set --public-url or AZIZAM_PUBLIC_URL", world.text)
 
     def test_waits_through_connection_refused_while_starting(self) -> None:
         world = World()
@@ -321,6 +340,59 @@ class SafeRestartTests(unittest.TestCase):
         self.assertEqual(code, sr.EXIT_INTERRUPTED)
         self.assertEqual(world.commands, [])
         self.assertEqual(world.posts(), [])
+
+    def test_failed_observation_never_reuses_idle_snapshot(self):
+        for failure in ("timeout", "auth", "malformed", "http"):
+            with self.subTest(failure=failure):
+                world = World()
+                http = world.http
+
+                def unavailable(method, url, **kwargs):
+                    if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                        if failure == "timeout":
+                            raise sr.Unreachable("timeout")
+                        return {"auth": (401, {}), "malformed": (200, {"draining": True}),
+                                "http": (503, {})}[failure]
+                    return http(method, url, **kwargs)
+
+                world.http = unavailable
+                self.assertEqual(world.invoke("--quiet-seconds", "0", "--timeout", "1"), sr.EXIT_BUSY)
+                self.assertEqual(world.commands, [])
+                self.assertFalse(world.draining)
+                self.assertIn("cannot prove idle", world.text)
+
+    def test_transient_observation_failure_retries_busy_work(self):
+        world = World()
+        http = world.http
+        reads = 0
+
+        def transient(method, url, **kwargs):
+            nonlocal reads
+            if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                reads += 1
+                if reads == 1:
+                    return 200, snap(draining=True, requests=1)
+                if reads == 2:
+                    raise sr.Unreachable("timeout")
+            return http(method, url, **kwargs)
+
+        world.http = transient
+        self.assertEqual(world.invoke("--quiet-seconds", "0"), sr.EXIT_OK)
+        self.assertGreaterEqual(world.sleeps, 2)
+        self.assertEqual(len(world.commands), 1)
+
+    def test_lost_drain_flag_cannot_authorize_restart(self):
+        world = World()
+        http = world.http
+
+        def expired(method, url, **kwargs):
+            if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                return 200, snap(draining=False)
+            return http(method, url, **kwargs)
+
+        world.http = expired
+        self.assertEqual(world.invoke("--quiet-seconds", "0", "--timeout", "1"), sr.EXIT_BUSY)
+        self.assertEqual(world.commands, [])
 
 
 class QuietWindowTests(unittest.TestCase):
@@ -401,12 +473,35 @@ class QuietWindowTests(unittest.TestCase):
 
 
 class LlamaModeTests(unittest.TestCase):
+    def test_missing_llama_unit_refuses_before_draining(self) -> None:
+        for unit in ("llama-bee", "custom-llama.service"):
+            for extra in ((), ("--force",)):
+                for failure in (1, 124, 127):
+                    with self.subTest(unit=unit, extra=extra, failure=failure):
+                        world = World()
+                        world.unit_check_code = failure
+                        argv = () if unit == "llama-bee" else ("--llama-unit", unit)
+                        code = world.invoke("--llama", *argv, *extra)
+                        self.assertEqual(code, sr.EXIT_SYSTEMCTL, world.text)
+                        self.assertEqual(world.commands, [
+                            ["systemctl", "--user", "cat", "--no-pager", "--", unit],
+                        ])
+                        self.assertEqual(world.calls, [])
+                        self.assertEqual(world.posts(), [])
+                        self.assertFalse(world.draining)
+                        self.assertFalse(world.restarted)
+                        self.assertIn(unit, world.text)
+                        self.assertIn("--llama-unit", world.text)
+
     def test_llama_drains_chat_restarts_llama_and_undrains_gateway(self) -> None:
         busy = snap(requests=1, chat=1, streams=1)
         world = World([busy, snap()])
         code = world.invoke("--llama")
         self.assertEqual(code, sr.EXIT_OK, world.text)
-        self.assertEqual(world.commands, [["systemctl", "--user", "restart", "llama-bee"]])
+        self.assertEqual(world.commands, [
+            ["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"],
+            ["systemctl", "--user", "restart", "llama-bee"],
+        ])
         # gateway stayed up, so the flag must have been switched off explicitly
         self.assertEqual([p["draining"] for p in world.posts()], [True, False])
         self.assertFalse(world.draining)
@@ -428,14 +523,14 @@ class LlamaModeTests(unittest.TestCase):
     def test_llama_deadline_does_not_restart(self) -> None:
         world = World([snap(requests=1, chat=1)])
         self.assertEqual(world.invoke("--llama", "--timeout", "3"), sr.EXIT_BUSY)
-        self.assertEqual(world.commands, [])
+        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"]])
         self.assertFalse(world.draining)
 
     def test_llama_refuses_when_gateway_drain_unreachable(self) -> None:
         world = World()
         world.unreachable = True
         self.assertEqual(world.invoke("--llama"), sr.EXIT_REFUSED)
-        self.assertEqual(world.commands, [])
+        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"]])
 
 
 class MainTests(unittest.TestCase):
@@ -480,8 +575,36 @@ class RunCommandTests(unittest.TestCase):
         # Like `npm run build` -> sh -> `next build`: the grandchild must die too.
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / "grandchild.pid"
-            script = f"sleep 60 & echo $! > {pid_file}; wait"
-            code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+            ready_pipe = Path(tmp) / "ready.fifo"
+            os.mkfifo(ready_pipe)
+            script = f"sleep 60 & echo $! > {pid_file}; echo > {ready_pipe}; wait"
+            ready = threading.Event()
+
+            def await_grandchild():
+                with open(ready_pipe, "rb") as pipe:  # opens once the script writes
+                    pipe.read()
+                ready.set()
+
+            reader = threading.Thread(target=await_grandchild, daemon=True)
+            reader.start()
+
+            class ReadyPopen(subprocess.Popen):
+                """Starts the timeout clock only once the grandchild exists."""
+
+                def wait(self, timeout=None):
+                    # The 30 s only bounds a hang; the pipe write is the event.
+                    if not ready.wait(30):
+                        raise AssertionError("grandchild never started")
+                    return super().wait(timeout)
+
+            try:
+                with patch.object(sr.subprocess, "Popen", ReadyPopen):
+                    code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+            finally:
+                if not ready.is_set():  # unblock the reader's open()
+                    with open(ready_pipe, "wb"):
+                        pass
+                reader.join(5)
             self.assertEqual(code, 124)
             grandchild = int(pid_file.read_text())
             deadline = time.time() + 5
@@ -503,6 +626,9 @@ class WebBuildTests(unittest.TestCase):
         identity.parent.mkdir()
         identity.write_text('{"name": "Azizam"}\n')
         os.utime(identity, (100, 100))
+        pages = Path(root) / "gateway" / "ui_pages.json"
+        pages.write_text('{"pages": {"": "public"}}\n')
+        os.utime(pages, (100, 100))
         source = web / "src" / "page.tsx"
         source.write_text("export default function Page() {}\n")
         (web / "out").mkdir()
@@ -539,7 +665,7 @@ class WebBuildTests(unittest.TestCase):
 
             world.run = run
             self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
-            self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl"])
+            self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl", "systemctl"])
             self.assertFalse(sr.web_build_required(web))
 
     def test_staged_build_sees_inputs_outside_web(self):
@@ -624,8 +750,11 @@ class WebBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             web = self.make_web(tmp)
             world = World()
+            original_run = world.run
 
             def export(cmd, timeout):
+                if cmd[0] != "npm":
+                    return original_run(cmd, timeout)
                 build_web = Path(cmd[2])
                 (build_web / "out").mkdir()
                 (build_web / "out" / "index.html").write_text("new page")
@@ -633,10 +762,191 @@ class WebBuildTests(unittest.TestCase):
 
             world.run = export
             with patch.object(sr, "publish_web_export", side_effect=OSError("exchange refused")):
-                self.assertEqual(world.invoke(web_dir=web), sr.EXIT_WEB_BUILD)
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_WEB_BUILD)
             self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
-            self.assertEqual(world.calls, [])
+            self.assertEqual([cmd[2] for cmd in world.commands], ["stop", "stop"])
+            self.assertEqual([p["draining"] for p in world.posts()], [True])
+            self.assertFalse(world.running)
+            self.assertIn("Recovery:", world.text)
             self.assertIn("exchange refused", world.text)
+            self.assertEqual(self.staged(tmp), [])
+
+    @staticmethod
+    def staged(root):
+        return sorted(path.name for path in Path(root).glob(".azizam-web-*"))
+
+    def build_world(self, web, events):
+        world = World()
+        original_run = world.run
+        original_http = world.http
+
+        def run(cmd, timeout):
+            if cmd[0] == "npm":
+                build_web = Path(cmd[2])
+                (build_web / "out").mkdir()
+                (build_web / "out" / "index.html").write_text("new page")
+                return 0
+            events.append((cmd[2], (web / "out" / "index.html").read_text()))
+            return original_run(cmd, timeout)
+
+        def http(method, url, **kwargs):
+            if method == "POST" and url.endswith("/admin/api/drain"):
+                events.append(("drain" if kwargs["body"]["draining"] else "undrain",
+                               (web / "out" / "index.html").read_text()))
+            return original_http(method, url, **kwargs)
+
+        world.run = run
+        world.http = http
+        return world
+
+    def test_export_is_published_between_stop_and_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            events = []
+            world = self.build_world(web, events)
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_OK)
+            self.assertEqual(events, [("drain", "<html></html>\n"), ("stop", "<html></html>\n"), ("start", "new page")])
+            self.assertLess(world.output.index("published the new web export"),
+                            world.output.index("starting azizam"))
+            self.assertEqual(self.staged(tmp), [])
+
+    def test_drain_timeout_leaves_served_export_byte_identical(self):
+        busy = snap(requests=1, inflight=[{"method": "POST", "path": "/v1/images", "age_s": 9}])
+        for argv in (("--timeout", "5", "--quiet-seconds", "0"), ("--timeout", "5", "--quiet-seconds", "60")):
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                before = {p.name: p.read_bytes() for p in (web / "out").iterdir()}
+                events = []
+                world = self.build_world(web, events)
+                world.snapshots = [snap(requests=1, chat=1, quiet=0.0, inflight=busy["inflight"])]
+                self.assertEqual(world.invoke(*argv, web_dir=web), sr.EXIT_BUSY)
+                self.assertEqual({p.name: p.read_bytes() for p in (web / "out").iterdir()}, before)
+                self.assertEqual(world.commands, [])
+                self.assertEqual(self.staged(tmp), [])
+
+    def test_refused_drain_discards_the_staged_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            world.drain_status = 404
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_REFUSED)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertEqual(self.staged(tmp), [])
+
+    def test_failed_stop_leaves_old_process_and_old_export_together(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            world.systemctl_code = 1
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_SYSTEMCTL)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertTrue(world.running)
+            self.assertTrue(world.draining)
+            self.assertEqual([cmd[2] for cmd in world.commands], ["stop"])
+            self.assertEqual(self.staged(tmp), [])
+            self.assertIn("Recovery: systemctl --user stop azizam && systemctl --user start azizam", world.text)
+
+    def test_failed_or_interrupted_start_rolls_back_only_while_stopped(self):
+        for failure in (1, KeyboardInterrupt):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                world = self.build_world(web, [])
+                run = world.run
+
+                def fail_start(cmd, timeout):
+                    if cmd[2] == "start":
+                        self.assertFalse(world.running)
+                        self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+                        if failure is KeyboardInterrupt:
+                            raise KeyboardInterrupt
+                        return failure
+                    return run(cmd, timeout)
+
+                world.run = fail_start
+                expected = sr.EXIT_INTERRUPTED if failure is KeyboardInterrupt else sr.EXIT_SYSTEMCTL
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), expected)
+                self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+                self.assertFalse(world.running)
+                self.assertNotIn(False, [p["draining"] for p in world.posts()])
+                [holder] = self.staged(tmp)
+                self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "new page")
+                self.assertIn("Recovery:", world.text)
+                self.assertNotIn("rm -rf", world.text)
+
+    def test_ambiguous_start_and_failed_cleanup_keep_both_exports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            run = world.run
+            stops = 0
+
+            def ambiguous(cmd, timeout):
+                nonlocal stops
+                if cmd[2] == "start":
+                    world.running = True  # new process started, but controller failed
+                    return 1
+                if cmd[2] == "stop":
+                    stops += 1
+                    if stops > 1:
+                        return 1
+                return run(cmd, timeout)
+
+            world.run = ambiguous
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_SYSTEMCTL)
+            self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+            [holder] = self.staged(tmp)
+            self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertNotIn(False, [p["draining"] for p in world.posts()])
+            self.assertIn("publish_web_export", world.text)
+            self.assertIn("systemctl --user stop azizam && python3 -c", world.text)
+            self.assertNotIn("rm -rf", world.text)
+
+    def test_interrupt_after_exchange_retains_recovery_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            publish = sr.Restarter._publish_staged_export
+
+            def interrupt(restarter):
+                publish(restarter)
+                raise KeyboardInterrupt
+
+            with patch.object(sr.Restarter, "_publish_staged_export", interrupt):
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_INTERRUPTED)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertFalse(world.running)
+            self.assertEqual(len(self.staged(tmp)), 1)
+
+    def test_unconfirmed_check_keeps_new_process_and_previous_export(self):
+        for failure in ("public", "get", "clear"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                world = self.build_world(web, [])
+                http = world.http
+                if failure == "public":
+                    world.public_health = [503]
+                    extra = ("--public-url", "https://ai.example.test")
+                else:
+                    extra = ()
+
+                def fail_verification(method, url, **kwargs):
+                    if world.restarted and url.endswith("/admin/api/drain"):
+                        if failure == "get":
+                            return 503, {}
+                        if failure == "clear":
+                            return 200, snap(draining=True)
+                    return http(method, url, **kwargs)
+
+                world.http = fail_verification
+                self.assertEqual(world.invoke("--quiet-seconds", "0", "--public-timeout", "1", *extra, web_dir=web),
+                                 sr.EXIT_UNCONFIRMED)
+                # Left running: the new process serves the new export.
+                self.assertTrue(world.running)
+                self.assertEqual([cmd[2] for cmd in world.commands], ["stop", "start"])
+                self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+                [holder] = self.staged(tmp)
+                self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "<html></html>\n")
+                self.assertIn("Recovery:", world.text)
 
     def test_failed_build_never_drains_or_restarts_even_with_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -725,6 +1035,135 @@ class WebBuildTests(unittest.TestCase):
             web = self.make_web(tmp, fresh=True)
             (web / "out" / sr.WEB_BUILD_STAMP).unlink()
             self.assertTrue(sr.web_build_required(web))
+
+
+class SmokeAuthModeTests(unittest.TestCase):
+    def smoke(self, *, mode=None, status=200, body=None):
+        # No network and no model calls: every curl invocation is a local fake.
+        fake = r"""#!/bin/bash
+set -eu
+args=("$@")
+url=
+out_file=
+header_target=
+write_format=
+head_request=0
+for ((i = 0; i < ${#args[@]}; i++)); do
+    arg=${args[i]}
+    case $arg in
+        http://*|https://*) url=$arg ;;
+        -o) ((i += 1)); out_file=${args[i]} ;;
+        -D) ((i += 1)); header_target=${args[i]} ;;
+        -w) ((i += 1)); write_format=${args[i]} ;;
+        -I) head_request=1 ;;
+    esac
+done
+[[ -n $url ]] || { echo "fake curl received no URL" >&2; exit 2; }
+rest=${url#*://}
+if [[ $rest == */* ]]; then path=${rest#*/}; else path=; fi
+code=200
+content_type=application/json
+redirect=
+headers=
+response_body=
+case $path in
+    v1/chat/completions)
+        response_body='{"choices":[{"message":{"content":"OK"}}]}' ;;
+    v1/audio/speech)
+        printf -v response_body '%1200s' ''
+        response_body=${response_body// /x} ;;
+    sdapi/v1/sd-models)
+        response_body='[]' ;;
+    '')
+        content_type=text/html
+        response_body='<script src="/_next/static/a123456789abcdef.js"></script>' ;;
+    library)
+        code=308
+        redirect=/library/ ;;
+    _next/static/*)
+        headers=$'HTTP/1.1 200 OK\nCache-Control: public, immutable\n' ;;
+    v1/models)
+        if ((head_request)); then
+            code=405
+        else
+            code=$FAKE_MODELS_STATUS
+            response_body=$FAKE_MODELS_BODY
+        fi ;;
+    mcp)
+        headers=$'HTTP/1.1 405 Method Not Allowed\nAllow: POST\n' ;;
+    ui/home/)
+        code=404
+        content_type=text/html
+        response_body='<html>not found</html>' ;;
+    *)
+        echo "unexpected fake curl URL: $url" >&2
+        exit 1 ;;
+esac
+if [[ -n $header_target ]]; then
+    if [[ $header_target == - ]]; then printf '%s' "$headers"; else printf '%s' "$headers" > "$header_target"; fi
+fi
+if [[ -n $out_file ]]; then printf '%s' "$response_body" > "$out_file"; else printf '%s' "$response_body"; fi
+if [[ -n $write_format ]]; then
+    write_format=${write_format//%\{http_code\}/$code}
+    write_format=${write_format//%\{content_type\}/$content_type}
+    write_format=${write_format//%\{redirect_url\}/$redirect}
+    printf '%b' "$write_format"
+fi
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            curl = Path(tmp) / "curl"
+            curl.write_text(fake)
+            curl.chmod(0o755)
+            env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
+                   "FAKE_MODELS_STATUS": str(status),
+                   "FAKE_MODELS_BODY": body if body is not None else json.dumps(
+                       {"object": "list", "data": [{"id": "fast"}, {"id": "default"}]})}
+            env.pop("AZIZAM_SMOKE_AUTH_MODE", None)
+            env.pop("AZIZAM_SMOKE_KEY", None)
+            if mode is not None:
+                env["AZIZAM_SMOKE_AUTH_MODE"] = mode
+            return subprocess.run(["bash", str(ROOT / "scripts" / "post-deploy-smoke")],
+                                  env=env, capture_output=True, text=True, timeout=10)
+
+    KEY_REQUIRED = '{"error":{"type":"access_error","code":"key_required"}}'
+
+    def test_default_expects_401_key_required_without_a_key(self):
+        result = self.smoke(status=401, body=self.KEY_REQUIRED)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS models without key (required)", result.stdout)
+
+    def test_trusted_mode_requires_json_model_list(self):
+        result = self.smoke(mode="trusted")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS models without key (trusted)", result.stdout)
+
+    def _assert_models_check_fails(self, **kwargs):
+        result = self.smoke(**kwargs)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL models without key", result.stdout)
+
+    # One method per case: each is a full smoke run, so they spread over workers.
+    def test_default_rejects_an_untrusted_success_response(self):
+        self._assert_models_check_fails()
+
+    def test_default_rejects_a_401_that_is_not_key_required(self):
+        self._assert_models_check_fails(status=401, body='{"error":{"code":"key_invalid"}}')
+
+    def test_default_rejects_a_401_without_a_json_error(self):
+        self._assert_models_check_fails(status=401, body="{}")
+
+    def test_trusted_mode_rejects_unauthorized_response(self):
+        self._assert_models_check_fails(mode="trusted", status=401, body=self.KEY_REQUIRED)
+
+    def test_trusted_mode_rejects_malformed_json(self):
+        self._assert_models_check_fails(mode="trusted", body="not json")
+
+    def test_trusted_mode_rejects_empty_model_list(self):
+        self._assert_models_check_fails(mode="trusted", body='{"object":"list","data":[]}')
+
+    def test_unknown_auth_mode_is_usage_error(self):
+        result = self.smoke(mode="bypass")
+        self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":

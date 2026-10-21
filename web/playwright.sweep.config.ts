@@ -1,6 +1,7 @@
 // Quality sweep: every route and state, 390/1440 px, light/dark, owner/member.
 // `npm run sweep` (household fixture), `npm run sweep:live` (live-data harness),
 // `npm run sweep:copy` (live-data harness on a copy of production data).
+import "./test-priority"; // first: nice 19 + idle I/O for the runner and everything it starts
 import { defineConfig } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -65,7 +66,12 @@ export default defineConfig({
   retries: 0,
   timeout: 600_000,
   expect: { timeout: 10_000 },
-  reporter: [["dot"], ["json", { outputFile: path.join(paths.dir, "playwright.json") }]],
+  reporter: [
+    ["dot"],
+    ["json", { outputFile: path.join(paths.dir, "playwright.json") }],
+    // Case receipts for scripts/test-scheduled; writes only when CASE_RECEIPTS_FILE is set.
+    ["./e2e/case-receipts.ts"],
+  ],
   use: {
     baseURL: target.baseURL,
     headless: true,

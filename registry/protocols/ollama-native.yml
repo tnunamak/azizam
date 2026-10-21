@@ -1,0 +1,106 @@
+protocol_version: 1
+id: ollama-native
+title: Ollama native HTTP API
+executor: http-v1
+notes: >-
+  Text chat, streamed text chat, model inventory and float embeddings.
+  Chat usage is omitted because this grammar does not add the separate token
+  counters. Tool calls and non-text chat input need a separate mapping.
+  Response ids and timestamps use gateway request metadata.
+auth:
+  inference: {kind: none}
+  control: {kind: none}
+operations:
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /api/chat
+      body:
+        encoding: json
+        map:
+          - copy: {from: /body/model, to: /model}
+          - copy: {from: /body/messages, to: /messages}
+          - set: {to: /stream, value: false}
+          - when:
+              if: {path: /body/stream, equals: true}
+              then:
+                - set: {to: /stream, value: true}
+          - copy: {from: /body/temperature, to: /options/temperature}
+          - copy: {from: /body/max_tokens, to: /options/num_predict}
+          - copy: {from: /body/max_completion_tokens, to: /options/num_predict}
+    response:
+      framing: json
+      map:
+        - set: {to: /object, value: chat.completion}
+        - copy: {from: /params/request_id, to: /id}
+        - copy: {from: /params/created, to: /created}
+        - copy: {from: /body/model, to: /model}
+        - set:
+            to: /choices
+            value: [{index: 0, message: {role: assistant, content: null}}]
+        - copy: {from: /body/message/content, to: /choices/0/message/content}
+        - enum:
+            from: /body/done_reason
+            to: /choices/0/finish_reason
+            table: {stop: stop, length: length}
+            unmapped: error
+        # A complete answer without done_reason is a stop. Streamed chunks keep a null reason until done.
+        - default: {to: /choices/0/finish_reason, value: stop}
+      stream:
+        when: {path: /body/stream, equals: true}
+        framing: ndjson
+        terminal: {path: /done, equals: true}
+        map:
+          - set: {to: /object, value: chat.completion.chunk}
+          - copy: {from: /params/request_id, to: /id}
+          - copy: {from: /params/created, to: /created}
+          - copy: {from: /body/model, to: /model}
+          - set:
+              to: /choices
+              value: [{index: 0, delta: {content: null}, finish_reason: null}]
+          - copy: {from: /body/message/content, to: /choices/0/delta/content}
+          - enum:
+              from: /body/done_reason
+              to: /choices/0/finish_reason
+              table: {stop: stop, length: length}
+              unmapped: error
+  models:
+    class: inventory
+    request: {method: GET, path: /api/tags}
+    response:
+      framing: json
+      map:
+        - set: {to: /object, value: list}
+        - each:
+            from: /body/models
+            to: /data
+            map:
+              - copy: {from: /item/name, to: /id}
+              - set: {to: /object, value: model}
+              - set: {to: /created, value: 0}
+              - set: {to: /owned_by, value: engine}
+  embeddings:
+    class: generate
+    request:
+      method: POST
+      path: /api/embed
+      body:
+        encoding: json
+        map:
+          - copy: {from: /body/model, to: /model}
+          - copy: {from: /body/input, to: /input}
+    response:
+      framing: json
+      map:
+        - set: {to: /object, value: list}
+        - copy: {from: /body/model, to: /model}
+        - each:
+            from: /body/embeddings
+            to: /data
+            map:
+              - set: {to: /object, value: embedding}
+              - copy: {from: /index, to: /index}
+              - copy: {from: /item, to: /embedding}
+        - copy: {from: /body/prompt_eval_count, to: /usage/prompt_tokens}
+        - copy: {from: /body/prompt_eval_count, to: /usage/total_tokens}

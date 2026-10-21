@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import gc
 import sys
-import time
 from pathlib import Path
 
 import pytest
+
+from tests.support.virtual_loop import VirtualEventLoop
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -98,12 +99,13 @@ def test_lease_counts_until_released_and_release_is_idempotent() -> None:
 def test_clear_for_swap_returns_at_once_when_idle() -> None:
     drain = SwapDrain()
 
-    async def scenario() -> float:
-        start = time.monotonic()
+    async def scenario() -> None:
         await drain.clear_for_swap("llm", _settings(timeout_s=5))
-        return time.monotonic() - start
 
-    assert asyncio.run(scenario()) < 0.5
+    # No lease is held and nothing releases one: returning at all is the oracle.
+    # The 30 s wait_for only turns a hang into a failure (a 5 s drain timeout
+    # would also end the wait, but with SwapDeferred).
+    asyncio.run(asyncio.wait_for(scenario(), 30))
 
 
 def test_clear_for_swap_waits_for_the_last_release() -> None:
@@ -127,17 +129,19 @@ def test_clear_for_swap_waits_for_the_last_release() -> None:
 
 
 def test_clear_for_swap_times_out_with_swap_deferred() -> None:
-    drain = SwapDrain()
+    loop = VirtualEventLoop()
+    drain = SwapDrain(clock=loop.time)
     lease = drain.lease("llm")
 
     async def scenario() -> SwapDeferred:
-        start = time.monotonic()
+        start = loop.time()
         with pytest.raises(SwapDeferred) as caught:
             await drain.clear_for_swap("llm", _settings(timeout_s=0.1))
-        assert 0.09 <= time.monotonic() - start < 2.0
+        assert loop.time() - start == 0.1
         return caught.value
 
-    deferred = asyncio.run(scenario())
+    with asyncio.Runner(loop_factory=lambda: loop) as runner:
+        deferred = runner.run(scenario())
     assert deferred.backend == "llm"
     assert deferred.in_flight == 1
     assert deferred.retry_after_s > 0
@@ -149,16 +153,17 @@ def test_clear_for_swap_times_out_with_swap_deferred() -> None:
 def test_an_old_lease_still_defers_the_swap_and_reports_its_age(capsys) -> None:
     """A lease never ages out: an hours-old one is a long stream as far as the
     drain can tell. The swap is deferred and the deferral names its age."""
-    offset = [0.0]
-    drain = SwapDrain(clock=lambda: time.monotonic() + offset[0])
+    loop = VirtualEventLoop()
+    drain = SwapDrain(clock=loop.time)
     lease = drain.lease("llm")
-    offset[0] += 3 * 3600
+    loop.now += 3 * 3600
 
     async def scenario() -> None:
         with pytest.raises(SwapDeferred):
             await drain.clear_for_swap("llm", _settings(timeout_s=0.05))
 
-    asyncio.run(scenario())
+    with asyncio.Runner(loop_factory=lambda: loop) as runner:
+        runner.run(scenario())
     assert drain.in_flight("llm") == 1
     assert "oldest 10800s" in capsys.readouterr().out
     lease.release()

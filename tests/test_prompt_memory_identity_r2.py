@@ -14,9 +14,10 @@ import proxy
 from gateway import accounts, admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.admin_api import AdminContext
 from gateway.admin_oidc import AdminSession
-from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
+from gateway.admin_runtime import AdminSQLiteStore, generate_app_api_key, runtime_identity_for_app_credential_hash
 from gateway.runtime_auth import hash_api_key
 from gateway.user_runtime import mint_user_app_key
+from tests.support.access import service_app
 
 
 SENTINEL = "zz-r2-sentinel-5c1d"
@@ -52,9 +53,10 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "data/payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     owner = admin_store.upsert_oidc_user("iss", "owner", email="owner@x.test", path=admin)
     robin = admin_store.upsert_oidc_user("iss", "robin", email="robin@x.test", path=admin)
-    robin_app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)
+    robin_app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], access_plan="person", path=admin)
     store = AdminSQLiteStore(admin)
     owner_ctx = AdminContext(subject=owner["id"], actor_id=owner["id"], actor_kind="user", roles=frozenset({"owner"}))
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, receipts=receipts, owner=owner, robin=robin,
@@ -74,7 +76,7 @@ def _robin_key(hh) -> str:
 
 def test_service_app_key_has_no_person_or_prompt_memory(hh):
     sa = admin_store.ensure_service_account("ha", path=hh.admin)
-    svc = admin_store.create_app("Home Assistant", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
+    svc = service_app("Home Assistant", path=hh.admin)
     result = hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)
     assert result["prompt_memory"]["person_id"] is None
     assert "not remembered" in result["prompt_memory"]["description"]
@@ -96,9 +98,13 @@ def test_service_app_key_has_no_person_or_prompt_memory(hh):
 def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     admin_member = admin_store.upsert_oidc_user("iss", "adm", email="adm@x.test", path=hh.admin)
     sa = admin_store.ensure_service_account("auto", path=hh.admin)
-    svc = admin_store.create_app("Automation", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
-    ctx = AdminContext(subject=admin_member["id"], actor_id=admin_member["id"], actor_kind="user", roles=frozenset({"admin"}))
-    key = hh.store.create_credential(app_id=svc["id"], data={}, actor=ctx)["api_key"]
+    svc = service_app("Automation", path=hh.admin)
+    # An administrator may no longer mint a key on an App the owner answers for
+    # (test_signin_who_can_enter), but keys made before that rule still exist.
+    # Model one directly: it was minted by the administrator, who is removed below.
+    key = generate_app_api_key()
+    admin_store.create_credential_hash(subject_kind="app", subject_id=svc["id"], hash=hash_api_key(key),
+                                       prefix=key[:8], created_by=admin_member["id"], path=hh.admin)
     accounts.change_person(admin_member["id"], hh.owner["id"], remove=True, path=hh.admin)
     auth = runtime_identity_for_app_credential_hash(hash_api_key(key), path=hh.admin)
     assert auth is not None and auth.person_id is None
@@ -141,7 +147,7 @@ def test_resolved_legacy_personal_key_remembers_prompt_and_keeps_library_item(hh
 def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     sa = admin_store.ensure_service_account("webui", path=hh.admin)
-    svc = admin_store.create_app("Open WebUI", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
+    svc = service_app("Open WebUI", path=hh.admin)
     auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)["api_key"], hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
@@ -211,14 +217,14 @@ def test_app_library_visibility_does_not_depend_on_maker_metadata(hh, makers):
 
 def test_legacy_service_key_stays_no_person(hh):
     sa = admin_store.ensure_service_account("legacy-svc", path=hh.admin)
-    app = admin_store.create_app("Shared", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
+    app = service_app("Shared", path=hh.admin)
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("old-service"), prefix="old", path=hh.admin)
     assert _ctx_for("old-service", hh.admin).identity.person_id is None
 
 
 def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
     sa = admin_store.ensure_service_account("full-export", path=hh.admin)
-    app = admin_store.create_app("Shared", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
+    app = service_app("Shared", path=hh.admin)
     key = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)["api_key"]
     auth = _ctx_for(key, hh.admin)
     ctx = proxy._begin_media_delivery(auth)
@@ -264,7 +270,7 @@ def test_own_personal_key_warns_about_prompt_access(hh, self_service):
         person = hh.robin["id"]
     else:
         app = admin_store.create_app("Owner Try", kind="personal",
-                                     owner_user_id=hh.owner["id"], path=hh.admin)
+                                     owner_user_id=hh.owner["id"], access_plan="person", path=hh.admin)
         result = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)
         person = hh.owner["id"]
     assert result["prompt_memory"]["person_id"] == person

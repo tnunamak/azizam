@@ -7,6 +7,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { quiet, removeIfPresent } from "./capture-settle.mjs";
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repo = path.resolve(web, "..");
@@ -32,8 +33,8 @@ const allStates = statesArg === "all";
 const browserLocale = "en-US";
 const browserTimezone = "America/Chicago";
 const baseURL = `http://127.0.0.1:${port}`;
-const surfaces = [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"]];
-const trySurfaces = [["try-image", "/ui/try/?capability=image"], ["try-speech", "/ui/try/?capability=speech"]];
+const surfaces = [["home", "/"], ["status", "/status/"], ["library", "/library/"]];
+const trySurfaces = [["try-image", "/try/?capability=image"], ["try-speech", "/try/?capability=speech"]];
 const widths = [1440, 390];
 const themes = ["light", "dark"];
 const OUTAGE_BODY = { error: { code: "internal_error", message: "The gateway could not load this data. Refresh to try again." } };
@@ -50,7 +51,7 @@ try {
   if (error.message?.includes("already serving")) throw error;
 }
 await mkdir(stateRoot, { recursive: true });
-await rm(manifestPath, { force: true });
+await removeIfPresent(rm, manifestPath);
 await mkdir(output, { recursive: true });
 
 const server = spawn(python, ["../scripts/ui/serve.py"], {
@@ -110,11 +111,10 @@ const skeletonsGone = () => {
 async function settle(page, { cap = 30_000 } = {}) {
   const notes = [];
   const limit = ms => Math.min(ms, cap);
-  await page.waitForLoadState("networkidle", { timeout: limit(30_000) }).catch(() => notes.push("network did not go idle"));
   const heading = await page.waitForFunction(headingVisible, null, { timeout: limit(15_000) }).then(() => true, () => false);
   if (!heading) notes.push("no visible h1, dialog h2 or [role=status]");
-  const quiet = await page.waitForFunction(skeletonsGone, null, { timeout: limit(20_000) }).then(() => true, () => false);
-  if (!quiet) notes.push("skeleton or aria-busy element still visible");
+  const skeletonsDone = await page.waitForFunction(skeletonsGone, null, { timeout: limit(20_000) }).then(() => true, () => false);
+  if (!skeletonsDone) notes.push("skeleton or aria-busy element still visible");
   try {
     await page.evaluate(async () => {
       await document.fonts.ready;
@@ -127,7 +127,7 @@ async function settle(page, { cap = 30_000 } = {}) {
   } catch (error) {
     notes.push(`image check failed: ${error.message.split("\n")[0]}`);
   }
-  await page.waitForTimeout(350);
+  await quiet(page, { timeout: limit(20_000) }).catch(() => notes.push("page did not go quiet"));
   return notes;
 }
 
@@ -164,7 +164,7 @@ async function newContext(seed, { width, theme }) {
 async function login(context, account, base) {
   const page = await context.newPage();
   try {
-    await page.goto(`${base}/ui/sign-in/`);
+    await page.goto(`${base}/sign-in/`);
     await page.getByLabel("Email", { exact: true }).fill(account.email);
     await page.getByLabel("Password", { exact: true }).fill(account.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -307,12 +307,12 @@ const statePopulated = (ctx, surface, url, state = "populated") => attempt(ctx, 
 
 async function stateLibraryDetail(ctx) {
   await attempt(ctx, "library", "library-detail", async page => {
-    const notes = await gotoSettled(page, ctx, "/ui/library/");
+    const notes = await gotoSettled(page, ctx, "/library/");
     const open = openAsset(page);
     if (!(await open.count())) throw new Skip("No button named \"Open ...\" in main");
     await open.click();
     await page.locator("[role=dialog]").first().waitFor({ state: "visible", timeout: 10_000 });
-    await page.waitForTimeout(600);
+    await quiet(page);
     await shoot(page, ctx, "library", "library-detail", { notes });
     return notes;
   });
@@ -321,7 +321,7 @@ async function stateLibraryDetail(ctx) {
 async function stateLibraryKind(ctx, kind) {
   const lower = kind.toLowerCase();
   await attempt(ctx, "library", `library-${lower}`, async page => {
-    const notes = await gotoSettled(page, ctx, "/ui/library/");
+    const notes = await gotoSettled(page, ctx, "/library/");
     let group = page.getByRole("group", { name: "Kind" });
     // On a phone the kinds live inside Filters (D1.3).
     let inFilters = false;
@@ -338,8 +338,7 @@ async function stateLibraryKind(ctx, kind) {
     if (!(await button.count())) throw new Skip(`No button named exactly \"${kind}\" in the Kind group`);
     await button.click();
     if (inFilters) await page.keyboard.press("Escape");
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => notes.push("network did not go idle after filter"));
-    await page.waitForTimeout(350);
+    await quiet(page, { timeout: 15_000 }).catch(() => notes.push("page did not go quiet after filter"));
     await shoot(page, ctx, "library", `library-${lower}-grid`, { notes: [...notes] });
     const open = openAsset(page);
     if (!(await open.count())) throw new Skip(`Grid captured, but no \"Open ...\" button for ${lower} assets`);
@@ -358,7 +357,7 @@ async function stateLibraryKind(ctx, kind) {
         notes.push(`dialog video not ready after 15 s (${state})`);
       });
     }
-    await page.waitForTimeout(600);
+    await quiet(page);
     await shoot(page, ctx, "library", `library-${lower}`, { notes });
     return notes;
   });
@@ -367,7 +366,7 @@ async function stateLibraryKind(ctx, kind) {
 const stateLoading = (ctx, surface, url) => attempt(ctx, surface, "loading", async page => {
   await routeTargets(page, surface, "hold");
   await page.goto(`${ctx.base}${url}`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1_500);
+  await page.locator('[aria-busy="true"], [data-slot="skeleton"]').first().waitFor({ state: "visible" });
   await shoot(page, ctx, surface, "loading", { notes: ["data requests held open"] });
 }, { injected: injectedFor(surface) });
 
@@ -415,7 +414,7 @@ async function captureSignedIn(seed, role, email, themeWidths) {
       for (const [surface, url] of surfaces) await stateLoading(ctx, surface, url);
       for (const [surface, url] of surfaces) await stateError(ctx, surface, url);
       for (const [surface, url] of surfaces) await stateRewritten(ctx, surface, url, "empty");
-      await stateRewritten(ctx, "library", "/ui/library/", "expired");
+      await stateRewritten(ctx, "library", "/library/", "expired");
     }
     await context.close();
   }

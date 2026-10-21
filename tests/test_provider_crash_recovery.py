@@ -10,9 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gateway import admin_store, providers
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
+from tests.support.access import identity, plan_for  # noqa: E402
 def _provider(**overrides: object) -> providers.ProviderRef:
     data = {
         "id": "openrouter",
@@ -27,14 +25,10 @@ def _provider(**overrides: object) -> providers.ProviderRef:
     return providers.ProviderRef(**data)  # type: ignore[arg-type]
 
 
-def _profile(**remote_overrides: object):
-    return DEFAULT_PROFILE.with_overrides(
-        id="paid-plan",
-        remote=RemoteProviderPolicy(
-            providers=frozenset({"openrouter"}),
-            **remote_overrides,
-        ),
-    )
+def _profile(**caps: str):
+    """An App whose plans list openrouter; ``caps`` are the plans' spending caps."""
+    return identity(plan_for("paid-plan", paid=["openrouter"], **caps),
+                    app_id="app_paid", accountable_person_id="usr_paid")
 
 
 class ProviderCrashRecoveryTests(unittest.TestCase):
@@ -44,8 +38,9 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
         self.ledger = Path(self.tmp.name) / "provider_spend.db"
         self.admin_db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(self.admin_db)
-        os.environ["OPENROUTER_TEST_KEY"] = "test-key"
-        self.addCleanup(lambda: os.environ.pop("OPENROUTER_TEST_KEY", None))
+        key = patch.dict(os.environ, {"OPENROUTER_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
 
     def _reserve(
         self,
@@ -82,7 +77,7 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
         with patch.object(providers, "current_process_generation", return_value="202:after-crash"):
             with self.assertRaises(providers.ProviderNeedsReconciliation):
                 providers.reserve_provider_spend(
-                    _profile(budget_usd_per_day=Decimal("0.02")),
+                    _profile(usd_per_day="0.02"),
                     _provider(),
                     providers.Cost(Decimal("0.000605"), "price-table", "openrouter"),
                     path=self.ledger,
@@ -102,7 +97,6 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
                 CREATE TABLE provider_spend (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     provider TEXT NOT NULL,
-                    profile_id TEXT NOT NULL,
                     status TEXT NOT NULL,
                     estimated_usd TEXT NOT NULL,
                     actual_usd TEXT,
@@ -117,9 +111,9 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, actual_usd, cost_source,
+                (provider, status, estimated_usd, actual_usd, cost_source,
                  created_at, settled_at, request_id, generation_id)
-                VALUES ('openrouter', 'paid-plan', 'reserved', '0.000605', NULL,
+                VALUES ('openrouter', 'reserved', '0.000605', NULL,
                         'price-table', 1700000000, NULL, 'req_1', 'gen_1')
                 """
             )
@@ -179,13 +173,13 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
 
         self.assertEqual(self._rows()[0]["status"], "needs_reconciliation")
 
-    def test_recovered_unknown_blocks_plan_cap(self) -> None:
+    def test_recovered_unknown_blocks_person_plan_cap(self) -> None:
         self._reserve(generation="707:old")
 
         with patch.object(providers, "current_process_generation", return_value="808:new"):
             with self.assertRaises(providers.ProviderNeedsReconciliation):
                 providers.reserve_provider_spend(
-                    _profile(budget_usd_per_day=Decimal("0.02")),
+                    _profile(usd_per_day="0.02"),
                     _provider(),
                     providers.Cost(Decimal("0.000605"), "price-table", "openrouter"),
                     path=self.ledger,

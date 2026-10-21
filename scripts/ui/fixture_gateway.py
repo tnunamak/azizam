@@ -77,18 +77,6 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
     from gateway import media_jobs, media_delivery
     from pathlib import Path
 
-    from gateway import default_profiles, admin_store
-
-    original_seed_profiles = default_profiles.seed_default_profiles
-
-    def household_seed_profiles(*, path=admin_store.DB_PATH, now=None):
-        # The three household plans already exist. Remove only unused defaults
-        # created at this startup, through the store's reference-checked API.
-        for profile in original_seed_profiles(path=path, now=now):
-            admin_store.delete_profile(profile["id"], path=path)
-        return []
-
-    default_profiles.seed_default_profiles = household_seed_profiles
     media_delivery.DEFAULT_WORKDIR = Path.cwd() / "media_metadata"
     import status_endpoint
 
@@ -134,8 +122,77 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
             [row for row in backends or [] if row.get("key") not in unobserved]
         )
 
+def _mount_settings_restore():
+    """A fixture-only route that puts back an owner-global setting the admin API
+    cannot restore (web/e2e/fixtures/isolation.ts). The admin API refuses the
+    seeded sign-in mode "both" while no identity provider is enabled, so a test
+    that switches to built-in accounts could not otherwise undo its change.
+    It also sets up a connection that a test sign-in would otherwise have to
+    prove, and blanks one that was never configured (the Sign-in page's save
+    cannot). The connection goes through the store, so its secret is encrypted.
+    Only the settings on this allowlist are writable."""
+    import proxy
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+    from fastapi.routing import APIRoute
+    from gateway import admin_store
+
+    restorable = {"sign_in", "oidc_provider_config"}
+
+    async def restore(key: str, request: Request):
+        if key not in restorable or request.client is None or request.client.host != "127.0.0.1":
+            return JSONResponse({"error": "not restorable"}, status_code=403)
+        value = await request.json()
+        if key == "oidc_provider_config":
+            from gateway.admin_api import AdminContext
+
+            proxy.ADMIN_STORE.update_oidc_config_setting(
+                data=value, actor=AdminContext(subject="browser-fixture", roles=frozenset({"owner"})))
+        else:
+            admin_store.put_operator_setting(key, value, updated_by="browser-fixture", path=proxy.ADMIN_DB_PATH)
+        return {"ok": True}
+
+    # First, ahead of the UI's catch-all routes.
+    proxy.app.router.routes.insert(0, APIRoute("/fixture/operator-settings/{key}", restore, methods=["PUT"]))
+
+
+_mount_settings_restore()
+
+
+def _stand_in_for_the_avatar_provider():
+    """Answer a sign-in picture at https://avatars.fixture.example/... from a file, with no network.
+
+    The fixture gateway has no public address to fetch from, and the picture route must never use
+    a private one. Every other URL still goes to the real fetcher, which refuses it here. The bytes
+    end with the URL, so two people's pictures differ (web/e2e/avatar-cache.spec.ts).
+    """
+    picture = os.environ.get("UI_E2E_AVATAR_PICTURE")
+    if not picture:
+        return
+    from gateway import media_fetch
+
+    real = media_fetch.safe_fetch_media
+    prefix = "https://avatars.fixture.example/"
+
+    async def fetch(url, **kwargs):
+        if not url.startswith(prefix):
+            return await real(url, **kwargs)
+        with open(picture, "rb") as handle:
+            data = handle.read() + url.encode()
+        return media_fetch.FetchedMedia(data, "avatar.png", "image/png")
+
+    media_fetch.safe_fetch_media = fetch
+
+
+_stand_in_for_the_avatar_provider()
+
 import uvicorn
 
+# Playwright's request client keeps idle sockets alive with no timeout. With
+# uvicorn's 5 s default, a request sent as the server closes an idle socket
+# fails with ECONNRESET; on a loaded host that happened mid-journey. Keep idle
+# sockets open for the life of the fixture.
 uvicorn.run(
-    "proxy:app", host="127.0.0.1", port=port, log_level="warning", loop="asyncio"
+    "proxy:app", host="127.0.0.1", port=port, log_level="warning", loop="asyncio",
+    timeout_keep_alive=3600,
 )

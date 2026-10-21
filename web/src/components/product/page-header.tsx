@@ -70,7 +70,7 @@ export function PageHeader({
           )}
           {longSubtitle && (
             <details className="text-muted-foreground text-meta mt-1 max-w-2xl">
-              <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
+              <summary className="flex min-h-8 w-fit items-center max-sm:min-h-11">
                 About this page
               </summary>
               <p className="mt-2">{longSubtitle}</p>

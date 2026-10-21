@@ -4,7 +4,7 @@ Owner: the D1 designer (Opus 5.5). Status: v1.6, 2026-10-09 (D1.6: a continuous 
 
 ## Direction
 
-**Deep water, daylight.** Everything a person came for sits on a clean daylight page (a deep-water night page in dark theme). Every surface opens with a title and one verdict label, says how old the evidence behind it is, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the goldfish-orange fish with the verdict line: the fish tells you whose gateway this is; the verdict tells you, in a few words, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
+**Deep water, daylight.** Everything a person came for sits on a clean daylight page (a deep-water night page in dark theme). Every surface opens with a title and one verdict label, says how old the evidence behind it is, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the copper curl with the verdict line: the curl (one lock of a baby's red hair, see "Brand") tells you whose gateway this is; the verdict tells you, in a few words, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
 
 D1.1 change: in light theme the sidebar is now a quiet grey-green panel one step off the page, not a dark-teal frame. The Linear-designer red team read the dark frame plus pastel tiles as two products glued together; a quieter frame lets the page carry the hierarchy. Dark theme keeps the deep-water chrome.
 
@@ -79,7 +79,7 @@ All raw values live in `web/src/styles/tokens.css`. Components use Tailwind util
 | Chrome raised | `--chrome-raised` | #E1E8EA | #13292F | Hover and current item |
 | Chrome text | `--chrome-foreground` / `--chrome-muted` | #10232A / #3D4F55 | #E3EEF0 / #B0C6CC | Nav rows: 7.6:1 on the light chrome (was 5.7), 10.3:1 on the dark (was 7.9) |
 | Chrome edge | `--chrome-border` | #D7E0E2 | #1A333A | Sidebar right edge, phone header bottom |
-| Chrome accent | `--chrome-accent` | #D2702A (goldfish) | #F2A65A | The brand mark; used nowhere else |
+| Chrome accent | `--chrome-accent` | #C4532B (copper) | #F08A5D | The brand mark, the current page's sidebar icon and the sidebar focus ring; nowhere else. 4.0:1 on the light chrome, 3.7:1 on its hover row, 4.6:1 on white; 6.1:1 or better on every dark surface (was #D2702A / #F2A65A: 3.1:1 on the light chrome, 2.8:1 on the hover row) |
 | Media stage | `--media-stage` / `-foreground` | #E6ECEE / #10232A | #050F12 / #E3EEF0 | Behind media in the viewer |
 | Media badge | `--media-badge` / `-foreground` / `-hover` | rgb(5 15 18 / 64%) / white / 80% | same | The duration badge on video and audio tiles and the audio play badge (white text 9:1 or better over the scrim on white) |
 | Subtle ink | `--subtle-foreground` | #4A5C62 | #9FB2B9 | Group labels, axis labels, quiet counts: 6.4:1 on the light page (was 4.8), 7.7:1 on the dark (was 5.5) |
@@ -89,7 +89,7 @@ All raw values live in `web/src/styles/tokens.css`. Components use Tailwind util
 | Info | `--info` / tint / fill | #1F5FA6 / #E6EFFA / #3B82D6 | #8DB8F2 / #182E4A / #6AA2EC | Busy, In progress |
 | Blocked | `--blocked` / tint / fill | #6B4FB0 / #EFE9FB / #5B3A9E | #C2A8F0 / #2A2340 / #D6C4FF | Blocked (with a lock icon) |
 | Neutral | `--neutral`, `--nocheck-fill` | #6A7C81, #C9D3D6 | #8AA1A7, #3B5961 | Off, Unknown (with the subtle ink for the word); an hour with no check |
-| People | `--person-1…7`, `--person-ink` | coral, sky, sage, violet, amber, rose, teal on #10232A | same | Person marks (all 6:1 or better) |
+| People | `--person-1…7`, `--person-ink` | coral, sky, sage, violet, amber, rose, teal on #10232A | same | Not used by person marks any more: they draw the eight avatar gradients below (white initials, 4.9:1 or better on every stop) |
 | Capabilities | `--capability-*` | seven hues | lighter pairs | The capability's glyph where it is the subject (the Try chip, the Library type badge); never a list icon or a tinted tile (System numbers v2, "Colour budget") |
 | Charts | `--chart-1`, `--chart-2`, `--chart-3`, `--chart-other` | = primary, #2F8F9B, #8C7A55, = neutral | = link, #2F7F88, #B9A274, = neutral | One series in `--chart-1`; a breakdown in at most three hues plus Other (`chartColors`). Every fill is 3:1 or better on the card |
 
@@ -297,6 +297,61 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 
 `token_drift.py` also flags unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl` in `app/`, `shadow-*` on non-overlay elements, and the old text utilities once their surface has moved. They fail in the files listed in its `SYSTEM_FILES` (PR 1: the shared parts) and are warnings elsewhere; a `craft-allow` comment exempts one line and says why (Button's `lg`, the full-width phone action).
 
+## Brand
+
+The mark is one curl of a baby's red hair. "Azizam" is Persian for "my dear"; the curl carries that warmth without a face or a mascot. It replaced the goldfish on 2026-10-13.
+
+How it was chosen: six concepts, drawn as SVG and rendered at 16, 32, 180 and 512 px and in context (browser tabs, an iOS home row, the sidebar in both themes, one colour). One blind judge (a different model from the maker) saw only the renders and the owner's brief. It ranked: tapered curl, fat horizontal curl, curl cut from a disc, thin even-stroke curl, heart of two curls, heart with a curl inside. It read the hearts as generic and "a little toy", the disc as a "9" in a circle, and the even stroke as too light at 16 px. The winner was redrawn once on its notes: larger in the square, a round tip, an open counter, a firmer 16 px drawing. The candidates, the renders and the ranking are in `~/Documents/azizam/brand/`.
+
+### Geometry
+
+- **One shape.** A spiral of four circular quarter turns, each radius 1.42 times the last, that runs out into a falling tail, tilted 18° so it fills the square. The stroke holds a round tip for the inner fifth, then thickens smoothly to the tail. Both ends are round.
+- **Two drawings.** The master (tip 4.8, tail 8.8, in a 48 box) serves every size from 20 px up. The small drawing (tip 6.0, tail 10.0) serves only the favicons, so at 16 px the stem is about 3 px and the counter keeps a pixel.
+- **Optical centre.** The curl is centred halfway between its bounding-box centre and its area centroid, so the heavy head does not ride high. The master keeps 2 units clear of the 48 box; the small drawing keeps 1.
+- **Source.** `docs/design/brand/curl.py` writes both drawings as SVG and prints the master path for `BrandMark` (`--path`). `node web/scripts/brand-icons.mjs` renders every icon from those SVGs. Do not edit a PNG or a path by hand.
+
+### Colour
+
+| Use | Colour | Contrast |
+|---|---|---|
+| Mark on light surfaces | `--chrome-accent` #C4532B | 4.0:1 on the light chrome, 4.6:1 on white |
+| Mark on dark surfaces and on app tiles | `--chrome-accent` (dark) #F08A5D | 6.1:1 or better on the dark chrome, page and card; 6.9:1 on the tile |
+| `favicon.ico` only | #D65F33 | 2.9:1 or better on light and dark browser tabs (an .ico cannot follow the colour scheme) |
+| App tile | #0C1F25, the dark page | |
+| One colour | `--foreground` (ink) or white | |
+
+Copper sits near the complement of the petrol teal, so the mark is the only warm colour in the chrome. Never tint it, put it on a gradient or give it a glow.
+
+### Lockup, clear space and sizes
+
+- **Lockup.** The mark, then "Azizam" in Hanken Grotesk 600 with tight tracking. In the sidebar the mark is 24 px beside 16 px text, 10 px apart. The curl's ink spans x 10 to 38 of its 48 box: where the mark stands at a text edge, as in the link preview, pull the box back by 10/48 of its size.
+- **Clear space.** Half the mark's height on every side, except toward the name in the lockup.
+- **Minimum size.** 16 px for the mark (the favicon uses the small drawing). Below 20 px in the UI, use the mark alone.
+
+### Icon set
+
+| File (served at the site root) | Size | Treatment |
+|---|---|---|
+| `favicon.ico` (`web/src/app/`) | 16, 32, 48 | Small drawing in #D65F33, transparent |
+| `icon.svg` (`web/src/app/`) | any | Small drawing; #C4532B, or #F08A5D when the browser prefers dark |
+| `apple-icon.png` (`web/src/app/`) | 180 | Master on #0C1F25, its 48 box at 70 % of the tile, opaque and square (iOS rounds it) |
+| `icon-192.png`, `icon-512.png` (`web/public/`) | 192, 512 | The same tile with 22.5 % rounded corners, for desktop shortcuts |
+| `icon-maskable-192.png`, `icon-maskable-512.png` (`web/public/`) | 192, 512 | Full bleed; the 48 box at 56 %, every copper pixel inside the 40 % safe circle (a test checks) |
+| `manifest.webmanifest` (`web/src/app/manifest.ts`) | | Name, colours and the four icons above |
+| `robots.txt` (`web/public/`) | | `User-agent: *`, `Disallow: /` |
+| `opengraph-image.png` (`web/public/`) | 1200 × 630 | The lockup on #0C1F25 and the link preview's line, "One AI gateway for your apps and the people you invite." |
+
+`gateway/ui_pages.json` lists these root files: the gateway serves exactly these names to anyone (browsers fetch icons without credentials), and `web/scripts/check-export-shape.mjs` fails the build when one is missing or an unlisted file appears. Next writes the icon, manifest and theme-color tags from `web/src/app/`. A link preview needs an absolute image URL, and the static export knows its origin only at build time, so `og:image` is added only when the build runs with `AZIZAM_PUBLIC_URL` set (`web/src/lib/site-metadata.ts`). Without it the preview has a title and a description and no image; a file-convention `opengraph-image` would point at `http://localhost:3000` instead.
+
+`robots.txt` is the one root file crawlers fetch (`web/public/robots.txt`: `User-agent: *` and `Disallow: /`). It is public for the same reason as the icons: a crawler sends no credentials, and a 401 would tell it nothing. Azizam is a private service, so every HTML response the gateway sends also carries `X-Robots-Tag: noindex, nofollow` (`gateway/noindex.py`, the outermost layer), and the root metadata adds `<meta name="robots" content="noindex, nofollow">`.
+
+### Do and don't
+
+- Do use the lockup where the product names itself (the sidebar, the phone header and the link preview), and the mark alone on app tiles, as the favicon and above a welcome card (the invitation).
+- Do keep one colour per mark: copper on the chrome and on deep water, ink or white when colour is not possible.
+- Don't rotate, mirror, outline, stretch or animate the curl, and don't add a face, eyes, a heart or a second curl.
+- Don't use the copper for text, buttons, links or state. It marks the brand and the current place only.
+
 ## Shell
 
 - **Sidebar (≥ 1024 px):** 232 px; a quiet light panel with a hairline edge in light theme, deep water in dark. The brand mark and name (plus the instance name when it differs), a search field with its shortcut, then two groups: **You** (Home, Library, Try, Apps & keys, Models, Workflows, Usage) and, for owners, **Gateway** (Status, Engines, Providers, People, Activity, Settings). Members see Status in You. Order is by how often a household member needs each place. Every destination has its own icon (ban 19). The footer holds the health line (a dot and the shared verdict count, Status model rule 3; its popover separates gateway reachability from "Your AI"), the account (person mark and name) and the theme toggle. Nav items are 32 px, 13 px text, medium weight only for the current page; group labels in subtle ink. D1.6: one type size and one row height for every nav item; the owner's Gateway group is set apart by space and its small label only (D1.5 made it smaller and quieter, and round 6 read the two sizes as incoherent).
@@ -316,6 +371,7 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 | StateWord, StateIcon | same | One icon, colour and word per state; Ready stays quiet. Icons 16 in rows, 14 in badges, 20 beside the verdict |
 | StateBadge | same, on `components/ui/badge.tsx` (`variant="state"`) | A state that is not Ready, on a row or card title: 20 tall, radius 4, the 14 icon and the word in `text-badge`, the state's ink on its tint (4.5:1 or better, `state_palette.py`) |
 | Callout | same | The one callout for every problem, notice and error: severity icon, a title naming the subject, meta, facts, body, actions. On wide screens the header action sits on the title row; on a phone it follows the body, so the instruction comes before its button, and everything under the title uses the full width. `evidence` facts follow `facts` on wide screens and fold behind "Show details" on a phone. D1.4 phone order: title, facts (scope, history), the instruction, its button, then evidence |
+| RouteError, GlobalError | `app/error.tsx`, `app/global-error.tsx` | The crashed state of a page: the title, the ErrorState callout (Try again calls `reset`) and a Go home link, inside the shell. `global-error` is the last resort when the root layout failed: its own html and body, one inline style element, no providers. Neither shows an error message, stack or digest; both write the error to the console |
 | CapabilityList | same | The one way to draw capabilities: rows of 40 (60 with the reason or age, 48 on a phone), the capability icon in ink, the name in `text-body` 500, the state word; one or two columns |
 | CapabilityChips | same | While problem cards are open, the capabilities as 40 px rows (48 on a phone) in one card (state icon, name, state word when not Ready): one column on a phone, two from 640 px, under the cards (D1.4 replaced the wrapping pills; D1.5b removed the side column) |
 | AudioFace, MediaBadge, PlayDisc, `playDiscButton`, DayChip, Waveform, `audioKind` | `components/product/audio-cover.tsx` | The tile cues (D1.6), all on one dark scrim. AudioFace: one neutral face for every clip (sunken surface, real waveform or the glyph) with a `center` slot that lets clicks through to the tile; MediaBadge: type glyph and length, bottom left (the glyph alone without a length), in badge text with the badge radius; PlayDisc: the 40 px play cue in the middle of an audio tile, and of a video tile on hover or focus only (craft PR 5); `playDiscButton`: the disc as the in-place audio play button on wider screens; DayChip: the day on the first tile of each day, in badge text with the badge radius. The waveform doubles as the position in the viewer |
@@ -325,8 +381,8 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 | `capabilityMeta` | same | Capability name, icon and hue |
 | UptimeBar, `hourSlots`, `hoursUp`, `failingSince`, `healthHistory`, `healthStory` | `components/product/uptime-bar.tsx` | Rule 4: 24 hourly segments, down hours taller as well as red, a legend of the colours shown, hour-by-hour list (`hourByHour={false}` in the engine table). `size="lg"` on problem cards: 24 px cells, the legend above the strip, clock times every six hours and "Now" under it. `healthStory` gives a card its two plain lines (rule 4) |
 | AppMark | `components/product/app-mark.tsx` | Real marks for known apps (Simple Icons, CC0) and a monogram otherwise |
-| PersonMark | `components/product/person-mark.tsx` | A person's initial in their stable hue |
-| BrandMark | `components/product/brand-mark.tsx` | The fish, in the chrome accent |
+| PersonMark, PersonAvatar, AvatarPicker | `components/product/person-mark.tsx`, `person-avatar.tsx` | A person's initial on one of eight gradients (Tide, Fern, Iris, Rose, Clay, Dusk, Plum, Slate; stored as `v1`…`v8`) chosen by a hash of the stable person id, never the display name, so a rename keeps the colour; or the sign-in picture when the person chose it, loaded only from the gateway (`/me/api/profile/avatar/picture`, never the provider's address). One initial at every size, 16 to 64 px (two letters crowd a small disc). The picker (account menu, Change avatar) is a radio group of the eight swatches plus Use my sign-in picture when the provider shared one |
+| BrandMark | `components/product/brand-mark.tsx` | The curl ("Brand"), in the chrome accent |
 | Segmented, Tabs | `components/product/segmented.tsx`, `components/ui/tabs.tsx` | The only segment pattern for filtering, and the tab pattern. D1.5: no sunken track; quiet chips, the chosen one in the accent tint and semibold (the sidebar's "you are here"). Options may carry an icon (hidden on phones, where four segments share the width). Tabs' `line` variant (People) keeps its underline. Segmented and chip tabs are a 32 group of 28 segments; `line` tabs are 40 with a 2 px indicator; all 44 on a phone |
 | Disclosure | `app/globals.css` (`summary`) | Every `<summary>` draws one chevron in the text colour that turns 90° when open; a summary with `list-none` draws its own. Disclosure buttons (the Callout's "Show details") lead with the same chevron |
 | CopyField | `components/product/copy-field.tsx` | One boxed value with the copy button inside its edge (Cloudflare 6a.2) |
@@ -341,7 +397,7 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 | ChartLegend, `chartColors` | `components/ui/charts.tsx` | A breakdown's colours (three hues plus Other) and its legend of 8 px dots |
 | EmptyState | `components/product/empty-state.tsx` | Drawn in the region it would fill, left-aligned, at least 160 tall: a 20 icon in muted ink, the title in `text-body` 500, one sentence in `text-meta`, the one action at 32 (Geist 12c.2); a dashed edge only outside a card (`inCard` drops it); never a centred illustration |
 | ErrorState | `components/product/error-state.tsx` | A Callout with heading, an optional sentence, retry, and the HTTP code under "Technical details" |
-| Favourites and task rows | `app/home/page.tsx` | D1.4: the person's two most-used tasks (from their own successful requests; pictures and chat for someone new) as two tiles with "Last used 22m ago"; every other task a quiet row; a state only when not Ready; a link into Try with the right mode, or a plain row with the reason when unusable. Craft PR 4: two heading levels only, so "Make something" heads the section and the favourites lead it (D1.6's "Your usual" and "Everything else" sub-headings go). Tiles are 88 tall, padding 16: a 20 icon in ink (16 on a phone), the name in `text-body` 500 and "Last used" in `text-meta`. The other tasks are `ListRow`s at 40 (48 on a phone) in one ListCard under the tiles, icons in ink at 16, a `StateBadge` when not Ready and the reason as a trailing `text-meta` fact |
+| Favourites and task rows | `app/_home/home-page.tsx` | D1.4: the person's two most-used tasks (from their own successful requests; pictures and chat for someone new) as two tiles with "Last used 22m ago"; every other task a quiet row; a state only when not Ready; a link into Try with the right mode, or a plain row with the reason when unusable. Craft PR 4: two heading levels only, so "Make something" heads the section and the favourites lead it (D1.6's "Your usual" and "Everything else" sub-headings go). Tiles are 88 tall, padding 16: a 20 icon in ink (16 on a phone), the name in `text-body` 500 and "Last used" in `text-meta`. The other tasks are `ListRow`s at 40 (48 on a phone) in one ListCard under the tiles, icons in ink at 16, a `StateBadge` when not Ready and the reason as a trailing `text-meta` fact |
 | Problem card | `app/status/status-client.tsx` | A Callout in the `incident` variant (D1.6), one order at every width: a title that names the consequence ("Video requests can fail right now"; the verdict above names the state, so nothing repeats), "What's wrong" (the cause) and "Affects" (scope and who already hit it); what to do in full-weight 16 px text with its button right under it; then "Last 24 hours" (the story, one line tying red hours to the verdict, the 32 px strip with 14 px clock labels); then evidence behind "Show details". Only the first card's action is primary |
 | Layer table | same | Engines and providers: name, serves, uptime bar, "16/24 h up", state word; spend meter and "USD 2.02 of 8.00 this month" on one line for providers. Rows are one line; the hour-by-hour list lives on the card and the engine sheet. Open only when nothing needs attention, or after "Show all" |
 | Creation tile and viewer | `app/library/page.tsx`, `app/library/library-format.ts` | Square media tile in one continuous grid, with at most two cues always on (craft PR 5): the MediaBadge on video and audio and the maker's 16 px mark with Everyone shown; the day chip on the first tile of each day (`dayMarks`) is the one exception, and audio keeps its PlayDisc. On hover or focus a video's PlayDisc and a short title (`captionTitle`, or `untitledName` when there is no prompt), maker and day (`tileDate`); audio as an AudioFace; viewer with stage, designed video and audio controls (audio on a plain card with its kind and a primary play button; its words appear once, in the details), facts and Details as KeyValueLists, actions at 32 with a 32 row menu, and Share (the file itself) first, at 40, where the browser has a share sheet |
@@ -387,7 +443,7 @@ No new component without a director decision.
 6. **Failed receipts filter.** `/admin/api/activity/requests` ignores a status filter, so Status samples the latest 50 requests. Add `status=failed` and `backend=<service_id>` filters, and counts over a stated window.
 7. **Provider connection checks.** `checked_at` is null until a connection test runs. A periodic provider check (or the last successful request time per provider) would let Status say more than "Not checked yet".
 8. **Video posters.** No real video job records a poster: on the live gateway 0 of 50 video assets carry `poster_asset_id` (`video_media_job_http.completed_asset_from_stored_video` builds the asset without one; only `scripts/ui/household_seed.py` writes one). Every live tile therefore loads the video's metadata to show a frame. Extract a poster frame when a video job completes and record it as `poster_asset_id`. Separately, the gateway lists a seeded poster as its own image in `/me/api/media`; the UI hides any asset another asset names as `poster_asset_id`, and the API should do that itself.
-9. **Plan spend.** Members learn that a limit was reached only from refused receipts, and owners cannot see how much of a limit is used. Add a `plan_spend` block (spent, cap, period, resets_at) to `/me/api/home` and to `/admin/api/profiles`.
+9. **Plan spend.** Members learn that a limit was reached only from refused receipts, and owners cannot see how much of a limit is used. The former `/admin/api/profiles` route is removed; `gateway/admin_api.py` now lists access plans through `/admin/api/access-plans`. UNVERIFIED: whether those store records carry `plan_spend`. Treat spend visibility as a requirement to verify, not a delivered admin response field.
 10. **Refusal reason on receipts.** The UI finds spending-limit refusals by matching warning text ("spending allowance", "cap … would exceed"). Put the `BudgetExceeded` code (`budget_exceeded`) and which limit (daily, monthly; plan, provider, global) on the receipt.
 11. **Capability-to-engine map.** Status links engines to capabilities by the capability labels on each engine (`capability_labels`). An explicit list of the engines and providers that serve each capability, in routing order, would make "another engine still serves it" exact.
 12. **In-flight work.** Running media jobs are not in `/me/api/media`. Home and Library show placeholders from running receipts in `/me/api/home`; a `running` list with progress would let them say "Making your video, 42%".

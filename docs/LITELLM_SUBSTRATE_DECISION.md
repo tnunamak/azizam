@@ -30,7 +30,7 @@ OpenAI-shaped LLM execution and model-group discovery for:
 The Azizam owns the product/control-plane responsibilities around that
 substrate:
 
-- runtime App keys, OIDC users, Profiles, and policy gates
+- runtime App keys, OIDC users, Access plans, and policy gates
 - local service availability, resource admission, and model readiness
 - media workflows, durable jobs, generated assets, and provider-native passthrough
 - Anthropic/Ollama/Responses protocol frontends where the gateway has product
@@ -80,8 +80,8 @@ LiteLLM has already replaced the gateway's control plane.
 
 There are two distinct kinds of key, owned by two distinct planes:
 
-- **Gateway App keys** (`opk_`/`oak_`) are the product control plane. They live
-  in `admin.db`, carry the App/Profile/policy identity, and authenticate product
+- **Gateway keys** (`opk_` App keys and `oak_` admin keys) are the product control plane. They live
+  in `admin.db`, carry the App/access-plan/policy identity, and authenticate product
   requests that enter through the gateway. The gateway owns their lifecycle
   (mint, list, revoke) under `/admin/api/apps/*` and `/admin/api`.
 - **LiteLLM virtual keys** (`sk-…`) are the *execution* plane. LiteLLM mints and
@@ -91,7 +91,7 @@ There are two distinct kinds of key, owned by two distinct planes:
 
 A virtual key authorizes eligible local LLM-shaped protocol frontends: the
 three OpenAI execution routes above, the gateway's Anthropic Messages frontend,
-and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Profile
+and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Access plan
 policy for those calls. It does not authorize gateway-owned media, jobs, admin,
 or native passthrough routes; those remain behind gateway App-key auth and their
 own gateway policy.
@@ -108,7 +108,7 @@ fallbacks independently in the sidecar.
 The operator surface over the sidecar's `/key/*` management API lives under
 `/admin/api/operator/litellm/keys` (list, create) and `…/keys/delete`, with a
 legacy Python panel under **Services → LiteLLM execution keys**.
-Browser requests to `/admin` redirect to the new UI at `/ui/home/`.
+`/admin` serves no browser page; the web app is at `/`.
 The old Python panel requires an admin key in a request header; browser
 session access does not open that panel. The management APIs remain at the
 paths above. Properties:
@@ -224,7 +224,10 @@ Reference material:
 ## Deployment shape: sidecar (current); library mode is an open question
 
 LiteLLM currently runs as a separate server process (the `litellm[proxy]` CLI
-on :4011); the gateway forwards OpenAI-shaped execution to it over HTTP. Running
+on :4011); the gateway forwards OpenAI-shaped execution to it over HTTP. With
+`start.sh` it listens on `127.0.0.1:4011`. In the Docker Compose deployment the
+sidecar listens on `litellm:4000` inside the Compose network, and the gateway
+uses `http://litellm:4000`. Running
 LiteLLM in-process as a library (`litellm.Router` / `litellm.acompletion`) is a
 possible alternative. **This is not decided.** The sidecar stays for now; the
 deployment shape is deliberately left open to revisit.
@@ -233,7 +236,7 @@ Context for whoever revisits it:
 
 - `litellm[proxy]` is already a gateway dependency (importable in the venv), so
   the choice is about process topology, not dependency footprint.
-- The gateway owns its product control plane (App keys, Profiles, policy, admin
+- The gateway owns its product control plane (App keys, Access plans, policy, admin
   UI, receipts) **in the current state** and uses LiteLLM for raw execution,
   virtual-key administration, and `v1/models`; the target state keeps product
   access policy in the gateway while LiteLLM executes eligible LLM calls.

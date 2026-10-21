@@ -510,3 +510,46 @@ class TestToolcallStreamDetector:
         detector = ToolcallStreamDetector(had_tools=True, backend_hint="vllm")
         asyncio.run(_collect_advisory(detector, chunks))
         assert detector.detected_family == "mistral"
+
+
+def test_marker_followed_by_structured_tool_call_suppresses_advisory():
+    """Content marker plus a real delta.tool_calls frame is not an unlifted call."""
+    calls = [{"id": "c1", "type": "function",
+              "function": {"name": "f", "arguments": "{}"}}]
+    chunks = [
+        _sse_chunk(_payload(_delta_choice(content="<tool_call>"))),
+        _sse_chunk(_payload(_delta_choice(tool_calls=calls))),
+        b"data: [DONE]\n\n",
+    ]
+    detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
+    assert asyncio.run(_collect_advisory(detector, chunks)) is None
+
+
+@pytest.mark.parametrize("structured_call", [False, True])
+@pytest.mark.parametrize("padding", ["", "x" * 256])
+def test_stream_advisory_survives_transport_splits_and_long_deltas(structured_call, padding):
+    marker = _sse_chunk(_payload(_delta_choice(content="<tool_call>" + padding)))
+    calls = [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}]
+    tool_frame = _sse_chunk(_payload(_delta_choice(tool_calls=calls)))
+    wire = marker + (tool_frame if structured_call else b"") + b"data: [DONE]\n\n"
+
+    async def exercise():
+        partitions = [[wire]]
+        partitions.extend([wire[:i], wire[i:]] for i in range(1, len(wire)))
+        partitions.append([wire[i : i + 1] for i in range(len(wire))])
+        for index, chunks in enumerate(partitions):
+            detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
+            advisory = await _collect_advisory(detector, chunks)
+            if structured_call:
+                assert advisory is None, (index, advisory)
+            else:
+                assert advisory is not None, index
+                assert "hermes_or_qwen" in advisory, (index, advisory)
+
+    asyncio.run(exercise())
+
+
+def test_oversized_unterminated_line_is_not_retained():
+    detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
+    detector._process_chunk(b": " + b"x" * ((1 << 20) + 1))
+    assert detector._line_carry == b""

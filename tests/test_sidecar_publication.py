@@ -193,7 +193,7 @@ def test_launcher_uses_yaml_admin_db_resolution(tmp_path, monkeypatch):
 def test_watcher_records_launched_hash_instead_of_prelaunch_hash(tmp_path):
     source = (ROOT / "start.sh").read_text()
     start = source.index("    watch_litellm_config() {")
-    end = source.index("\n    watch_litellm_config &", start)
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
     watcher = source[start:end]
     artifact = tmp_path / "selected.yaml"
     artifact.write_text("exists")
@@ -222,6 +222,7 @@ LITELLM_CONFIG_PATH=$1/shared.yaml
 LITELLM_PID_FILE=$1/child.pid
 LITELLM_RUNTIME_HASH_FILE=$1/runtime-hash
 AZIZAM_ADMIN_DB_PATH=$1/admin.db
+mkfifo "$LITELLM_CONFIG_PATH.release"
 python3() {
     local launch="" receipt=""
     while [ "$#" -gt 0 ]; do
@@ -237,11 +238,14 @@ python3() {
     fi
     echo snapshot > "$launch"
     echo acknowledged > "$receipt"
+    # A real sidecar remains alive after acknowledging startup.
+    read -r release < "$LITELLM_CONFIG_PATH.release"
 }
 ''' + source[start:end] + '''
 start_litellm || exit 1
 cat "$LITELLM_RUNTIME_HASH_FILE"
 cat "$LITELLM_LAUNCH_CONFIG_PATH"
+echo release > "$LITELLM_CONFIG_PATH.release"
 wait "$LITELLM_PID"
 '''
     result = subprocess.run(["bash", "-c", script, "launch-test", str(tmp_path)],

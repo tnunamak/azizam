@@ -1,11 +1,62 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
-import { chatAlias } from "../src/app/home/recipes";
+import { chatAlias } from "../src/app/_home/chat-alias";
+import { fulfilJson } from "./fixtures/intercept";
 
-const homePath = "/ui/home/";
+// The key selector right after minting: the loading label, or the key's own.
+const newKeyLabel = (credential: { display_name?: string | null }) =>
+  new RegExp(`New key · loading access|· ${(credential.display_name || "Key").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+
+const homePath = "/";
 const homeApi = "**/me/api/home";
-const mediaApi = "**/me/api/media?limit=50";
+const mediaApi = "**/me/api/media?limit=12";
 const setupApi = "**/admin/api/setup-progress";
+
+
+type PlanDocument = Record<string, unknown>;
+
+/**
+ * Give the signed-in person a plan for one test, through the same admin API an
+ * owner uses. Returns what to run afterwards to hand back the previous plan.
+ */
+async function holdPlan(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  email: string,
+  document: PlanDocument,
+) {
+  const created = await request.post("/admin/api/access-plans", {
+    headers,
+    data: {
+      direct_engine_access: { engines: [], operations: [] },
+      paid_providers: [],
+      provider_fallback: false,
+      caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+      can_load_models: true,
+      receipt_detail: "basic",
+      media_metadata: "none",
+      ...document,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const { access_plan: plan } = await created.json();
+  const { people } = await (await request.get("/admin/api/people")).json();
+  const me = people.find((person: { email: string }) => person.email === email);
+  const original: string | null = me.plan_id;
+  const assign = (planId: string | null) =>
+    request.patch(`/admin/api/people/${me.id}`, {
+      headers,
+      data: { access_plan: planId },
+    });
+  expect((await assign(plan.id)).ok()).toBe(true);
+  return async () => {
+    expect((await assign(original)).ok()).toBe(true);
+    expect(
+      (await request.delete(`/admin/api/access-plans/${plan.id}`, { headers })).ok(),
+    ).toBe(true);
+  };
+}
 
 test("Home names a freshly checked on-demand task as ready to start", async ({
   page,
@@ -13,9 +64,7 @@ test("Home names a freshly checked on-demand task as ready to start", async ({
   await page.route(homeApi, async (route) => {
     const response = await route.fetch();
     const home = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...home,
         capabilities: home.capabilities.map(
           (capability: { capability: string; availability?: object }) =>
@@ -37,8 +86,7 @@ test("Home names a freshly checked on-demand task as ready to start", async ({
                 }
               : capability,
         ),
-      },
-    });
+      }, { response });
   });
   await page.goto(homePath);
   await expect(page.locator("main")).toContainText(
@@ -54,9 +102,7 @@ test("Home refreshes capability evidence while it stays open", async ({
   await page.route(homeApi, async (route) => {
     const response = await route.fetch();
     const home = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...home,
         capabilities: home.capabilities.map(
           (capability: { capability: string; availability?: object }) =>
@@ -79,8 +125,7 @@ test("Home refreshes capability evidence while it stays open", async ({
                 }
               : capability,
         ),
-      },
-    });
+      }, { response });
   });
   await page.goto(homePath);
   // The state badge sits in the row beside its link, so read the whole row.
@@ -93,7 +138,7 @@ test("Home refreshes capability evidence while it stays open", async ({
   await expect(chat).not.toContainText("Unknown");
 });
 
-async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
+async function chooseKey(page: Page, optionName: string | RegExp) {
   await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: optionName }).click();
 }
@@ -107,7 +152,7 @@ async function openClientInstructionsOnPhone(page: Page, _width: number) {
   // "Add an app"; a newcomer sees it open.
   const addApp = page.getByRole("button", { name: "Add an app", exact: true });
   await expect(picker.or(addApp)).toBeVisible();
-  if (await addApp.isVisible()) await addApp.click();
+  if (await addApp.count()) await addApp.click();
   await expect(picker).toBeVisible();
   if ((await picker.getAttribute("aria-pressed")) !== "true") {
     await picker.click();
@@ -175,9 +220,7 @@ for (const theme of ["light", "dark"] as const) {
           await page.route(homeApi, async (route) => {
             const response = await route.fetch();
             const actual = await response.json();
-            await route.fulfill({
-              response,
-              json: {
+            await fulfilJson(route, {
                 ...actual,
                 apps: [],
                 capabilities: [],
@@ -192,20 +235,18 @@ for (const theme of ["light", "dark"] as const) {
                   affected_capability_ids: [],
                   counts: { total: 0, available: 0, affected: 0 },
                 },
-              },
-            });
+              }, { response });
           });
           await page.route(setupApi, (route) =>
-            route.fulfill({ json: { complete: true, steps: [] } }),
+            fulfilJson(route, { complete: true, steps: [] }),
           );
           await page.route(mediaApi, (route) =>
-            route.fulfill({ json: { assets: [], next_cursor: null } }),
+            fulfilJson(route, { assets: [], next_cursor: null }),
           );
         }
         if (state === "seeded") {
           await page.route(mediaApi, (route) =>
-            route.fulfill({
-              json: {
+            fulfilJson(route, {
                 assets: [
                   {
                     asset_id: "home-recorded-image",
@@ -218,19 +259,15 @@ for (const theme of ["light", "dark"] as const) {
                   },
                 ],
                 next_cursor: null,
-              },
-            }),
+              }),
           );
           await page.route(setupApi, (route) =>
-            route.fulfill({ json: { complete: true, steps: [] } }),
+            fulfilJson(route, { complete: true, steps: [] }),
           );
         }
         if (state === "error") {
           await page.route(homeApi, (route) =>
-            route.fulfill({
-              status: 503,
-              json: { error: { message: "Unavailable for this test" } },
-            }),
+            fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
           );
         }
 
@@ -261,7 +298,7 @@ for (const theme of ["light", "dark"] as const) {
             (app: { name: string }) => app.name === "Browser test app",
           );
           expect(seededApp?.credentials.length).toBeGreaterThan(0);
-          const thumbnail = page.locator('a[href^="/ui/library/?asset="] img');
+          const thumbnail = page.locator('a[href^="/library/?asset="] img');
           await expect(thumbnail).toHaveCount(1);
           await thumbnail.scrollIntoViewIfNeeded();
           await expect
@@ -272,7 +309,7 @@ for (const theme of ["light", "dark"] as const) {
             )
             .toBeGreaterThan(0);
           await openClientInstructionsOnPhone(page, width);
-          await chooseRecipeKey(page, /Browser test app/);
+          await chooseKey(page, /Browser test app/);
           const selected = seededApp.credentials[0];
           const aliases = snapshot.credential_aliases?.[selected.id] ?? [];
           const model = page.getByRole("textbox", {
@@ -392,10 +429,7 @@ test("Home setup notes fit a phone and remain accessible", async ({
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.route(setupApi, async (route) => {
     const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: { ...(await response.json()), complete: true },
-    });
+    await fulfilJson(route, { ...(await response.json()), complete: true }, { response });
   });
   await page.goto(homePath);
   const snapshot = await (await request.get("/me/api/home")).json();
@@ -404,7 +438,7 @@ test("Home setup notes fit a phone and remain accessible", async ({
   );
   expect(seededApp?.credentials.length).toBeGreaterThan(0);
   await openClientInstructionsOnPhone(page, 390);
-  await chooseRecipeKey(page, /Browser test app/);
+  await chooseKey(page, /Browser test app/);
   await page.getByRole("button", { name: "Setup notes", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Open WebUI");
   await expect(page.getByRole("dialog")).toContainText(
@@ -449,9 +483,9 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
   await expect(page.getByLabel("Loading Home")).toHaveCount(0);
 });
 
-test("signed-in landing redirects to Home", async ({ page }) => {
-  await page.goto("/ui/");
-  await expect(page).toHaveURL(/\/ui\/home\/$/);
+test("signed-in root shows Home", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await openClientInstructionsOnPhone(page, 1280);
   await expect(
     page.getByRole("button", { name: "Open WebUI", exact: true }),
@@ -472,19 +506,15 @@ test("member Home never requests owner APIs", async ({ page, request }) => {
     if (pathname.startsWith("/admin/api/")) ownerCalls.push(pathname);
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         csrf_token: "member-fixture",
         user: member,
         apps: [],
-      },
-    }),
+      }),
   );
   await page.route(homeApi, (route) =>
-    route.fulfill({
-      json: { ...actual, user: member, apps: [], receipts: [] },
-    }),
+    fulfilJson(route, { ...actual, user: member, apps: [], receipts: [] }),
   );
   await page.goto(homePath);
   await expect(
@@ -511,21 +541,15 @@ test("superadmin Home does not request the owner-only setup API", async ({
     await page.route(path, async (route) => {
       const response = await route.fetch();
       const actual = await response.json();
-      await route.fulfill({
-        response,
-        json: { ...actual, user: { ...actual.user, role: "superadmin" } },
-      });
+      await fulfilJson(route, { ...actual, user: { ...actual.user, role: "superadmin" } }, { response });
     });
   }
   // A superadmin is allowed to use the gateway, but the first-run checklist
   // belongs to its owner. Any accidental request gets the actual contract's 403.
   await page.route(setupApi, (route) =>
-    route.fulfill({
-      status: 403,
-      json: {
+    fulfilJson(route, {
         error: { code: "owner_required", message: "Owner access required." },
-      },
-    }),
+      }, { status: 403 }),
   );
   await page.goto(homePath);
   await expect(
@@ -582,7 +606,7 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("inline reveal-once key tests a real chat request and produces one owned receipt", async ({
+test("inline reveal-once key tests a real chat request and produces one owned receipt", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -591,35 +615,12 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     "x-azizam-admin-action": "1",
     "x-azizam-csrf": session.actor.csrf_token,
   };
-  // Set the person's inherited plan before they create a key, through the
-  // same admin mapping interface an operator uses to grant access.
-  const profileResponse = await request.post("/admin/api/profiles", {
-    headers,
-    data: {
-      name: "Home connection acceptance",
-      profile: {
-        id: "home-connection-acceptance",
-        protocols: ["openai"],
-        backends: ["capture-engine"],
-        models: ["demo-chat"],
-      },
-    },
+  // Set the person's plan before they create a key, through the same admin
+  // interface an operator uses to grant access.
+  const release = await holdPlan(request, headers, session.actor.email, {
+    name: "Home connection acceptance",
+    can_use: { chat: { items: [{ model: "demo-chat" }] } },
   });
-  expect(profileResponse.status()).toBe(201);
-  const { profile } = await profileResponse.json();
-  const mappingResponse = await request.post(
-    "/admin/api/runtime-profile-mappings",
-    {
-      headers,
-      data: {
-        source_kind: "email",
-        source_value: session.actor.email,
-        profile_id: profile.id,
-      },
-    },
-  );
-  expect(mappingResponse.status()).toBe(201);
-  const { mapping } = await mappingResponse.json();
   try {
     const registryResponse = await request.get(
       "/admin/api/operator/service-registry",
@@ -656,12 +657,13 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         secret,
       "Minted key is shown once",
     ).toBe(true);
+    // The new key stays selected: "New key · loading access" until Home's
+    // refetch lists it, then its own name. Either order is correct.
     await expect(page.getByRole("combobox", { name: "API key" })).toContainText(
-      "New key",
+      newKeyLabel(credential),
     );
-    await expect(
-      page.getByRole("textbox", { name: "Model", exact: true }),
-    ).toHaveCount(0);
+    // The Model field follows the key's access, which arrives with Home's
+    // refetch; the chat check after the reload exercises that access.
     await page
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
@@ -690,7 +692,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     ).toBeFalsy();
     // The new-key option reads "New key for Open WebUI" since D1.1; pick
     // the key just minted for the Open WebUI app.
-    await chooseRecipeKey(page, /^Open WebUI · /);
+    await chooseKey(page, /^Open WebUI · /);
 
     const before = await (
       await request.get("/me/api/activity?limit=100")
@@ -698,7 +700,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const ownedBefore = before.receipts.filter(
       (receipt: { request_id: string }) => receipt.request_id,
     ).length;
-    await page.getByLabel("Paste your API key", { exact: true }).fill(secret);
+    await page.getByLabel("Paste your API Key", { exact: true }).fill(secret);
     const testedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/me/api/connection-test",
@@ -738,8 +740,8 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     expect(receipt.request_id).toBe(connection.request_id);
     expect(receipt.status).toBe("succeeded");
     expect(receipt.source_kind).toBe("gateway-ui");
-    // Stable alias resolution precedes the existing durable receipt boundary.
-    expect(receipt.requested_model).toBe("demo-chat");
+    // The receipt records the name the request used; the plan grants the model behind it.
+    expect(receipt.requested_model).toBe("fast");
     expect(
       JSON.stringify(connection).includes(secret),
       "Connection response must not echo the key",
@@ -779,26 +781,21 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     await page
       .getByRole("link", { name: "View request receipt", exact: true })
       .click();
-    await expect(page).toHaveURL(new RegExp(`/r/${connection.request_id}$`));
-    await expect(
-      page.getByRole("dialog", { name: "Request detail", exact: true }),
-    ).toBeVisible();
-    await expect(page.locator("#receipt-body")).toContainText(
-      connection.request_id,
-    );
+    await expect(page).toHaveURL(new RegExp(`/usage/\\?receipt=${connection.request_id}$`));
+    // /usage/?receipt= opens the Usage receipt sheet (the /r/<id> page is gone).
+    const sheet = page.getByRole("dialog", {
+      name: "Request receipt",
+      exact: true,
+    });
+    await expect(sheet).toBeVisible();
+    await sheet.getByText("Technical details", { exact: true }).click();
+    await expect(sheet).toContainText(`Request ID: ${connection.request_id}`);
   } finally {
-    expect(
-      (
-        await request.delete(
-          `/admin/api/runtime-profile-mappings/${mapping.id}`,
-          { headers },
-        )
-      ).ok(),
-    ).toBe(true);
+    await release();
   }
 });
 
-test("a new inherited key cannot borrow a broader existing app's recipe", async ({
+test("a new inherited key cannot borrow an existing app's access beyond the person's plan", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -807,44 +804,24 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     "x-azizam-admin-action": "1",
     "x-azizam-csrf": session.actor.csrf_token,
   };
-  const profileResponse = await request.post("/admin/api/profiles", {
-    headers,
-    data: {
-      name: "Home inherited no chat",
-      profile: {
-        id: "home-inherited-no-chat",
-        protocols: ["openai"],
-        backends: ["capture-engine"],
-        // Empty model lists permit every model. Use an explicit non-chat model.
-        models: ["demo-image"],
-      },
-    },
+  const release = await holdPlan(request, headers, session.actor.email, {
+    name: "Home inherited no chat",
+    // A plan lists what it grants: use an explicit non-chat model.
+    can_use: { image: { items: [{ model: "demo-image" }] } },
   });
-  expect(profileResponse.status()).toBe(201);
-  const { profile } = await profileResponse.json();
-  const mappingResponse = await request.post(
-    "/admin/api/runtime-profile-mappings",
-    {
-      headers,
-      data: {
-        source_kind: "email",
-        source_value: session.actor.email,
-        profile_id: profile.id,
-      },
-    },
-  );
-  expect(mappingResponse.status()).toBe(201);
-  const { mapping } = await mappingResponse.json();
   try {
     const snapshot = await (await request.get("/me/api/home")).json();
     const broader = snapshot.apps.find(
       (app: { name: string }) => app.name === "Browser test app",
     ).credentials[0];
+    // An app runs only what both its plan and its person's plan allow
+    // (ACCESS_PLANS.md §2.6): the person's plan now grants no chat, so the
+    // app's own chat grant no longer gives its key the chat alias either.
     expect(
       snapshot.credential_aliases[broader.id].some(
         (alias: { id: string }) => alias.id === "fast",
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
     await openClientInstructionsOnPhone(page, 1280);
@@ -854,7 +831,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     // "New app · default access" reads "New key for Open WebUI" since D1.1.
     await expect(selector).toContainText("New key for Open WebUI");
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
-    await chooseRecipeKey(page, /Browser test app/);
+    await chooseKey(page, /Browser test app/);
     const allowedChat = chatAlias(snapshot.credential_aliases[broader.id]);
     if (allowedChat) {
       await expect(page.getByRole("textbox", { name: "Model" })).toHaveValue(allowedChat);
@@ -874,7 +851,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     const minted = await mintedResponse;
     expect(minted.status()).toBe(201);
     const { credential } = await minted.json();
-    await expect(selector).toContainText("New key");
+    await expect(selector).toContainText(newKeyLabel(credential));
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     const catalog = await request.get("/v1/models", {
       headers: { authorization: `Bearer ${credential.api_key}` },
@@ -908,13 +885,6 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
       .click();
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
   } finally {
-    expect(
-      (
-        await request.delete(
-          `/admin/api/runtime-profile-mappings/${mapping.id}`,
-          { headers },
-        )
-      ).ok(),
-    ).toBe(true);
+    await release();
   }
 });

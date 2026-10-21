@@ -1,36 +1,60 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
+// People cases share the lane owner's invitations and people list, so they run
+// in order on one worker (in parallel one case re-rendered another's list and
+// focus did not return to the invitation's Actions trigger).
+test.describe.configure({ mode: "default" });
+
+// The shapes the gateway sends (docs/design/ACCESS_PLANS.md §3.1).
+const planDocument = {
+  name: "Local creative",
+  can_use: { chat: { items: "all" }, image: { items: "all" } },
+  direct_engine_access: { engines: [], operations: [] },
+  paid_providers: [],
+  provider_fallback: false,
+  caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+  can_load_models: true,
+  receipt_detail: "basic",
+  media_metadata: "none",
+};
+const planSummary = "Chat and images. Local models only. No paid providers.";
 const plan = {
   id: "plan-local",
   name: "Local creative",
-  description: "For family and friends",
   created_at: 1720000000,
-  protocols: ["openai"],
-  workflows: [],
-  status_visibility: "full",
-  profile: {
-    allow: { intents: ["chat", "images"], exposure: ["local"] },
-    models: ["demo-chat"],
-    fallback: { cloud_allowed: false },
-    custom_operator_field: { preserve: true },
-  },
+  updated_at: 1720000000,
+  plan: { ...planDocument, id: "plan-local" },
+  summary: planSummary,
+  used_by: { people: ["person-family"], apps: [], invites: 1 },
 };
+// People and Invites list plans as pickers show them.
+const planChoice = { id: plan.id, name: plan.name, summary: planSummary };
 const person = {
   id: "person-family",
   name: "Morgan Rivera",
   email: "morgan@example.test",
-  profile_id: plan.id,
+  plan_id: plan.id,
   plan_name: plan.name,
-  disabled: false,
+  disabled_at: null,
   last_active: Math.floor(Date.now() / 1000) - 3600,
+  disabled: false,
   requests_this_month: null,
+  builtin: true,
+  protected: false,
+  role: "member",
+  grants: [],
 };
 const invitation = {
   id: "invitation-family",
+  kind: "invite",
   email: "sam@example.test",
-  profile_id: plan.id,
+  plan_id: plan.id,
   plan_name: plan.name,
+  user_id: null,
+  created_by: "owner",
   expires_at: Math.floor(Date.now() / 1000) + 86400,
   created_at: Math.floor(Date.now() / 1000) - 3600,
   used_at: null,
@@ -40,35 +64,21 @@ const signIn = {
   built_in: true,
   oidc: true,
   oidc_label: "Example ID",
-  oidc_url: "/admin/login?next=/ui/",
+  oidc_url: "/login?return_to=/",
   instance_name: "Rivera household",
   owner_name: "Alex",
 };
 const editor = {
-  schema_version: 1,
-  profile: {
-    create: { profile: {} },
-    set_semantics: { omitted: "no_opinion", empty: "deny_all" },
-    choices: {
-      intents: [
-        { id: "chat", label: "Chat" },
-        { id: "images", label: "Images" },
-      ],
-      exposure: [
-        { id: "local", label: "Local" },
-        { id: "remote", label: "Remote (paid)" },
-      ],
-      models: [{ id: "demo-chat", label: "Demo chat" }],
-      protocols: [{ id: "openai", label: "OpenAI" }],
-      workflows: [],
-      trust_tiers: [],
-      resource_tiers: [],
-      tags: [],
-      status_visibility: [],
-      target_visibility: [],
-      target_activation: [],
-    },
-  },
+  schema_version: 2,
+  capabilities: [
+    { id: "chat", label: "Chat", items: [{ kind: "model", id: "demo-chat", available: true }] },
+    { id: "image", label: "Images", items: [] },
+  ],
+  engines: [],
+  paid_providers: [],
+  receipt_detail: [{ id: "basic", label: "Basic", description: null }],
+  media_metadata: [{ id: "none", label: "Strip", description: null }],
+  new_plan: { ...planDocument, name: "", can_use: {} },
 };
 const surfaces = ["people", "invites", "plans", "sign-in", "invite"] as const;
 type Surface = (typeof surfaces)[number];
@@ -76,55 +86,37 @@ type State = "seeded" | "empty" | "error";
 
 async function mock(page: Page, state: State) {
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json:
-        state === "error"
+    fulfilJson(route, state === "error"
           ? { error: { message: "People unavailable" } }
           : {
               people: state === "empty" ? [] : [person],
-              profiles: state === "empty" ? [] : [plan],
-            },
-    }),
+              access_plans: state === "empty" ? [] : [planChoice],
+            }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/invites", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json:
-        state === "error"
+    fulfilJson(route, state === "error"
           ? { error: { message: "Invites unavailable" } }
           : {
               invites: state === "empty" ? [] : [invitation],
-              profiles: state === "empty" ? [] : [plan],
-            },
-    }),
+              access_plans: state === "empty" ? [] : [planChoice],
+              invite_access_plan: null,
+            }, { status: state === "error" ? 503 : 200 }),
   );
-  await page.route("**/admin/api/profiles", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json:
-        state === "error"
+  await page.route("**/admin/api/access-plans", (route) =>
+    fulfilJson(route, state === "error"
           ? { error: { message: "Plans unavailable" } }
-          : { profiles: state === "empty" ? [] : [plan] },
-    }),
+          : { access_plans: state === "empty" ? [] : [plan] }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/auth/api/options*", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json:
-        state === "error"
+    fulfilJson(route, state === "error"
           ? { error: { message: "Sign-in unavailable" } }
           : {
               ...signIn,
               ...(state === "empty" ? { built_in: false, oidc: false } : {}),
-            },
-    }),
+            }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/auth/api/invite", (route) =>
-    route.fulfill({
-      status: state === "error" ? 410 : 200,
-      json:
-        state === "error"
+    fulfilJson(route, state === "error"
           ? {
               error: {
                 message:
@@ -133,24 +125,23 @@ async function mock(page: Page, state: State) {
             }
           : {
               ...signIn,
-              plan,
+              plan: planChoice,
               email: invitation.email,
               expires_at: invitation.expires_at,
-            },
-    }),
+            }, { status: state === "error" ? 410 : 200 }),
   );
-  await page.route("**/admin/api/policy/editor", (route) =>
-    route.fulfill({ json: editor }),
+  await page.route("**/admin/api/access-plans/editor", (route) =>
+    fulfilJson(route, editor),
   );
 }
 async function open(page: Page, surface: Surface, state: State) {
   await mock(page, state);
   await page.goto(
     surface === "sign-in"
-      ? "/ui/sign-in/"
+      ? "/sign-in/"
       : surface === "invite"
-        ? `/ui/invite/${state === "empty" ? "" : "#token=browser-test-token"}`
-        : "/ui/people/",
+        ? `/invite/${state === "empty" ? "" : "#token=browser-test-token"}`
+        : "/people/",
   );
   if (surface === "invites")
     await page.getByRole("tab", { name: "Invites", exact: true }).click();
@@ -168,7 +159,7 @@ async function open(page: Page, surface: Surface, state: State) {
     await expect(
       page
         .getByRole("alert")
-        .filter({ hasText: /Couldn’t load (this|sign-in)/ }),
+        .filter({ hasText: /Couldn’t load (this|sign-in)|Something didn’t load/ }),
     ).toBeVisible();
   else if (surface === "people")
     await expect(
@@ -264,20 +255,16 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   await page.route("**/admin/api/invites", async (route) => {
     if (route.request().method() === "POST") {
       expect(route.request().postDataJSON()).toEqual({
-        profile_id: plan.id,
+        access_plan: plan.id,
         email: "friend@example.test",
         expires_in: 604800,
       });
-      await route.fulfill({
-        json: {
+      await fulfilJson(route, {
           invite: invitation,
-          url: "/ui/invite/#token=browser-test-token",
-        },
-      });
+          url: "/invite/#token=browser-test-token",
+        });
     } else
-      await route.fulfill({
-        json: { invites: [invitation], profiles: [plan] },
-      });
+      await fulfilJson(route, { invites: [invitation], access_plans: [planChoice], invite_access_plan: null });
   });
   await page
     .getByRole("button", { name: "Invite someone", exact: true })
@@ -297,7 +284,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   );
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await page.route(`**/admin/api/invites/${invitation.id}/link`, (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=browser-test-token" } }),
+    fulfilJson(route, { url: "/invite/#token=browser-test-token" }),
   );
   await page.reload();
   await page.getByRole("tab", { name: "Invites", exact: true }).click();
@@ -319,7 +306,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
       method: route.request().method(),
       body: route.request().postDataJSON(),
     });
-    await route.fulfill({ json: { person } });
+    await fulfilJson(route, { ok: true });
   });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Change access plan" }).click();
@@ -328,7 +315,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   );
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(writes[0]).toEqual({ method: "PATCH", body: { profile_id: plan.id } });
+  expect(writes[0]).toEqual({ method: "PATCH", body: { access_plan: plan.id } });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Disable access" }).click();
   await page
@@ -337,12 +324,10 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(writes[1]).toEqual({ method: "PATCH", body: { disabled: true } });
   await page.route(`**/admin/api/people/${person.id}/reset`, (route) =>
-    route.fulfill({
-      json: {
-        url: "/ui/sign-in/#reset=reset-test",
+    fulfilJson(route, {
+        url: "/sign-in/#reset=reset-test",
         expires_at: invitation.expires_at,
-      },
-    }),
+      }),
   );
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page
@@ -365,50 +350,105 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
 
-test("people lane editing preserves unknown fields, omitted sets, and simulator returns actual decision", async ({
+test("people lane editing sends the whole plan document", async ({
   page,
 }) => {
   await open(page, "plans", "seeded");
-  await page.route(`**/admin/api/profiles/${plan.id}`, (route) => {
+  await page.route(`**/admin/api/access-plans/${plan.id}`, (route) => {
     const body = route.request().postDataJSON();
-    expect(body.profile.custom_operator_field).toEqual({ preserve: true });
-    expect(body.profile.models).toEqual(["demo-chat"]);
-    expect(body.profile.protocols).toBeUndefined();
-    return route.fulfill({ json: { profile: { ...plan, ...body } } });
+    expect(route.request().method()).toBe("PUT");
+    // Every field goes back, so the server never fills a gap with a default.
+    expect(body).toEqual({ ...planDocument, name: "Family access" });
+    return fulfilJson(route, { access_plan: { ...plan, name: body.name, plan: { ...body, id: plan.id } } });
   });
   await page.getByRole("button", { name: "Edit plan", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Family access");
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.route("**/admin/api/policy/simulate", (route) => {
-    expect(route.request().postDataJSON()).toEqual({
-      profile: plan.id,
-      request: { model: "demo-chat", intent: null, protocol: null },
-    });
-    return route.fulfill({
-      json: {
-        profile_id: plan.id,
-        decision: {
-          decision: "denied",
-          allowed: false,
-          reasons: ["This model is not allowed by the selected plan."],
-          sources: [],
-          visibility_level: "none",
-        },
+});
+
+// Check access names the rule behind each row and leads to the page that edits it.
+// The display states (filters, counts, cannot tell) belong to the component spec.
+const planRule = (code: string, plain_reason: string) => ({
+  code, kind: "plan", id: plan.id, name: plan.name, plain_reason,
+});
+const checkAccessPreview = {
+  plan_ids: [plan.id],
+  summary: { usable: 1, total: 3, blocked: 2, unknown: 0 },
+  groups: [
+    { group: "chat", label: "Chat", total: 2, usable: 1, blocked: 1, unknown: 0 },
+    { group: "video", label: "Video", total: 1, usable: 0, blocked: 1, unknown: 0 },
+  ],
+  entries: [
+    {
+      id: "demo-chat", name: "Demo chat", alias: false, group: "chat", group_label: "Chat",
+      state: "allowed", reason: null, points_to: [], kinds: [],
+      rule: planRule("plan.allows_all", "The Local creative plan includes every chat item, now and as they are added."),
+    },
+    {
+      id: "demo-secret", name: "Demo secret", alias: false, group: "chat", group_label: "Chat",
+      state: "blocked", points_to: [], kinds: [],
+      reason: "It is in the Adult category, which this plan can't see.",
+      rule: {
+        code: "category.hidden", kind: "category", id: "adult", name: "Adult",
+        plain_reason: "It is in the Adult category, which this plan can't see.",
       },
+    },
+    {
+      id: "demo-video", name: "Demo video", alias: false, group: "video", group_label: "Video",
+      state: "blocked", points_to: [], kinds: [],
+      reason: "The Local creative plan doesn't include video.",
+      rule: planRule("plan.capability_not_granted", "The Local creative plan doesn't include video."),
+    },
+  ],
+};
+for (const width of [1280, 390])
+  test(`Check access names the rule behind a row, explains why, and leads to its editor at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await open(page, "plans", "seeded");
+    await page.route("**/admin/api/access/preview", (route) => {
+      expect(route.request().postDataJSON()).toEqual({ plan: plan.id });
+      return fulfilJson(route, checkAccessPreview);
     });
+    if (width === 390) {
+      // The row's own button is hidden on a phone; the actions menu has it.
+      await page.getByRole("button", { name: `Actions for ${plan.name}` }).click();
+      await page.getByRole("menuitem", { name: "Check access", exact: true }).click();
+    } else {
+      await page.getByRole("button", { name: "Check access", exact: true }).click();
+    }
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Can use 1 of 3")).toBeVisible();
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await expect(dialog.getByRole("heading", { name: "Video" }).locator("..")).toContainText("0 of 1 usable · 1 blocked");
+    // The blocked row says which rule decided it, in plain words, with no internal id.
+    const video = dialog.getByRole("listitem").filter({ hasText: "Demo video" });
+    await expect(video).toContainText("Blocked: The Local creative plan doesn't include video.");
+    await expect(video).not.toContainText(plan.id);
+    // A category is named, and its link goes to that category.
+    const secret = dialog.getByRole("listitem").filter({ hasText: "Demo secret" });
+    await expect(secret.getByRole("link", { name: "Edit the Adult category" })).toHaveAttribute(
+      "href", "/categories/?category=adult",
+    );
+    // An allowed row explains itself when it is opened.
+    const chat = dialog.getByRole("listitem").filter({ hasText: "Demo chat" });
+    await expect(chat).not.toContainText("Why allowed");
+    await chat.getByRole("button", { name: "Why Demo chat" }).click();
+    await expect(chat).toContainText("Why allowed: The Local creative plan includes every chat item");
+    // Nothing spills sideways on a phone.
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    // The plan link opens the plan editor in place.
+    await video.getByRole("link", { name: "Edit the Local creative plan" }).click();
+    await expect(page.getByRole("heading", { name: "Edit access plan" })).toBeVisible();
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue(plan.name);
+    await expect(page.getByRole("heading", { name: `Check access · ${plan.name}` })).toHaveCount(0);
   });
-  await page.getByRole("button", { name: "Test access", exact: true }).click();
-  await page.getByLabel("Model", { exact: true }).fill("demo-chat");
-  await page.getByRole("button", { name: "Run test" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "This request would be denied",
-  );
-  await expect(page.getByRole("status")).toContainText(
-    "This model is not allowed by the selected plan.",
-  );
-  await page.getByLabel("Model", { exact: true }).fill("different-model");
-  await expect(page.getByText("This request would be denied")).toHaveCount(0);
+
+test("the plan link of Check access also works as an address", async ({ page }) => {
+  await mock(page, "seeded");
+  await page.goto(`/people/?plan=${plan.id}`);
+  await expect(page.getByRole("heading", { name: "Edit access plan" })).toBeVisible();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(plan.name);
 });
 
 test("people lane account acceptance reveals a key once, then lands on Home", async ({
@@ -422,9 +462,7 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
       email: invitation.email,
       password: "Browser acceptance password",
     });
-    return route.fulfill({
-      json: { next: "/ui/", credential: { api_key: "test-key-display-once" } },
-    });
+    return fulfilJson(route, { next: "/", credential: { api_key: "test-key-display-once" } });
   });
   await page.getByLabel("Your name").fill("Sam Rivera");
   await page
@@ -453,7 +491,7 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
   ).toBeVisible();
   expect(new URL(page.url()).hash).toBe("");
   await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page).toHaveURL(/\/ui\/$/);
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
 });
 
 test("people lane unbound invitation requires an explicit choice", async ({
@@ -488,19 +526,16 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
     expect(route.request().postDataJSON()).toEqual({
       email: person.email,
       password: "Browser sign in password",
-      return_to: "/ui/home/",
+      return_to: "/",
     });
-    return route.fulfill({
-      status: failed ? 401 : 200,
-      json: failed
+    return fulfilJson(route, failed
         ? {
             error: {
               code: "invalid_login",
               message: "Email or password is incorrect.",
             },
           }
-        : { next: "/ui/" },
-    });
+        : { next: "/" }, { status: failed ? 401 : 200 });
   });
   await page.getByLabel("Email", { exact: true }).fill(person.email);
   await page
@@ -514,8 +549,8 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
   ).toContainText("Email or password is incorrect.");
   failed = false;
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/$/);
-  await page.goto("/ui/sign-in/#reset=reset-browser-token");
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
+  await page.goto("/sign-in/#reset=reset-browser-token");
   await expect(
     page.getByRole("heading", { name: "Choose a new password" }),
   ).toBeVisible();
@@ -524,13 +559,13 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
       token: "reset-browser-token",
       password: "Browser replacement password",
     });
-    return route.fulfill({ json: { next: "/ui/sign-in/" } });
+    return fulfilJson(route, { next: "/sign-in/" });
   });
   await page
     .getByLabel("New password", { exact: true })
     .fill("Browser replacement password");
   await page.getByRole("button", { name: "Save password" }).click();
-  await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
+  await expect(page).toHaveURL(/\/sign-in\/$/);
   await expect(
     page.getByRole("heading", {
       name: `Sign in to ${signIn.instance_name}`,
@@ -545,7 +580,7 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await open(page, "invites", "error");
   await page.unroute("**/admin/api/invites");
   await page.route("**/admin/api/invites", (route) =>
-    route.fulfill({ json: { invites: [invitation], profiles: [plan] } }),
+    fulfilJson(route, { invites: [invitation], access_plans: [planChoice] }),
   );
   // The plans request also fails in the error state, so the header explains
   // why Invite is unavailable and offers its own Try again.
@@ -561,7 +596,7 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await page.route(`**/admin/api/invites/${invitation.id}`, (route) => {
     revoked = true;
     expect(route.request().method()).toBe("DELETE");
-    return route.fulfill({ json: { invite: invitation } });
+    return fulfilJson(route, { invite: invitation });
   });
   await page
     .getByRole("button", { name: "Actions for invitation to sam@example.test" })
@@ -601,9 +636,9 @@ test("people lane invitation rows distinguish pending, accepted, expired and rev
   ];
   await mock(page, "seeded");
   await page.route("**/admin/api/invites", (route) =>
-    route.fulfill({ json: { invites, profiles: [plan] } }),
+    fulfilJson(route, { invites, access_plans: [planChoice] }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await page.getByRole("tab", { name: "Invites", exact: true }).click();
   for (const status of ["Pending", "Accepted", "Expired", "Revoked"]) {
     await expect(page.getByText(status, { exact: true })).toBeVisible();
@@ -626,8 +661,7 @@ test("people lane omits unknown monthly usage and keeps known usage", async ({
 }) => {
   await mock(page, "seeded");
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         people: [
           person,
           {
@@ -638,12 +672,11 @@ test("people lane omits unknown monthly usage and keeps known usage", async ({
             requests_this_month: 42,
           },
         ],
-        profiles: [plan],
-      },
-    }),
+        access_plans: [planChoice],
+      }),
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   const unknownRow = page
     .getByRole("listitem")
     .filter({ hasText: "Morgan Rivera" });
@@ -663,8 +696,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
     sessionStorage.setItem("gateway-invitation", "oidc-resume-token"),
   );
   await page.route("**/auth/api/options*", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...signIn,
         built_in: false,
         signed_in_oidc: {
@@ -672,8 +704,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
           name: "Sam Rivera",
           csrf_token: "test-oidc-csrf",
         },
-      },
-    }),
+      }),
   );
   await page.route("**/auth/api/invite/accept", (route) => {
     expect(route.request().postDataJSON()).toEqual({
@@ -682,11 +713,9 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
       email: invitation.email,
     });
     expect(route.request().headers()["x-azizam-csrf"]).toBe("test-oidc-csrf");
-    return route.fulfill({
-      json: { next: "/ui/", credential: { api_key: "oidc-test-display-once" } },
-    });
+    return fulfilJson(route, { next: "/", credential: { api_key: "oidc-test-display-once" } });
   });
-  await page.goto("/ui/invite/");
+  await page.goto("/invite/");
   await expect(
     page.getByText("Accept as sam@example.test.", { exact: true }),
   ).toBeVisible();
@@ -701,7 +730,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
   ).toBeNull();
 });
 
-test("people lane real invitation creates an account, app and working key, then revokes access", async ({
+test("people lane real invitation creates an account, app and working key, then revokes access", { tag: GLOBAL_STATE_TAG }, async ({
   browser,
   baseURL,
   request,
@@ -714,15 +743,15 @@ test("people lane real invitation creates an account, app and working key, then 
   try {
     const session = await (await request.get("/admin/api/session")).json();
     const headers = { "x-azizam-csrf": session.actor.csrf_token };
-    const profiles = await (await request.get("/admin/api/profiles")).json();
-    const local = profiles.profiles.find(
+    const plans = await (await request.get("/admin/api/access-plans")).json();
+    const local = plans.access_plans.find(
       (p: { name: string }) => p.name === "Local chat",
     );
     expect(local).toBeTruthy();
     const result = await request.post("/admin/api/invites", {
       headers,
       data: {
-        profile_id: local.id,
+        access_plan: local.id,
         email: "real-browser-member@example.test",
         expires_in: 86400,
       },
@@ -760,7 +789,7 @@ test("people lane real invitation creates an account, app and working key, then 
       ).ok(),
     ).toBe(true);
     await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(memberPage).toHaveURL(/\/ui\/$/);
+    await expect(memberPage).toHaveURL(/^https?:\/\/[^/]+\/$/);
     const member = await memberContext.request.get("/me/api/session");
     const memberData = await member.json();
     expect(memberData.authenticated).toBe(true);
@@ -806,14 +835,12 @@ test("people lane protects owner actions and explains permanent key revocation",
 }) => {
   await mock(page, "seeded");
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         people: [{ ...person, builtin: false, protected: true }],
-        profiles: [plan],
-      },
-    }),
+        access_plans: [planChoice],
+      }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await expect(
     page.getByText("Protected account", { exact: true }),
   ).toBeVisible();
@@ -822,12 +849,10 @@ test("people lane protects owner actions and explains permanent key revocation",
   ).toHaveCount(0);
   await page.unroute("**/admin/api/people");
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         people: [{ ...person, builtin: true, protected: true, role: "owner" }],
-        profiles: [plan],
-      },
-    }),
+        access_plans: [planChoice],
+      }),
   );
   await page.reload();
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
@@ -846,12 +871,10 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.keyboard.press("Escape");
   await page.unroute("**/admin/api/people");
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         people: [{ ...person, builtin: false, protected: false }],
-        profiles: [plan],
-      },
-    }),
+        access_plans: [planChoice],
+      }),
   );
   await page.reload();
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
@@ -865,14 +888,12 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.unroute("**/admin/api/people");
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         people: [
           { ...person, builtin: true, protected: false, disabled: true },
         ],
-        profiles: [plan],
-      },
-    }),
+        access_plans: [planChoice],
+      }),
   );
   await page.reload();
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
@@ -888,8 +909,7 @@ test("administrators cannot invite or manage people but can view access plans", 
 }) => {
   await mock(page, "seeded");
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         user: {
           id: "admin",
@@ -897,10 +917,9 @@ test("administrators cannot invite or manage people but can view access plans", 
           email: "admin@example.test",
           role: "admin",
         },
-      },
-    }),
+      }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await expect(
     page.getByRole("button", { name: "Invite someone", exact: true }),
   ).toBeDisabled();
@@ -912,29 +931,30 @@ test("administrators cannot invite or manage people but can view access plans", 
     page.getByRole("button", { name: /Actions for invitation/ }),
   ).toHaveCount(0);
   await page.getByRole("tab", { name: "Access plans", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Edit plan" })).toBeVisible();
+  await expect(
+    page.getByText("Only the owner can change access plans.", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit plan" })).toHaveCount(0);
 });
 
-test("invalid policy shapes stay editable with an inline error", async ({
+test("an invalid plan document stays editable with an inline error", async ({
   page,
 }) => {
   await mock(page, "seeded");
-  await page.goto("/ui/people/?tab=plans");
+  await page.goto("/people/?tab=plans");
   await page.getByRole("button", { name: "Edit plan" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByText("Advanced", { exact: true }).click();
-  await dialog.getByText("Complete policy document", { exact: true }).click();
-  await dialog.getByLabel("Policy JSON").fill('{"models":"invalid"}');
+  await dialog.getByText("Details", { exact: true }).click();
+  await dialog.getByText("Complete plan document", { exact: true }).click();
+  await dialog.getByLabel("Plan JSON").fill('{"name":"No fields"}');
   await expect(dialog.getByRole("alert")).toHaveText(
-    "models must be an array of strings.",
+    "The plan needs the field can_use.",
   );
-  await expect(dialog.getByLabel("Policy JSON")).toHaveValue(
-    '{"models":"invalid"}',
-  );
+  await expect(dialog.getByLabel("Plan JSON")).toHaveValue('{"name":"No fields"}');
   await expect(
     dialog.getByRole("button", { name: "Save access plan" }),
   ).toBeDisabled();
-  await dialog.getByLabel("Policy JSON").fill('{"models":[]}');
+  await dialog.getByLabel("Plan JSON").fill(JSON.stringify(planDocument));
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", { name: "Save access plan" }),
@@ -947,11 +967,9 @@ for (const disabled of [false, true]) {
   }) => {
     await mock(page, "seeded");
     await page.route("**/admin/api/people", (route) =>
-      route.fulfill({
-        json: { people: [{ ...person, disabled }], profiles: [plan] },
-      }),
+      fulfilJson(route, { people: [{ ...person, disabled }], access_plans: [planChoice] }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     const trigger = page.getByRole("button", {
       name: "Actions for Morgan Rivera",
     });
@@ -975,14 +993,12 @@ test("invitation revoke names the recipient and link dialogs use the public URL"
 }) => {
   await mock(page, "seeded");
   await page.route("**/admin/api/settings/instance", (route) =>
-    route.fulfill({
-      json: { instance: { base_url: "https://public.example.test" } },
-    }),
+    fulfilJson(route, { instance: { base_url: "https://public.example.test" } }),
   );
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+    fulfilJson(route, { url: "/invite/#token=fixture" }),
   );
-  await page.goto("/ui/people/?tab=invites");
+  await page.goto("/people/?tab=invites");
   const trigger = page.getByRole("button", {
     name: "Actions for invitation to sam@example.test",
   });
@@ -998,7 +1014,7 @@ test("invitation revoke names the recipient and link dialogs use the public URL"
   await page.getByRole("menuitem", { name: "Copy invite link" }).click();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  ).toHaveValue("https://public.example.test/invite/#token=fixture");
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await expect(trigger).toBeFocused();
 });
@@ -1012,16 +1028,14 @@ for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await mock(page, "seeded");
     await page.route("**/admin/api/people", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           people: [
             { ...person, name: "n".repeat(300), plan_name: "p".repeat(300) },
           ],
-          profiles: [plan],
-        },
-      }),
+          access_plans: [planChoice],
+        }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     for (const text of ["n".repeat(300), "p".repeat(300)]) {
       // The plan is a column on wider screens and joins the second line on
       // a phone; one copy is visible.
@@ -1060,14 +1074,12 @@ test("relative links wait for public settings while absolute server links are im
   });
   await page.route("**/admin/api/settings/instance", async (route) => {
     await pending;
-    await route.fulfill({
-      json: { instance: { base_url: "https://public.example.test" } },
-    });
+    await fulfilJson(route, { instance: { base_url: "https://public.example.test" } });
   });
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+    fulfilJson(route, { url: "/invite/#token=fixture" }),
   );
-  await page.goto("/ui/people/?tab=invites");
+  await page.goto("/people/?tab=invites");
   await page
     .getByRole("button", { name: "Actions for invitation to sam@example.test" })
     .click();
@@ -1081,15 +1093,13 @@ test("relative links wait for public settings while absolute server links are im
   release();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  ).toHaveValue("https://public.example.test/invite/#token=fixture");
   await expect(
     page.getByRole("button", { name: "Copy link", exact: true }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
-    route.fulfill({
-      json: { url: "https://server.example.test/ui/invite/#token=absolute" },
-    }),
+    fulfilJson(route, { url: "https://server.example.test/invite/#token=absolute" }),
   );
   await page
     .getByRole("button", { name: "Actions for invitation to sam@example.test" })
@@ -1097,7 +1107,7 @@ test("relative links wait for public settings while absolute server links are im
   await page.getByRole("menuitem", { name: "Copy invite link" }).click();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://server.example.test/ui/invite/#token=absolute");
+  ).toHaveValue("https://server.example.test/invite/#token=absolute");
 });
 
 for (const tab of ["People", "Invites"] as const) {
@@ -1108,14 +1118,11 @@ for (const tab of ["People", "Invites"] as const) {
     await page.route(
       `**/admin/api/${tab === "People" ? "people" : "invites"}`,
       (route) =>
-        route.fulfill({
-          status: 403,
-          json: {
+        fulfilJson(route, {
             error: { code: "owner_required", message: "Owner required" },
-          },
-        }),
+          }, { status: 403 }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     if (tab === "Invites")
       await page.getByRole("tab", { name: tab, exact: true }).click();
     await expect(page.getByRole("main").getByRole("alert")).toContainText(

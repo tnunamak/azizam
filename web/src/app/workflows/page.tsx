@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -333,7 +333,7 @@ function WorkflowAction({
           <StatusPill status={status} reason={view.text ?? undefined} summary />
         )}
         <Button asChild size="sm" variant={hideReadyStatus ? "ghost" : "default"}>
-          <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
+          <Link prefetch={false} href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
             Open in Try
           </Link>
         </Button>
@@ -355,7 +355,7 @@ function WorkflowAction({
         <p className="text-muted-foreground text-meta">{view.text}</p>
         {view.fix && (
           <Button asChild variant="outline" size="sm">
-            <Link href={view.fix.href}>{view.fix.action}</Link>
+            <Link prefetch={false} href={view.fix.href}>{view.fix.action}</Link>
           </Button>
         )}
       </div>
@@ -761,7 +761,7 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 />
               </div>
               {asset.prompt && <p className="break-words">{asset.prompt}</p>}
-              {(asset.model || asset.workflow || asset.generation_ms != null) && (
+              {(asset.model || asset.workflow === workflow.id || asset.generation_ms != null) && (
                 <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-label">
                   {asset.model && (
                     <>
@@ -769,10 +769,10 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                       <dd className="break-all">{nameModel(asset.model)}</dd>
                     </>
                   )}
-                  {asset.workflow && (
+                  {asset.workflow === workflow.id && (
                     <>
                       <dt>Workflow</dt>
-                      <dd className="break-all">{asset.workflow}</dd>
+                      <dd className="break-all">{workflow.title}</dd>
                     </>
                   )}
                   {asset.generation_ms != null && (
@@ -783,15 +783,16 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                   )}
                 </dl>
               )}
-              {owner && asset.model && (
+              {owner && (asset.model || asset.workflow) && (
                 <details>
                   <summary className="cursor-pointer text-xs">Technical details</summary>
-                  <p className="mt-2 break-all font-mono text-xs">{asset.model}</p>
+                  {asset.model && <p className="mt-2 break-all font-mono text-xs">{asset.model}</p>}
+                  {asset.workflow && <p className="mt-2 break-all font-mono text-xs">{asset.workflow}</p>}
                 </details>
               )}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <Link
+                  <Link prefetch={false}
                     href={`/library/?asset=${encodeURIComponent(asset.asset_id)}`}
                   >
                     Open in Library
@@ -799,9 +800,9 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 </Button>
                 {asset.request_id ? (
                   <Button variant="outline" size="sm" asChild>
-                    <a href={`/r/${encodeURIComponent(asset.request_id)}`}>
+                    <Link prefetch={false} href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
                       View receipt
-                    </a>
+                    </Link>
                   </Button>
                 ) : null}
                 {asset.download_url && (
@@ -841,7 +842,11 @@ export default function WorkflowsPage() {
     [allRows, owner],
   );
   // Read the open workflow from the latest catalog so a refresh reaches it.
-  const detail = allRows.find((row) => row.id === detailId) ?? null;
+  const detail = rows.find((row) => row.id === detailId) ?? null;
+  // A workflow that left the catalog stays dismissed if it comes back.
+  useEffect(() => {
+    if (data && detailId !== null && detail === null) setDetailId(null);
+  }, [data, detailId, detail]);
   const allCapabilities = [
     ...capabilityOrder,
     ...new Set(
@@ -853,14 +858,20 @@ export default function WorkflowsPage() {
   const availableCapabilities = allCapabilities.filter((cap) =>
     rows.some((row) => row.capability === cap),
   );
+  const effectiveCapability = capability === "all" || rows.some((row) => row.capability === capability)
+    ? capability
+    : "all";
+  useEffect(() => {
+    if (capability !== effectiveCapability) setCapability(effectiveCapability);
+  }, [capability, effectiveCapability]);
   const filtered = useMemo(
     () =>
       rows.filter(
         (row) =>
           matches(row, query) &&
-          (capability === "all" || row.capability === capability),
+          (effectiveCapability === "all" || row.capability === effectiveCapability),
       ),
-    [rows, query, capability],
+    [rows, query, effectiveCapability],
   );
   const working = filtered.filter((row) => readiness(row) !== "setup");
   const notSetUp = filtered.filter((row) => readiness(row) === "setup");
@@ -904,7 +915,7 @@ export default function WorkflowsPage() {
           }
           action={
             <Button variant="outline" asChild>
-              <Link href="/models">Explore models</Link>
+              <Link prefetch={false} href="/models">Explore models</Link>
             </Button>
           }
         />
@@ -925,9 +936,28 @@ export default function WorkflowsPage() {
               />
               <span className="sr-only">Search workflows</span>
             </label>
+            {/* A phone has no room for every task in a row, and a strip
+                that scrolls hides the ones past the edge. A select lists
+                them all (P4); wider screens keep the segments. */}
+            <label className="block basis-full space-y-2 sm:hidden">
+              <span className="text-sm font-medium">Task</span>
+              <select
+                className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
+                value={effectiveCapability}
+                onChange={(event) => setCapability(event.target.value)}
+              >
+                <option value="all">All</option>
+                {availableCapabilities.map((cap) => (
+                  <option key={cap} value={cap}>
+                    {capabilityLabel(cap)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Segmented
               label="Workflow task"
-              value={capability}
+              className="max-sm:hidden"
+              value={effectiveCapability}
               onChange={setCapability}
               options={[
                 { value: "all", label: "All", icon: SlidersHorizontal },

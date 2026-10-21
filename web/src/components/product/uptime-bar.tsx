@@ -11,7 +11,9 @@ export function hourSlots(
   series: SeriesPoint[] | undefined,
   end: number,
 ): Array<{ start: number; value: number | null }> {
-  const points = series ?? [];
+  const points = (series ?? []).filter(([timestamp, value]) =>
+    Number.isFinite(timestamp) && Number.isFinite(value),
+  );
   return Array.from({ length: 24 }, (_, index) => {
     const start = end - (24 - index) * 3600;
     const inSlot = points.filter(
@@ -84,6 +86,7 @@ export function healthHistory(
       if (!previousBad) spells += 1;
       lastBadEnd = slot.start + 3600;
     }
+    if (slot.value === null) lastBadEnd = null;
     previousBad = bad;
   }
   const since = failingSince(slots);
@@ -92,7 +95,9 @@ export function healthHistory(
     degraded,
     spells,
     failingSince: since,
-    recoveredAt: since === null ? lastBadEnd : null,
+    recoveredAt: slots.at(-1)?.value != null && slots.at(-1)!.value! >= 1
+      ? lastBadEnd
+      : null,
   };
 }
 
@@ -117,7 +122,8 @@ export function healthStory(
   slots: Array<{ start: number; value: number | null }>,
 ): HealthStory {
   const { down, degraded, spells, failingSince: since, recoveredAt } = history;
-  if (!down && !degraded) return { current: null, day: null };
+  const latest = slots.at(-1)?.value ?? null;
+  if (!down && !degraded) return { current: latest === null ? "No recent check" : null, day: null };
   // Plain words (D1.5: "3 spells: down 4 h" read as jargon).
   const hours = (n: number) => `${n} hour${n === 1 ? "" : "s"}`;
   const amounts =
@@ -129,13 +135,16 @@ export function healthStory(
   const day = `${amounts} in the last 24 hours${
     spells > 1 ? `, in ${spells} separate stretches` : ""
   }.`;
+  if (latest === null) return { current: "No recent check", day };
   if (since !== null) {
-    // The current run is "down" if any of its hours was down, else degraded.
-    const run = slots.filter((slot) => slot.start >= since);
-    const word = run.some((slot) => slot.value !== null && slot.value <= 0)
-      ? "Down"
-      : "Degraded";
-    return { current: `${word} since about ${clock(since)}`, day };
+    const downNow = latest <= 0;
+    let stateSince = slots.at(-1)!.start;
+    for (let index = slots.length - 2; index >= 0; index -= 1) {
+      const slot = slots[index];
+      if (slot.value === null || slot.value >= 1 || (slot.value <= 0) !== downNow) break;
+      stateSince = slot.start;
+    }
+    return { current: `${downNow ? "Down" : "Degraded"} since about ${clock(stateSince)}`, day };
   }
   return {
     current:
@@ -160,6 +169,22 @@ function slotWord(value: number | null): string {
   return "degraded";
 }
 
+const downPattern = {
+  backgroundImage:
+    "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
+};
+
+function slotLabel(start: number, value: number | null, enabled: boolean): string {
+  const time = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+  return `${time(start)} to ${time(start + 3600)}: ${enabled ? slotWord(value) : "turned off"}`;
+}
+
 function clock(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -179,7 +204,7 @@ function HourByHour({
       className="text-muted-foreground mt-1 text-xs"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">
+      <summary className="w-fit max-sm:min-h-11 max-sm:py-3">
         Hour by hour
       </summary>
       {open ? (
@@ -197,7 +222,7 @@ function HourByHour({
 
 /**
  * Hourly health checks over the last day, oldest left (Linear 2a.3), with
- * start and end labels. Down hours are taller as well as red, so colour is
+ * start and end labels. Down hours are striped as well as taller, so colour is
  * not the only signal; the full hour-by-hour text is in a details list.
  */
 export function UptimeBar({
@@ -207,7 +232,7 @@ export function UptimeBar({
   label,
   className,
   showAxis = true,
-  showLegend = false,
+  showLegend = true,
   hourByHour = true,
   size = "sm",
 }: {
@@ -232,12 +257,13 @@ export function UptimeBar({
   size?: "sm" | "lg";
 }) {
   const large = size === "lg";
-  if (!series?.length) return null;
   const slots = hourSlots(series, end);
   const { up, checked } = hoursUp(slots);
   const summary = !enabled
     ? `${label}: turned off`
-    : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
+    : checked === 0
+      ? `${label}: no checks recorded in the last 24 hours`
+      : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
   // Only the colours this bar shows, so every word names a cell.
   const legend = showLegend ? (
     <ul
@@ -251,7 +277,7 @@ export function UptimeBar({
         ["bg-success-fill", "Up"],
         ["bg-warning-fill", "Degraded"],
         ["bg-danger-fill", "Down"],
-        ["bg-nocheck-fill", "No check"],
+        ["bg-nocheck-fill", enabled ? "No check" : "Turned off"],
       ]
         .filter(([swatch]) =>
           slots.some((slot) => slotClass(slot.value, enabled) === swatch),
@@ -260,6 +286,7 @@ export function UptimeBar({
           <li key={word} className="flex items-center gap-1.5">
             <span
               aria-hidden="true"
+              style={word === "Down" ? downPattern : undefined}
               className={cn(
                 "rounded-xs",
                 large ? "size-2.5" : "size-2",
@@ -275,7 +302,7 @@ export function UptimeBar({
     <div className={cn("min-w-0", className)}>
       {large ? legend : null}
       <div
-        role="img"
+        role="group"
         aria-label={summary}
         className={cn(
           "flex min-w-0 items-end",
@@ -285,7 +312,10 @@ export function UptimeBar({
         {slots.map((slot) => (
           <span
             key={slot.start}
-            title={`${clock(slot.start)}: ${slotWord(slot.value)}`}
+            role="img"
+            aria-label={slotLabel(slot.start, slot.value, enabled)}
+            title={slotLabel(slot.start, slot.value, enabled)}
+            style={enabled && slot.value !== null && slot.value <= 0 ? downPattern : undefined}
             className={cn(
               "flex-1 rounded-xs",
               slotClass(slot.value, enabled),

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, receipt_store, sqlite_startup
 from gateway.admin_api import AdminAuth, _require_admin
+from gateway.receipt_context import person_label, receipt_context
 
 
 def create_activity_router(
@@ -25,19 +26,18 @@ def create_activity_router(
         if "owner" not in ctx.roles:
             return JSONResponse(status_code=403, content={"error": {
                 "code": "owner_required", "message": "Only the gateway owner can view all requests."}})
-        return None
+        return ctx
 
     @router.get("/requests")
     def requests(request: Request, limit: int = Query(50, ge=1, le=100),
                  person_id: str | None = Query(None, max_length=256),
                  source: str | None = Query(None, max_length=512),
                  before: str | None = Query(None, max_length=512)):
-        denied = authorize(request)
-        if denied is not None:
-            return denied
+        caller = authorize(request)
+        if isinstance(caller, JSONResponse):
+            return caller
         users = admin_store.list_users(path=admin_path)
-        people = [{"id": row["id"], "label": row.get("display_name") or row.get("email") or "Gateway member"}
-                  for row in users]
+        people = [{"id": row["id"], "label": person_label(row)} for row in users]
         labels = {person["id"]: person["label"] for person in people}
         apps = {row["id"]: row for row in admin_store.list_apps(path=admin_path)}
         sources = _sources(apps)
@@ -76,16 +76,15 @@ def create_activity_router(
                 + " ORDER BY created_at DESC, request_id DESC LIMIT ?", [*params, limit + 1]).fetchall()
         records = []
         for id, timestamp in rows[:limit]:
-            row = receipt_store.get(id, audience="admin", path=receipts_path)
+            row = receipt_store.get(
+                id, audience="admin",
+                viewer_person_id=caller.actor_id if caller.actor_kind == "user" else None,
+                path=receipts_path,
+            )
             if row is None:
                 continue
-            app = apps.get(row.get("app_id"), {})
-            owner = app.get("owner_user_id")
-            source_info = _receipt_source(row, app)
-            records.append({"receipt": row, "created_at": timestamp,
-                            "person_label": labels.get(owner, "Unattributed request"),
-                            "app_label": app.get("name") or source_info["label"],
-                            "source": source_info})
+            records.append({"receipt": row, **receipt_context(
+                row, timestamp, app=apps.get(row.get("app_id"), {}), person_labels=labels)})
         cursor = None
         if len(rows) > limit:
             last_request_id, last_created_at = rows[limit - 1]
@@ -104,24 +103,5 @@ def _sources(apps: dict[str, dict]) -> list[dict]:
             "label": str(app.get("name") or "App"),
             "app_id": app_id,
             "owner_user_id": app.get("owner_user_id"),
-            "owner_service_account_id": app.get("owner_service_account_id"),
         })
     return rows
-
-
-def _receipt_source(receipt: dict, app: dict) -> dict:
-    app_id = receipt.get("app_id")
-    if isinstance(app_id, str) and app_id:
-        return {
-            "id": f"app:{app_id}",
-            "kind": "app",
-            "label": str(app.get("name") or receipt.get("api_key_name") or "App"),
-            "app_id": app_id,
-        }
-    return {
-        "id": "local-network",
-        "kind": "local-network",
-        "label": str(receipt.get("source_label") or "Local network · no key"),
-        "app_id": None,
-        "client_hint": receipt.get("client_hint") if isinstance(receipt.get("client_hint"), str) else None,
-    }

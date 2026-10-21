@@ -40,6 +40,49 @@ describe("engine capability groups", () => {
         ]),
       ),
     ).toHaveLength(4);
+    expect(
+      groups.flatMap((group) =>
+        group.entries.flatMap((entry) => [
+          entry.service.id,
+          ...entry.alternatives.map((row) => row.id),
+        ]),
+      ).sort(),
+    ).toEqual(["image", "primary", "secondary", "standby"]);
+  });
+
+  it("preserves every engine exactly once and priority grouping across all input permutations", () => {
+    const rows = [
+      service("secondary", { priority: 20 }),
+      service("primary", { priority: 10 }),
+      service("standby", { role: "standby" }),
+      service("image", { capabilities: ["images", "video"] }),
+    ];
+    const permutations = (remaining: Service[]): Service[][] =>
+      remaining.length === 0
+        ? [[]]
+        : remaining.flatMap((row, index) =>
+            permutations(remaining.filter((_, other) => other !== index))
+              .map((tail) => [row, ...tail]),
+          );
+    const orders = permutations(rows);
+    expect(orders).toHaveLength(24);
+    for (const order of orders) {
+      const { groups, hiddenCount } = groupEngines(order, new Map(), false, null);
+      expect(hiddenCount).toBe(0);
+      expect(groups.map((group) => ({
+        capability: group.capability,
+        entries: group.entries.map((entry) => ({
+          id: entry.service.id,
+          alternatives: entry.alternatives.map((row) => row.id),
+        })),
+      })), order.map((row) => row.id).join(",")).toEqual([
+        { capability: "Chat", entries: [
+          { id: "primary", alternatives: ["standby"] },
+          { id: "secondary", alternatives: [] },
+        ] },
+        { capability: "Images", entries: [{ id: "image", alternatives: [] }] },
+      ]);
+    }
   });
 
   it("respects an explicit parent and leaves orphan fallback visible", () => {
@@ -97,16 +140,16 @@ describe("engine capability groups", () => {
   it("omits protocol tags from user-facing capability summaries and groups without changing raw data", () => {
     const rows = [
       service("api", {
-        capabilities: ["openai", "chat", "completions", "llm_execution"],
+        capabilities: ["protocol-a", "chat", "completions", "llm_execution"],
       }),
       service("protocol-only", {
-        capabilities: ["typesafe_systemone"],
+        capabilities: ["protocol-b"],
       }),
     ];
 
     expect(humanCapabilities(rows[0].capabilities)).toEqual(["Chat", "Text"]);
     expect(rows[0].capabilities).toEqual([
-      "openai",
+      "protocol-a",
       "chat",
       "completions",
       "llm_execution",

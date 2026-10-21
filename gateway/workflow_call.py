@@ -35,7 +35,7 @@ class CallError(Exception):
     @classmethod
     def public(cls, key: str, **details: Any) -> "CallError":
         """A failure told with the shared copy: its layer and one next action."""
-        layer, message = describe(key, **details)
+        layer, message = describe(key, audience="api", **details)
         return cls(message, layer=layer, **details)
 
 

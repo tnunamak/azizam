@@ -77,7 +77,7 @@ Use common names when they honestly bind to real workflow behavior:
 | `controlnet_strength` | `number` | ControlNet weight/strength. Typical range is workflow-specific. |
 | `controlnet_start` | `number` | Optional start fraction/step if the workflow exposes it. |
 | `controlnet_end` | `number` | Optional end fraction/step if the workflow exposes it. |
-| `controlnet_model` | `string` | Optional model selector if safe for the profile and backend. |
+| `controlnet_model` | `string` | Optional model selector if safe for the access plan and backend. |
 | `controlnet_preprocessor` | `string` | Optional preprocessor selector if the workflow has a real preprocessor stage. |
 
 Other conditioning families should use equally explicit workflow controls, for

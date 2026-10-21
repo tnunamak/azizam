@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from gateway import client_errors, runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
-from gateway.stable_aliases import AliasResolution, AliasUnavailableError, resolve_alias
+from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
 
 
 ROUTING_TIMEOUT_SECONDS = 15.0
@@ -74,26 +75,44 @@ class DecisionRuntime:
         service = self.config().get("backends", {}).get(service_id, {})
         engine = None
         try:
+            # The stored credentials of the health endpoint (a query token) are put back here, at the moment of the probe.
+            base = f"http://{service['host']}:{service['port']}"
+            # ... and only where the address it makes has the origin they were stored for (decision D39).
+            target = runtime_secrets.url(service, "health_endpoint", base=base, join=lambda head, tail: f"{head}{tail}") or f"{base}/health"
             with httpx.Client(timeout=0.3, trust_env=False) as client:
-                response = client.get(f"http://{service['host']}:{service['port']}{service.get('health_endpoint', '/health')}")
+                response = client.get(target)
             if response.status_code == 200:
                 candidate = response.json().get("engine")
                 if candidate in {"gpu", "cpu"}:
                     engine = candidate
-        except (httpx.HTTPError, ValueError, KeyError, AttributeError):
+        except (httpx.HTTPError, ValueError, KeyError, AttributeError, runtime_secrets.SecretUnavailable):
             pass
         self.observed[service_id] = (time.monotonic(), engine)
         return engine
 
     def model_names(self) -> list[str]:
         section = self.config().get("model_aliases", {}).get("decisions", {})
-        names = list(dict.fromkeys(
+        # Names a wildcard pattern publishes (``names:``) are real aliases too.
+        published = [name for pattern in section.get("openai", []) for name in pattern_names(pattern)]
+        return list(dict.fromkeys(
             list(section.get("stable", {})) + list(section.get("engines", {}))
             + [spec["model"] for spec in section.get("engines", {}).values() if spec.get("model")]
+            + published
         ))
-        if any(pattern.get("match") == "jev-*" for pattern in section.get("openai", [])):
-            names += ["jev-latest", "jev-preview"]
-        return names
+
+    @staticmethod
+    def _slot(resolved: AliasResolution, service: str | None) -> str:
+        """The engine slot ``service`` fills for this request: the pick or one of its fallbacks."""
+        if service == resolved.service:
+            return resolved.target
+        return next((engine for engine, candidate in resolved.fallbacks if candidate == service), resolved.target)
+
+    def policy_model(self, model: str) -> str:
+        """The name access is decided on: the engine slot the caller's name reaches first."""
+        try:
+            return self.resolve(model).target
+        except DecisionsError:
+            return model  # Nothing serves it now; judge the name as given.
 
     def capability_for(self, model: str, service_id: str | None = None) -> Capability:
         """One metadata contract for discovery and each authorized routing target."""
@@ -103,14 +122,18 @@ class DecisionRuntime:
         if service not in candidates:
             raise DecisionsError(403, "permission_denied", "This backend is not a configured decision target.")
         section = self.config().get("model_aliases", {}).get("decisions", {})
-        spec = next((row for row in section.get("engines", {}).values()
-                     if row.get("service") == service), {})
+        engines = section.get("engines", {})
+        slot = self._slot(resolved, service)
+        spec = engines.get(slot) or next((row for row in engines.values() if row.get("service") == service), {})
         engine = self.observed_engine(str(service))
-        is_alias = model in section.get("stable", {}) or model.startswith("jev-")
+        # A name is an alias when it is neither an engine slot nor the model a slot serves.
+        is_alias = model not in engines and model not in {row.get("model") for row in engines.values()}
+        # Access is decided on the slot this service fills, however the caller spelled it.
         return Capability(
             intent="decision.systemone", backend=service, model=model,
             input_modalities=("text", "json"), output_modalities=("decision",),
-            tags=("alias" if is_alias else "model", "free-local", "local", f"engine:{engine or 'unknown'}"),
+            tags=("alias" if is_alias else "model", *([f"resolves_to:{slot}"] if slot != model else []),
+                  "free-local", "local", f"engine:{engine or 'unknown'}"),
             limits=tuple((key, spec[key]) for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens", "calibrated") if key in spec),
             backend_kind="local", cost_class="free-local", engine=engine,
             calibrated=bool(spec.get("calibrated", False)),
@@ -131,9 +154,6 @@ class DecisionRuntime:
                 continue
             spec = resolved.engine_spec or {}
             engine = capability.engine
-            target_policy = getattr(_profile, "target_policy", None)
-            if getattr(target_policy, "visibility", "catalog") == "available" and engine is None:
-                continue
             rows.append(DecisionModel(
                 id=name, root=resolved.upstream_model, backend=resolved.service, engine=engine,
                 limits=dict(capability.limits),
@@ -206,8 +226,8 @@ class DecisionRuntime:
                         headers=dict(refusal.headers), backend=service_id,
                     )
             try:
-                policy = getattr(_profile, "target_policy", None)
-                if getattr(policy, "activation", "may_activate") == "existing_only":
+                # ``_profile`` is the request's EffectiveAccess (both plans).
+                if not getattr(_profile, "can_load_models", False):
                     readiness = None  # Authorization probed it; never activate a cold service for this plan.
                 else:
                     readiness = await asyncio.wait_for(self.ensure_ready(service_id), max(0.001, deadline - time.monotonic()))
@@ -255,7 +275,8 @@ class DecisionRuntime:
             status = response.status_code if response.status_code in (200, 422, 429) else 502
             if status == 502:
                 raise DecisionsError(502, "decision_backend_error", "The configured decision engine failed.")
-            headers = {"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {}
+            retry_after = client_errors.retry_after(response.headers.get("retry-after"))   # a number we write, not the service's text
+            headers = {"retry-after": retry_after} if retry_after is not None else {}
             if fallbacks:
                 headers["x-azizam-fallback"] = ",".join(fallbacks)
             return DecisionDispatchResult(payload, status_code=status, backend=service_id,

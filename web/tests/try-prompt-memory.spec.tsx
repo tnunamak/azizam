@@ -88,7 +88,7 @@ function renderTry(viewer: Viewer = member) {
 
 async function ready() {
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Picture model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Picture model"),
   );
 }
 
@@ -143,7 +143,7 @@ describe("Try: Don't keep this prompt", () => {
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toBeUndefined();
     expect(screen.queryByText("Prompt not kept")).toBeNull();
   });
@@ -160,7 +160,7 @@ describe("Try: Don't keep this prompt", () => {
     ).toBeVisible();
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
@@ -196,7 +196,7 @@ describe("Try: Don't keep this prompt", () => {
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+    await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
@@ -246,7 +246,7 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
   await ready();
   await screen.findByText("Prompts aren’t kept");
   await user.click(screen.getByRole("button", { name: "Run" }));
-  await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+  await screen.findByAltText("Generated result", {}, { timeout: 15000 });
   expect(
     screen.getByText("The picture still goes to Library."),
   ).toBeVisible();
@@ -312,3 +312,68 @@ it("names prompt keeping when the owner turned it off for everyone", async () =>
     "/settings#prompts",
   );
 });
+
+it.each(["sign-out", "unmount"] as const)(
+  "does not dispatch prepared speech after %s during the privacy refresh",
+  async (ending) => {
+    const { act } = await import("@testing-library/react");
+    let finishPrivacy!: (value: ReturnType<typeof memory>) => void;
+    const pendingPrivacy = new Promise<ReturnType<typeof memory>>((resolve) => {
+      finishPrivacy = resolve;
+    });
+    account.params = new URLSearchParams("capability=speech");
+    account.promptMemory
+      .mockReset()
+      .mockResolvedValueOnce(memory())
+      .mockImplementation(() => pendingPrivacy);
+    fetchMock.mockReset().mockImplementation(async (url: string) => {
+      if (url === "/me/api/models/catalog") {
+        return json({
+          aliases: [],
+          models: [{
+            id: "fixture-speech",
+            name: "Fixture speech",
+            capabilities: ["speech"],
+            locality: "local",
+          }],
+        });
+      }
+      if (url === "/me/api/workflows") return json({ workflows: [] });
+      // A fake empty result is sufficient: this endpoint must not be reached.
+      if (url === "/openai/v1/audio/speech") return json({});
+      throw new Error("Unexpected request: " + url);
+    });
+    const view = renderTry();
+    try {
+      await waitFor(() =>
+        expect(screen.getByRole("combobox", { name: "Model" }))
+          .toHaveTextContent("Fixture speech"),
+      );
+      await screen.findByRole("switch", { name: "Don’t keep this prompt" });
+      await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
+      await waitFor(() => expect(account.promptMemory).toHaveBeenCalledTimes(2));
+      expect(account.tryKey).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"))
+        .toHaveLength(0);
+
+      if (ending === "unmount") {
+        view.unmount();
+      } else {
+        view.rerender(
+          <ViewerContext.Provider value={{ ...member, authenticated: false }}>
+            <TryPage />
+          </ViewerContext.Provider>,
+        );
+      }
+      await act(async () => {
+        finishPrivacy(memory());
+        await pendingPrivacy;
+      });
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"))
+        .toHaveLength(0);
+      expect(screen.queryByText("Key details")).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  },
+);

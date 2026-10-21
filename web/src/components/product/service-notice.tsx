@@ -15,7 +15,7 @@ export function ServiceNotice({
   return (
     <p role="status" className="text-sm">
       {message}{" "}
-      <Link
+      <Link prefetch={false}
         className="text-link underline underline-offset-4"
         href={`/status#${section.toLowerCase()}`}
       >

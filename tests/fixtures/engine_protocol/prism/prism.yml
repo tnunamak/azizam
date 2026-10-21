@@ -1,0 +1,334 @@
+protocol_version: 1
+id: prism
+title: Fictional HTTP engine
+executor: http-v1
+auth:
+  inference:
+    kind: header
+    name: X-Inference
+  control:
+    kind: header
+    name: X-Control
+errors:
+- status: 429
+  code: engine_busy
+  advice: Wait for capacity.
+operations:
+  health:
+    class: inventory
+    request:
+      method: GET
+      path: /api/v3/ping
+    response:
+      framing: none
+  inventory:
+    class: inventory
+    request:
+      method: GET
+      path: /api/v3/catalog
+      query:
+      - name: kind
+        from: /params/kind
+        default: text
+    response:
+      framing: json
+      select:
+        ids: /items/*/slug
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /api/v3/converse
+      body:
+        encoding: json
+        base: empty
+        map:
+        - copy:
+            from: /body/model
+            to: /engine/model
+        - copy:
+            from: /body/messages
+            to: /input/turns
+        - set:
+            to: /delivery
+            value: once
+        - when:
+            if:
+              path: /body/stream
+              equals: true
+            then:
+            - set:
+                to: /delivery
+                value: live
+        - when:
+            if:
+              path: /body/temperature
+              present: true
+            then:
+            - copy:
+                from: /body/temperature
+                to: /sampling/t
+            - clamp:
+                path: /sampling/t
+                min: 0
+                max: 2
+        - when:
+            if:
+              path: /body/max_tokens
+              present: true
+            then:
+            - copy:
+                from: /body/max_tokens
+                to: /sampling/max_new
+    response:
+      framing: json
+      map:
+      - set:
+          to: /object
+          value: chat.completion
+      - copy:
+          from: /body/result/id
+          to: /id
+      - copy:
+          from: /body/result/model
+          to: /model
+      - set:
+          to: /choices
+          value:
+          - index: 0
+            message:
+              role: assistant
+              content: null
+            finish_reason: null
+      - copy:
+          from: /body/result/output/text
+          to: /choices/0/message/content
+      - enum:
+          from: /body/result/why
+          to: /choices/0/finish_reason
+          table:
+            eos: stop
+            cap: length
+            filter: content_filter
+          unmapped: error
+      - copy:
+          from: /body/meter/in
+          to: /usage/prompt_tokens
+      - copy:
+          from: /body/meter/out
+          to: /usage/completion_tokens
+      - copy:
+          from: /body/result/issued
+          to: /created
+      - copy:
+          from: /body/meter/total
+          to: /usage/total_tokens
+      stream:
+        when:
+          path: /body/stream
+          equals: true
+        framing: sse
+        terminal:
+          path: /done
+          equals: true
+        map:
+        - set:
+            to: /object
+            value: chat.completion.chunk
+        - set:
+            to: /choices
+            value:
+            - index: 0
+              delta:
+                content: null
+              finish_reason: null
+        - copy:
+            from: /body/delta
+            to: /choices/0/delta/content
+        - when:
+            if:
+              path: /body/done
+              equals: true
+            then:
+            - enum:
+                from: /body/why
+                to: /choices/0/finish_reason
+                table:
+                  eos: stop
+                  cap: length
+                  filter: content_filter
+                unmapped: error
+            - copy:
+                from: /body/meter/in
+                to: /usage/prompt_tokens
+            - copy:
+                from: /body/meter/out
+                to: /usage/completion_tokens
+        - set:
+            to: /id
+            value: stream-1
+        - set:
+            to: /created
+            value: 1700000000
+        - copy:
+            from: /params/model
+            to: /model
+  transcribe:
+    class: generate
+    request:
+      method: POST
+      path: /api/v3/listen
+      body:
+        encoding: multipart
+        parts:
+        - name: audio
+          kind: file
+          from: /files/file
+          required: true
+        - name: lang
+          kind: field
+          from: /body/language
+    response:
+      framing: json
+      map:
+      - copy:
+          from: /body/transcript/text
+          to: /text
+  models:
+    class: inventory
+    request:
+      method: GET
+      path: /catalog
+    response:
+      framing: json
+      map:
+      - set:
+          to: /object
+          value: list
+      - copy:
+          from: /body/available
+          to: /data
+  embeddings:
+    class: generate
+    request:
+      method: POST
+      path: /vectors
+      body:
+        encoding: json
+        map:
+        - copy:
+            from: /body/model
+            to: /encoder
+        - copy:
+            from: /body/input
+            to: /texts
+    response:
+      framing: json
+      map:
+      - set:
+          to: /object
+          value: list
+      - copy:
+          from: /body/vectors
+          to: /data
+      - copy:
+          from: /body/encoder
+          to: /model
+      - set:
+          to: /usage
+          value:
+            prompt_tokens: 1
+            total_tokens: 1
+  images:
+    class: generate
+    job:
+      submit:
+        request:
+          method: POST
+          path: /api/v3/renders
+          body:
+            encoding: json
+            base: empty
+            map:
+            - copy:
+                from: /body/prompt
+                to: /spec/text
+            - copy:
+                from: /body/size
+                to: /spec/dims
+            - default:
+                to: /spec/dims
+                value: 512x512
+        id: /ticket/id
+      poll:
+        request:
+          method: GET
+          path: /api/v3/renders/{id}
+        status:
+          path: /phase
+          states:
+            WAITING: pending
+            WORKING: running
+            FINISHED: succeeded
+            ERRORED: failed
+            ABORTED: cancelled
+        error: /problem/text
+        assets: /outputs/*/key
+        interval_s: 0.5
+        max_wait_s: 300
+      fetch:
+        request:
+          method: GET
+          path: /api/v3/renders/{id}/outputs/{asset}
+      cancel:
+        request:
+          method: DELETE
+          path: /api/v3/renders/{id}
+  images_sync:
+    class: generate
+    request:
+      method: POST
+      path: /picture
+      body:
+        encoding: json
+        map:
+        - copy:
+            from: /body/prompt
+            to: /caption
+    response:
+      framing: binary
+  speech:
+    class: generate
+    request:
+      method: POST
+      path: /speak
+      body:
+        encoding: json
+        map:
+        - copy:
+            from: /body/input
+            to: /text
+        - copy:
+            from: /body/model
+            to: /voice_model
+    response:
+      framing: binary
+  choose:
+    class: control
+    request:
+      method: POST
+      path: /selected
+      body:
+        encoding: json
+        base: passthrough
+    response:
+      framing: none
+  selected:
+    class: control
+    request:
+      method: GET
+      path: /selected
+    response:
+      framing: json
+      select:
+        value: /active

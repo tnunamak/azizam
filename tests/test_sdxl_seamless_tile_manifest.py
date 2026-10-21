@@ -309,9 +309,9 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                     }
                 )
 
-        err, images = await proxy._comfy_run_round(
+        err, images = await proxy._graph_run_round(
             _Client(),  # type: ignore[arg-type]
-            {},
+            {"45": {"class_type": "Image Seamless Texture"}},
             {},
             "test error",
         )
@@ -363,7 +363,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
 
         client = _Client()
         with patch.object(proxy, "COMFY_TIMEOUT", 0):
-            err, images = await proxy._comfy_run_round(
+            err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
                 {},
@@ -411,7 +411,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
 
         client = _Client()
         with patch.object(proxy, "COMFY_TIMEOUT", 1):
-            err, images = await proxy._comfy_run_round(
+            err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
                 {},
@@ -459,7 +459,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
         client = _Client()
         with patch.object(proxy, "COMFY_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
             with self.assertRaises(proxy.asyncio.CancelledError):
-                await proxy._comfy_run_round(
+                await proxy._graph_run_round(
                     client,  # type: ignore[arg-type]
                     {},
                     {},
@@ -490,16 +490,19 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
             "outputs": {},
         }
 
+        graph = {"45": {"class_type": "Image Seamless Texture"}}
         self.assertEqual(
-            proxy._comfy_execution_error_message(job),
+            proxy._graph_error_message(job, graph),
             "ComfyUI Image Seamless Texture node 45: execution failed",
         )
         self.assertEqual(
-            proxy._history_terminal_state(job),
+            proxy._graph_history_state(job, graph),
             ("failed", "ComfyUI Image Seamless Texture node 45: execution failed"),
         )
+        # without the graph the gateway submitted, the engine's node name is not repeated
+        self.assertEqual(proxy._graph_error_message(job), "ComfyUI execution error: execution failed")
         self.assertEqual(proxy._job_status_from_history(job), ("failed", 100))
-        for summary in (proxy._comfy_execution_error_message(job), proxy._history_terminal_state(job)[1]):
+        for summary in (proxy._graph_error_message(job, graph), proxy._graph_history_state(job, graph)[1]):
             self.assertNotIn("0.7", summary)
             self.assertNotIn(raw_exception, summary)
             self.assertNotIn(private_prompt, summary)
@@ -514,8 +517,8 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
             "outputs": {},
         }
 
-        self.assertEqual(proxy._comfy_execution_error_message(job), "ComfyUI execution failed")
-        self.assertEqual(proxy._history_terminal_state(job), ("failed", "ComfyUI execution failed"))
+        self.assertEqual(proxy._graph_error_message(job), "ComfyUI execution failed")
+        self.assertEqual(proxy._graph_history_state(job), ("failed", "ComfyUI execution failed"))
 
 
 if __name__ == "__main__":

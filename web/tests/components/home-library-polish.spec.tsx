@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import HomePage from "@/app/home/page";
+import HomePage from "@/app/_home/home-page";
 import LibraryPage from "@/app/library/page";
 import { ViewerContext } from "@/components/shell/session";
 
@@ -95,7 +95,7 @@ describe("Home and Library polish", () => {
         switch (String(input)) {
           case "/me/api/home":
             return Response.json(home);
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [assets[0]] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -113,13 +113,13 @@ describe("Home and Library polish", () => {
     const header = screen.getByRole("heading", { level: 1, name: "Home" }).closest("header")!;
     expect(within(header).getByRole("status")).toHaveTextContent("Images unknown");
     const connect = screen.getByRole("region", { name: "Connect an app" });
-    // The address belongs to an app's recipe, so it waits for the choice.
+    // The address belongs to an app's guide, so it waits for the choice.
     expect(within(connect).queryByLabelText("Gateway address")).toBeNull();
     expect(
       within(connect).queryByRole("button", { name: "Check connection" }),
     ).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    // The recipe's base URL is the gateway address, so it is not repeated.
+    // The guide's address is the gateway address, so it is not repeated.
     expect(within(connect).queryByLabelText("Base URL")).toBeNull();
     expect(within(connect).getByLabelText("Gateway address")).toHaveValue(
       home.api_base_url,
@@ -178,7 +178,7 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [assets[0]] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -248,7 +248,7 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -277,13 +277,13 @@ describe("Home and Library polish", () => {
         : Response.json({ assets, models: [] })),
     );
     const { container } = renderPage(<LibraryPage />);
-    await screen.findByRole("button", { name: "Open Ocean sounds" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") });
     const audio = container.querySelector("audio");
     expect(audio).not.toHaveAttribute("controls");
     expect(audio).toHaveAttribute("preload", "none");
     const play = screen.getByRole("button", { name: "Play Ocean sounds" });
     expect(
-      screen.getByRole("button", { name: "Open Ocean sounds" }).contains(play),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") }).contains(play),
     ).toBe(false);
     expect(audio).not.toHaveAttribute("src");
     expect(audio?.closest("button")).toBeNull();
@@ -309,7 +309,7 @@ describe("Home and Library polish", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Ocean sounds" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeVisible();
@@ -336,7 +336,7 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<LibraryPage />, true);
-    await screen.findByRole("button", { name: "Open Swimming fish" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
     expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
     screen.getByRole("combobox", { name: "Person" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -364,7 +364,7 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<LibraryPage />);
-    await screen.findByRole("button", { name: "Open Swimming fish" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
     expect(screen.queryByText(/^\d+ s$/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Video" }));
     expect(screen.getByRole("button", { name: "Video" })).toHaveAttribute(

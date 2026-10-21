@@ -13,9 +13,8 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import proxy
-from gateway.policy import DEFAULT_PROFILE, NativePassthroughPolicy, RemoteProviderPolicy
-
-
+from gateway import engine_check
+from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 def _request(path: str, payload: dict) -> Request:
     sent = False
 
@@ -29,7 +28,20 @@ def _request(path: str, payload: dict) -> Request:
     return Request({"type": "http", "method": "POST", "path": path, "headers": []}, receive)
 
 
+# The provider route reads the engine record: a caller who is not the owner may POST only what it declares.
+_GENERATES_CHAT = {"native": {"allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}}
+
+
 class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # The fixtures name an engine host that has no address; the destination check is not what these tests cover.
+        for patcher in (
+            patch.object(proxy.engine_check, "check_destination", AsyncMock(return_value=engine_check.Destination("ok"))),
+            patch.object(proxy.engine_check, "checked_transport", return_value=None),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     async def test_provider_native_rejects_paid_remote_record_before_dispatch(self) -> None:
         class Upstream:
             status_code = 200
@@ -55,23 +67,12 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        native_profile = DEFAULT_PROFILE.with_overrides(
-            id="native-only",
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"openrouter"}),
-                allowed_operations=frozenset({"POST /v1/chat/completions"}),
-            ),
-            remote=RemoteProviderPolicy(
-                providers=frozenset(),
-                max_usd_per_request=Decimal("0"),
-            ),
-        )
+        native_profile = plan_for("native-only", paid=sorted(set()))
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="native-paid-test",
                 key_hash="sha256:native-paid-test",
-                profile=native_profile,
+                access=access(native_profile),
                 app_id="app_native_paid_test",
             )
         )
@@ -126,23 +127,12 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        native_profile = DEFAULT_PROFILE.with_overrides(
-            id="native-only",
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"local-alias"}),
-                allowed_operations=frozenset({"POST /v1/chat/completions"}),
-            ),
-            remote=RemoteProviderPolicy(
-                providers=frozenset(),
-                max_usd_per_request=Decimal("0"),
-            ),
-        )
+        native_profile = plan_for("native-only", paid=sorted(set()))
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="native-paid-test",
                 key_hash="sha256:native-paid-test",
-                profile=native_profile,
+                access=access(native_profile),
                 app_id="app_native_paid_test",
             )
         )
@@ -200,8 +190,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                     async def failing_forward(*_args, **_kwargs):
                         raise error
 
-                    route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
-                    with patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=route_auth), patch.object(
+                    route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
+                    with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
                         proxy, "_forward_chat_completions", failing_forward
                     ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
                         proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
@@ -239,8 +229,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                     raise error
                     yield b"unreachable"
 
-                route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
-                with patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=route_auth), patch.object(
+                route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
+                with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
                     proxy, "_forward_chat_completions", forward
                 ), patch.object(proxy, "iter_llm_response_bytes", failing_iter), patch.object(
                     proxy.receipt_store, "begin", side_effect=began.append
@@ -263,8 +253,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             entered.set()
             await asyncio.Future()
 
-        route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
-        with patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=route_auth), patch.object(
+        route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
+        with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
             proxy, "_forward_chat_completions", delayed_forward
         ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
             proxy.receipt_store, "finalize", side_effect=lambda r: finalized.append(r) or True
@@ -295,9 +285,10 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-            proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+            proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
             proxy.httpx, "AsyncClient", return_value=DelayedClient()
         ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
@@ -329,9 +320,10 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-            proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+            proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
             proxy.httpx, "AsyncClient", return_value=Client()
         ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
@@ -380,10 +372,11 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                         self.closed = True
                         return None
 
-                target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+                target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
                 client = Client()
                 with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-                    proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+                    proxy, "_auth_context_from_scope", return_value=access_context()
                 ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
                     proxy.httpx, "AsyncClient", return_value=client
                 ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
@@ -418,7 +411,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             response = await proxy._forward_current_loaded_openai_request(
                 _request("/v1/chat/completions", {"model": "current", "messages": []}),
                 request_path="/v1/chat/completions",
-                auth_context=proxy.NO_AUTH_CONTEXT,
+                auth_context=access_context(),
                 body_json={"model": "current", "messages": []},
             )
 
@@ -447,7 +440,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         ):
             task = asyncio.create_task(proxy._forward_current_loaded_openai_request(
                 _request("/v1/chat/completions", {"model": "current", "messages": []}),
-                request_path="/v1/chat/completions", auth_context=proxy.NO_AUTH_CONTEXT,
+                request_path="/v1/chat/completions", auth_context=access_context(),
                 body_json={"model": "current", "messages": []},
             ))
             await asyncio.wait_for(entered.wait(), 1)

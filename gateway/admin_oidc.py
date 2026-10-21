@@ -19,8 +19,9 @@ What lives here:
 * ``state`` / ``nonce`` storage + validation primitives that are pure (a
   caller-supplied dict-like store).
 * An ID-token *claim-shape* validator (``validate_id_token_claims``) that
-  checks issuer, audience, expiry, nonce, and email/domain allow-list given
-  an already-decoded claims dict. Cryptographic JWT signature verification
+  checks issuer, audience, expiry, nonce and email given an already-decoded
+  claims dict. Who may sign in is decided by sign-in rules
+  (``gateway.signin_rules``), never here. Cryptographic JWT signature verification
   is delegated to an adapter boundary (:class:`IDTokenVerifier`) so this
   module is fully testable without network or a JWKS dependency.
 * Role bootstrap helper that seeds a configured, verified owner under the
@@ -50,7 +51,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, MutableMapping, Protocol
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
-from gateway.browser_routes import admin_destination, with_query
+from gateway import ui_routes
+
 
 __all__ = [
     "AdminRole",
@@ -62,9 +64,9 @@ __all__ = [
     "OIDCConfigError",
     "PKCEPair",
     "SessionError",
+    "SignInRefused",
     "StateRecord",
     "authorization_url",
-    "admin_role_from_oidc_claims",
     "access_names_from_oidc_claims",
     "bootstrap_admin_role",
     "consume_state",
@@ -98,12 +100,27 @@ class IDTokenClaimsError(ValueError):
     """Raised when an ID-token claims dict fails validation."""
 
 
+class SignInRefused(IDTokenClaimsError):
+    """A signed, current token for a person the instance does not admit.
+
+    Only the checks on who the person is raise this (unverified email, email
+    not allowed). The caller may end that person's identity-provider access,
+    which a malformed or replayed token must never be able to do.
+    """
+
+
 class SessionError(ValueError):
     """Raised when a session cookie is malformed, tampered with, or expired."""
 
 
-def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
-    """Keep product return destinations local, including their query and fragment."""
+def safe_browser_return_to(value: str | None, *, default: str = "/") -> str:
+    """Keep return destinations on a web app page or /status/raw.
+
+    The query and fragment are kept. Everything else, including API paths,
+    other hosts and paths with dot segments, falls back to ``default``.
+    tests/fixtures/return_paths.json is shared with the web app's mirror,
+    safeContinuePath.
+    """
     if not value or not value.startswith("/"):
         return default
     decoded = unquote(value)
@@ -115,15 +132,8 @@ def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> 
         return default
     if target.netloc or target.scheme:
         return default
-    destination = admin_destination(target.path, target.query)
-    if destination:
-        return destination + (f"#{target.fragment}" if target.fragment else "")
-    if target.path in {"/", "/me", "/me/", "/ui", "/status", "/status/"}:
-        destination = "/ui/status/" if target.path.rstrip("/") == "/status" else "/ui/home/"
-        return with_query(destination, target.query) + (f"#{target.fragment}" if target.fragment else "")
-    if target.path in {"/status/raw", "/status/raw/", "/setup", "/setup/"}:
-        return value
-    if target.path.startswith("/ui/") and not target.path.startswith("/ui/admin/"):
+    path = unquote(target.path)
+    if ui_routes.is_page_path(path) or path in {"/status/raw", "/status/raw/"}:
         return value
     return default
 
@@ -158,7 +168,11 @@ class CookieConfig:
     """Settings for the signed admin-session cookie."""
 
     name: str = "opx_admin_session"
-    max_age_seconds: int = 60 * 60 * 8  # 8h default — admins re-auth daily-ish
+    # Not the session lifetime: that is the owner's session policy
+    # (gateway.session_policy). This is how long a role the identity provider
+    # granted stays confirmed after a sign-in, and the lifetime of a session
+    # built without a policy.
+    max_age_seconds: int = 60 * 60 * 8
     secure: bool = True
     http_only: bool = True
     same_site: str = "lax"  # "lax" | "strict" | "none"
@@ -197,7 +211,8 @@ class OIDCConfig:
     client_secret: str
     redirect_uri: str
     scopes: tuple[str, ...]
-    allowed_email_domains: frozenset[str]
+    # Bootstrap only: the verified email that may become the first owner when
+    # no owner exists. It admits no one else; sign-in rules decide that.
     admin_emails: frozenset[str]
     signing_key: bytes
     cookie: CookieConfig = field(default_factory=CookieConfig)
@@ -210,10 +225,6 @@ class OIDCConfig:
     jwks_uri: str = ""
     # Allow clock skew when checking ``exp`` / ``iat``.
     clock_skew_seconds: int = 60
-    # Optional IdP-driven admin grants. Keycloak commonly emits groups as
-    # "/trusted-users" and roles under realm_access/resource_access.
-    admin_groups: frozenset[str] = field(default_factory=frozenset)
-    admin_roles: frozenset[str] = field(default_factory=frozenset)
     # Name of the ID-token claim that carries the user's group memberships.
     # Defaults to "groups" (the de-facto standard for Keycloak, Okta, etc.).
     # Change this if your IdP uses a different claim name (e.g. "roles",
@@ -254,22 +265,6 @@ def _coerce_str_set(values: Any) -> frozenset[str]:
 def canonical_oidc_group(value: str) -> str:
     """Interpret a short group name as a root path, preserving its exact name."""
     return value if value.startswith("/") else "/" + value
-
-
-def _coerce_access_name_set(values: Any) -> frozenset[str]:
-    """Load exact authorization names; separators are only config list syntax."""
-    if values is None:
-        return frozenset()
-    if isinstance(values, str):
-        items: Iterable[Any] = [
-            part.strip() for chunk in values.splitlines() for part in chunk.split(",")
-        ]
-    else:
-        try:
-            items = list(values)
-        except TypeError as exc:
-            raise OIDCConfigError(f"expected iterable, got {type(values).__name__}") from exc
-    return frozenset(str(item) for item in items if str(item))
 
 
 def _coerce_scopes(values: Any) -> tuple[str, ...]:
@@ -317,15 +312,7 @@ _STORED_OIDC_STRING_FIELDS = frozenset(
         "display_name",
     }
 )
-_STORED_OIDC_LIST_FIELDS = frozenset(
-    {
-        "scopes",
-        "allowed_email_domains",
-        "admin_emails",
-        "admin_groups",
-        "admin_roles",
-    }
-)
+_STORED_OIDC_LIST_FIELDS = frozenset({"scopes"})
 
 
 def validate_oidc_stored_override(data: Mapping[str, Any]) -> None:
@@ -402,12 +389,8 @@ def load_oidc_config(
       both are present, ``client_secret`` wins.
     * ``redirect_uri`` — absolute URL
     * ``scopes`` — string ("openid email profile") or list
-    * ``allowed_email_domains`` — list of domains (case-insensitive)
-    * ``admin_emails`` — list of emails (case-insensitive)
-    * ``admin_groups`` — OIDC group names/paths that should grant admin
-    * ``admin_roles`` — OIDC realm/client role names that should grant admin
-    * ``admin_groups_env`` / ``admin_roles_env`` — env var names with comma-
-      separated OIDC group/role names
+    * ``admin_emails`` — emails (case-insensitive) that may become the first
+      owner while no owner exists. Who else may sign in is a sign-in rule.
     * ``signing_key`` — literal
     * ``signing_key_env`` — env var name
     * ``cookie`` — nested mapping for :class:`CookieConfig`
@@ -438,17 +421,6 @@ def load_oidc_config(
     else:
         signing_key = _coerce_signing_key(signing_raw)
 
-    admin_groups = data.get("admin_groups")
-    if not admin_groups:
-        groups_env = data.get("admin_groups_env")
-        if groups_env:
-            admin_groups = env_map.get(str(groups_env), "")
-    admin_roles = data.get("admin_roles")
-    if not admin_roles:
-        roles_env = data.get("admin_roles_env")
-        if roles_env:
-            admin_roles = env_map.get(str(roles_env), "")
-
     cookie_data = data.get("cookie") or {}
     if not isinstance(cookie_data, Mapping):
         raise OIDCConfigError("cookie config must be a mapping")
@@ -470,7 +442,6 @@ def load_oidc_config(
         client_secret=str(client_secret),
         redirect_uri=str(data.get("redirect_uri", "")),
         scopes=_coerce_scopes(data.get("scopes")),
-        allowed_email_domains=_coerce_str_set(data.get("allowed_email_domains")),
         admin_emails=_coerce_str_set(data.get("admin_emails")),
         signing_key=signing_key,
         cookie=cookie,
@@ -478,8 +449,6 @@ def load_oidc_config(
         token_endpoint=str(data.get("token_endpoint", "")),
         jwks_uri=str(data.get("jwks_uri", "")),
         clock_skew_seconds=int(data.get("clock_skew_seconds", 60)),
-        admin_groups=_coerce_access_name_set(admin_groups),
-        admin_roles=_coerce_access_name_set(admin_roles),
         groups_claim=str(data.get("groups_claim") or "groups"),
     )
 
@@ -543,6 +512,11 @@ class StateRecord:
     redirect_uri: str = ""
     browser_cookie_name: str = ""
     browser_binding_hash: str = ""
+    # Set for a test sign-in from Settings: the callback records what came
+    # back for that test and signs no one in.
+    test_id: str = ""
+    # Set when the person is confirming a sign-in they already have (step-up).
+    reauth: bool = False
 
 
 def record_state(
@@ -554,6 +528,8 @@ def record_state(
     redirect_uri: str = "",
     browser_cookie_name: str = "",
     browser_binding_hash: str = "",
+    test_id: str = "",
+    reauth: bool = False,
     state: str | None = None,
     now: float | None = None,
     max_age_seconds: int = 600,
@@ -575,6 +551,8 @@ def record_state(
         redirect_uri=redirect_uri,
         browser_cookie_name=browser_cookie_name,
         browser_binding_hash=browser_binding_hash,
+        test_id=test_id,
+        reauth=reauth,
     )
     store[record.state] = record
     return record
@@ -692,8 +670,8 @@ def validate_id_token_claims(
     * ``exp`` is in the future (with ``clock_skew_seconds`` tolerance),
     * ``iat``, if present, is not absurdly in the future,
     * ``nonce`` matches ``expected_nonce``,
-    * ``email`` is present and (if domain/admin allow-lists are set)
-      is permitted by them.
+    * ``email`` is present, and the provider did not say it is unverified.
+      Whether this person may sign in is decided afterwards by sign-in rules.
 
     Returns the same claims dict on success; raises
     :class:`IDTokenClaimsError` otherwise. Cryptographic signature
@@ -741,34 +719,9 @@ def validate_id_token_claims(
 
     email_verified = claims.get("email_verified")
     if email_verified is False:
-        raise IDTokenClaimsError("email not verified by IdP")
-
-    if (
-        not _email_allowed(email, config)
-        and admin_role_from_oidc_claims(claims, config=config) != AdminRole.ADMIN
-    ):
-        raise IDTokenClaimsError("email not in allow-list")
+        raise SignInRefused("email not verified by IdP")
 
     return claims
-
-
-def _email_allowed(email: str, config: OIDCConfig) -> bool:
-    """Return True if ``email`` passes the configured allow-lists.
-
-    Rules:
-
-    * If both ``admin_emails`` and ``allowed_email_domains`` are empty,
-      *anyone* who passes IdP auth is allowed. This is the "single tenant,
-      IdP-restricted to my org" case.
-    * Otherwise, the email must either be in ``admin_emails`` or its
-      domain must be in ``allowed_email_domains``.
-    """
-    if not config.admin_emails and not config.allowed_email_domains:
-        return True
-    if email in config.admin_emails:
-        return True
-    _, _, domain = email.partition("@")
-    return domain in config.allowed_email_domains
 
 
 def _iter_claim_strings(value: Any) -> Iterable[str]:
@@ -779,48 +732,6 @@ def _iter_claim_strings(value: Any) -> Iterable[str]:
     if isinstance(value, (list, tuple, set, frozenset)):
         return tuple(str(item) for item in value if item is not None)
     return ()
-
-
-def _claim_values_match(
-    value: Any, allowed: frozenset[str], *, groups: bool = False,
-) -> bool:
-    expected = allowed | {canonical_oidc_group(item) for item in allowed} if groups else allowed
-    # Claims are issuer assertions, not operator shorthand. No suffix,
-    # case, whitespace or punctuation aliases belong in authorization.
-    return any(item in expected for item in _iter_claim_strings(value))
-
-
-def admin_role_from_oidc_claims(
-    claims: Mapping[str, Any],
-    *,
-    config: OIDCConfig,
-) -> str:
-    """Return an admin role granted by configured OIDC groups/roles.
-
-    This deliberately grants only ``admin``. ``owner`` remains an explicit
-    bootstrap/manual concept, while "trusted users" can be managed in the
-    IdP as the normal admin set for this gateway.
-    """
-    if _claim_values_match(claims.get(config.groups_claim), config.admin_groups, groups=True):
-        return AdminRole.ADMIN
-
-    realm_access = claims.get("realm_access")
-    if isinstance(realm_access, Mapping) and _claim_values_match(
-        realm_access.get("roles"),
-        config.admin_roles,
-    ):
-        return AdminRole.ADMIN
-
-    resource_access = claims.get("resource_access")
-    if isinstance(resource_access, Mapping):
-        client_access = resource_access.get(config.client_id)
-        if isinstance(client_access, Mapping) and _claim_values_match(
-            client_access.get("roles"),
-            config.admin_roles,
-        ):
-            return AdminRole.ADMIN
-
-    return AdminRole.NONE
 
 
 def access_names_from_oidc_claims(
@@ -859,6 +770,13 @@ def access_names_from_oidc_claims(
 # ---------------------------------------------------------------------------
 
 
+# ``AdminSession.authenticated_at`` when the identity provider's ID token carried no ``auth_time``: the
+# epoch, older than any step-up window, so the session is never recent (decision D40). ``None`` is
+# different: a password or key sign-in, or a cookie from before sliding sessions, whose issue time is when
+# the person proved who they are.
+AUTH_TIME_UNKNOWN = 0.0
+
+
 @dataclass(frozen=True)
 class AdminSession:
     """The minimal payload we trust into a signed cookie.
@@ -875,13 +793,42 @@ class AdminSession:
     issued_at: float
     expires_at: float
     session_id: str = ""
+    # Sliding-session fields. None marks a cookie issued before sliding
+    # sessions: it was last renewed and last authenticated when it was issued,
+    # and has no absolute deadline of its own.
+    absolute_expires_at: float | None = None
+    renewed_at: float | None = None
+    authenticated_at: float | None = None
+    # False for a session that must end at its expiry (a browser session claimed with an admin key).
+    renewable: bool = True
+    # The first id of this sign-in. Every renewal issues a new ``session_id`` (decision D35) but keeps
+    # the family, which the server revokes as a whole. Empty for a session that was never renewed.
+    family: str = ""
+
+    @property
+    def family_id(self) -> str:
+        """What a sign-in is called across its renewals: its first session id."""
+        return self.family or self.session_id
+
+    @property
+    def last_renewed(self) -> float:
+        return self.issued_at if self.renewed_at is None else self.renewed_at
+
+    @property
+    def last_authenticated(self) -> float:
+        return self.issued_at if self.authenticated_at is None else self.authenticated_at
+
+    @property
+    def latest_expiry(self) -> float:
+        """The latest moment any copy of this session could still be valid."""
+        return max(self.expires_at, self.absolute_expires_at or 0.0)
 
     def is_expired(self, now: float | None = None) -> bool:
         current = now if now is not None else time.time()
         return current >= self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "sub": self.subject,
             "email": self.email,
             "role": self.role,
@@ -889,6 +836,15 @@ class AdminSession:
             "exp": int(self.expires_at),
             "sid": self.session_id,
         }
+        for key, value in (("aexp", self.absolute_expires_at), ("rat", self.renewed_at),
+                           ("aat", self.authenticated_at)):
+            if value is not None:
+                data[key] = int(value)
+        if not self.renewable:
+            data["rn"] = 0
+        if self.family and self.family != self.session_id:
+            data["fid"] = self.family
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AdminSession":
@@ -906,9 +862,38 @@ class AdminSession:
                 issued_at=float(data["iat"]),
                 expires_at=float(data["exp"]),
                 session_id=session_id,
+                absolute_expires_at=_optional_float(data.get("aexp")),
+                renewed_at=_optional_float(data.get("rat")),
+                authenticated_at=_optional_float(data.get("aat")),
+                renewable=data.get("rn", 0 if _is_key_claim(data) else 1) != 0,
+                family=str(data.get("fid") or ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionError(f"malformed session payload: {exc}") from exc
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+# A browser session claimed with an admin key is not a person's sign-in (see ``/setup/claim``). Its
+# subject names a service account, or its email is this label.
+SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
+KEY_CLAIM_EMAIL = "local-admin"
+
+
+def new_session_id() -> str:
+    return _b64url(secrets.token_bytes(16))
+
+
+def _is_key_claim(data: Mapping[str, Any]) -> bool:
+    """Whether a payload without ``rn`` was issued by a key claim.
+
+    Cookies from before sliding sessions carry no ``rn``, and a key claim lasts its eight hours and
+    never renews. A cookie without ``rn`` that a key claim could have made is not renewable; a
+    person's sign-in is upgraded once, as before.
+    """
+    return str(data.get("sub") or "").startswith(SERVICE_ACCOUNT_SESSION_PREFIX) or data.get("email") == KEY_CLAIM_EMAIL
 
 
 # A short version tag so we can rotate the cookie format without silently
@@ -922,22 +907,41 @@ def session_from_claims(
     role: str,
     cookie: CookieConfig,
     now: float | None = None,
+    idle_seconds: int | None = None,
+    absolute_seconds: int | None = None,
 ) -> AdminSession:
     """Build an :class:`AdminSession` from validated ID-token claims.
 
     Only the subject + email are pulled from the claims. The role is
     decided by the caller (typically via :func:`bootstrap_admin_role`).
+
+    With ``idle_seconds`` and ``absolute_seconds`` (the session policy) the
+    session can be renewed until its absolute deadline. Without them it lives
+    ``cookie.max_age_seconds`` and is never renewed.
     """
     if role not in AdminRole.ALL:
         raise SessionError(f"invalid role {role!r}")
     issued = now if now is not None else time.time()
+    session_id = new_session_id()
+    if idle_seconds is None or absolute_seconds is None:
+        return AdminSession(
+            subject=str(claims["sub"]),
+            email=str(claims["email"]).strip().lower(),
+            role=role,
+            issued_at=issued,
+            expires_at=issued + cookie.max_age_seconds,
+            session_id=session_id,
+        )
     return AdminSession(
         subject=str(claims["sub"]),
         email=str(claims["email"]).strip().lower(),
         role=role,
         issued_at=issued,
-        expires_at=issued + cookie.max_age_seconds,
-        session_id=_b64url(secrets.token_bytes(16)),
+        expires_at=issued + min(idle_seconds, absolute_seconds),
+        session_id=session_id,
+        absolute_expires_at=issued + absolute_seconds,
+        renewed_at=issued,
+        authenticated_at=issued,
     )
 
 
@@ -962,7 +966,8 @@ def csrf_token_for_session(session: AdminSession, *, signing_key: bytes) -> str:
     """Return the same-origin mutation token for a signed browser session."""
     if len(signing_key) < _MIN_SIGNING_KEY_BYTES:
         raise SessionError("signing_key too short")
-    session_nonce = session.session_id or (
+    # The family, not the id: a renewal keeps the token the open page already holds.
+    session_nonce = session.family_id or (
         f"{session.subject}:{int(session.issued_at)}:{int(session.expires_at)}"
     )
     mac = hmac.new(
@@ -1027,11 +1032,14 @@ def bootstrap_admin_role(
 ) -> str:
     """Seed only the first configured, verified owner under the trusted issuer.
 
-    Persisted grants are presence-only here. Returning users recover their
-    grants by immutable (issuer, subject) at the caller, never by email.
-    Once any grant exists, an email cannot create or transfer authorization.
+    ``existing_roles`` maps grant ids to role names. Persisted grants are
+    presence-only here. Returning users recover their grants by immutable
+    (issuer, subject) at the caller, never by email. Once an owner grant exists
+    (even a revoked one), an email cannot create or transfer ownership. An
+    administrator grant does not count: a group administrator who signs in
+    first must not lock the listed owner out.
     """
-    if existing_roles or issuer != config.issuer or email_verified is not True:
+    if AdminRole.OWNER in set(existing_roles.values()) or issuer != config.issuer or email_verified is not True:
         return AdminRole.NONE
     if email.strip().lower() in config.admin_emails:
         return AdminRole.OWNER

@@ -297,31 +297,67 @@ class TestStreamingThinkSplitTransform:
         parsed = _parse_sse_chunk(result)
         assert parsed["choices"][0]["delta"]["content"] == "V"
 
-    def test_split_think_close_tag_across_chunks(self) -> None:
-        """The key 4b test: </think> split across two chunks is caught when ON."""
-        # Simulate </think> split: chunk1 ends with "</thi", chunk2 starts with "nk>"
-        # Build a realistic SSE response where the close tag is split.
-        full_content = "<think>reasoning</think>answer"
-        # Split at position in the middle of </think>
-        split_pos = full_content.index("</think>") + 4  # "</thi" in chunk1
-        part1 = full_content[:split_pos]
-        part2 = full_content[split_pos:]
-
-        payload1 = {"choices": [{"delta": {"content": part1}}]}
-        payload2 = {"choices": [{"delta": {"content": part2}}]}
-        chunk1 = _sse_chunk(payload1)
-        chunk2 = _sse_chunk(payload2)
-
+    def test_finish_releases_held_text_when_stream_ends_without_done(self) -> None:
         sst = StreamingThinkSplitTransform()
-        r1 = sst.process_chunk(chunk1)
-        r2 = sst.process_chunk(chunk2)
+        out = sst.process_chunk(_sse_chunk({"choices": [{"index": 0, "delta": {"content": "hello <thi"}}]}))
+        assert _parse_sse_chunk(out)["choices"][0]["delta"]["content"] == "hello "
+        tail = _parse_sse_chunk(sst.finish())
+        assert tail["choices"][0]["delta"]["content"] == "<thi"
+        assert sst.finish() == b""
 
-        # Together the two output chunks should emit the answer (not the raw tags)
-        combined = r1 + r2
-        combined_text = combined.decode("utf-8")
-        assert "answer" in combined_text
-        # The raw <think> content should NOT appear in the final visible output
-        assert "<think>reasoning</think>answer" not in combined_text
+    def test_unicode_before_tag_keeps_offsets(self) -> None:
+        # U+0130 lowercases to two code points; offsets must still match the original text.
+        chunk = _sse_chunk({"choices": [{"delta": {"content": "\u0130<think>R</think>V"}}]})
+        delta = _parse_sse_chunk(StreamingThinkSplitTransform().process_chunk(chunk))["choices"][0]["delta"]
+        assert delta["content"] == "\u0130V"
+        assert delta["reasoning_content"] == "R"
+
+    def test_oversized_unterminated_line_is_passed_through_not_carried(self) -> None:
+        sst = StreamingThinkSplitTransform()
+        big = b"data: " + b"x" * ((1 << 20) + 1)
+        assert sst.process_chunk(big) == big
+        assert sst._raw_carry == b""
+
+    def test_split_think_close_tag_across_chunks(self) -> None:
+        """A </think> cut at any offset between two frames still yields clean channels."""
+        text = "<think>reasoning</think>answer"
+        tag_start = text.index("</think>")
+        for offset in range(1, len("</think>")):
+            split = tag_start + offset
+            transform = StreamingThinkSplitTransform()
+            outputs = []
+            for piece in (text[:split], text[split:]):
+                payload = {"choices": [{"index": 0, "delta": {"content": piece}}]}
+                outputs.append(transform.process_chunk(_sse_chunk(payload)))
+            frames = []
+            for line in b"".join(outputs).decode("utf-8").splitlines():
+                if line.startswith("data:"):
+                    body = line[5:].strip()
+                    if body and body != "[DONE]":
+                        frames.append(json.loads(body))
+            assert frames, offset
+            deltas = [
+                choice["delta"]
+                for frame in frames
+                for choice in frame.get("choices", [])
+                if choice.get("index", 0) == 0 and "delta" in choice
+            ]
+            visible = "".join(delta.get("content") or "" for delta in deltas)
+            reasoning = "".join(delta.get("reasoning_content") or "" for delta in deltas)
+            assert visible == "answer", (offset, visible)
+            assert reasoning == "reasoning", (offset, reasoning)
+
+    def test_held_partial_tag_is_released_when_stream_ends(self) -> None:
+        """Text that merely looks like a tag prefix is not lost at end of stream."""
+        transform = StreamingThinkSplitTransform()
+        out = transform.process_chunk(_sse_chunk({"id": "c", "choices": [{"index": 0, "delta": {"content": "a </th"}}]}))
+        out += transform.process_chunk(b"data: [DONE]\n\n")
+        visible = "".join(
+            json.loads(line[5:])["choices"][0]["delta"].get("content") or ""
+            for line in out.decode().splitlines()
+            if line.startswith("data:") and "[DONE]" not in line
+        )
+        assert visible == "a </th"
 
     def test_off_by_default_no_regression(self) -> None:
         """When streaming-think-split is NOT attached, SSE chunk is byte-identical to legacy."""

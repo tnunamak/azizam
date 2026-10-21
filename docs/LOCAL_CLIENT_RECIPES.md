@@ -36,8 +36,9 @@ and run snippets with `.venv/bin/python`. Node recipes require Node.js and
 `npm install openai` in the client project; run the shown imports in an ES module.
 `AZIZAM_BASE_URL` is the gateway root without a trailing slash.
 
-Chat examples assume you registered `my-llama` as in the [README](../README.md),
-or set `AZIZAM_MODEL` to a chat model visible in `/v1/models`. Media examples
+Chat examples read the model name from `AZIZAM_MODEL`. Set it to the public
+name you gave the engine (see the [README](../README.md)), or to any chat model
+visible in `/v1/models`. Media examples
 require their named workflows, engines, and input files. For remix and character
 replacement, set `AZIZAM_VIDEO_ID` or `AZIZAM_SOURCE_VIDEO_ID` to a completed
 video owned by your key. Replace shell asset/video/request ID placeholders
@@ -78,9 +79,9 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
 | | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
-| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech` | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech`; plus `rename_app` and `rename_key` for the signed-in person's own apps and keys | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
 | | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
-| | Auth | Bearer app key. A 401 carries an RFC 9728 `resource_metadata` challenge. There is no OAuth server. | same |
+| | Auth | Bearer app key, or sign-in through the gateway's OAuth flow for hosted clients; see [Recipe: MCP clients](#recipe-mcp-clients-chatgpt-claudeai-claude-code-cursor-pi-codex). A 401 carries an RFC 9728 `resource_metadata` challenge. | same |
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
 | | Resources, prompts, sampling, elicitation, tasks, `subscriptions/listen`, SSE streams, `GET /mcp`, session ids | Unsupported: `-32601` or 405 | same |
 | | External image URLs as tool inputs | Unsupported: tool error. Use a data URI or an asset id from an earlier result. | same |
@@ -97,7 +98,8 @@ Per-client recipes follow in this document.
 Concrete engine ids, model ids, timings, GPU names, and systemd unit names in
 this file describe one example deployment. A fresh install exposes the
 capabilities and model names that the operator registered; the README's
-`my-llama` chat alias is the default example used for new client snippets.
+`my-llama` chat alias is only an example name. Client snippets read `AZIZAM_MODEL`
+and do not assume that name.
 
 ## Live Surfaces Today
 
@@ -585,7 +587,7 @@ stored in `media_jobs.db` (table `video_job_records`) and remain until explicitl
 deleted, so ids and their owner survive a gateway restart. Status, content, list, delete, remix,
 edit and extend are all scoped to the owning key: another key's id, and any id
 the gateway has no record of (never made here, deleted, or made before records
-were stored), returns `404 video_id not found` (unless auth is disabled). Set `videos.allow_untracked_ids: true` to keep videos made before records were stored readable for a while. A
+were stored), returns `404 video_id not found`. Set `videos.allow_untracked_ids: true` to keep videos made before records were stored readable for a while. A
 different API key's jobs never appear in the list:
 
 ```bash
@@ -923,9 +925,12 @@ Canonical protocol aliases:
 
 Provider-native discovery lives at `/gateway/v1/providers` and
 `/gateway/v1/providers/{provider}`; results are projected through the caller's
-App profile policy. Raw provider-native passthrough, when enabled for a key, is
+App access plan policy. Raw provider-native passthrough, when enabled for a key, is
 reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
-root paths, and there is no legacy root Tabby shim. Passthrough preserves
+root paths. Engine-native access for a configured engine uses
+`/native/{engine_id}/{path}`, governed by that engine's allow rules. Generation
+follows the App's access plan. Control calls (load, settings, restart, file
+paths) need owner authority, which generation access never implies. Passthrough preserves
 streamed response bodies such as SSE, NDJSON, and generated media rather than
 buffering the whole upstream response first.
 
@@ -941,14 +946,15 @@ Collision strategy is intentionally simple: canonical protocol frontends own
 aliases `/v1` and `/api`. Provider-native passthrough never claims those roots.
 If a backend has its own `/v1/models`, `/api/tags`, `/queue`, or similar native
 path, call it through `/gateway/v1/providers/{provider}/{path...}` after
-discovering the provider id and confirming the App profile allows
+discovering the provider id and confirming the App access plan allows
 `native_passthrough`.
 
 Auth semantics are also uniform. `/health`, `/.well-known/azizam`,
 `/.well-known/skills`, `/llms.txt`, `/docs`, and `/openapi.json` are public
 discovery. Protocol frontends, gateway-native
-runtime APIs, and provider-native passthrough require
-`Authorization: Bearer $AZIZAM_API_KEY`. Some SDKs name that field
+runtime APIs, and provider-native passthrough generation require
+`Authorization: Bearer $AZIZAM_API_KEY`. Native control calls need owner authority
+instead; an App key does not grant them. Some SDKs name that field
 `api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
 token, not an upstream OpenAI, Anthropic, or Ollama credential.
 
@@ -1009,7 +1015,7 @@ Notes:
 - Limits: 1000 documents, 10 000 characters per document. Longer input is a 400, not silently cut.
 - Scores are model scores in 0..1. They compare documents within one request. Do not reuse a threshold from
   another reranker.
-- A key may rerank when its profile allows `text.embeddings`.
+- A key may rerank when its access plan allows `text.embeddings`.
 
 ## Recipe: OpenAI Realtime (voice agents)
 
@@ -1055,9 +1061,13 @@ Function tools run in the SDK as usual.
 
 Notes:
 
-- Auth is the one of the other routes: a trusted LAN client needs no key; otherwise send `Authorization: Bearer`,
-  `?api_key=`, or (browsers) the `openai-insecure-api-key.<key>` subprotocol. A refused upgrade is a plain HTTP 401
-  or 403. The key's profile must allow transcription, chat and speech, because a voice session uses all three.
+- Send an App key with `Authorization: Bearer`, `?api_key=`, or (browsers)
+  the `openai-insecure-api-key.<key>` subprotocol. Without a key, an owner must
+  have added the client address to an App's **Trusted addresses**. Otherwise,
+  authentication returns `401 key_required`. A sent key always wins;
+  placeholders such as `loopback` return `401 key_invalid`. A refused upgrade
+  is a plain HTTP 401 or 403. The App's access plan must allow transcription,
+  chat and speech, because a voice session uses all three.
 - Real numbers, 5 voice turns (2026-10-03): end of speech to first audio 1.5 to 2.0 s (median 1.6 s). That is
   speech-to-text 0.2 to 0.8 s, then the model's first sentence 0.7 to 1.5 s (time to first token about 0.33 s), then
   Supertonic's first audio 0.26 to 0.30 s.
@@ -1088,8 +1098,11 @@ the gateway does not pull, push, create, copy, or delete local model files.
 
 ```text
 Base URL:  http://127.0.0.1:5000/openai/v1
-API Key:   $AZIZAM_API_KEY
+API Key:   your opk_... App key (paste the value; do not type $AZIZAM_API_KEY)
 ```
+
+For other network layouts, such as Open WebUI in a container or on another
+device, see [Connect an engine by where it runs](FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs).
 
 Then refresh models; Open WebUI will call the configured models endpoint and
 populate the selector with whatever aliases and backend models the proxy
@@ -1231,7 +1244,9 @@ supports a pathful base URL. For clients hard-coded to `/api`, use
 `http://127.0.0.1:5000` and the convenience `/api` routes. Send
 `Authorization: Bearer $AZIZAM_API_KEY` (`x-api-key` also works, but the
 Ollama clients only send a bearer header); this is not a vanilla
-unauthenticated Ollama daemon. Clients on the LAN bypass list need no key.
+unauthenticated Ollama daemon. A keyless request needs an App trusted-address
+match set by the owner; being on the LAN is not enough. Missing keys otherwise
+return `401 key_required`. Dummy keys return `401 key_invalid`.
 The official `ollama` Python client takes the key as
 `ollama.Client(host=..., headers={"Authorization": "Bearer ..."})`.
 
@@ -1300,7 +1315,9 @@ print(msg.content[0].text)
 ```
 
 Auth: the SDK's `api_key` is sent as `x-api-key`; `auth_token=` (bearer) works
-too. Use either. Clients on the LAN bypass list need no key.
+too. Use either with a real App key. A request without a key needs an
+owner-configured App trusted-address match; otherwise it returns
+`401 key_required`. A sent placeholder key returns `401 key_invalid`.
 
 Claude Code: set `ANTHROPIC_BASE_URL=http://127.0.0.1:5000`,
 `ANTHROPIC_AUTH_TOKEN=$AZIZAM_API_KEY`, `ANTHROPIC_MODEL=default` and
@@ -1356,7 +1373,7 @@ from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
 client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 
 first = client.responses.create(model=model, input="Remember the word mango.")
 second = client.responses.create(
@@ -1409,7 +1426,7 @@ import os
 from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 
 client = OpenAI(
     base_url=f"{base_url}/openai/v1",
@@ -1434,7 +1451,7 @@ const client = new OpenAI({
   apiKey: process.env.AZIZAM_API_KEY,
 });
 
-const model = process.env.AZIZAM_MODEL ?? "my-llama";
+const model = process.env.AZIZAM_MODEL;
 const r = await client.chat.completions.create({
   model,
   messages: [{ role: "user", content: "ping" }],
@@ -1447,7 +1464,7 @@ Smoke test (no SDK):
 ```bash
 export AZIZAM_API_KEY='opk_...'
 AZIZAM_BASE_URL="${AZIZAM_BASE_URL:-http://127.0.0.1:5000}"
-AZIZAM_MODEL="${AZIZAM_MODEL:-my-llama}"
+AZIZAM_MODEL="${AZIZAM_MODEL:?set AZIZAM_MODEL to a public model name}"
 curl -s "$AZIZAM_BASE_URL/openai/v1/chat/completions" \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -1462,7 +1479,7 @@ import os
 from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 client = OpenAI(
     base_url=f"{base_url}/openai/v1",
     api_key=os.environ["AZIZAM_API_KEY"],
@@ -1487,16 +1504,28 @@ Expected unsupported features:
   Realtime HTTP routes such as `/v1/realtime/calls`, `client_secrets`, SIP and WebRTC are not supported;
   registered HTTP compatibility routes return `unsupported_operation`.
 
-## Recipe: MCP clients (Claude Code, Pi, Cursor, Codex)
+## Recipe: MCP clients (ChatGPT, Claude.ai, Claude Code, Cursor, Pi, Codex)
 
-The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three tools, so an
-agent pays about 600 tokens once and gets every workflow:
+The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three media tools, so an
+agent pays about 600 tokens once and gets every workflow. Two more tools, `rename_app` and
+`rename_key`, rename the signed-in person's own apps and keys (names only; they need a client the
+person signed in to, not an App key):
 
 | Tool | Use |
 |---|---|
 | `capabilities` | List workflows, aliases (`image`, `video`, `music`, `sfx`, ...) and `speech`. With `target`, return the typed inputs, outputs and expected run time. |
 | `run` | Start a `target` with `inputs`. Fast work returns the result. Slow work returns a `job_id` after `wait_seconds` (default 30, at most 120). |
 | `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
+| `rename_app` | Give one of your apps a new `name`. `app` is its current name (or its id when two share a name). |
+| `rename_key` | Give an active key of one of your apps a new `name`. `app` and `key` are current names (or ids). |
+
+Arguments for `job`:
+
+| Argument | Type | Requirement, default and limits |
+|---|---|---|
+| `job_id` | string | Required. |
+| `wait_seconds` | integer | 0 to 120; default 0. |
+| `cancel` | boolean | Default false. When true, cancel instead of polling, then report the job state. |
 
 Media comes back as MCP `resource_link` blocks that point at signed asset URLs, and
 as `structuredContent.assets[]` with the `asset_id`. Pass an `asset_id` or a data URI
@@ -1504,12 +1533,18 @@ as an image input to chain an edit. The adapter does not fetch external URLs.
 
 The tools are generated from `x-azizam-workflows` and the stable aliases, so a
 new workflow appears with no code change. Every action is dispatched to the same
-core route a plain HTTP client would call, with your key, so profile policy and
+core route a plain HTTP client would call, with your key, so access plan policy and
 receipts apply. A policy denial comes back as a tool error that carries the HTTP status.
 
-Auth is the same bearer key. A request without a key gets `401` with
-`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
-The gateway has no OAuth server, so give the client the key as a header.
+Auth is a bearer key or a sign-in. A request without credentials gets `401` with
+`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp", scope="mcp"`.
+A client that follows the MCP authorization spec then signs the person in to the
+gateway: they approve it once on the gateway's consent page, and it acts as them
+within their plan until they disconnect it on the Connect page. ChatGPT and
+Claude.ai work only this way: paste `https://ai.example.com/mcp`, choose OAuth (or
+just add the connector) and leave the client ID and secret empty. Sign-in needs the
+gateway's public https address to be set. Clients that send headers can still use
+an app key, as below. The Connect page has per-client notes.
 
 Protocol: revision 2026-07-28 (stateless, `server/discover`) and the handshake
 revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;
@@ -1598,7 +1633,7 @@ an exact model or settings. Unknown names pass through unchanged.
 | Chat / completions | `default` | Example deployment: Qwen3.8-27B, reasoning on (also does vision) | `gpt-5*`, `gpt-4.1`, `gpt-4o`, `gpt-4`, `o1*`, `o3*`, `o4*`, `chatgpt-*`, `claude-*` |
 | | `fast` | `default-fast` (same weights, reasoning off) | `gpt-*-mini*`, `gpt-*-nano*`, `o*-mini*`, `gpt-3.5*`, `claude-*haiku*` |
 | | `vision` | `default` | |
-| | `coder` | `coder` (coding profile) | `gpt-*-codex*`, `codex-*` |
+| | `coder` | `coder` (coding model alias) | `gpt-*-codex*`, `codex-*` |
 | | `rp` | `rp` (roleplay) | |
 | Embeddings | `embed` | `nomic-embed-text-v1.5` (768-dim; not vector-compatible with OpenAI's) | `text-embedding-*` |
 | Image generate | `image` | `krea2-turbo` | `gpt-image-*`, `chatgpt-image-*`, `dall-e-*` |
@@ -1627,7 +1662,10 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `sfx` | `sa3-small-sfx` | |
 
 TTS and STT aliases resolve through **engines**: each tier lists engines in
-order and the first one whose service is deployed wins. Engine ids
+order and the first one whose service is deployed wins. For speech with a named
+voice, the first deployed engine that accepts that voice wins. Fallback happens
+only among engines that accept the voice. If none accepts it, the gateway
+returns `400 voice_not_available`. Engine ids
 (`chatterbox`, `omnivoice`, `supertonic`, `kokoro`, `parakeet-gpu`, `parakeet`, `nemotron-streaming`,
 `canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed (or is
 disabled in the service registry, like `chatterbox` since 2026-10-08) returns
@@ -1689,6 +1727,17 @@ answer once (an SSE request gets one delta). See the shared
 and streaming behavior. `GET /v1/audio/voices` lists each deployed engine's
 voices under `engines`.
 
+**Voices are engine data.** Each engine in `model_aliases.speech.engines` lists
+its `voices`; `voice_map` and the speech section's `voice_aliases` are accepted
+spellings (an OpenAI name such as `shimmer`, or an older one such as
+`cheerful_female`). A model served by a tier of engines (`stable`) sends a voice
+to the first engine, in the tier's order, that accepts it; a voice that no engine
+of the model accepts is `400 voice_not_available` (`param: voice`), not a silent
+default. Omitting `voice` uses the first engine's `default_voice`. An engine with
+no `voices` list takes any voice id. `GET /v1/audio/voices?model=<model>` lists
+exactly the voices that model accepts (without `model`, those of `tts-1`), and
+Try offers the same voices per model.
+
 ### Custom voices
 
 Users can create their own voices and use them with the speech route. The request
@@ -1714,7 +1763,7 @@ curl "$AZIZAM_BASE_URL/v1/audio/speech" -H "Authorization: Bearer $AZIZAM_API_KE
 | Route | Notes |
 |---|---|
 | `POST /v1/audio/voices` | multipart: `name`, `audio_sample` (file, <= 10 MiB; wav, mp3, flac, ogg, aac, webm, m4a), `consent` (id), `type` (`audio_sample`, default). Extras: `description`, `labels` (JSON object, <= 10), `remove_background_noise` (default false). |
-| `POST /v1/audio/voices` with `type: "prompt"` | JSON or multipart: `name`, `prompt` (1-2000 chars), `script_hint`, `model` (`auto`), extra `seed`. OmniVoice designs from a fixed vocabulary, not free text: the gateway reads the description for gender (male, female), age (child, teenager, young adult, middle-aged, elderly), pitch (very low, low, moderate, high, very high), `whisper` and an accent (american, british, australian, canadian, indian, chinese, japanese, korean, portuguese, russian), lists the words it could not use in `warnings` (`design_terms_ignored: ...`), and returns the attributes it applied as `design_instruct`. A description with none of them is `400 invalid_prompt`. OmniVoice renders the script once and the gateway keeps that clip, so the voice then works on every cloning engine (OpenAI limits prompt voices to its Live API). |
+| `POST /v1/audio/voices` with `type: "prompt"` | JSON or multipart: `name`, `prompt` (1-2000 chars), `script_hint`, `model` (`auto`), extra `seed`. The engine named by `voices.design_engine` does the design. When that engine's data declares a `voice_design.vocabulary` (the shipped OmniVoice data does: gender, age, pitch, `whisper` and an accent), the gateway reads the description for those attributes, lists the words it could not use in `warnings` (`design_terms_ignored: ...`), and returns the attributes it applied as `design_instruct`; a description with none of them is `400 invalid_prompt`. An engine with no vocabulary receives the description unchanged. OmniVoice renders the script once and the gateway keeps that clip, so the voice then works on every cloning engine (OpenAI limits prompt voices to its Live API). |
 | `GET /v1/audio/voices` | Built-in list as before, plus `object: "list"`, `data` (your custom voices, newest first), `first_id`, `last_id`, `has_more`; `after` and `limit` (1-100). |
 | `GET/POST/DELETE /v1/audio/voices/{id}` | Get; rename or relabel (JSON `name`, `description`, `labels`); delete (`{"id", "object": "audio.voice", "deleted": true}`). |
 | `GET /v1/audio/voices/{id}/sample` | The stored reference clip (`audio/wav`), to hear what the clone is built from. |
@@ -1815,28 +1864,6 @@ curl -s "$AZIZAM_BASE_URL/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o
 each stable alias as a capability tagged `alias`, `resolves_to:<target>` and
 `engine:<id>`.
 
-## Showcase page: `/showcase`
-
-`GET /showcase` serves a static demo page (source in `showcase/`, no build step,
-no CDN). It builds one card per capability at load time from
-`/gateway/v1/workflows`, `/gateway/v1/capabilities`, `/gateway/v1/aliases`,
-`/v1/voices` and `/openapi.json`, so a new workflow manifest appears without a
-code change. Section order and matching rules are data in
-`showcase/sections.json`; an unmatched workflow lands in "More workflows".
-
-Each card shows a recorded example (input, output, wall time, alias and what it
-resolves to), a Try it form built from the OpenAPI input schema, and copy-paste
-curl, Python and JavaScript. The Try it panels call the gateway from the browser
-on the same origin, so LAN bypass works; an optional API key is kept only in
-`localStorage`. The top strip shows engine status, the ComfyUI queue and whether
-the LLM is generating (`GET /showcase/api/status`, normal auth).
-
-The page, its assets and the example files are public. Examples live in
-`data/showcase/examples/<id>/` (gitignored; override with
-`AZIZAM_SHOWCASE_EXAMPLES_DIR`). Record them with
-`scripts/build-showcase-examples`. It is idempotent, waits for an idle GPU before
-every job, and runs cheap jobs first and video last. `--list` shows what is pending.
-
 ## Discovery and Debugging: `/gateway/v1/*`
 
 The read-only gateway router (`gateway/api.py`) is mounted into the live app.
@@ -1854,7 +1881,7 @@ curl -s http://127.0.0.1:5000/gateway/v1/workflows \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
-Returns the workflows the caller's profile is allowed to see, with portable
+Returns the workflows the caller's access plan is allowed to see, with portable
 inputs and outputs (no backend node IDs at `client` audience).
 
 ### Capabilities
@@ -1947,7 +1974,7 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
   chunks, JPEG/WebP EXIF/XMP/comments, and MP4/WebM/audio tags go; pixels and
   samples are unchanged (no re-encode; video and audio use ffmpeg
   `-map_metadata -1 -c copy`). The stored copy is never modified.
-- Not set: the profile default applies (below).
+- Not set: default-mode behavior is UNVERIFIED for access plans v4 (see below).
 
 Where to put it:
 
@@ -1967,27 +1994,13 @@ choice made when it was submitted; a later GET override wins over it. Streaming
 speech (`stream_format`) is delivered as the engine produced it, unbuffered.
 An invalid value is a `400` with `param: extensions.com.azizam.workflow.metadata`.
 
-**Profile default.** Order: request control, then profile
-`media_metadata.default`, then `none`.
+**Default metadata mode.** Access plans v4 replace the old Profile JSON
+configuration. The old LAN-bypass, disabled-auth and path-token defaults no
+longer apply. Use an explicit request value (`full` or `none`) when the result
+must not depend on a default.
 
-```yaml
-# profile document (admin Profile `profile_json`, or an entry's `profile:` block)
-media_metadata:
-  default: full      # full | none; omitted = none
-```
-
-- Seeded `Owner (local)` profile (`owner-local`): `full`.
-- Trusted LAN/localhost clients (`auth.lan_bypass_*`): `full`.
-- Auth disabled (a personal local run): `full`.
-- Any other profile, path-token client, or profile without the block: `none`.
-
-To change an existing profile, edit its `profile_json` (admin Profile API, or
-the DB row) and add the block. Seeding never overwrites profiles, so existing
-databases need this edit once: `PATCH /admin/api/profiles/{profile_id}` with
-`{"profile": {...the full profile document..., "media_metadata": {"default": "full"}}}`
-(the body replaces the document, so send all of it). The `/admin` Profile form
-rebuilds the document from its own fields and does not carry `media_metadata`
-yet: re-saving a profile from the form drops the block.
+UNVERIFIED: the v4 setting and precedence for an omitted metadata mode.
+The old `profile_json` editing recipe is not current setup guidance.
 
 Prior art, in short: ComfyUI embeds `prompt` and `workflow` in every saved file
 and offers `--disable-metadata` as a server-wide off switch (no per-request
@@ -1998,10 +2011,10 @@ manifest into the asset with a certificate. It proves who made a file and does
 not carry a re-runnable workflow. The gateway does not implement C2PA; the
 provenance record is unsigned and meant for the owner's own tooling.
 
-## Profile-Scoped Keys
+## App keys and access plans
 
 Dashboard-generated and imported `opk_...` keys authenticate through
-`admin.db`. Each key belongs to an App, and the App's stored Profile layers a
+`admin.db`. Each key belongs to an App, and the App's stored Access plan layers a
 named policy bundle on top of the runtime key:
 
 - which protocols a client can use
@@ -2010,19 +2023,18 @@ named policy bundle on top of the runtime key:
 - how much status and diagnostics it may see
 - which native passthrough lanes are allowed
 
-The profile-binding path is:
+To set up access:
 
-1. **Do not rotate keys preemptively.** Existing imported `opk_...` values keep
-   working after their hashes are in `admin.db`.
-2. **Create or edit a Profile** in `/admin` referencing the protocols, models,
-   workflows, and provider-native surfaces the App should use.
-3. **Attach the Profile to the App** in `/admin`, or let the App inherit from
-   the owning user's dashboard-managed identity/Profile mapping.
-4. **Verify with `/gateway/v1/capabilities`.** After binding a Profile, the
-   capabilities listed for that key should narrow or widen to match. If the
-   set looks wrong, the Profile is misconfigured; do not rotate the key.
-5. **Only rotate the `opk_...` key itself** if it was exposed (committed,
-   pasted, sent to a third party). Profile changes do not require key rotation.
+1. Create or edit the App's access plan in the dashboard.
+2. Use **Apps & keys** to select the App and manage its keys.
+3. Check `/gateway/v1/capabilities` with the App key to verify visible access.
+4. If a client cannot send a key, the owner can open the App menu and choose
+   **Trusted addresses**. Only matching addresses can use that App without a
+   key. Other requests receive `401 key_required`.
+
+A sent key always takes priority over a trusted address. Placeholder values
+such as `loopback` return `401 key_invalid`; leave the key absent for trusted
+address access. `X-Forwarded-For` counts only from `auth.trusted_proxies`.
 
 What this document deliberately does *not* do: print any real key, real hash,
 real env name from a downstream service block, or any value from a live key
@@ -2071,10 +2083,9 @@ the RIFE node also declares `3` and `4` as supported values.
 
 - `/health` is the recommended unauthenticated liveness endpoint. Public
   discovery/static surfaces also include `/.well-known/azizam`,
-  `/.well-known/skills`, `/llms.txt`, `/docs`, `/openapi.json`, and the public
-  `/showcase` page/assets/examples. See [PUBLIC_EXPOSURE.md](ops/PUBLIC_EXPOSURE.md)
+  `/.well-known/skills`, `/llms.txt`, `/docs` and `/openapi.json`. See [PUBLIC_EXPOSURE.md](ops/PUBLIC_EXPOSURE.md)
   for the inventory; use `/health` for Docker/systemd health checks.
-- Dashboard Apps, Profiles, and keys live in `admin.db` and apply live through
+- Dashboard Apps, Access plans, and keys live in `admin.db` and apply live through
   the admin store.
 - Streaming clients must respect server-side idle timeouts on
   `/v1/chat/completions` and `/v1/completions`. A long stall in an

@@ -79,12 +79,17 @@ for env_name in AZIZAM_PORT HARNESS_PORT; do
 done
 
 # -- Temp workspace -------------------------------------------------------------
+source "$(dirname "${BASH_SOURCE[0]}")/lib/scratch.sh"
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   mkdir -p "$HOME/.tmp"
+  scratch_sweep "$HOME/.tmp" gw-ux-p1b-
   TMPDIR_ROOT=$(mktemp -d "$HOME/.tmp/gw-ux-p1b-XXXXXX")
 else
+  scratch_sweep /tmp azizam-fresh-
   TMPDIR_ROOT=$(mktemp -d /tmp/azizam-fresh-XXXXXX)
 fi
+scratch_mark "$TMPDIR_ROOT"
+scratch_on_signal
 
 cleanup_fixture() {
   if [[ "$FIXTURE_MODE" == 1 && -n "${PROXY_PID:-}" ]]; then
@@ -134,21 +139,6 @@ admin:
       secure: false
 
 backends:
-  # Tabby is an external service; the gateway no longer spawns TabbyAPI.
-  # TABBY_MANAGED defaults to false. The host/port are placeholders; the
-  # backend will be unreachable, but the gateway serves all non-LLM routes.
-  tabby:
-    name: TabbyAPI (harness placeholder -- not started)
-    native_passthrough: true
-    host: 127.0.0.1
-    port: 5050
-    health_endpoint: /v1/models
-    role: standby
-    managed: false
-    capabilities:
-      - chat
-      - completions
-
   example-llm:
     name: Example LLM backend (harness placeholder)
     native_passthrough: true
@@ -274,7 +264,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
   setsid strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network bwrap "${fixture_sandbox_args[@]}" -- env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
-    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AZIZAM_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AZIZAM_IMAGE_CACHE_DIR="$AZIZAM_IMAGE_CACHE_DIR" AZIZAM_VRAM_ESTIMATES_PATH="$AZIZAM_VRAM_ESTIMATES_PATH" AZIZAM_DRIFT_REPORT_PATH="$AZIZAM_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
+    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TTS_ENABLED=false AZIZAM_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AZIZAM_IMAGE_CACHE_DIR="$AZIZAM_IMAGE_CACHE_DIR" AZIZAM_VRAM_ESTIMATES_PATH="$AZIZAM_VRAM_ESTIMATES_PATH" AZIZAM_DRIFT_REPORT_PATH="$AZIZAM_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
@@ -308,8 +298,6 @@ export AZIZAM_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
 # Keep LiteLLM deliberately unreachable unless a test opts in explicitly.
 export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:15999}"
 export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-}"
-# Silence noisy tabbyapi health checks that would fail on a fresh host
-export TABBY_IDLE_TIMEOUT=0
 export TTS_ENABLED=false
 # This is someone's real desktop/dev box, not the fresh-operator's machine --
 # never leak its disk/thermal state into the isolated instance's health.

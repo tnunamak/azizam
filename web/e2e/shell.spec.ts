@@ -1,24 +1,33 @@
-import { test, expect } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-const ownerPages = ["Engines", "Providers", "People", "Categories", "Activity", "Settings"];
+const ownerPages = [
+  "Engines",
+  "Providers",
+  "People",
+  "Categories",
+  "Activity",
+  "Settings",
+];
 
 // DESIGN.md "Shell": You is ordered by how often a household member needs
 // each place (Home, Library, Try first); Workflows stays right after Models.
-test("You navigation keeps Workflows right after Models", async ({
-  page,
-}) => {
+test("You navigation keeps Workflows right after Models", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/ui/");
+  await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   await expect(navigation.getByRole("link")).toHaveText([
     "Home",
     "Library",
     "Try",
     "Apps & keys",
+    "Connect",
     "Models",
     "Workflows",
     "Usage",
@@ -28,95 +37,86 @@ test("You navigation keeps Workflows right after Models", async ({
   await navigation
     .getByRole("link", { name: "Workflows", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/ui\/workflows\/?$/);
+  await expect(page).toHaveURL(/\/workflows\/?$/);
   await expect(
     page.getByRole("heading", { level: 1, name: /^Workflows( \d+)?$/ }),
   ).toBeVisible();
   await page.keyboard.press("Control+k");
-  await page
-    .getByRole("combobox", { name: "Go to" })
-    .fill("Workflows");
+  await page.getByRole("combobox", { name: "Go to" }).fill("Workflows");
   await expect(
     page.getByRole("option", { name: "Workflows", exact: true }),
   ).toBeVisible();
 });
 
-test("command palette navigates and runs three real actions", async ({
-  page,
-  context,
-}) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.goto("/ui/");
-  await page.keyboard.press("Control+k");
-  await expect(
-    page.getByRole("dialog", { name: "Go to" }),
-  ).toBeVisible();
-  await page
-    .getByRole("combobox", { name: "Go to" })
-    .fill("Models");
-  await page.getByRole("option", { name: "Models", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/models\/?$/);
-  // Both desktop shortcuts are supported, independent of the host platform.
-  await page.keyboard.press("Meta+k");
-  const discovery = page.waitForResponse((response) =>
-    response.url().endsWith("/.well-known/azizam"),
-  );
-  await page
-    .getByRole("combobox", { name: "Go to" })
-    .fill("Copy gateway address");
-  await page
-    .getByRole("option", { name: "Copy gateway address", exact: true })
-    .click();
-  const snapshot = await (await discovery).json();
-  await expect(
-    page.getByRole("dialog", { name: "Go to" }),
-  ).not.toBeVisible();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copied).toBe(snapshot.recipes.openai.canonical_base_url);
-  await page.keyboard.press("Control+k");
-  await page
-    .getByRole("combobox", { name: "Go to" })
-    .fill("Check gateway reachability");
-  const health = page.waitForResponse((response) =>
-    response.url().endsWith("/health"),
-  );
-  await page
-    .getByRole("option", { name: "Check gateway reachability" })
-    .click();
-  expect((await health).ok()).toBe(true);
-  await expect(
-    page.getByText(
-      "The gateway is reachable. Engine requests are tested on Try.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await page.keyboard.press("Control+k");
-  await page
-    .getByRole("combobox", { name: "Go to" })
-    .fill("Create key");
-  await page.getByRole("option", { name: "Create key", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/apps\/\?action=create-key/);
-  await expect(
-    page.getByRole("dialog", { name: "New app", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByLabel("App name", { exact: true })
-    .fill("Command palette app");
-  const key = page.waitForResponse(
-    (response) =>
-      response.url().includes("/me/api/apps/") &&
-      response.url().endsWith("/keys") &&
-      response.request().method() === "POST",
-  );
-  await page
-    .getByRole("button", { name: "Create app and key", exact: true })
-    .click();
-  expect((await key).status()).toBe(201);
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Command palette app", exact: true }),
-  ).toBeVisible();
-});
+test(
+  "command palette navigates and runs three real actions",
+  { tag: GLOBAL_STATE_TAG },
+  async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/");
+    await page.keyboard.press("Control+k");
+    await expect(page.getByRole("dialog", { name: "Go to" })).toBeVisible();
+    await page.getByRole("combobox", { name: "Go to" }).fill("Models");
+    await page.getByRole("option", { name: "Models", exact: true }).click();
+    await expect(page).toHaveURL(/\/models\/?$/);
+    // Both desktop shortcuts are supported, independent of the host platform.
+    await page.keyboard.press("Meta+k");
+    const discovery = page.waitForResponse((response) =>
+      response.url().endsWith("/.well-known/azizam"),
+    );
+    await page
+      .getByRole("combobox", { name: "Go to" })
+      .fill("Copy gateway address");
+    await page
+      .getByRole("option", { name: "Copy gateway address", exact: true })
+      .click();
+    const snapshot = await (await discovery).json();
+    await expect(page.getByRole("dialog", { name: "Go to" })).not.toBeVisible();
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).toBe(snapshot.recipes.openai.canonical_base_url);
+    await page.keyboard.press("Control+k");
+    await page
+      .getByRole("combobox", { name: "Go to" })
+      .fill("Check gateway reachability");
+    const health = page.waitForResponse((response) =>
+      response.url().endsWith("/health"),
+    );
+    await page
+      .getByRole("option", { name: "Check gateway reachability" })
+      .click();
+    expect((await health).ok()).toBe(true);
+    await expect(
+      page.getByText(
+        "The gateway is reachable. Engine requests are tested on Try.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.keyboard.press("Control+k");
+    await page.getByRole("combobox", { name: "Go to" }).fill("Create key");
+    await page.getByRole("option", { name: "Create key", exact: true }).click();
+    await expect(page).toHaveURL(/\/apps\/\?action=create-key/);
+    await expect(
+      page.getByRole("dialog", { name: "New app", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByLabel("App name", { exact: true })
+      .fill("Command palette app");
+    const key = page.waitForResponse(
+      (response) =>
+        response.url().includes("/me/api/apps/") &&
+        response.url().endsWith("/keys") &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("button", { name: "Create app and key", exact: true })
+      .click();
+    expect((await key).status()).toBe(201);
+    await page.getByRole("button", { name: "I’ve saved the key" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Command palette app", exact: true }),
+    ).toBeVisible();
+  },
+);
 
 test("command clipboard denial preserves and focuses the exact gateway address", async ({
   page,
@@ -133,11 +133,9 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   });
   const address = "https://gateway.example/openai/v1?exact=1";
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({
-      json: { recipes: { openai: { canonical_base_url: address } } },
-    }),
+    fulfilJson(route, { recipes: { openai: { canonical_base_url: address } } }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   const trigger = page.getByRole("button", {
     name: "Go to",
     exact: true,
@@ -158,12 +156,17 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   });
   await expect(field).toHaveValue(address);
   await expect(field).toBeFocused();
-  expect(
-    await field.evaluate((element: HTMLInputElement) =>
-      element.value.slice(element.selectionStart!, element.selectionEnd!),
-    ),
-  ).toBe(address);
-  await expect(dialog.getByRole("status")).toBeEmpty();
+  await expect
+    .poll(() =>
+      field.evaluate((element: HTMLInputElement) =>
+        element.value.slice(element.selectionStart!, element.selectionEnd!),
+      ),
+    )
+    .toBe(address);
+  // Pending command groups ("Loading apps…") are status regions of their own.
+  await expect(
+    dialog.getByTestId("gateway-address-recovery").getByRole("status"),
+  ).toBeEmpty();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(trigger).toBeFocused();
@@ -172,7 +175,7 @@ test("command clipboard denial preserves and focuses the exact gateway address",
 test("command discovery failure offers retry before attempting clipboard writes", async ({
   page,
 }) => {
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   let clipboardWrites = 0;
   await page.exposeFunction("recordClipboardWrite", () => {
     clipboardWrites += 1;
@@ -190,7 +193,11 @@ test("command discovery failure offers retry before attempting clipboard writes"
     });
   });
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({ status: 503, json: { error: "fixture unavailable" } }),
+    fulfilJson(
+      route,
+      { error: { message: "fixture unavailable" } },
+      { status: 503 },
+    ),
   );
   await page.keyboard.press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Go to" });
@@ -214,7 +221,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
 test("theme toggle persists after navigation and reload", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: "light" });
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(page.locator("html")).toHaveClass(/light/);
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
@@ -227,7 +234,7 @@ test("phone More and tablet expansion expose every destination", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/");
+  await page.goto("/");
   await page.getByRole("button", { name: "More", exact: true }).click();
   let sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   for (const name of [
@@ -243,7 +250,7 @@ test("phone More and tablet expansion expose every destination", async ({
     await expect(sheet.getByRole("link", { name, exact: true })).toBeVisible();
   }
   await sheet.getByRole("link", { name: "Activity", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/activity\/?$/);
+  await expect(page).toHaveURL(/\/activity\/?$/);
   await expect(sheet).not.toBeVisible();
   await page.setViewportSize({ width: 768, height: 1000 });
   await page.getByRole("button", { name: "Expand navigation" }).click();
@@ -252,7 +259,7 @@ test("phone More and tablet expansion expose every destination", async ({
     sheet.getByRole("link", { name: "Settings", exact: true }),
   ).toBeVisible();
   await sheet.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/settings\/?$/);
+  await expect(page).toHaveURL(/\/settings\/?$/);
 });
 
 test("member shell hides owner controls and makes no owner API calls", async ({
@@ -272,20 +279,18 @@ test("member shell hides owner controls and makes no owner API calls", async ({
       ownerCalls.push(request.url());
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        csrf_token: "member-fixture",
-        user: member,
-        apps: [],
-      },
+    fulfilJson(route, {
+      authenticated: true,
+      csrf_token: "member-fixture",
+      user: member,
+      apps: [],
     }),
   );
   await page.route("**/me/api/home", async (route) => {
     const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(
+      route,
+      {
         ...(await response.json()),
         user: member,
         apps: [],
@@ -295,32 +300,29 @@ test("member shell hides owner controls and makes no owner API calls", async ({
         credential_aliases: {},
         new_app_aliases: [],
       },
-    });
+      { response },
+    );
   });
   await page.route("**/me/api/status", (route) =>
-    route.fulfill({
-      json: {
-        scope: "member",
-        status: {
-          state: "unavailable",
-          reason: "No service has been measured as ready yet.",
-        },
-        capabilities: [],
-        receipts: [],
-        help: "Ask the owner if an allowed capability is unavailable.",
+    fulfilJson(route, {
+      scope: "member",
+      status: {
+        state: "unavailable",
+        reason: "No service has been measured as ready yet.",
       },
+      capabilities: [],
+      receipts: [],
+      help: "Ask the owner if an allowed capability is unavailable.",
     }),
   );
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Account menu" }),
   ).toContainText("Test member");
   for (const name of ownerPages)
     await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Control+k");
-  await expect(
-    page.getByRole("dialog", { name: "Go to" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Go to" })).toBeVisible();
   for (const name of ownerPages)
     await expect(page.getByRole("option", { name, exact: true })).toHaveCount(
       0,
@@ -338,7 +340,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   for (const name of ownerPages)
     await expect(sheet.getByRole("link", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByRole("heading", { name: "Status", exact: true }),
   ).toBeVisible();
@@ -353,7 +355,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
 for (const width of [1024, 768]) {
   test(`sidebar footer remains reachable at ${width}x768`, async ({ page }) => {
     await page.setViewportSize({ width, height: 768 });
-    await page.goto("/ui/");
+    await page.goto("/");
     await expect(
       page.getByRole("link", { name: "Settings", exact: true }),
     ).toBeVisible();
@@ -371,7 +373,7 @@ for (const width of [1024, 768]) {
       .getByLabel("Gateway health")
       .getByRole("link", { name: /^(View status|See why)$/ })
       .click();
-    await expect(page).toHaveURL(/\/ui\/status\/?$/);
+    await expect(page).toHaveURL(/\/status\/?$/);
   });
 }
 
@@ -379,14 +381,18 @@ test("session failure explains the problem and retry restores the account", asyn
   page,
 }) => {
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(
+      route,
+      { error: { message: "Unavailable for this test" } },
+      { status: 503 },
+    ),
   );
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(
-    page.getByText("Check your connection and try again.", { exact: true }),
+    page.getByText(
+      "We couldn't tell why your account didn't load. Try again.",
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Settings", exact: true }),
@@ -402,7 +408,7 @@ test("session failure explains the problem and retry restores the account", asyn
 test("phone header navigation has 44px touch targets", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   // Library: Home and Status carry their own verdict instead of the pill.
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });
@@ -424,4 +430,81 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
     const box = await target.boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
+});
+
+// The ordinary axe pass skips experimental rules. A control whose accessible
+// name leaves out its visible words breaks voice control (WCAG 2.5.3).
+async function seriousAxeViolations(page: Page) {
+  const wcag = await new AxeBuilder({ page }).analyze();
+  const labelInName = await new AxeBuilder({ page })
+    .withRules(["label-content-name-mismatch"])
+    .analyze();
+  return [
+    ...wcag.violations.filter((violation) =>
+      ["serious", "critical"].includes(violation.impact ?? ""),
+    ),
+    ...labelInName.violations,
+  ];
+}
+
+test("tablet rail returns focus to its opener when it closes", async ({
+  page,
+}) => {
+  // Motion on: the sheet leaves with an exit animation, which is when focus can get lost.
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 768, height: 1000 });
+  await page.goto("/");
+  const expand = page.getByRole("button", { name: "Expand navigation" });
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
+
+  await expand.click();
+  const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).not.toBeVisible();
+  await expect(expand).toBeFocused();
+
+  await expand.click();
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(expand).toBeFocused();
+});
+
+test("phone More returns keyboard focus, and Go to hands focus to its own dialog", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet).toBeVisible();
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(sheet).not.toBeVisible();
+  await expect(more).toBeFocused();
+
+  await more.click();
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(more).toBeFocused();
+
+  await more.click();
+  await sheet.getByRole("button", { name: /^Go to/ }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Go to" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Go to" })).toBeFocused();
+});
+
+test("owner shell names every control by its visible words at desktop width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Go to", exact: true }).first(),
+  ).toBeVisible();
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
 });

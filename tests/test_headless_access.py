@@ -16,10 +16,11 @@ from fastapi.routing import APIRoute
 from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
-from gateway import accounts, admin_store, providers, receipt_store
+from gateway import accounts, admin_store, metrics_writer, providers, receipt_store
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
+from gateway.ui_routes import UiRoute
 from gateway.ui_static import UIStaticFiles
 import test_proxy_admin_integration as admin_integration
 
@@ -36,10 +37,10 @@ def _inventoried(path):
 def _registered_routes(routes):
     rows = []
     for path, route in walk_routes(routes):
+        if type(route) is UiRoute:
+            # The web export: registry pages, payloads and assets only (test_ui_routes).
+            continue
         if isinstance(route, Mount):
-            if path == "/ui" and route.name == "web_ui" and type(route.app) is UIStaticFiles:
-                # Static export only; owner page paths are guarded by middleware.
-                continue
             assert route.routes, f"Unclassified opaque mount: {path}"
             continue
         assert isinstance(route, (Route, WebSocketRoute)), f"Unclassified route type: {path}"
@@ -101,13 +102,13 @@ def test_walk_preserves_nested_mount_prefixes_and_http_and_websocket_methods():
     ]
 
 
-def test_only_named_ui_static_mount_is_exempt(tmp_path):
-    static = UIStaticFiles(directory=tmp_path)
-    assert _registered_routes([Mount("/ui", app=static, name="web_ui")]) == []
-    for route in (Mount("/admin/static", app=static, name="web_ui"),
-                  Mount("/ui", app=static, name="other")):
-        with pytest.raises(AssertionError, match="opaque mount"):
-            _registered_routes([route])
+def test_only_the_ui_route_type_is_exempt(tmp_path):
+    async def guard(request, name):
+        return None
+
+    assert _registered_routes([UiRoute(tmp_path, guard)]) == []
+    with pytest.raises(AssertionError, match="opaque mount"):
+        _registered_routes([Mount("/ui", app=UIStaticFiles(directory=tmp_path), name="web_ui")])
 
 
 def test_owner_schema_describes_nested_mounts_and_rejects_unsupported_http_routes():
@@ -185,6 +186,12 @@ def test_member_probe_detects_role_bypass_behind_action_guard(principals, gatewa
             test_every_owner_route_rejects_app_and_member_without_effects(row, principals, gateway_test_state_dir)
 
 
+def test_headless_snapshots_have_stable_key_order():
+    for name in ("headless_openapi.json", "headless_routes.json"):
+        snapshot = (FIXTURES / name).read_text()
+        assert snapshot == json.dumps(json.loads(snapshot), indent=2, sort_keys=True) + "\n"
+
+
 def test_openapi_snapshot_and_security():
     proxy.app.openapi_schema = None
     schema = proxy.app.openapi()
@@ -234,8 +241,11 @@ def principals():
         accounts.initialize(case.db)
         providers.ensure_ledger(path=proxy.ADMIN_DB_PATH.parent / "provider_spend.db")
         receipt_store.init_db()
-        app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "auth-fixture"})
-        assert app.status_code == 201
+        accountable = admin_store.upsert_oidc_user("https://idp.example", "headless-accountable",
+                                                  email="accountable@example.com", path=case.db)
+        app = case.client.post("/admin/api/apps", headers=case._auth(), json={
+            "name": "auth-fixture", "access_plan": "person", "owner_user_id": accountable["id"]})
+        assert app.status_code == 201, app.text
         minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
                                  headers=case._auth(), json={"label": "auth-fixture"})
         assert minted.status_code == 201
@@ -245,7 +255,10 @@ def principals():
         proxy.ADMIN_AUTH.cookie = cookie
         member = admin_store.upsert_oidc_user("https://idp.example", "headless-member",
                                             email="member@example.com", path=case.db)
-        session = session_from_claims({"sub": member["id"], "email": member["email"]}, role="none", cookie=cookie)
+        # A current sign-in, not an 8-hour cookie from before sliding sessions: the first request with one of those
+        # would upgrade it (a write), and the same cookie sent again after the grace window would end the sign-in.
+        session = session_from_claims({"sub": member["id"], "email": member["email"]}, role="none", cookie=cookie,
+                                      idle_seconds=30 * 86400, absolute_seconds=90 * 86400)
         case.member_cookie = (cookie.name, encode_session_cookie(session, signing_key=b"s" * 32))
         case.member_headers = {
             "Accept": "application/json",
@@ -260,13 +273,25 @@ def principals():
         case.tearDown()
 
 
+# Valid typed bodies for the sign-in routes; each stops in the handler before any effect.
+_SIGNIN_PROPOSAL = {"methods": {"password": True, "provider": False}, "provider": {},
+                    "rules": {"fallback": "closed", "rules": []}}
+SIGNIN_BODIES = {
+    "/admin/api/signin/preview": {"proposal": _SIGNIN_PROPOSAL},
+    "/admin/api/signin/discover": {"address": ""},
+    "/admin/api/signin/test": {"provider": {}},
+    "/admin/api/signin/link-owner": {"test_id": "missing-fixture-id"},
+    "/admin/api/signin": {"proposal": _SIGNIN_PROPOSAL},
+    "/admin/api/signin/owner-password": {"password": "short"},
+}
+
+
 def _request(row):
     path = re.sub(r"\{(?:reservation_id|event_id)\}", "1", row["path"])
     path = re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
     # Supply valid typed bodies so the request reaches auth instead of 422.
-    body = {"profile_id": "default-local"} if path == "/admin/api/invites" else {}
-    if path == "/admin/api/operator/sign-in":
-        body = {"mode": "both"}
+    body = {"access_plan": "plan-missing"} if path == "/admin/api/invites" else {}
+    body = SIGNIN_BODIES.get(path, body)
     return path, body
 
 
@@ -278,7 +303,20 @@ def _drain_state():
     return snapshot
 
 
+def _settle_metrics_writer():
+    """The metrics writer creates and commits metrics.db on its own thread,
+    started by whichever earlier test in this worker first recorded a sample.
+    Wait for that work so a snapshot never catches the file mid-creation;
+    anything the request under test records is still flushed into the next
+    snapshot and still fails the comparison."""
+    writer = metrics_writer._writer
+    if writer is not None and writer.stats["accepting"]:
+        writer.wait_ready()
+        writer.flush()
+
+
 def _database_contents(root):
+    _settle_metrics_writer()
     result = {}
     for path in sorted(root.rglob("*.db")):
         try:
@@ -342,7 +380,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
         operation.assert_called_once()
     else:
         # Typed bodies must pass FastAPI validation and fail inside the handler.
-        typed = row.get("handler", "").startswith("gateway.accounts_api.")
+        typed = row.get("handler", "").startswith(("gateway.accounts_api.", "gateway.signin_api."))
         if typed and row["method"] not in {"GET", "DELETE"}:
             body = {**body, "expires_in": 0} if "/invites" in path or path.endswith("/reset") else body
             payload = {"json": body}
@@ -360,7 +398,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
             assert response.json()["error"]["code"] in HANDLER_ERRORS, (
                 row["method"], row["path"], response.json()["error"]["code"])
         elif response.is_redirect:
-            assert response.headers["location"].startswith("/ui/")
+            assert response.headers["location"].startswith("/") and not response.headers["location"].startswith("//")
     assert _database_contents(gateway_test_state_dir) == before
     assert _database_contents(principals.db.parent) == fixture_before
     assert _drain_state() == drain_before
@@ -373,12 +411,15 @@ class OwnerOperationReached(Exception):
 
 HANDLER_ERRORS = {
     "invalid_json", "invalid_request", "invalid_expiry", "empty_update",
-    "app_not_found", "profile_not_found", "credential_not_found", "provider_not_found",
-    "account_not_found", "invite_not_found", "link_unavailable", "runtime_mapping_not_found", "extension_package_not_found",
+    "app_not_found", "trusted_address_not_found", "access_plan_not_found", "credential_not_found", "provider_not_found",
+    "account_not_found", "invalid_defaults", "invite_not_found", "link_unavailable", "extension_package_not_found",
     "revision_not_found", "no_active_snapshot", "invalid_retention",
     "settings_revision_required", "registry_revision_required", "litellm_unconfigured",
     "generation_mismatch", "audit_event_not_found", "person_not_found",
-    "invalid_defaults", "invalid_instance", "invalid_lan_placeholder_keys", "invalid_prompt_memory",
+    "invalid_instance", "invalid_prompt_memory", "invalid_sessions",
+    "address_invalid", "client_id_required", "test_not_passed", "test_not_found", "owner_person_required",
+    "invalid_password", "service_not_found", "record_not_found", "retention_destination_not_found",
+    "ledger_not_found",
 }
 
 
@@ -391,7 +432,7 @@ def test_session_only_routes_do_not_accept_standalone_owner_bearer(row, principa
         headers=principals._auth(), follow_redirects=False)
     assert response.status_code in {401, 403, 302, 303}, (row["method"], row["path"], response.status_code)
     if response.is_redirect:
-        assert response.headers["location"] in {"/setup", "/ui/sign-in/"}
+        assert response.headers["location"] in {"/setup/", "/sign-in/"}
 
 
 @pytest.mark.parametrize("row", [row for row in INVENTORY if row["auth"] == "session-view"],

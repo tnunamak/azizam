@@ -110,8 +110,8 @@ def test_snapshot_does_not_reveal_the_session_a_key_is_bound_to(member):
 
 
 def test_upgrade_revokes_unbound_try_keys_once(member):
-    try_app = admin_store.create_app("Try", kind="personal", owner_user_id=member.user["id"], path=member.db)
-    other_app = admin_store.create_app("Laptop", kind="personal", owner_user_id=member.user["id"], path=member.db)
+    try_app = admin_store.create_app("Try", kind="personal", owner_user_id=member.user["id"], access_plan="person", path=member.db)
+    other_app = admin_store.create_app("Laptop", kind="personal", owner_user_id=member.user["id"], access_plan="person", path=member.db)
     def key(app, name, secret):
         return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(secret),
                                                   prefix="opk_test", display_name=name, path=member.db)["id"]
@@ -136,8 +136,6 @@ def browser(monkeypatch, member):
     import proxy
 
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", member.db)
-    monkeypatch.setattr(proxy, "_user_self_service_enabled", lambda: True)
-    monkeypatch.setattr(proxy, "_default_profile_id_for_session", lambda _session: None)
     monkeypatch.setattr(proxy, "_csrf_token_for_oidc_session", lambda _session: "fixture-csrf")
     session = AdminSession(subject=member.user["id"], email="member@example.test", role="none",
                            issued_at=1, expires_at=4_000_000_000, session_id="browser-session")

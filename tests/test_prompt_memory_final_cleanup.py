@@ -1,20 +1,23 @@
 """Final prompt-memory regressions: upgrade, missing cache, locks and erasure."""
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import accounts, admin_store, media_jobs, prompt_memory, video_media_job_http
 from gateway.admin_runtime import person_for_app_credential
 
 
 @pytest.fixture
-def household(tmp_path, monkeypatch):
+def household(tmp_path, monkeypatch, isolated_receipts):
     admin, jobs, responses = (tmp_path / name for name in ('admin.db', 'jobs.db', 'responses.db'))
     admin_store.init_db(admin)
     accounts.initialize(admin)
@@ -27,10 +30,11 @@ def household(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path / 'cache')
     monkeypatch.setattr(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', tmp_path / 'payloads')
     monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOADS', {})
+    monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES', {})
     people = [admin_store.upsert_oidc_user('test', name, path=admin) for name in ('owner', 'robin', 'other')]
-    apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], path=admin)
+    apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], access_plan="person", path=admin)
             for name, user in zip(('owner', 'robin', 'other'), people)]
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(name='Robin', key_hash='sha256:robin',
+    auth = proxy.AuthContext(identity=auth_identity(name='Robin', key_hash='sha256:robin',
         app_id=apps[1]['id'], person_id=people[1]['id']))
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, owner=people[0], robin=people[1],
                            other=people[2], app=apps[1], other_app=apps[2], auth=auth)
@@ -86,9 +90,9 @@ def test_request_policy_reads_do_not_wait_for_admin_writer(household):
     hh = household
     with sqlite3.connect(hh.admin) as lock:
         lock.execute('BEGIN IMMEDIATE')
-        started = time.monotonic()
         decision = prompt_memory.decide_for_person(hh.robin['id'], {'prompt': 'private'}, admin_path=hh.admin)
-        assert time.monotonic() - started < 0.5
+        # The writer holds its lock for the whole block, so a read that waited
+        # on it would end in storage_unavailable, not keep.
         assert decision.keep
         # The final write guard remains conservative while a mutation is pending.
         assert not prompt_memory.safe_put('video_locked', hh.robin['id'], 'private',
@@ -97,7 +101,7 @@ def test_request_policy_reads_do_not_wait_for_admin_writer(household):
 
 
 def _job(hh, *, other=False, seeded=True, created_at=None):
-    auth = hh.auth if not other else proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = hh.auth if not other else proxy.AuthContext(identity=auth_identity(
         name='Other', key_hash='sha256:other', app_id=hh.other_app['id'], person_id=hh.other['id']))
     body = {'prompt': 'dedupe secret', **({'seed': 12} if seeded else {})}
     request_id, digest, mode = proxy._image_media_job_request_id(body=body, auth_context=auth,
@@ -203,11 +207,21 @@ def test_missing_preference_under_lock_degrades_to_dont_store(household):
     hh = household
     with sqlite3.connect(hh.admin) as conn:
         conn.execute('DELETE FROM prompt_memory_preferences WHERE user_id=?', (hh.robin['id'],))
-    with sqlite3.connect(hh.admin) as lock:
+    statements: list[str] = []
+    real_conn = admin_store._conn
+
+    @contextlib.contextmanager
+    def traced_conn(path=admin_store.DB_PATH):
+        with real_conn(path) as conn:
+            conn.set_trace_callback(statements.append)
+            yield conn
+
+    with sqlite3.connect(hh.admin) as lock, patch.object(admin_store, '_conn', traced_conn):
         lock.execute('BEGIN IMMEDIATE')
-        started = time.monotonic()
         decision = prompt_memory.decide_for_person(hh.robin['id'], {'prompt': 'private'}, admin_path=hh.admin)
-        assert time.monotonic() - started < 0.5
+        # The request path must not queue behind the writer: it asks for no busy
+        # wait before it asks for its own write lock.
+        assert statements.index('PRAGMA busy_timeout=0') < statements.index('BEGIN IMMEDIATE')
         assert decision.keep is False
         assert decision.reason == 'storage_unavailable'
 

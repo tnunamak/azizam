@@ -1,0 +1,376 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "stream_format sse",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"model\":\"tts-fast\",\"voice\":\"shimmer\",\"input\":\"hello\",\"response_format\":\"pcm\",\"stream_format\":\"sse\"}"
+        },
+        "headers": {
+          "content-length": "100",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/audio/speech",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "events": [
+            {
+              "audio": {
+                "kind": "binary",
+                "len": 2722,
+                "magic": "c409c409c409c409",
+                "sha256": "ffbf83d29d25d807d181a6dbb2379633fce70aaaea4f2219e397d356af0dfe71"
+              },
+              "type": "speech.audio.delta (joined)"
+            },
+            "data: {\"type\":\"speech.audio.done\"}"
+          ],
+          "kind": "sse-audio"
+        },
+        "headers": {
+          "cache-control": "no-cache",
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-accel-buffering": "no",
+          "x-request-id": "<req:1>"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "Streamed speech as SSE: speech.audio.delta events then speech.audio.done",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"model\": \"supertonic\", \"voice\": \"F4\", \"input\": \"hello\", \"response_format\": \"pcm\", \"stream_format\": \"audio\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "108",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8010"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/speech",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8010"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 4
+      }
+    ],
+    "retention_fact_destinations": [
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "tts-supertonic",
+        "metadata_json": {
+          "address": "127.0.0.1:8010",
+          "kind": "engine",
+          "name": "supertonic-tts",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_revisions": [
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "host swap, hibernation, and crash capture settings",
+          "confidence": "documented",
+          "control": "review swap, hibernation, and crash-dump settings on the host",
+          "default": "conditional",
+          "evidence_url": "https://man7.org/linux/man-pages/man2/mlock.2.html",
+          "holds": "request bodies while a request runs",
+          "how_long": "during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine",
+          "id": "gateway-temporary-copies",
+          "reach": "the machine owner and anyone with access to its files or memory image",
+          "where": "process memory and temporary workspaces"
+        },
+        "first_seen": "<time>",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a permitted crash dump handled by systemd-coredump",
+          "confidence": "documented",
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
+        },
+        "first_seen": "<time>",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "store_prompts_in_spend_logs or its environment override is enabled",
+          "confidence": "documented",
+          "control": "inspect effective UI, environment and file settings; disable content storage and delete old rows separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/ui_logs",
+          "holds": "request and response content if spend-content storage is enabled",
+          "how_long": "unknown; cleanup requires a separately configured retention period",
+          "id": "litellm-spend-content",
+          "reach": "LiteLLM administrators and anyone with access to its spend database",
+          "where": "LiteLLM spend rows"
+        },
+        "first_seen": "<time>",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
+          "confidence": "documented",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
+        },
+        "first_seen": "<time>",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "speech.synthesis",
+        "job_id": null,
+        "parent_request_id": null,
+        "path": "/v1/audio/speech",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "tts-supertonic",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "speech.synthesis",
+          "job_id": null,
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "terminal_reason": "http_200"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/speech",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "route_authorized",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "runtime_route_policy",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "tts-fast",
+          "requested_workflow": null,
+          "resolved_model": "supertonic",
+          "resolved_workflow": null,
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+            "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+          ],
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": true,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "tts_stream_sse",
+  "schema": 1
+}

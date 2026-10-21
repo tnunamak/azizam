@@ -8,7 +8,7 @@ absolute links; tests and docs can use the same builder with a fixed base URL.
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -168,8 +168,16 @@ def build_gateway_discovery_metadata(
     base_url: str | None = None,
     service_name: str = "azizam",
     registry: Mapping[str, Any] | None = None,
+    mcp_tools: Sequence[Mapping[str, Any]] | None = None,
+    mcp_sign_in: bool = False,
 ) -> dict[str, Any]:
-    """Return unauthenticated public metadata for agent/client discovery."""
+    """Return unauthenticated public metadata for agent/client discovery.
+
+    ``mcp_tools`` is the live tool list of the MCP server, so the Connect page
+    shows what the server exposes instead of a copy that can drift.
+    ``mcp_sign_in`` says whether MCP clients can sign in with OAuth here (it
+    needs a public https address).
+    """
     root = _base_url(base_url)
     protocol_frontends = None
     if isinstance(registry, Mapping) and isinstance(
@@ -181,7 +189,6 @@ def build_gateway_discovery_metadata(
         "health": "/health",
         "login": "/login",
         "user_portal": "/",
-        "user_portal_alias": "/me",
         "user_session": "/me/api/session",
         "user_apps": "/me/api/apps",
         "user_app": "/me/api/apps/{app_id}",
@@ -191,6 +198,7 @@ def build_gateway_discovery_metadata(
         "user_access_request": "/me/api/access-request",
         "openapi": "/openapi.json",
         "llms_txt": "/llms.txt",
+        "mcp": "/mcp",
         "skill_catalog": "/.well-known/skills",
         "skill": "/.well-known/skills/azizam-gateway/SKILL.md",
         "workflow_catalog": "/openapi.json#x-azizam-workflows",
@@ -258,6 +266,21 @@ def build_gateway_discovery_metadata(
             root=root,
             protocol_frontends=protocol_frontends,
         ),
+        "mcp": {
+            "url": _join(base_url, "/mcp"),
+            "transport": "streamable-http",
+            "auth": ("OAuth sign-in (MCP authorization) or Authorization: Bearer <app key>"
+                     if mcp_sign_in else "Authorization: Bearer <app key>"),
+            "sign_in": mcp_sign_in,
+            "tools": [
+                {
+                    "name": str(tool["name"]),
+                    "title": str(tool.get("title") or tool["name"]),
+                    "description": str(tool.get("description") or ""),
+                }
+                for tool in mcp_tools or ()
+            ],
+        },
         "links": links,
         "absolute_links": {
             key: _join(base_url, path) for key, path in links.items()
@@ -328,7 +351,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "3. GET /gateway/v1/capabilities with bearer auth.",
         "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
         "5. Use /anthropic/v1 or /ollama/api only for clients that require those protocols; /api remains an Ollama convenience route.",
-        "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough; there is no root Tabby shim.",
+        "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough.",
         "7. Ollama lifecycle routes create/pull/push/copy/delete return unsupported_operation and do not mutate model files.",
         "8. Fetch /gateway/v1/workflows before using extensions.com.azizam.workflow controls.",
         "9. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",

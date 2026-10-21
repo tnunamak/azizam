@@ -29,6 +29,8 @@ Privacy:
 
 from __future__ import annotations
 
+import queue
+
 from gateway.compat import get_env
 
 import json
@@ -84,16 +86,48 @@ def _without_prompt_fields(record: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in record.items() if not _is_prompt_field(str(k))}
 
 
-def _persist_event(record: dict[str, Any]) -> None:
-    """Best-effort append of one record. Failures are swallowed; the in-memory
-    counters remain authoritative."""
+# One writer thread appends records, so a request never waits on the file.
+_WRITES: "queue.SimpleQueue[tuple[Path, dict[str, Any]]]" = queue.SimpleQueue()
+_WRITES_DONE = threading.Condition()
+_writes_pending = 0
+_writer: Optional[threading.Thread] = None
+
+
+def _append_record(path: Path, record: dict[str, Any]) -> None:
     try:
-        path = _DEFAULT_CACHE_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, separators=(",", ":")) + "\n")
     except Exception:
         pass
+
+
+def _write_loop() -> None:
+    global _writes_pending
+    while True:
+        item = _WRITES.get()
+        _append_record(*item)
+        with _WRITES_DONE:
+            _writes_pending -= 1
+            _WRITES_DONE.notify_all()
+
+
+def _persist_event(record: dict[str, Any]) -> None:
+    """Best-effort append of one record. Failures are swallowed; the in-memory
+    counters remain authoritative."""
+    global _writes_pending, _writer
+    with _WRITES_DONE:
+        _writes_pending += 1
+        if _writer is None or not _writer.is_alive():
+            _writer = threading.Thread(target=_write_loop, name="firehose-writer", daemon=True)
+            _writer.start()
+    _WRITES.put((_DEFAULT_CACHE_PATH, record))
+
+
+def flush_persisted(timeout: float = 5.0) -> None:
+    """Wait until every queued record is on disk (for readers of the log and for tests)."""
+    with _WRITES_DONE:
+        _WRITES_DONE.wait_for(lambda: _writes_pending == 0, timeout)
 
 
 def record_request(
@@ -173,6 +207,7 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
     the file rotates implicitly via the cutoff filter — see ``compact_log``).
     Returns a small stats dict for logging.
     """
+    flush_persisted()
     target = path or _DEFAULT_CACHE_PATH
     stats = {"requests_replayed": 0, "events_replayed": 0, "skipped": 0}
     if not target.is_file():
@@ -187,10 +222,10 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
                     continue
                 try:
                     rec = json.loads(line)
+                    ts = float(rec.get("ts") or 0)
                 except Exception:
                     stats["skipped"] += 1
                     continue
-                ts = float(rec.get("ts") or 0)
                 if ts < cutoff:
                     continue
                 kind = rec.get("kind")
@@ -199,14 +234,20 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
                     p = rec.get("path") or ""
                     if not p:
                         continue
-                    status = int(rec.get("status") or 0)
-                    latency = rec.get("latency_ms")
+                    # Convert before touching shared state so a bad row leaves no trace.
+                    try:
+                        status = int(rec.get("status") or 0)
+                        latency = rec.get("latency_ms")
+                        latency = float(latency) if latency is not None else None
+                    except (TypeError, ValueError, OverflowError):
+                        stats["skipped"] += 1
+                        continue
                     with _lock:
                         keyrec = _KEY_ACTIVITY[name]
                         keyrec["endpoints"][p] = keyrec["endpoints"].get(p, 0) + 1
                         if ts > keyrec["last_seen"]:
                             keyrec["last_seen"] = ts
-                        keyrec["events"].append((ts, status, float(latency) if latency is not None else None))
+                        keyrec["events"].append((ts, status, latency))
                     stats["requests_replayed"] += 1
                     oldest_kept = ts if oldest_kept is None else min(oldest_kept, ts)
                 elif kind == "event":
@@ -230,6 +271,7 @@ def compact_log(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> Optio
 
     Best-effort. Returns count of retained records, or None on failure.
     """
+    flush_persisted()
     target = path or _DEFAULT_CACHE_PATH
     if not target.is_file():
         return 0

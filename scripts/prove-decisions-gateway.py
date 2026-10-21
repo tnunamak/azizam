@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import secrets
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,12 @@ def main():
     if not all(18000 <= port <= 18999 for port in (args.engine_port, args.gateway_port)):
         parser.error("proof listeners must use ports 18000 through 18999")
     repo = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(repo / "scripts"))
+    import scratch_owner
+    scratch_owner.sweep(repo / "venv", "decisions-proof-")  # what a SIGKILLed proof left
+    scratch_owner.exit_on_signals()
     state = Path(tempfile.mkdtemp(prefix="decisions-proof-", dir=repo / "venv"))
+    scratch_owner.mark(state)
     key = secrets.token_urlsafe(24)
     config = {
         "proxy": {"host": "127.0.0.1", "port": args.gateway_port},
@@ -58,7 +64,7 @@ def main():
         "model_aliases": {"decisions": {
             "engines": {"local": {"service": "decisions", "model": "decider-2b-v11", "calibrated": True,
                         "max_options": 255, "max_levels": 10, "context_tokens": 4096}},
-            "stable": {"decide": ["local"]}, "openai": [{"match": "jev-*", "to": "decide"}],
+            "stable": {"decide": ["local"]}, "openai": [{"match": "jev-*", "to": "decide", "names": ["jev-latest", "jev-preview"]}],
         }},
     }
     config_path = state / "config.yml"
@@ -72,9 +78,14 @@ def main():
     launcher = state / "launch.py"
     launcher.write_text('''import hashlib, os, sys
 import proxy
-from gateway import admin_store, receipt_store
-owner = admin_store.create_service_account("proof", path=proxy.ADMIN_STORE.path)
-app = admin_store.create_app("proof", kind="service", owner_service_account_id=owner["id"], path=proxy.ADMIN_STORE.path)
+from gateway import accounts, admin_store, receipt_store
+db = proxy.ADMIN_STORE.path
+plan = admin_store.create_access_plan({"name": "Decisions proof", "can_use": {"decide": {"items": "all"}},
+    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
+    "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none"}, path=db)
+owner = admin_store.upsert_oidc_user("https://proof.invalid", "proof", display_name="Proof owner", path=db)
+accounts.change_person(owner["id"], "proof", path=db, plan_id=plan["id"])
+app = admin_store.create_app("proof", kind="service", owner_user_id=owner["id"], access_plan=plan["id"], path=db)
 key = sys.stdin.readline().strip()
 admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:"+hashlib.sha256(key.encode()).hexdigest(), prefix="proof", app_id=app["id"], path=proxy.ADMIN_STORE.path)
 receipt_store.init_db()
@@ -100,7 +111,7 @@ uvicorn.run(proxy.app, host="127.0.0.1", port=int(sys.argv[1]), lifespan="off", 
         deadline = time.monotonic() + 30
         while True:
             if process.poll() is not None:
-                raise RuntimeError(f"throwaway gateway exited {process.returncode}; inspect {state / 'gateway.log'}")
+                raise RuntimeError(f"throwaway gateway exited {process.returncode}; last log lines: {(state / 'gateway.log').read_text()[-2000:]}")
             try:
                 models, _ = call("/typesafe/v1/models")
                 assert any(model["name"] == "decide" for model in models["models"])
@@ -146,6 +157,7 @@ uvicorn.run(proxy.app, host="127.0.0.1", port=int(sys.argv[1]), lifespan="off", 
             process.kill()
             process.wait()
         log.close()
+        shutil.rmtree(state, ignore_errors=True)  # holds the throwaway App's database
 
 
 if __name__ == "__main__":

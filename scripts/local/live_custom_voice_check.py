@@ -16,6 +16,7 @@ import argparse
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -174,6 +175,7 @@ def main() -> int:
         consent_id = None
     finally:
         # Never leave test data behind, whatever failed.
+        shutil.rmtree(work, ignore_errors=True)
         for path, ident in (("/audio/voices", voice_id), ("/audio/voice_consents", consent_id)):
             if ident:
                 try:

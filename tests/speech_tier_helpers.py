@@ -15,6 +15,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs, receipt_store
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
@@ -106,7 +107,7 @@ class RouteCase(unittest.TestCase):
         self.ensure = AsyncMock(return_value=True)
         self.health = AsyncMock(return_value=True)
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", self.cfg),
             patch.object(proxy, "_service_availability_response", return_value=None),

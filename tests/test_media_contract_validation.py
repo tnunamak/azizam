@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import AsyncOpenAI
 import proxy
+from tests.support.access import access_context  # noqa: E402
 from test_audio_media_job_integration import _StubJsonRequest
 from test_image_route_receipts import (
     _FakeAsyncClient, _MultipartRequest, _MultipartUpload, _png_bytes,
@@ -61,8 +62,8 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(n=value), patch.object(
                 proxy, "_generate_images_with_adaptive_batching", generate,
             ):
-                response = await proxy.proxy_comfy_request(
-                    _StubJsonRequest({"prompt": "a tree", "n": value}), proxy.NO_AUTH_CONTEXT,
+                response = await proxy.proxy_graph_image_request(
+                    _StubJsonRequest({"prompt": "a tree", "n": value}), access_context(),
                 )
                 self.assert_invalid(response, "n")
                 generate.assert_not_awaited()
@@ -74,9 +75,9 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
         ):
             for value in (1, 10):
-                response = await proxy.proxy_comfy_request(
+                response = await proxy.proxy_graph_image_request(
                     _StubJsonRequest({"model": "flux2-klein-4b", "prompt": "a tree", "n": value}),
-                    proxy.NO_AUTH_CONTEXT,
+                    access_context(),
                 )
                 self.assertEqual(response.status_code, 200, response.body)
                 self.assertEqual(generate.call_args.kwargs["n_requested"], value)
@@ -88,8 +89,8 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         if size is not None:
             items.append(("size", size))
         items.extend(("image[]", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))) for _ in range(count))
-        handler = proxy.proxy_comfy_variations_request if variations else proxy.proxy_comfy_edit_request
-        return await handler(_MultipartRequest(items), proxy.NO_AUTH_CONTEXT)
+        handler = proxy.proxy_graph_image_variations_request if variations else proxy.proxy_graph_image_edit_request
+        return await handler(_MultipartRequest(items), access_context())
 
     async def test_http3_03_edit_and_variations_reject_invalid_sizes(self):
         for variations in (False, True):
@@ -118,7 +119,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_http3_04_excess_images_do_not_upload(self):
         workflow = {"_meta": {"image_node": "1"}, "1": {"inputs": {"image": ""}}}
         with patch.object(proxy, "_select_edit_workflow", lambda model, **kw: model), patch.object(
-            proxy, "load_comfy_workflow", return_value=workflow,
+            proxy, "load_graph_workflow", return_value=workflow,
         ), patch.object(proxy, "_find_image_manifest", return_value=None):
             response = await self.edit(count=2)
         self.assert_invalid(response, "image[]")
@@ -136,7 +137,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             proxy, "_load_audio_workflow_file", return_value=copy.deepcopy(workflow),
         ), patch.object(proxy, "_load_audio_workflow_manifest", return_value=None):
             return await proxy.proxy_audio_generate(
-                _StubJsonRequest({"prompt": "a tone", **parameters}), proxy.NO_AUTH_CONTEXT,
+                _StubJsonRequest({"prompt": "a tone", **parameters}), access_context(),
             )
 
     async def assert_audio_invalid(self, param, value):
@@ -208,7 +209,7 @@ class ModelRetrieveContractTests(unittest.IsolatedAsyncioTestCase):
                     for entry in entries:
                         model = await sdk.models.retrieve(entry["id"])
                         self.assertEqual(model.id, entry["id"])
-        routes = {route.path: route.endpoint for route in proxy.app.routes}
+        routes = {route.path: route.endpoint for route in proxy.app.routes if hasattr(route, "endpoint")}
         self.assertIs(routes["/openai/v1/models/{model_id:path}"], routes["/v1/models/{model_id:path}"])
 
 

@@ -33,7 +33,7 @@ DEFAULT_WORKDIR = None
 class DeliveryContext:
     """Facts about the current request that media delivery needs."""
 
-    profile_default: str = provenance.METADATA_NONE
+    plan_bound: str = provenance.METADATA_NONE
     requested_mode: str | None = None
     receipt: Any = None
     # Provenance inputs gathered while the request runs.
@@ -51,7 +51,7 @@ class DeliveryContext:
         if (self.prompt_decision is not None and not self.prompt_decision.keep
                 and self.prompt_decision.reason != "no_person"):
             return provenance.METADATA_NONE
-        return provenance.resolve_metadata_mode(self.requested_mode, self.profile_default)
+        return provenance.resolve_metadata_mode(self.requested_mode, self.plan_bound)
 
 
 _CONTEXT: contextvars.ContextVar[DeliveryContext | None] = contextvars.ContextVar(
@@ -59,10 +59,10 @@ _CONTEXT: contextvars.ContextVar[DeliveryContext | None] = contextvars.ContextVa
 )
 
 
-def begin(*, profile_default: str | None, receipt: Any = None) -> DeliveryContext:
+def begin(*, plan_bound: str | None, receipt: Any = None) -> DeliveryContext:
     """Start a fresh context for the current request/task and return it."""
     ctx = DeliveryContext(
-        profile_default=provenance.resolve_metadata_mode(None, profile_default),
+        plan_bound=provenance.resolve_metadata_mode(None, plan_bound),
         receipt=receipt,
     )
     _CONTEXT.set(ctx)

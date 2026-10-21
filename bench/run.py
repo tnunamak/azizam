@@ -44,7 +44,7 @@ def prepare(state: Path):
         "registry": {"catalog_dir": str(state / "catalog")},
         "backends": {
             **{name: {"enabled": False, "host": "127.0.0.1", "port": 18990}
-               for name in ("tabby", "kobold", "embeddings")},
+               for name in ("kobold", "embeddings")},
             "litellm": {"enabled": True, "host": "127.0.0.1", "port": 18990,
                         "base_url": "http://127.0.0.1:18990", "capabilities": ["chat"],
                         "model_policy_schema_version": 1,
@@ -56,7 +56,7 @@ def prepare(state: Path):
                         "workflows_dir": str(state / "workflows"), "default_model": "bench-image"},
         },
         "model_aliases": {
-            "speech": {"engines": {"bench-tts": {"service": "tts", "model": "bench-tts", "voice_transform": "",
+            "speech": {"engines": {"bench-tts": {"service": "tts", "model": "bench-tts",
                                                       "voice_map": {"alloy": "alloy", "nova": "nova"}}}, "stable": {"tts": "bench-tts"}},
             "transcriptions": {"engines": {"bench-stt": {"service": "stt", "model": "bench-stt"}}, "stable": {"stt": "bench-stt"}},
         },

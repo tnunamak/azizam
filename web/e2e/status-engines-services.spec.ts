@@ -1,5 +1,7 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const registry = {
   schema_version: 1,
@@ -98,189 +100,34 @@ const status = {
   backends: [{ service_id: "chat", live_status: "up", latency_ms: 42 }],
 };
 
-function requestBody(route: Route): unknown {
-  const body = route.request().postData();
-  return body ? route.request().postDataJSON() : null;
-}
-
 async function mockEngineApis(
   page: Page,
   options: {
     empty?: boolean;
     registryError?: boolean;
     statusError?: boolean;
-    registryOverride?: typeof registry;
-    statusOverride?: unknown;
-    bodies?: unknown[];
   } = {},
 ) {
-  const activeRegistry = options.registryOverride ?? registry;
   await page.route("**/admin/api/status", (route) => {
     if (options.statusError) {
-      return route.fulfill({
-        status: 503,
-        json: {
+      return fulfilJson(route, {
           error: { code: "status_down", message: "Status refresh failed" },
-        },
-      });
+        }, { status: 503 });
     }
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         status:
-          options.statusOverride ?? (options.empty ? { backends: [] } : status),
-      },
-    });
+          options.empty ? { backends: [] } : status,
+      });
   });
-  await page.route("**/admin/api/operator/service-presets", (route) =>
-    route.fulfill({
-      json: {
-        presets: [
-          {
-            id: "openai-compatible",
-            label: "OpenAI compatible",
-            base_path: "/v1",
-            default_port: null,
-            protocol: "openai-compatible",
-            capabilities: ["chat"],
-            native_passthrough: false,
-          },
-        ],
-      },
-    }),
-  );
   await page.route("**/admin/api/operator/service-registry", (route) => {
     if (options.registryError) {
-      return route.fulfill({
-        status: 503,
-        json: { error: { code: "offline", message: "Registry offline" } },
-      });
+      return fulfilJson(route, { error: { code: "offline", message: "Registry offline" } }, { status: 503 });
     }
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         service_registry: options.empty
           ? { schema_version: 1, services: {} }
-          : activeRegistry,
-      },
-      headers: { etag: "test-etag" },
-    });
-  });
-  await page.route("**/admin/api/operator/services/test", (route: Route) =>
-    route.fulfill({
-      json: {
-        probe: {
-          ok: true,
-          status: 200,
-          error: "",
-          url: "http://127.0.0.1:18081/v1/health",
-        },
-      },
-    }),
-  );
-  await page.route("**/admin/api/operator/services/detect-models", (route) =>
-    route.fulfill({
-      json: { detected: { ok: true, models: ["demo-chat"], error: "" } },
-    }),
-  );
-  await page.route("**/admin/api/operator/services", async (route) => {
-    options.bodies?.push(requestBody(route));
-    route.fulfill({
-      json: {
-        service_registry: {
-          ...activeRegistry,
-          services: {
-            ...activeRegistry.services,
-            added: {
-              id: "added",
-              name: "Added engine",
-              kind: "openai-compatible",
-              source: "ui",
-              enabled: true,
-              editable: true,
-              capabilities: ["chat"],
-              role: "optional",
-              config: { base_url: "http://127.0.0.1:18083/v1" },
-            },
-          },
-        },
-      },
-      headers: { etag: "test-etag-2" },
-    });
-  });
-  await page.route(
-    "**/admin/api/operator/services/chat/enabled",
-    async (route) => {
-      options.bodies?.push(requestBody(route));
-      return route.fulfill({
-        json: {
-          service_registry: {
-            ...registry,
-            services: {
-              ...activeRegistry.services,
-              chat: { ...activeRegistry.services.chat, enabled: false },
-            },
-          },
-        },
-        headers: { etag: "test-etag-2" },
-      });
-    },
-  );
-  await page.route("**/admin/api/operator/services/image", async (route) => {
-    options.bodies?.push(requestBody(route));
-    return route.fulfill({
-      json: {
-        service_registry: {
-          ...activeRegistry,
-          services: { chat: activeRegistry.services.chat },
-        },
-      },
-      headers: { etag: "test-etag-remove" },
-    });
-  });
-  await page.route("**/admin/api/operator/services/managed", async (route) => {
-    options.bodies?.push(requestBody(route));
-    return route.fulfill({
-      json: {
-        service_registry: {
-          ...activeRegistry,
-          services: {
-            ...activeRegistry.services,
-            managed: {
-              ...registry.services.managed,
-              name: "Renamed substrate",
-              config: {
-                ...activeRegistry.services.managed.config,
-                note: "Managed note changed.",
-              },
-            },
-          },
-        },
-      },
-      headers: { etag: "test-etag-managed" },
-    });
-  });
-  await page.route("**/admin/api/operator/services/chat", async (route) => {
-    options.bodies?.push(requestBody(route));
-    return route.fulfill({
-      json: {
-        service_registry: {
-          ...activeRegistry,
-          services: {
-            ...activeRegistry.services,
-            chat: {
-              ...registry.services.chat,
-              name: "Renamed chat engine",
-              config: {
-                ...activeRegistry.services.chat.config,
-                host: "127.0.0.1",
-                port: 19000,
-                base_path: "/v1",
-              },
-            },
-          },
-        },
-      },
-      headers: { etag: "test-etag-3" },
-    });
+          : registry,
+      }, { headers: { etag: "test-etag" } });
   });
 }
 
@@ -291,11 +138,11 @@ async function checkPageBasics(page: Page, screenshotName: string) {
     ["serious", "critical"].includes(violation.impact ?? ""),
   );
   expect(violations).toEqual([]);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   await page.screenshot({
     path: `test-results/screens/${screenshotName}.png`,
     fullPage: true,
@@ -306,350 +153,58 @@ function engineCard(page: Page, name: string) {
   return page.locator("tr").filter({ hasText: name });
 }
 
-async function openEngineEdit(
+async function openEngine(
   page: Page,
   card: ReturnType<typeof engineCard>,
   serviceName: string,
 ) {
-  const summary = card
-    .getByRole("button", { name: new RegExp(serviceName) })
-    .first();
-  if (await summary.isVisible()) {
-    await summary.click();
-    return page.getByRole("dialog", { name: "Edit engine" });
-  }
-  await card
-    .getByRole("button", { name: `Actions for ${serviceName}` })
-    .click();
-  await page.getByRole("menuitem", { name: "Edit engine" }).click();
-  return page.getByRole("dialog", { name: "Edit engine" });
+  await card.getByRole("button", { name: new RegExp(serviceName) }).first().click();
 }
 
-async function openEngineActions(
-  card: ReturnType<typeof engineCard>,
-  serviceName: string,
-) {
-  await card
-    .getByRole("button", { name: `Actions for ${serviceName}` })
-    .click();
-}
-
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390]) {
-    for (const route of ["engines", "services"]) {
-      test(`${route} seeded ${theme} ${width}`, async ({ page }) => {
-        await mockEngineApis(page);
-        await page.setViewportSize({
-          width,
-          height: width === 390 ? 844 : 1000,
-        });
-        await page.addInitScript(
-          (value) => localStorage.setItem("theme", value),
-          theme,
-        );
-        await page.goto(`/ui/${route}/`);
-
-        await expect(
-          page.getByRole("heading", { name: "Engines", level: 1 }),
-        ).toBeVisible();
-        const chatCard = engineCard(page, "Local chat engine");
-        await expect(chatCard).toBeVisible();
-        await expect(
-          chatCard.getByText("existing-chat", { exact: true }),
-        ).toHaveCount(0);
-        await expect(page.getByText("Local image engine")).toHaveCount(0);
-        await page.getByRole("switch", { name: "Show not in use" }).click();
-        await expect(page.getByText("Local image engine")).toBeVisible();
-
-        const editSheet = await openEngineEdit(
-          page,
-          chatCard,
-          "Local chat engine",
-        );
-        await expect(editSheet).toBeVisible();
-        await editSheet
-          .getByText("Connection and models", { exact: true })
-          .click();
-        await expect(
-          editSheet.getByText("existing-chat", { exact: true }),
-        ).toBeVisible();
-        await editSheet.getByRole("button", { name: "Test" }).click();
-        await expect(editSheet.getByText(/connection passed/)).toBeVisible();
-        await editSheet.getByRole("button", { name: "Detect" }).click();
-        await expect(
-          editSheet
-            .getByRole("group", { name: "Model 1" })
-            .getByRole("textbox", { name: "Model name" }),
-        ).toHaveValue("demo-chat");
-        await page.keyboard.press("Escape");
-
-        await checkPageBasics(page, `status-${route}-seeded-${theme}-${width}`);
-      });
-
-      test(`${route} empty ${theme} ${width}`, async ({ page }) => {
-        await mockEngineApis(page, { empty: true });
-        await page.setViewportSize({
-          width,
-          height: width === 390 ? 844 : 1000,
-        });
-        await page.addInitScript(
-          (value) => localStorage.setItem("theme", value),
-          theme,
-        );
-        await page.goto(`/ui/${route}/`);
-        await expect(page.getByText("No engines configured")).toBeVisible();
-        await checkPageBasics(page, `status-${route}-empty-${theme}-${width}`);
-      });
-
-      test(`${route} error ${theme} ${width}`, async ({ page }) => {
-        await mockEngineApis(page, { registryError: true });
-        await page.setViewportSize({
-          width,
-          height: width === 390 ? 844 : 1000,
-        });
-        await page.addInitScript(
-          (value) => localStorage.setItem("theme", value),
-          theme,
-        );
-        await page.goto(`/ui/${route}/`);
-        await expect(
-          page.getByText("Engine list could not be loaded"),
-        ).toBeVisible();
-        await expect(
-          page.getByText(
-            "Each engine's state is unknown. Try loading the engine list again.",
-          ),
-        ).toBeVisible();
-        // The gateway's own words stay one tap away.
-        await page.getByText("Technical details").click();
-        await expect(page.getByText("Registry offline")).toBeVisible();
-        await checkPageBasics(page, `status-${route}-error-${theme}-${width}`);
-      });
+// Copy, truth tables and the add / edit / toggle / remove request bodies are
+// asserted in src/app/engines/engine-states.spec.tsx. The browser keeps real
+// layout width, theme tokens and axe, one representative per concept.
+const cases = [
+  { state: "seeded", theme: "light", width: 1440 },
+  { state: "seeded", theme: "dark", width: 390 },
+  { state: "empty", theme: "light", width: 390 },
+  { state: "error", theme: "dark", width: 1440 },
+] as const;
+for (const { state, theme, width } of cases) {
+  test(`engines ${state} ${theme} ${width}`, async ({ page }) => {
+    await mockEngineApis(page, {
+      empty: state === "empty",
+      registryError: state === "error",
+    });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.addInitScript(
+      (value) => localStorage.setItem("theme", value),
+      theme,
+    );
+    await page.goto("/engines/");
+    if (state === "seeded") {
+      await expect(
+        page.getByRole("heading", { name: "Engines", level: 1 }),
+      ).toBeVisible();
+      const chatCard = engineCard(page, "Local chat engine");
+      await expect(chatCard).toBeVisible();
+      // A row opens the engine page; the list comes back on Back.
+      await openEngine(page, chatCard, "Local chat engine");
+      await expect(page).toHaveURL(/engine=chat/);
+      await page.goBack();
+      await expect(chatCard).toBeVisible();
+    } else if (state === "empty") {
+      await expect(page.getByText("No engines configured")).toBeVisible();
+    } else {
+      await expect(
+        page.getByText("Engine list could not be loaded"),
+      ).toBeVisible();
     }
-  }
+    await checkPageBasics(page, `status-engines-${state}-${theme}-${width}`);
+  });
 }
 
-test("engines do not infer green state when observations are unavailable", async ({
-  page,
-}) => {
-  await mockEngineApis(page, {
-    statusOverride: {
-      current_health: {
-        state: "unavailable",
-        tone: "neutral",
-        label: "Live status unavailable",
-        detail: "The gateway could not observe engines.",
-        observation_available: false,
-        services: status.current_health.services,
-      },
-      backends: [{ service_id: "chat", live_status: "up" }],
-    },
-  });
-  await page.goto("/ui/engines/");
-  await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
-    0,
-  );
-  await expect(page.getByText("Ready")).toHaveCount(0);
-});
-
-test("engines route selects a disabled service from the query string", async ({
-  page,
-}) => {
-  await mockEngineApis(page);
-  await page.goto("/ui/engines/?service=image");
-  await expect(page.getByText("Local image engine")).toBeVisible();
-  const selected = page.locator("tr[aria-current='true']");
-  await expect(selected.getByText("Local image engine")).toBeVisible();
-  const selectedSheet = await openEngineEdit(
-    page,
-    selected,
-    "Local image engine",
-  );
-  await expect(
-    selectedSheet.getByRole("switch", { name: "Toggle Local image engine" }),
-  ).not.toBeChecked();
-  await page.keyboard.press("Escape");
-});
-
-test("engines clear live projection when status refresh fails", async ({
-  page,
-}) => {
-  await mockEngineApis(page, { statusError: true });
-  await page.goto("/ui/engines/");
-  await expect(page.getByText("Live status unavailable")).toBeVisible();
-  await expect(
-    page.getByText("Engine states are unknown. Try loading live status again."),
-  ).toBeVisible();
-  await page.getByText("Technical details").click();
-  await expect(page.getByText("Status refresh failed")).toBeVisible();
-  await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
-    0,
-  );
-  await expect(page.getByText("Ready")).toHaveCount(0);
-});
-
-test("engines add, edit, toggle, and remove use existing APIs safely", async ({
-  page,
-}) => {
-  const bodies: unknown[] = [];
-  await mockEngineApis(page, { bodies });
-  await page.goto("/ui/engines/");
-
-  await page.getByRole("button", { name: "Add engine" }).first().click();
-  const addDialog = page.getByRole("dialog", { name: "Add engine" });
-  await addDialog.getByRole("combobox", { name: "Preset" }).click();
-  await page.getByRole("option", { name: /OpenAI.?compatible/i }).click();
-  await addDialog.getByLabel("Name").fill("Added engine");
-  await addDialog.getByLabel("Base URL").fill("http://127.0.0.1:18083/v1");
-  await addDialog.getByRole("button", { name: "Add engine" }).click();
-  await expect(page.getByText("Engine added")).toBeVisible();
-
-  const chatCard = engineCard(page, "Local chat engine");
-  const dialog = await openEngineEdit(page, chatCard, "Local chat engine");
-  await dialog.getByLabel("Name").fill("Renamed chat engine");
-  await dialog.getByLabel("Endpoint").fill("https://example.test/v1");
-  await dialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(
-    dialog.getByText(/HTTPS endpoints are not supported/),
-  ).toBeVisible();
-  await dialog.getByText("Advanced fields", { exact: true }).click();
-  const config = await dialog
-    .getByLabel("Advanced JSON", { exact: true })
-    .inputValue();
-  await dialog.getByLabel("Advanced JSON", { exact: true }).fill("null");
-  await dialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(
-    dialog.getByText("Advanced fields must be a JSON object."),
-  ).toBeVisible();
-  await dialog.getByLabel("Advanced JSON", { exact: true }).fill(config);
-  await dialog.getByLabel("Endpoint").fill("http://127.0.0.1:19000/v1");
-  await dialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(dialog).not.toBeVisible();
-
-  await page.getByText("Show infrastructure", { exact: true }).click();
-  const managedDialog = await openEngineEdit(
-    page,
-    engineCard(page, "Gateway substrate"),
-    "Gateway substrate",
-  );
-  await managedDialog.getByLabel("Name").fill("Renamed substrate");
-  await managedDialog.getByLabel("Note").fill("Managed note changed.");
-  await expect(managedDialog.getByLabel("Endpoint")).toHaveCount(0);
-  await managedDialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(managedDialog).not.toBeVisible();
-
-  const toggleSheet = await openEngineEdit(
-    page,
-    engineCard(page, "Local chat engine"),
-    "Local chat engine",
-  );
-  const writesBeforeToggle = bodies.length;
-  await toggleSheet
-    .getByRole("switch", { name: "Toggle Local chat engine" })
-    .click();
-  expect(bodies).toHaveLength(writesBeforeToggle);
-  await toggleSheet.getByRole("button", { name: "Save engine" }).click();
-  await expect(toggleSheet).not.toBeVisible();
-  await page.getByRole("switch", { name: "Show not in use" }).click();
-  const imageCard = engineCard(page, "Local image engine");
-  await openEngineActions(imageCard, "Local image engine");
-  await page.getByRole("menuitem", { name: "Remove engine" }).click();
-  await page
-    .getByRole("dialog", { name: "Remove engine?", exact: true })
-    .getByRole("textbox")
-    .fill("Local image engine");
-  await page
-    .getByRole("button", { name: "Remove engine", exact: true })
-    .click();
-  await expect(page.getByText("Engine removed")).toBeVisible();
-
-  expect(bodies).toContainEqual(
-    expect.objectContaining({
-      name: "Added engine",
-      preset: "openai-compatible",
-      base_url: "http://127.0.0.1:18083/v1",
-    }),
-  );
-  expect(bodies).toContainEqual(expect.objectContaining({ enabled: false }));
-  expect(bodies).toContainEqual({
-    name: "Renamed substrate",
-    note: "Managed note changed.",
-    enabled: true,
-  });
-  expect(bodies).toContainEqual(
-    expect.objectContaining({
-      name: "Renamed chat engine",
-      host: "127.0.0.1",
-      port: 19000,
-      base_path: "/v1",
-      custom_flag: "keep-me",
-      enabled: true,
-    }),
-  );
-  const editBody = bodies.find(
-    (body): body is Record<string, unknown> =>
-      Boolean(body) &&
-      typeof body === "object" &&
-      (body as Record<string, unknown>).port === 19000,
-  );
-  expect(editBody).toBeTruthy();
-  expect(editBody).not.toHaveProperty("base_url");
-});
-
-test("engines label degraded and standby states honestly", async ({ page }) => {
-  await mockEngineApis(page, {
-    registryOverride: {
-      ...registry,
-      services: {
-        ...registry.services,
-        image: { ...registry.services.image, enabled: true },
-      },
-    },
-    statusOverride: {
-      current_health: {
-        state: "warn",
-        tone: "warn",
-        label: "Engines need attention",
-        detail: "One engine is degraded and one is stopped on standby.",
-        observation_available: true,
-        services: [
-          {
-            service_id: "chat",
-            name: "Local chat engine",
-            configured: true,
-            enabled: true,
-            role: "primary",
-            routable: true,
-            observation: "degraded",
-            tone: "warn",
-            last_error: null,
-          },
-          {
-            service_id: "image",
-            name: "Local image engine",
-            configured: true,
-            enabled: true,
-            role: "optional",
-            routable: true,
-            observation: "standby_stopped",
-            tone: "neutral",
-            last_error: null,
-          },
-        ],
-      },
-      backends: [],
-    },
-  });
-  await page.goto("/ui/engines/");
-  await expect(page.getByText("Degraded", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Standby, stopped", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Busy")).toHaveCount(0);
-  await expect(page.getByText("Starting")).toHaveCount(0);
-});
-
-test("services compatibility route is owner gated", async ({ page }) => {
+test("Engines is owner gated for a member", async ({ page }) => {
   const adminCalls: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/admin/api/")) {
@@ -657,8 +212,7 @@ test("services compatibility route is owner gated", async ({ page }) => {
     }
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         user: {
           id: "member",
@@ -667,10 +221,9 @@ test("services compatibility route is owner gated", async ({ page }) => {
           role: "member",
         },
         apps: [],
-      },
-    }),
+      }),
   );
-  await page.goto("/ui/services/");
+  await page.goto("/engines/");
   await expect(
     page.getByText("Owner access required", { exact: true }),
   ).toBeVisible();
@@ -681,6 +234,6 @@ test("services compatibility route is owner gated", async ({ page }) => {
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Sign in with an owner account" }),
-  ).toHaveAttribute("href", /return_to=%2Fui%2Fservices%2F/);
+  ).toHaveAttribute("href", /return_to=%2Fengines%2F/);
   expect(adminCalls).toEqual([]);
 });

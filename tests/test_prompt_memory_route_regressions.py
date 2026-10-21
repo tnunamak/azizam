@@ -17,10 +17,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
+import pytest
 from fastapi.testclient import TestClient
 from gateway import admin_store, media_jobs, media_metadata, me_media, prompt_memory, receipt_store
 
-from tests.test_media_provenance import StubRequest, _NullClient, _patch_route_stores
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
+from tests.test_media_provenance import StubRequest, _patch_route_stores
 
 SENTINEL = "zz-review-sentinel-91ab"
 
@@ -41,6 +44,11 @@ def _all_bytes(root: Path) -> bytes:
 
 
 class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
+    @pytest.fixture(autouse=True)
+    def _inject(self, fake_upstreams, monkeypatch):
+        self.fakes = fake_upstreams
+        self.monkeypatch = monkeypatch
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -56,8 +64,8 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             p.start()
             self.addCleanup(p.stop)
         self.member = admin_store.upsert_oidc_user("iss", "robin", email="robin@example.test", path=self.admin_db)
-        self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], path=self.admin_db)
-        self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
+        self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], access_plan="person", path=self.admin_db)
+        self.auth = proxy.AuthContext(identity=auth_identity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
 
     async def _generate(self, extensions):
         body = {"prompt": SENTINEL, "model": "krea2-turbo", "size": "8x6", "response_format": "b64_json"}
@@ -68,17 +76,18 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             async def json(self_inner):
                 return body
 
-        async def fake_round(*_a, **_k):
-            return None, [_comfy_png_with(SENTINEL)]
-
+        comfy = self.fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
+        self.monkeypatch.setattr(proxy, "COMFY_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
-        with patch.object(proxy, "_comfy_run_round", fake_round), patch.object(
+        with patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
-            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(
             proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
-            proxy.httpx, "AsyncClient", lambda *a, **k: _NullClient()), patch.object(
-            proxy, "configured_downstream_headers", lambda *_a: {}):
-            response = await proxy.proxy_comfy_request(Req(), self.auth, receipt=receipt)
+            proxy, "configured_downstream_headers", lambda *_a: {}), patch.object(
+            # The background decision probes service health over HTTP; no ComfyUI fact is under test here.
+            proxy, "resolve_image_background_decision",
+            AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))):
+            response = await proxy.proxy_graph_image_request(Req(), self.auth, receipt=receipt)
         return response
 
     async def test_member_forget_end_to_end(self):
@@ -120,17 +129,22 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
 
     async def test_prompt_write_does_not_block_event_loop(self):
         entered = threading.Event()
+        release = threading.Event()
         original = prompt_memory.put
         def slow_put(*args, **kwargs):
             entered.set()
-            time.sleep(0.15)
+            # Storage stays blocked until the test has seen the loop run.
+            assert release.wait(timeout=10), "the loop never ran while prompt storage waited"
             return original(*args, **kwargs)
         with patch.object(prompt_memory, "put", slow_put):
             task = asyncio.create_task(self._generate(None))
             while not entered.is_set() and not task.done():
                 await asyncio.sleep(0.001)
             self.assertTrue(entered.is_set())
-            await asyncio.sleep(0.01)
+            # The loop still runs these turns while the write is blocked.
+            for _ in range(3):
+                await asyncio.sleep(0)
             self.assertFalse(task.done(), "the loop must progress while prompt storage waits")
+            release.set()
             response = await task
         self.assertEqual(response.status_code, 200)

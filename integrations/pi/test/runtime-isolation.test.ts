@@ -12,7 +12,6 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 const runs = (name: string) => (existsSync(join(root, name)) ? readFileSync(join(root, name), "utf8").split("\n").filter(Boolean).length : 0);
-const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
 
 /** A fresh agent dir where unrelated providers hold `!command` keys and azizam's key is a `models.json` command. */
 function agentDir(name: string): string {
@@ -41,10 +40,27 @@ async function boot(name: string, register: "scoped" | "pi-default") {
 		}) as unknown as typeof fetch,
 	});
 	const runtime = await ModelRuntime.create({ refreshOnCreate: false });
+	const refreshes: Promise<unknown>[] = [];
+	const refresh = runtime.refresh.bind(runtime);
+	(runtime as any).refresh = (...args: Parameters<typeof refresh>) => {
+		const pending = refresh(...args);
+		refreshes.push(pending);
+		return pending;
+	};
 	if (register === "scoped") registerProviderScoped(runtime, provider);
 	else runtime.registerNativeProvider(provider);
+	await Promise.all(refreshes);
 	await provider.prefetch(runtime);
-	await settle();
+	// Registration and prefetch can queue refresh work on later turns. Drain
+	// observed work, then keep a short quiet window for delayed commands.
+	for (;;) {
+		const pending = refreshes.splice(0);
+		await Promise.all(pending);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		if (refreshes.length === 0) break;
+	}
+	await new Promise<void>((resolve) => setTimeout(resolve, 50));
+	while (refreshes.length) await Promise.all(refreshes.splice(0));
 	return { runtime, provider, auth };
 }
 
@@ -78,4 +94,54 @@ test("registerProviderScoped restores the runtime's refresh and swallows only th
 	registerProviderScoped(runtime, azizamProvider({ env: { AZIZAM_BASE_URL: "http://gw.test/v1" } }));
 	assert.equal((runtime as any).refresh, own, "refresh must be restored after registration");
 	assert.deepEqual(seen, [], "the unscoped refresh must not reach Pi during registration");
+});
+
+test("scoped registration forwards scoped refreshes and restores every descriptor on throw", async () => {
+	const { registerProviderScoped } = await import("../src/provider.ts");
+	const provider = {} as Parameters<typeof registerProviderScoped>[1];
+
+	for (const own of [false, true]) {
+		for (const throws of [false, true]) {
+			const calls: { receiver: unknown; options: unknown }[] = [];
+			const result = { aborted: false, errors: new Map() };
+			const scopedOptions = { providers: ["azizam"], allowNetwork: false };
+			const failure = new Error("registration failed");
+			const refresh = async function (this: unknown, options?: unknown) {
+				calls.push({ receiver: this, options });
+				return result;
+			};
+			const runtime = Object.create({ refresh });
+			if (own) {
+				Object.defineProperty(runtime, "refresh", { value: refresh, configurable: true, enumerable: false, writable: true });
+			}
+			const before = Object.getOwnPropertyDescriptor(runtime, "refresh");
+			let unscoped: Promise<any> | undefined;
+			let scoped: Promise<any> | undefined;
+			runtime.registerNativeProvider = (received: unknown) => {
+				assert.equal(received, provider);
+				unscoped = runtime.refresh();
+				scoped = runtime.refresh(scopedOptions);
+				if (throws) throw failure;
+			};
+
+			if (throws) {
+				assert.throws(() => registerProviderScoped(runtime, provider), (error: unknown) => error === failure);
+			} else {
+				registerProviderScoped(runtime, provider);
+			}
+
+			assert.deepEqual(Object.getOwnPropertyDescriptor(runtime, "refresh"), before, "restore the original own descriptor or remove the temporary own property");
+			assert.equal(runtime.refresh, refresh);
+			assert.ok(unscoped);
+			assert.ok(scoped);
+			assert.deepEqual(await unscoped, { aborted: false, errors: new Map() });
+			assert.equal(await scoped, result);
+			assert.equal(calls.length, 1);
+			assert.equal(calls[0].receiver, runtime);
+			assert.equal(calls[0].options, scopedOptions);
+
+			await runtime.refresh({ providers: ["after-registration"] });
+			assert.equal(calls.length, 2, "normal refresh must still work afterwards");
+		}
+	}
 });

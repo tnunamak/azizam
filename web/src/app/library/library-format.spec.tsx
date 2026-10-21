@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { formatTimestamp } from "@/lib/format";
 
 import {
   dayMarks,
@@ -7,10 +8,28 @@ import {
   prettifyModelId,
   tileDate,
   captionTitle,
+  thumbnailSize,
 } from "./library-format";
 
 // Thursday 8 October 2026, mid-afternoon local time.
 const now = new Date(2026, 9, 8, 15, 0);
+
+describe("thumbnailSize", () => {
+  test.each([
+    [1536, 1024, 480, 320],
+    [1024, 1536, 320, 480],
+    [480, 480, 480, 480],
+    [128, 64, 128, 64],
+    [8192, 1, 480, 1],
+    [null, null, 480, 360],
+    [0, 1024, 480, 360],
+    [-1, 1024, 480, 360],
+    [Infinity, 1024, 480, 360],
+    [1536, NaN, 480, 360],
+  ])("sizes %s × %s within the thumbnail bounds", (width, height, w, h) => {
+    expect(thumbnailSize(width, height)).toEqual({ width: w, height: h });
+  });
+});
 
 describe("tileDate", () => {
   test.each([
@@ -151,4 +170,51 @@ describe("captionTitle", () => {
   ])("captions %s as %s", (prompt, title) => {
     expect(captionTitle(prompt, "Image")).toBe(title);
   });
+});
+
+describe("shared timestamp presentation", () => {
+  const nowMs = Date.parse("2026-10-08T15:00:00.000Z");
+  const options = { nowMs, locale: "en-US", timeZone: "UTC" };
+  test.each([
+    [-1_000, "1 second ago"], [-60_000, "1 minute ago"],
+    [-3_600_000, "1 hour ago"], [-86_399_999, "23 hours ago"],
+    [60_000, "in 1 minute"], [0, "now"],
+  ])("renders recent offset %s relatively", (offset, label) => {
+    const date = new Date(nowMs + offset);
+    expect(formatTimestamp(date, options)).toEqual({
+      children: label, title: date.toISOString(), dateTime: date.toISOString(),
+    });
+  });
+  test.each([-86_400_000, 86_400_000])("uses absolute time at the 24-hour boundary %s", (offset) => {
+    const date = new Date(nowMs + offset);
+    expect(formatTimestamp(date, options).children).toBe(
+      new Intl.DateTimeFormat("en-US", {
+        year: "numeric", month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit", timeZoneName: "short", timeZone: "UTC",
+      }).format(date),
+    );
+  });
+  test("honors locale for relative labels", () => {
+    expect(formatTimestamp(new Date(nowMs - 3_600_000), { ...options, locale: "fr-FR" }).children)
+      .toBe(new Intl.RelativeTimeFormat("fr-FR", { numeric: "auto" }).format(-1, "hour"));
+  });
+  test.each(["UTC", "America/Los_Angeles", "Asia/Tokyo"])("honors locale and %s for absolute labels", (timeZone) => {
+    const date = new Date("2026-10-01T01:30:00.123Z");
+    const formatted = formatTimestamp(date, { ...options, locale: "de-DE", timeZone });
+    expect(formatted.children).toBe(new Intl.DateTimeFormat("de-DE", {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short", timeZone,
+    }).format(date));
+    expect(formatted.title).toBe("2026-10-01T01:30:00.123Z");
+  });
+  test("normalizes seconds, milliseconds and offset ISO inputs to the same exact instant", () => {
+    const expected = formatTimestamp("2026-10-08T14:00:00.123Z", options);
+    expect(formatTimestamp((nowMs - 3_600_000 + 123) / 1000, options)).toEqual(expected);
+    expect(formatTimestamp(nowMs - 3_600_000 + 123, options)).toEqual(expected);
+    expect(formatTimestamp("2026-10-08T16:00:00.123+02:00", options)).toEqual(expected);
+  });
+  test.each([null, undefined, "", "invalid", NaN, Infinity, 1e20, new Date(NaN)])
+    ("handles missing or invalid timestamp %s without an invalid tooltip", (input) => {
+      expect(formatTimestamp(input, options)).toEqual({ children: "Time not recorded" });
+    });
 });

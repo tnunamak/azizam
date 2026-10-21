@@ -4,9 +4,8 @@ This module implements the six primitive transform types from
 docs/design/ENGINE_TRANSFORMS_DESIGN.md §2, a named-transform registry,
 and a pipeline runner.
 
-STEP 0: Engine + registry, DARK — nothing in proxy.py is wired to this yet
-        (except the voxtral-voices built-in registered at module level, used
-        in Step 1).
+Service and model records attach transforms as data; proxy.py runs the
+attached pipelines.
 
 Public surface
 --------------
@@ -188,6 +187,49 @@ def _del_nested(obj: dict[str, Any], dotted_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_primitive_config(cfg: dict[str, Any], kind: str) -> None:
+    """Reject malformed primitive configuration before request mutation."""
+    if not isinstance(cfg, Mapping):
+        raise ValueError(f"{kind} config must be a mapping")
+
+    def error(field: str, expected: str) -> None:
+        raise ValueError(f"{kind} config '{field}' {expected}")
+
+    required = {
+        "value-map": ("param",), "param-map": ("from", "to"),
+        "clamp": ("param",),
+    }.get(kind, ())
+    for field in required:
+        if field not in cfg:
+            error(field, "is required")
+        if not isinstance(cfg[field], str):
+            error(field, "must be a string")
+
+    # Missing/null collections retain the existing empty/no-op defaults.
+    for field in ({"value-map": ("map",), "default-params": ("set",)}.get(kind, ())):
+        value = cfg.get(field)
+        if value is not None and not isinstance(value, Mapping):
+            error(field, "must be a mapping or null")
+        if field == "set" and value is not None:
+            if any(not isinstance(key, str) for key in value):
+                error(field, "must have string paths")
+    if kind == "drop-params":
+        value = cfg.get("drop")
+        if value is not None and (
+            not isinstance(value, list) or any(not isinstance(key, str) for key in value)
+        ):
+            error("drop", "must be a list of strings or null")
+    if kind == "message-inject":
+        for field in ("role", "text", "mode"):
+            if field in cfg and not isinstance(cfg[field], str):
+                error(field, "must be a string")
+    if kind == "clamp":
+        for field in ("min", "max"):
+            value = cfg.get(field)
+            if value is not None and not isinstance(value, (int, float)):
+                error(field, "must be a number or null")
+
+
 class _Primitive:
     """Shared base for all declarative primitives."""
 
@@ -224,14 +266,14 @@ class ValueMapTransform(_Primitive):
 
     YAML::
 
-        voxtral-voices:
-          kind: value-map
-          param: voice
-          map: { cheerful_female: shimmer, alloy: alloy }
-          default: alloy
+        kind: value-map
+        param: quality
+        map: { hd: high, standard: medium }
+        default: medium
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "value-map")
         super().__init__(cfg)
         self._param: str = cfg["param"]
         self._map: dict[str, Any] = cfg.get("map") or {}
@@ -262,6 +304,7 @@ class DropParamsTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "drop-params")
         super().__init__(cfg)
         self._drop: list[str] = cfg.get("drop") or []
 
@@ -288,6 +331,7 @@ class DefaultParamsTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "default-params")
         super().__init__(cfg)
         self._set: dict[str, Any] = cfg.get("set") or {}
         # only_if_absent is the documented semantic; we always honour it (setdefault).
@@ -328,6 +372,7 @@ class ParamMapTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "param-map")
         super().__init__(cfg)
         self._from: str = cfg["from"]
         self._to: str = cfg["to"]
@@ -375,6 +420,7 @@ class MessageInjectTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "message-inject")
         super().__init__(cfg)
         self._role: str = cfg.get("role", "system")
         self._text: str = cfg.get("text", "")
@@ -422,13 +468,14 @@ class ClampTransform(_Primitive):
 
     YAML::
 
-        tabby-penalty-clamp:
+        penalty-clamp:
           kind: clamp
           param: frequency_penalty
           min: 0.0
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "clamp")
         super().__init__(cfg)
         self._param: str = cfg["param"]
         self._min: float | None = cfg.get("min")
@@ -821,24 +868,48 @@ class ReasoningFieldNormalizeTransform:
 # ---------------------------------------------------------------------------
 
 # The maximum delimiter length we need to buffer across chunks.
+_THINK_OPEN_TAG = "<think>"
 _THINK_CLOSE_TAG = "</think>"
 _THINK_CLOSE_TAG_LEN = len(_THINK_CLOSE_TAG)
+# str.lower() can change length (U+0130), which shifts tag offsets; fold ASCII only.
+_ASCII_LOWER = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
+# An SSE line longer than this is not carried across reads; it passes through unparsed.
+_MAX_CARRY_BYTES = 1 << 20
+
+
+def _split_sse_lines(text: str, *, final: bool = True) -> list[tuple[str, str]]:
+    """Split only CRLF, LF and CR, optionally leaving a final CR unresolved."""
+    lines: list[tuple[str, str]] = []
+    start = 0
+    for match in re.finditer(r"\r\n|\r|\n", text):
+        if not final and match.group() == "\r" and match.end() == len(text):
+            break
+        lines.append((text[start:match.start()], match.group()))
+        start = match.end()
+    if start < len(text):
+        lines.append((text[start:], ""))
+    return lines
 
 
 class StreamingThinkSplitTransform:
-    """Step 4b built-in: catch ``</think>`` split across SSE chunks.
+    """Step 4b built-in: repair ``<think>`` / ``</think>`` tags split across SSE frames.
 
     Ships OPT-IN — attached only when explicitly configured.  When NOT attached,
     the existing per-chunk behavior (_normalize_chat_completion_sse_chunk) is
     byte-identical (no regression).
 
-    Maintains a bounded cross-chunk buffer (at most len("</think>") - 1 bytes)
-    to catch the case where the close-delimiter is split across two consecutive
-    SSE chunks.  The buffer is flushed immediately on finding the delimiter.
+    A tag can be cut at any byte, either inside one network read or between two
+    SSE frames (``{"content":"...</thi"}`` then ``{"content":"nk>answer"}``).  The
+    transform therefore works on the decoded ``delta.content`` text, not on raw
+    bytes: per choice it holds back a trailing partial tag (at most
+    ``len("</think>") - 1`` characters), routes text inside the tags to
+    ``reasoning_content`` and text outside to ``content``.  A held remainder is
+    released on the choice's ``finish_reason`` frame or at ``[DONE]``.  It also
+    carries an incomplete trailing SSE line to the next read.
 
-    This is a stateful built-in; it holds mutable state (the carry buffer) and
-    is therefore NOT safe to share across concurrent requests — each request must
-    use its own instance.  The registry stores the class; callers instantiate.
+    This is a stateful built-in; it holds mutable state and is therefore NOT safe
+    to share across concurrent requests — each request must use its own instance.
+    The registry stores the class; callers instantiate.
 
     NOTE: This transform operates on raw SSE bytes, not on the dict payload, so
     it does not fit the standard on_request/on_response protocol.  It exposes a
@@ -846,80 +917,161 @@ class StreamingThinkSplitTransform:
     is a no-op (included for registry protocol compliance).
     """
 
+    _TAGS = (_THINK_OPEN_TAG, _THINK_CLOSE_TAG)
+
     def __init__(self) -> None:
-        self._carry: bytes = b""
+        self._raw_carry: bytes = b""
+        # choice index -> [held partial-tag text, currently inside <think>]
+        self._choice_state: dict[int, list[Any]] = {}
+        self._last_payload: dict[str, Any] | None = None
 
-    def process_chunk(self, chunk: bytes) -> bytes:
-        """Process one raw SSE chunk, applying cross-chunk delimiter repair."""
-        data = self._carry + chunk
-        self._carry = b""
+    @classmethod
+    def _partial_tag_len(cls, text: str) -> int:
+        """Length of the longest suffix of *text* that is a proper prefix of a tag."""
+        lowered = text.translate(_ASCII_LOWER)
+        for length in range(min(_THINK_CLOSE_TAG_LEN - 1, len(lowered)), 0, -1):
+            suffix = lowered[-length:]
+            if any(tag.startswith(suffix) and len(tag) > length for tag in cls._TAGS):
+                return length
+        return 0
 
-        # Fast path: if no hint of think tags, return immediately.
-        lower = data.lower()
-        if b"</think>" not in lower and b"</" not in lower:
-            return chunk  # nothing to buffer — emit original
+    def _split_text(self, state: list[Any], text: str, *, final: bool) -> tuple[str, str]:
+        """Return (visible, reasoning) for *text*, updating the choice *state*."""
+        held, in_think = state
+        text = held + text
+        visible: list[str] = []
+        reasoning: list[str] = []
+        while text:
+            lowered = text.translate(_ASCII_LOWER)
+            tag = _THINK_CLOSE_TAG if in_think else _THINK_OPEN_TAG
+            idx = lowered.find(tag)
+            if not in_think:
+                # A close tag before any opener: the text before it was reasoning.
+                idx_close = lowered.find(_THINK_CLOSE_TAG)
+                if idx_close >= 0 and (idx < 0 or idx_close < idx):
+                    reasoning.append(text[:idx_close])
+                    text = text[idx_close + _THINK_CLOSE_TAG_LEN :]
+                    continue
+            if idx >= 0:
+                (reasoning if in_think else visible).append(text[:idx])
+                text = text[idx + len(tag) :]
+                in_think = not in_think
+                continue
+            keep = 0 if final else self._partial_tag_len(text)
+            (reasoning if in_think else visible).append(text[: len(text) - keep])
+            text = text[len(text) - keep :]
+            break
+        state[0], state[1] = text, in_think
+        return "".join(visible), "".join(reasoning)
 
+    def _rewrite_payload(self, payload: dict[str, Any]) -> bool:
+        changed = False
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            return False
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            state = self._choice_state.setdefault(choice.get("index", 0), ["", False])
+            finishing = choice.get("finish_reason") is not None
+            if not isinstance(content, str) and not (finishing and state[0]):
+                continue
+            visible, reasoning = self._split_text(state, content if isinstance(content, str) else "", final=finishing)
+            if visible != content or reasoning:
+                delta["content"] = visible
+                if reasoning:
+                    delta["reasoning_content"] = (delta.get("reasoning_content") or "") + reasoning
+                changed = True
+        return changed
+
+    def _flush_frame(self) -> str:
+        """Frame releasing any held text when the stream ends without a finish frame."""
+        template = self._last_payload
+        if not template:
+            return ""
+        out_choices = []
+        for index, state in sorted(self._choice_state.items()):
+            if not state[0]:
+                continue
+            visible, reasoning = self._split_text(state, "", final=True)
+            delta: dict[str, Any] = {"content": visible}
+            if reasoning:
+                delta["reasoning_content"] = reasoning
+            out_choices.append({"index": index, "delta": delta, "finish_reason": None})
+        if not out_choices:
+            return ""
+        frame = {k: v for k, v in template.items() if k in ("id", "object", "created", "model")}
+        frame["choices"] = out_choices
+        return f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
+
+    def finish(self) -> bytes:
+        """Release held text when the upstream closes without a finish frame or [DONE]."""
+        # Only a pending CR completes a carried line at EOF; unterminated data
+        # keeps the existing carry behavior.
+        pending = self.process_chunk(b"", _final=True) if self._raw_carry.endswith(b"\r") else b""
+        return pending + self._flush_frame().encode("utf-8")
+
+    def process_chunk(self, chunk: bytes, *, _final: bool = False) -> bytes:
+        """Process one raw SSE read, repairing tags split across reads or frames."""
+        data = self._raw_carry + chunk
+        # Latin-1 keeps character offsets equal to byte offsets, including
+        # partial UTF-8 sequences in an unfinished data line.
+        lines = _split_sse_lines(data.decode("latin-1"), final=_final)
+        cut = len(data) - (len(lines[-1][0]) if lines and not lines[-1][1] else 0)
+        tail = data[cut:].lstrip()
+        # Only an unfinished ``data:`` line is worth carrying; anything else passes through.
+        if tail and (tail.startswith(b"data:") or b"data:".startswith(tail)):
+            self._raw_carry = data[cut:]
+            data = data[:cut]
+            if len(self._raw_carry) > _MAX_CARRY_BYTES:
+                data, self._raw_carry = data + self._raw_carry, b""
+        else:
+            self._raw_carry = b""
+        # Non-data text and oversized lines pass through immediately; only an
+        # ambiguous CR delimiter waits, not the non-data or oversized line.
+        if not _final and not self._raw_carry and data.endswith(b"\r"):
+            data, self._raw_carry = data[:-1], b"\r"
+        if not data:
+            return b""
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            return chunk  # can't decode — pass through unchanged
-
-        # Check if data ends with a prefix of </think> (partial delimiter).
-        # Buffer the suffix so next chunk can complete it.
-        close_tag_lower = _THINK_CLOSE_TAG  # "</think>"
-        # Search for the last occurrence of a partial suffix of </think> at the end.
-        end_carry = b""
-        for length in range(1, _THINK_CLOSE_TAG_LEN):
-            suffix = _THINK_CLOSE_TAG[:length].encode("utf-8")
-            if data.endswith(suffix) and b"</think>" not in data[:-length + 1 or None].lower():
-                end_carry = suffix
-                data = data[: len(data) - length]
-                break
-        self._carry = end_carry
-
-        # Now process data for full </think> delimiters using the existing SSE logic.
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            self._carry = b""  # reset carry on decode error
-            return chunk
-
-        if "data:" not in text or ("reasoning_content" not in text and "</think>" not in text.lower()):
-            return data if end_carry else chunk
+            # An opaque prefix must not discard the held CR delimiter.
+            if self._raw_carry != b"\r":
+                self._raw_carry = b""
+            return data
 
         out_lines: list[str] = []
-        changed = False
-        for line in text.splitlines(keepends=True):
-            stripped = line.strip()
-            if not stripped.startswith("data:"):
-                out_lines.append(line)
+        for line, newline in _split_sse_lines(text):
+            original = line + newline
+            if not line.strip().startswith("data:"):
+                out_lines.append(original)
                 continue
             prefix, rest = line.split("data:", 1)
-            newline = ""
-            if rest.endswith("\r\n"):
-                rest = rest[:-2]
-                newline = "\r\n"
-            elif rest.endswith("\n"):
-                rest = rest[:-1]
-                newline = "\n"
             rest = rest.strip()
-            if not rest or rest == "[DONE]":
-                out_lines.append(line)
+            if rest == "[DONE]":
+                out_lines.append(self._flush_frame())
+                out_lines.append(original)
                 continue
             try:
-                payload = json.loads(rest)
+                payload = json.loads(rest) if rest else None
             except json.JSONDecodeError:
-                out_lines.append(line)
+                payload = None
+            if not isinstance(payload, dict):
+                out_lines.append(original)
                 continue
-            if isinstance(payload, dict) and normalize_chat_completion_payload(payload):
+            self._last_payload = payload
+            changed = self._rewrite_payload(payload)
+            changed = normalize_chat_completion_payload(payload) or changed
+            if changed:
                 out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
-                changed = True
             else:
-                out_lines.append(line)
-
-        if changed or end_carry:
-            return "".join(out_lines).encode("utf-8")
-        return chunk
+                out_lines.append(original)
+        return "".join(out_lines).encode("utf-8")
 
     # Protocol shims for registry compliance
     def on_request(self, body: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
@@ -964,72 +1116,6 @@ class DropNullParamsTransform(_Primitive):
 # ---------------------------------------------------------------------------
 
 REGISTRY: TransformRegistry = TransformRegistry()
-
-# ---- TTS voice map (registry id "voxtral-voices", kept for compatibility) ----
-# Single source of truth for TTS voice names.  The id predates the OmniVoice
-# backend; it now maps every accepted voice name to a CANONICAL voice name.
-# Canonical voices are OpenAI's current TTS voices.  Each has one fixed speaker
-# identity (a reference clip + transcript in the shared voice catalog), so the
-# same name sounds the same on every backend/tier that uses the catalog.
-# Backends receive canonical names only; they never map aliases themselves.
-# The voice listing endpoint reads from this entry via _voxtral_voice_map().
-DEFAULT_TTS_VOICE = "alloy"
-
-# name -> metadata for /v1/voices.  Gender is the commonly perceived gender of
-# OpenAI's voice of the same name (OpenAI does not publish one).
-CANONICAL_TTS_VOICES: dict[str, dict[str, str]] = {
-    "alloy": {"gender": "female", "description": "Neutral, balanced, versatile."},
-    "ash": {"gender": "male", "description": "Clear, steady, conversational."},
-    "ballad": {"gender": "male", "description": "Gentle, soft, melodic."},
-    "cedar": {"gender": "male", "description": "Warm, grounded, natural."},
-    "coral": {"gender": "female", "description": "Warm, friendly, upbeat."},
-    "echo": {"gender": "male", "description": "Smooth, calm, even."},
-    "fable": {"gender": "male", "description": "Expressive storyteller."},
-    "marin": {"gender": "female", "description": "Natural, polished, composed."},
-    "nova": {"gender": "female", "description": "Energetic, bright, upbeat."},
-    "onyx": {"gender": "male", "description": "Deep, authoritative."},
-    "sage": {"gender": "female", "description": "Calm, thoughtful, measured."},
-    "shimmer": {"gender": "female", "description": "Bright, cheerful, light."},
-    "verse": {"gender": "male", "description": "Expressive, dynamic."},
-}
-
-# Names used by earlier clients (Voxtral presets, retired OpenAI-style names)
-# -> closest canonical voice.  Aliases point at canonical voices, never at
-# other aliases.
-LEGACY_TTS_VOICE_ALIASES: dict[str, str] = {
-    "neutral_female": "alloy",
-    "casual_female": "coral",
-    "cheerful_female": "shimmer",
-    "neutral_male": "ash",
-    "casual_male": "echo",
-    "sophia": "alloy",
-    "isabella": "shimmer",
-    "lily": "coral",
-    "juniper": "coral",
-    "evan": "echo",
-    "adam": "ash",
-}
-
-# "<lang>_<gender>" voice-design presets (identity not fixed) pass through.
-TTS_LANGUAGE_PRESET_VOICES = tuple(
-    f"{lang}_{gender}"
-    for lang in ("ar", "de", "es", "fr", "hi", "it", "nl", "pt")
-    for gender in ("female", "male")
-)
-
-REGISTRY.register(
-    "voxtral-voices",
-    {
-        "kind": "value-map",
-        "param": "voice",
-        "map": {
-            **{name: name for name in CANONICAL_TTS_VOICES},
-            **LEGACY_TTS_VOICE_ALIASES,
-            **{name: name for name in TTS_LANGUAGE_PRESET_VOICES},
-        },
-        "default": DEFAULT_TTS_VOICE,
-    },
-)
 
 # ---- reasoning effort (reviewed opt-in built-ins) -------------------------
 # Keep explicit list-order translation separate from the final chat policy.
@@ -1103,26 +1189,6 @@ REGISTRY.register(
             "param": "presence_penalty",
             "min": -2.0,
             "max": 2.0,
-        },
-    ],
-)
-
-# ---- tabby-penalty-floor --------------------------------------------------
-# TabbyAPI (ExLlamaV2) enforces ge=0 on frequency/presence_penalty via Pydantic.
-# Clamp both to a floor of 0.0 so negative client values don't 422.
-# Source: ENGINE_TRANSFORMS_DESIGN.md §2.6 (tabby-penalty-clamp example).
-REGISTRY.register(
-    "tabby-penalty-floor",
-    [
-        {
-            "kind": "clamp",
-            "param": "frequency_penalty",
-            "min": 0.0,
-        },
-        {
-            "kind": "clamp",
-            "param": "presence_penalty",
-            "min": 0.0,
         },
     ],
 )

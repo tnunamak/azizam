@@ -29,18 +29,21 @@ the requested audience.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
-from gateway.sqlite_startup import connect, store_startup
+from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
 import json
+import logging
 import os
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
-from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience
+from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience, validate_retention
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 from gateway.ownership import stored_owner_key
 
@@ -65,7 +68,7 @@ _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnecte
 _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
     {
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
-        "api_key_name", "requested_model", "stream",
+        "api_key_name", "connection_id", "requested_model", "stream",
         "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility", "owner_key_hash",
         "source_kind", "source_label", "client_hint",
         "attempt_number",
@@ -165,13 +168,32 @@ def init_db(path: Path = DB_PATH) -> None:
 
 
 @contextmanager
+def reader(path: Path = DB_PATH):
+    """Read-only receipt access; inside a request it shares the request's receipt connection."""
+    if request_connections.active() and Path(path).exists():
+        with _conn(Path(path)) as conn:
+            yield conn
+    else:
+        conn = connect_readonly(path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
+@contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = connect(path, timeout=5.0)
-    try:
-        _apply_pragmas(conn)
+    def open_connection() -> sqlite3.Connection:
+        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("receipts", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _coerce_to_internal_dict(receipt_or_dict: Any) -> dict[str, Any]:
@@ -198,6 +220,13 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     if "request_id" not in data or not data["request_id"]:
         raise ValueError("receipt missing request_id")
     assert_safe_top_level("receipt", data)
+    if "retention" in data:
+        validate_retention(data["retention"])
+    if "retention_facts" in data:
+        hashes = data["retention_facts"]
+        if (not isinstance(hashes, list) or len(set(map(str, hashes))) != len(hashes)
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes)):
+            raise ValueError("receipt retention_facts must be distinct SHA-256 revisions")
     metadata = data.get("metadata")
     if metadata is None:
         return
@@ -340,10 +369,18 @@ def finalize(
     return cur.rowcount == 1
 
 
-def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
+def _filter_for_audience(
+    data: Mapping[str, Any], audience: str, *,
+    viewer_person_id: str | None = None,
+) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
-    return serialize_receipt_for_audience(_with_source(data), audience)
+    retention_detail = audience == "internal" or bool(
+        viewer_person_id and data.get("maker_person_id") == viewer_person_id
+    )
+    return serialize_receipt_for_audience(
+        _with_source(data), audience, from_store=True, retention_detail=retention_detail,
+    )
 
 
 def _with_source(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -485,15 +522,66 @@ def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, An
     return updated
 
 
+def get_many(
+    request_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    viewer_person_id: str | None = None,
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{request_id: receipt}`` as ``get`` would, in one query per 500 ids."""
+    ids = sorted({value for value in request_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT request_id, receipt_json, created_at FROM receipts "
+                f"WHERE request_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                data = _safe_loads(row[1])
+                if not isinstance(data, Mapping):
+                    continue
+                receipt = _filter_for_audience(
+                    _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+                    viewer_person_id=viewer_person_id,
+                )
+                receipt.setdefault("_stored_at", int(row[2]))
+                out[row[0]] = receipt
+    return out
+
+
 def get(
     request_id: str,
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Return the stored receipt filtered for ``audience``, or None."""
+    found = get_with_created_at(
+        request_id, audience=audience, viewer_person_id=viewer_person_id,
+        now_ms=now_ms, stale_after_ms=stale_after_ms, path=path,
+    )
+    return None if found is None else found[0]
+
+
+def get_with_created_at(
+    request_id: str,
+    *,
+    audience: str = "internal",
+    viewer_person_id: str | None = None,
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], float] | None:
+    """Return ``(receipt, created_at)``; ``created_at`` is the table column, as the lists show it."""
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT receipt_json, created_at FROM receipts WHERE request_id = ?",
@@ -505,16 +593,18 @@ def get(
     if not isinstance(data, Mapping):
         return None
     out = _filter_for_audience(
-        _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+        _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+        viewer_person_id=viewer_person_id,
     )
     out.setdefault("_stored_at", int(row[1]))
-    return out
+    return out, row[1]
 
 
 def recent(
     limit: int = 50,
     *,
     audience: str = "internal",
+    viewer_person_id: str | None = None,
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     owner_key_hashes: list[str] | None = None,
@@ -564,16 +654,25 @@ def recent(
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
     if outer_only:
-        clauses.append("parent_request_id IS NULL")
+        # The unary plus keeps SQLite on the created_at index. Without it the planner takes the
+        # parent_request_id index and sorts every top-level receipt to return a handful.
+        clauses.append("+parent_request_id IS NULL")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
+    # Newest first with no owner filter: walk the created_at index and stop after `limit` rows.
+    # Left to itself the planner flips between that and a full scan with a full sort on the
+    # value of LIMIT (3 and 5 plan differently), so the index is named.
+    ordered = " INDEXED BY receipts_created_at" if app_ids is None and owner_key_hashes is None else ""
 
     with _conn(path) as conn:
-        rows = conn.execute(
-            f"SELECT receipt_json, created_at FROM receipts{where} "
-            "ORDER BY created_at DESC, request_id DESC LIMIT ?",
-            params,
-        ).fetchall()
+        query = (f"SELECT receipt_json, created_at FROM receipts{ordered}{where} "
+                 "ORDER BY created_at DESC, request_id DESC LIMIT ?")
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except sqlite3.OperationalError:
+            if not ordered:
+                raise
+            rows = conn.execute(query.replace(ordered, "", 1), params).fetchall()  # a database without the index
 
     out: list[dict[str, Any]] = []
     for receipt_json, created_at in rows:
@@ -581,7 +680,8 @@ def recent(
         if not isinstance(data, Mapping):
             continue
         filtered = _filter_for_audience(
-            _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+            _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
+            viewer_person_id=viewer_person_id,
         )
         filtered.setdefault("_stored_at", int(created_at))
         out.append(filtered)
@@ -599,15 +699,19 @@ def retention_days(admin_path: Path) -> int | None:
     return days
 
 
-def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH) -> int:
-    """Delete expired history only when a finite window is explicitly supplied."""
+def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH,
+          *, fact_store_path: Path | None = None) -> int:
+    """Delete expired history and release facts from the configured media store."""
     if retain_s is None:
         return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
-        return deleted
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    return deleted
 
 
 def history_floor(path: Path = DB_PATH) -> int:
@@ -625,6 +729,57 @@ def _delete_before(conn: sqlite3.Connection, cutoff: int | None) -> int:
     return deleted
 
 
+def _expired_ids(conn: sqlite3.Connection, cutoff: int | None) -> list[str]:
+    if cutoff is None:
+        return []
+    return [row[0] for row in conn.execute("SELECT request_id FROM receipts WHERE created_at < ?", (cutoff,))]
+
+
+def _release_expired_fact_refs(ids: list[str], fact_store_path: Path | None) -> bool:
+    """Release metadata after receipt expiry commits; failure never restores history."""
+    if not ids:
+        return True
+    if fact_store_path is None or not Path(fact_store_path).exists():
+        logging.getLogger(__name__).warning("Receipt fact cleanup skipped: fact store path is missing")
+        return True
+    from gateway import media_jobs
+
+    try:
+        for offset in range(0, len(ids), 100):
+            if offset:
+                # Maintenance runs in a worker. Release the write lock long
+                # enough for waiting request writers before the next batch.
+                time.sleep(0.01)
+            media_jobs.release_fact_reference_batch("receipt", ids[offset:offset + 100], path=fact_store_path)
+    except Exception as error:
+        logging.getLogger(__name__).warning("Receipt fact cleanup pending: %s", type(error).__name__)
+        return False
+    return True
+
+
+def _sweep_orphan_fact_refs(path: Path, fact_store_path: Path | None) -> None:
+    if fact_store_path is None or not Path(fact_store_path).exists():
+        logging.getLogger(__name__).warning("Receipt fact orphan sweep pending: fact store path is missing")
+        return
+    from gateway import media_jobs
+
+    after = ""
+    try:
+        # Facts commit just before their receipt on some write paths. A new
+        # source is not an orphan until that bounded write window has passed.
+        older_than = int(time.time()) - 300
+        while ids := media_jobs.receipt_fact_source_ids(after=after, older_than=older_than, path=fact_store_path):
+            after = ids[-1]
+            with _conn(path) as conn:
+                live = {row[0] for row in conn.execute(
+                    "SELECT request_id FROM receipts WHERE request_id IN (" + ",".join("?" for _ in ids) + ")", ids,
+                )}
+            if not _release_expired_fact_refs([item for item in ids if item not in live], fact_store_path):
+                return
+    except Exception as error:
+        logging.getLogger(__name__).warning("Receipt fact orphan sweep pending: %s", type(error).__name__)
+
+
 def retention_preview(days: int | None, *, path: Path = DB_PATH) -> dict[str, Any]:
     cutoff = int(time.time()) - days * 86400 if days is not None else None
     with _conn(path) as conn:
@@ -639,6 +794,8 @@ class RetentionPreviewChanged(ValueError):
 def save_retention(
     days: int | None, preview: Mapping[str, Any] | None,
     save_setting: Callable[[], Any], *, path: Path = DB_PATH,
+    fact_store_path: Path | None = None,
+    on_cleanup_failure: Callable[[], Any] | None = None,
 ) -> int:
     """Validate the preview under a write lock, save the choice, then delete.
 
@@ -663,21 +820,28 @@ def save_retention(
             if count != preview["delete_count"]:
                 raise RetentionPreviewChanged("Receipt count changed. Review the new deletion count.")
         save_setting()
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
-        return deleted
+    if not _release_expired_fact_refs(expired_ids, fact_store_path) and on_cleanup_failure is not None:
+        on_cleanup_failure()
+    return deleted
 
 
-def maintain(admin_path: Path, *, path: Path = DB_PATH) -> int:
+def maintain(admin_path: Path, *, path: Path = DB_PATH,
+             fact_store_path: Path | None = None) -> int:
     """Apply saved expiry and reclaim at most 256 free pages off request paths."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         days = retention_days(admin_path)
         cutoff = int(time.time()) - days * 86400 if days is not None else None
+        expired_ids = _expired_ids(conn, cutoff)
         deleted = _delete_before(conn, cutoff)
         conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
-        return deleted
+    _release_expired_fact_refs(expired_ids, fact_store_path)
+    _sweep_orphan_fact_refs(path, fact_store_path)
+    return deleted
 
 
 def compact(path: Path) -> dict[str, int | bool]:
@@ -742,6 +906,7 @@ __all__ = [
     "STALE_AFTER_MS",
     "SCHEMA_VERSION",
     "init_db",
+    "get_many",
     "begin",
     "finalize",
     "record",

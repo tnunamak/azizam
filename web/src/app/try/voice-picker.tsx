@@ -1,5 +1,6 @@
 "use client";
 
+import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 
 export type { SpeechVoiceCatalog as SpeechVoices } from "@/lib/product-api-types";
@@ -30,23 +31,30 @@ export function VoicePicker({
   loading: boolean;
 }) {
   const voices = choices?.voices ?? [];
-  const other = Boolean(
-    choices?.allow_other && !voices.some((voice) => voice.id === value),
+  const [customEntry, setCustomEntry] = useState(() =>
+    Boolean(choices?.allow_other && !voices.some((voice) => voice.id === value)),
   );
+  const other = Boolean(
+    choices?.allow_other &&
+      (customEntry || !voices.some((voice) => voice.id === value)),
+  );
+  const fallbackId = useId();
+  const defaultVoiceOnly = !loading && !voices.length && !choices?.allow_other;
   return (
     <div className="space-y-2">
       <label className="block space-y-2">
         <span className="text-sm font-medium">Voice</span>
         <select
-          className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
+          className="border-input bg-card rounded-control min-h-11 min-w-11 w-full border px-3 text-base"
           value={other ? "__other__" : value}
           disabled={loading || (!voices.length && !choices?.allow_other)}
           aria-busy={loading}
-          onChange={(event) =>
-            onChange(
-              event.target.value === "__other__" ? "" : event.target.value,
-            )
-          }
+          aria-describedby={defaultVoiceOnly ? fallbackId : undefined}
+          onChange={(event) => {
+            const custom = event.target.value === "__other__";
+            setCustomEntry(custom);
+            onChange(custom ? "" : event.target.value);
+          }}
         >
           {loading ? (
             <option value="">Loading voices…</option>
@@ -64,8 +72,8 @@ export function VoicePicker({
           ) : null}
         </select>
       </label>
-      {!loading && !voices.length && !choices?.allow_other ? (
-        <p className="text-muted-foreground text-sm">
+      {defaultVoiceOnly ? (
+        <p id={fallbackId} className="text-muted-foreground text-sm">
           No voices are listed for this model. Your request will use its default
           voice.
         </p>
@@ -74,8 +82,12 @@ export function VoicePicker({
         <label className="block space-y-2">
           <span className="text-sm font-medium">Voice ID</span>
           <Input
+            className="min-h-11 min-w-11"
             value={value}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => {
+              setCustomEntry(true);
+              onChange(event.target.value);
+            }}
           />
         </label>
       ) : null}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -122,7 +123,8 @@ def env():
 
     deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
                    store_asset=core.store_asset, read_asset=core.read_asset,
-                   public_base_url=lambda r: "https://gw.test", poll_interval=0.0)
+                   public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
+                   allowed_origins=lambda r: ["https://gw.test"])
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
     return SimpleNamespace(core=core, client=TestClient(app))
@@ -139,6 +141,8 @@ def rpc(env, method, params=None, *, headers=None, modern=False, id_=1):
         hdrs.update({"mcp-protocol-version": MODERN, "mcp-method": method})
         if method == "tools/call":
             hdrs["mcp-name"] = params["name"]
+    elif method != "initialize":
+        hdrs["mcp-protocol-version"] = "2025-11-25"  # sent after initialize since 2025-06-18
     hdrs.update(headers or {})
     return env.client.post("/mcp", json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params}, headers=hdrs)
 
@@ -159,15 +163,41 @@ def test_missing_key_is_401_with_resource_metadata_challenge(env):
         'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp"')
 
 
+def test_presented_but_rejected_token_gets_invalid_token_and_scope():
+    deps = McpDeps(authenticate=lambda r, p: JSONResponse({"error": {"message": "no"}}, status_code=401),
+                   call=None, catalog=lambda: [], aliases=lambda: {}, store_asset=None, read_asset=None,
+                   public_base_url=lambda r: "https://gw.test", scopes=("mcp",),
+                   authorization_servers=lambda r: ["https://gw.test"])
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    bare = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert bare.headers["www-authenticate"] == (
+        'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp", scope="mcp"')
+    stale = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                        headers={"authorization": "Bearer old"})
+    assert stale.headers["www-authenticate"].startswith('Bearer error="invalid_token", error_description=')
+    assert 'scope="mcp"' in stale.headers["www-authenticate"]
+    body = client.get("/.well-known/oauth-protected-resource").json()
+    assert body["authorization_servers"] == ["https://gw.test"] and body["scopes_supported"] == ["mcp"]
+    assert "offline_access" not in body["scopes_supported"]
+
+
 def test_protected_resource_metadata_names_header_bearer_only(env):
     body = env.client.get("/.well-known/oauth-protected-resource/mcp").json()
     assert body["resource"] == "https://gw.test/mcp"
     assert body["bearer_methods_supported"] == ["header"]
 
 
-def test_foreign_origin_is_403_and_same_origin_passes(env):
+def test_foreign_origin_is_403_and_listed_origin_passes(env):
     assert rpc(env, "ping", headers={"origin": "https://evil.example"}).status_code == 403
-    assert rpc(env, "ping", headers={"origin": "http://testserver"}).status_code == 200
+    assert rpc(env, "ping", headers={"origin": "https://GW.test"}).status_code == 200
+
+
+def test_dns_rebinding_page_cannot_vouch_for_itself_with_host(env):
+    # A rebinding page controls both Host and Origin; only the list counts.
+    headers = {"origin": "http://evil.example", "host": "evil.example"}
+    assert rpc(env, "ping", headers=headers).status_code == 403
 
 
 def test_get_and_delete_are_405_because_there_is_no_stream(env):
@@ -181,6 +211,44 @@ def test_garbage_body_is_a_parse_error(env):
 
 
 # ------------------------------------------------------------- legacy era
+
+
+def test_modern_request_without_required_meta_is_400_invalid_params(env):
+    headers = {**H, "mcp-protocol-version": MODERN, "mcp-method": "tools/list"}
+    for meta in (None, {"io.modelcontextprotocol/clientCapabilities": {}},
+                 {"io.modelcontextprotocol/protocolVersion": MODERN}):
+        params = {} if meta is None else {"_meta": meta}
+        resp = env.client.post("/mcp", headers=headers,
+                               json={"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": params})
+        assert resp.status_code == 400, meta
+        assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS and resp.json()["id"] == 7
+
+
+def test_modern_era_has_no_initialize_or_ping(env):
+    for method in ("initialize", "ping"):
+        resp = rpc(env, method, modern=True)
+        assert resp.status_code == 404 and resp.json()["error"]["code"] == mcp_server.METHOD_NOT_FOUND
+
+
+def test_modern_results_name_the_server_in_meta(env):
+    result = rpc(env, "tools/list", modern=True).json()["result"]
+    assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "azizam"
+
+
+def test_batches_are_refused_outside_2025_03_26(env):
+    batch = [{"jsonrpc": "2.0", "id": 1, "method": "ping"}]
+    resp = env.client.post("/mcp", json=batch, headers={**H, "mcp-protocol-version": "2025-11-25"})
+    assert resp.status_code == 400 and resp.json()["error"]["code"] == mcp_server.INVALID_REQUEST
+    mixed = env.client.post("/mcp", json=[{"jsonrpc": "2.0", "id": 1, "method": "ping"}, {"id": 2}], headers=H)
+    assert [r.get("error", {}).get("code") for r in mixed.json()] == [None, mcp_server.INVALID_REQUEST]
+
+
+def test_2025_03_26_results_carry_text_only(env):
+    resp = env.client.post("/mcp", headers=H, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                     "params": {"name": "capabilities", "arguments": {}}})
+    result = resp.json()["result"]
+    assert "structuredContent" not in result
+    assert [c["type"] for c in result["content"]] == ["text"]
 
 
 def test_legacy_initialize_negotiates_and_mints_no_session(env):
@@ -202,10 +270,45 @@ def test_notification_is_202_without_body(env):
     assert resp.status_code == 202 and resp.content == b""
 
 
-def test_legacy_tools_list_has_exactly_the_three_meta_tools(env):
+def test_legacy_tools_list_has_the_three_meta_tools_and_the_two_rename_tools(env):
     tools = rpc(env, "tools/list", headers={"mcp-protocol-version": "2025-06-18"}).json()["result"]["tools"]
-    assert [t["name"] for t in tools] == ["capabilities", "run", "job"]
+    assert [t["name"] for t in tools] == ["capabilities", "run", "job", "rename_app", "rename_key"]
     assert all(t["inputSchema"]["type"] == "object" for t in tools)
+
+
+def test_owner_only_stt_measurement_tool_is_not_listed_to_nonowners():
+    state = {"owner": False}
+    def authenticate(_request, _path):
+        return SimpleNamespace(identity="k")
+
+    deps = McpDeps(authenticate=authenticate, call=Core().call, catalog=lambda: CATALOG,
+        aliases=lambda: ALIASES, store_asset=lambda *a: {}, read_asset=lambda *a: None,
+        public_base_url=lambda r: "https://gw.test", stt_measurement=lambda *a: {},
+        owner_visible=lambda _request, _auth: state["owner"])
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    response = client.post("/mcp", headers=H,
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert "stt_measurement" not in {tool["name"] for tool in response.json()["result"]["tools"]}
+    state["owner"] = True
+    owner_response = client.post("/mcp", headers=H,
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert "stt_measurement" in {tool["name"] for tool in owner_response.json()["result"]["tools"]}
+
+
+def test_stt_measurement_mcp_settings_schema_exposes_native_audio_by_mode():
+    tool = next(tool for tool in mcp_server.TOOLS if tool["name"] == "stt_measurement")
+    settings = tool["inputSchema"]["properties"]["settings"]["properties"]
+    assert "native_long_audio" not in settings
+    assert "native_long_audio_offline" in settings
+    assert "native_long_audio_streaming" in settings
+
+
+def test_stt_measurement_description_carries_sample_rights_caveat():
+    tool = next(tool for tool in mcp_server.TOOLS if tool["name"] == "stt_measurement")
+    assert "Public hosting does not establish reuse rights" in tool["description"]
+    assert "not-stated" in tool["description"]
 
 
 def test_legacy_unknown_method_is_a_200_json_rpc_error(env):
@@ -308,6 +411,33 @@ def test_unknown_target_lists_valid_ones(env):
     result = call(env, "capabilities", {"target": "gpt-image-9"})
     assert result["isError"] is True
     assert "krea" in result["structuredContent"]["targets"]
+
+
+def test_hidden_workflows_and_names_are_not_listed_or_resolved():
+    """The same visibility check discovery uses: a hidden item is absent, not merely refused later."""
+    seen = []
+
+    def visible(_request, _auth, entry):
+        seen.append(dict(entry))
+        return entry["id"] not in {"audio.generate.sfx", "tts-fast"}
+
+    def authenticate(request, _path):
+        return SimpleNamespace(identity="k")
+
+    deps = McpDeps(authenticate=authenticate, call=Core().call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=lambda *a: {}, read_asset=lambda *a: None, public_base_url=lambda r: "https://gw.test",
+                   poll_interval=0.0, allowed_origins=lambda r: ["https://gw.test"], visible=visible)
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    hidden = SimpleNamespace(client=TestClient(app))
+    rows = {r["target"]: r for r in call(hidden, "capabilities", {})["structuredContent"]["workflows"]}
+    assert "sfx" not in rows and {"krea", "qwen-edit", "speech"} <= set(rows)
+    assert rows["speech"]["aliases"] == ["tts"]
+    assert {"id": "audio.generate.sfx", "intent": "audio.generate"} in seen
+    assert {"id": "tts-fast", "operation": "speech"} in seen
+    # A hidden workflow cannot be described either: it is an unknown target.
+    result = call(hidden, "capabilities", {"target": "sfx"})
+    assert result["isError"] is True and "sfx" not in result["structuredContent"]["targets"]
 
 
 # --------------------------------------------------------------------- run
@@ -450,6 +580,76 @@ def test_run_slow_job_returns_a_job_id_after_wait(env):
     assert env.core.calls[0][2]["json"] == {"model": "video-ltx", "prompt": "waves"}
 
 
+def test_run_slow_job_waits_until_positive_deadline(monkeypatch):
+    async def scenario():
+        core = Core()
+        core.routes[("POST", "/v1/videos")] = httpx.Response(
+            200, json={"id": "video_9", "status": "queued"})
+        core.polls["/v1/videos/video_9"] = [
+            {"id": "video_9", "status": "in_progress", "progress": 10}]
+        now = [100.0]
+        sleeps = asyncio.Queue()
+
+        async def controlled_sleep(delay):
+            assert delay > 0, "S6: polling must not busy-loop"
+            wake = asyncio.get_running_loop().create_future()
+            await sleeps.put((delay, wake))
+            await wake
+
+        # Rebind this module's references, never mutate global asyncio/time.
+        monkeypatch.setattr(mcp_server, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        monkeypatch.setattr(mcp_server, "asyncio", SimpleNamespace(
+            sleep=controlled_sleep, wait_for=asyncio.wait_for,
+            TimeoutError=asyncio.TimeoutError, to_thread=asyncio.to_thread))
+        deps = McpDeps(
+            authenticate=lambda request, path: SimpleNamespace(identity="k"),
+            call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+            store_asset=core.store_asset, read_asset=core.read_asset,
+            public_base_url=lambda request: "https://gw.test", poll_interval=1.0)
+        app = FastAPI()
+        mcp_server.register_mcp_routes(app, deps)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://gw.test"
+        ) as client:
+            task = asyncio.create_task(client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "run", "arguments": {
+                    "target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 5}}}))
+            try:
+                delay, wake = await asyncio.wait_for(sleeps.get(), timeout=1)
+                assert delay == 1.0
+                assert now[0] == 100.0 and not task.done()
+                now[0] = 104.999
+                wake.set_result(None)
+                delay, wake = await asyncio.wait_for(sleeps.get(), timeout=1)
+                assert delay == pytest.approx(0.001)
+                assert not task.done(), "S6: running job returned before its requested deadline"
+                now[0] = 105.0
+                wake.set_result(None)
+                response = await asyncio.wait_for(task, timeout=1)
+                assert response.status_code == 200
+                result = response.json()["result"]
+                assert not result.get("isError", False)
+                out = result["structuredContent"]
+                assert (out["status"], out["job_id"], out["progress"], out["target"]) == (
+                    "running", "video_9", 10, "ltx")
+                assert out["next"] == "Call `job` with this job_id to keep waiting (set wait_seconds)."
+                assert core.calls == [
+                    ("POST", "/v1/videos", {"json": {"model": "video-ltx", "prompt": "waves"}}),
+                    ("GET", "/v1/videos/video_9", {}),
+                    ("GET", "/v1/videos/video_9", {}),
+                    ("GET", "/v1/videos/video_9", {}),
+                ]
+                assert core.stored == []
+                assert sleeps.empty()
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=1)
+
+    asyncio.run(scenario())
+
+
 def test_job_returns_a_finished_video_as_a_stored_link(env):
     env.core.polls["/v1/videos/video_9"] = [{"id": "video_9", "status": "completed"}]
     env.core.routes[("GET", "/v1/videos/video_9/content")] = httpx.Response(200, content=MP4, headers={"content-type": "video/mp4"})
@@ -496,6 +696,9 @@ def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
                                               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
     result = resp.json()["result"]
     assert result["isError"] is True and "secret" not in json.dumps(result)
+    assert "error" not in resp.json()
+    assert result["content"][0] == {
+        "type": "text", "text": "the adapter hit an unexpected error; see the gateway log"}
 
 
 def test_admission_refusal_keeps_safe_reasons_and_actions(env):
@@ -522,3 +725,157 @@ def test_job_waits_through_unknown_nonterminal_state_and_exposes_phases(env):
     out = call(env, 'job', {'job_id': 'mj_1', 'wait_seconds': 5})['structuredContent']
     assert out['status'] == 'canceled'
     assert (out['started_at'], out['finished_at'], out['attempt_number']) == (10, 20, 1)
+
+
+@pytest.mark.parametrize("version", mcp_server.SUPPORTED_VERSIONS)
+@pytest.mark.parametrize("status", [400, 403, 429, 500])
+def test_execution_errors_have_plain_message_and_preserve_details(env, version, status):
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        status, json={"error": {"message": "generation refused", "code": "generation_failed"}})
+    resp = rpc(env, "tools/call",
+               {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}},
+               modern=version == MODERN, headers={"mcp-protocol-version": version}, id_=42)
+    body = resp.json()
+    assert resp.status_code == 200 and body["id"] == 42
+    assert "error" not in body
+    result = body["result"]
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": "generation refused"}
+    payload = json.loads(result["content"][1]["text"])
+    assert payload["http_status"] == status and payload["code"] == "generation_failed"
+    if version == mcp_server.OLDEST_VERSION:
+        assert "structuredContent" not in result
+    else:
+        assert result["structuredContent"] == payload
+
+
+@pytest.mark.parametrize("name", [None, "", "missing", [], {}])
+def test_invalid_tool_names_are_protocol_errors(env, name):
+    resp = rpc(env, "tools/call", {"name": name, "arguments": {}})
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+    assert "result" not in resp.json() and env.core.calls == []
+
+
+@pytest.mark.parametrize("modern", [False, True])
+@pytest.mark.parametrize("arguments", [None, False, 0, "", [], ["x"], "x"])
+def test_non_object_arguments_are_protocol_errors(env, modern, arguments):
+    resp = rpc(env, "tools/call", {"name": "capabilities", "arguments": arguments}, modern=modern)
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+    assert "result" not in resp.json() and env.core.calls == []
+
+
+def test_omitted_arguments_are_still_supported(env):
+    resp = rpc(env, "tools/call", {"name": "capabilities"})
+    assert resp.status_code == 200
+    assert "error" not in resp.json() and not resp.json()["result"].get("isError")
+
+
+@pytest.mark.parametrize("tool", ["run", "job"])
+@pytest.mark.parametrize("error", ["out of memory", None])
+def test_failed_jobs_are_tool_errors_with_plain_messages(env, tool, error):
+    env.core.routes[("POST", "/gateway/v1/media/jobs")] = httpx.Response(200, json={"job_id": "mj_2"})
+    env.core.polls["/gateway/v1/media/jobs/mj_2"] = [{"status": "failed", "error": error}]
+    args = {"job_id": "mj_2"} if tool == "job" else {
+        "target": "krea", "mode": "async", "inputs": {"prompt": "x"}, "wait_seconds": 0}
+    result = call(env, tool, args)
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": error or "failed"}
+    assert result["structuredContent"]["job_id"] == "mj_2"
+    assert result["structuredContent"]["status"] == "failed"
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "canceled"])
+def test_non_failed_job_states_are_not_tool_errors(env, status):
+    env.core.polls["/gateway/v1/media/jobs/mj_2"] = [{"status": status}]
+    result = call(env, "job", {"job_id": "mj_2"})
+    assert not result.get("isError")
+    assert result["structuredContent"]["status"] == status
+
+
+def test_input_validation_error_has_plain_message(env):
+    result = call(env, "run", {})
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": "`target` is required"}
+    assert env.core.calls == []
+
+
+# ------------------------------------------------------------- rename tools
+
+
+def _renaming_env(rename):
+    deps = McpDeps(authenticate=lambda request, _path: SimpleNamespace(identity="k"), call=None, catalog=lambda: [],
+                   aliases=lambda: {}, store_asset=None, read_asset=None, public_base_url=lambda r: "https://gw.test",
+                   rename=rename)
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    return SimpleNamespace(client=TestClient(app))
+
+
+def test_the_rename_tools_declare_their_arguments_and_are_idempotent_writes():
+    tools = {tool["name"]: tool for tool in mcp_server.TOOLS}
+
+    for name, required in (("rename_app", ["app", "name"]), ("rename_key", ["app", "key", "name"])):
+        schema = tools[name]["inputSchema"]
+        assert schema["required"] == required and schema["additionalProperties"] is False
+        assert schema["properties"]["name"]["maxLength"] == 80
+        assert tools[name]["annotations"] == {
+            "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+
+
+def test_a_rename_call_reaches_the_gateway_with_the_callers_auth_and_returns_its_answer():
+    seen = []
+
+    def rename(request, auth, tool, args):
+        seen.append((auth.identity, tool, args))
+        return {"status": "renamed", "app": {"id": "app_1", "name": args["name"]}}
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Work laptop"})
+
+    assert seen == [("k", "rename_app", {"app": "Laptop", "name": "Work laptop"})]
+    assert "isError" not in result
+    assert result["structuredContent"] == {"status": "renamed", "app": {"id": "app_1", "name": "Work laptop"}}
+
+
+@pytest.mark.parametrize("tool, arguments, message", [
+    ("rename_app", {"name": "X"}, "`app` is required"),
+    ("rename_app", {"app": "Laptop"}, "`name` is required"),
+    ("rename_app", {"app": "Laptop", "name": "  "}, "`name` is required"),
+    ("rename_app", {"app": "Laptop", "name": 3}, "`name` is required"),
+    ("rename_key", {"app": "Laptop", "name": "X"}, "`key` is required"),
+    ("rename_key", {"app": "Laptop", "key": "Editor", "name": "X", "extra": 1}, "unknown argument 'extra'"),
+])
+def test_a_rename_call_with_bad_arguments_is_a_tool_error_that_never_reaches_the_gateway(tool, arguments, message):
+    def rename(*_args):
+        raise AssertionError("the adapter must refuse before it asks the gateway")
+
+    result = call(_renaming_env(rename), tool, arguments)
+
+    assert result["isError"] is True and message in result["structuredContent"]["error"]
+
+
+def test_a_refusal_from_the_gateway_is_a_tool_error_with_its_words_and_code():
+    def rename(*_args):
+        raise mcp_server.CallError("Another app already has that name. Choose a different name.", code="app_name_taken")
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Phone"})
+
+    assert result["isError"] is True
+    assert result["structuredContent"] == {"status": "error", "code": "app_name_taken",
+                                           "error": "Another app already has that name. Choose a different name."}
+
+
+def test_an_unexpected_failure_in_the_gateway_leaks_nothing():
+    def rename(*_args):
+        raise RuntimeError("secret path /var/lib/azizam")
+
+    result = call(_renaming_env(rename), "rename_app", {"app": "Laptop", "name": "Phone"})
+
+    assert result["isError"] is True and "secret path" not in json.dumps(result)
+
+
+def test_a_host_without_renaming_says_so():
+    result = call(_renaming_env(None), "rename_key", {"app": "Laptop", "key": "Editor", "name": "Notes"})
+
+    assert result["isError"] is True and "does not offer renaming" in result["structuredContent"]["error"]

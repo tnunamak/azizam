@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""Run the scheduled test tier on a detached copy of a commit (TEST_STRATEGY.md 1.3).
+
+Usage: scripts/test-scheduled nightly [--only TASK] [--ref REF] [--base-port N] [--receipts-dir DIR]
+       scripts/test-scheduled --list
+
+nightly runs three tasks over a throwaway worktree of REF (default HEAD):
+  sdk-probes  the Node SDK probes (tests/compat/node) against a disposable
+              gateway whose upstream is the scenario-driven fake upstream
+              (tests/support/fake_upstream, run as a loopback process);
+  sweep       the quality sweep (web/playwright.sweep.config.ts);
+  perf        the real-data performance harness (scripts/perf/run.py): every GET
+              route and every page against a copy of the live databases, judged by
+              scripts/perf/budgets.toml. Over budget is FAIL and opens or updates
+              the GitHub issue labelled `perf-red`. It lists no test files: its
+              verdict is the harness's exit code.
+Which test files belong to which task is data: the [[scheduled]] entries of
+tests/suites.toml. A listed file with no passed case, a skipped case or a
+failed case keeps the night from passing.
+
+Outcomes, in the receipt and the exit code (a scheduled pass is never gate
+evidence, and only PASS exits 0):
+  PASS 0   FAIL 1   SKIPPED 3 (load over the limit, or a media job in flight)
+  INCOMPLETE 4 (a task timed out, could not start, or ran no listed case)
+A run that is killed leaves an INCOMPLETE receipt, never a missing or green one.
+--only TASK runs one task for diagnosis; its best outcome is INCOMPLETE, never PASS.
+
+The receipt directory is ~/.tmp/azizam-ci-receipts/scheduled/nightly-<UTC time>/.
+Each task takes the host CI lock (~/.tmp/azizam-ci.lock) alone and yields to a
+waiting gate (~/.tmp/azizam-ci.gate-waiting), as TEST_STRATEGY.md 1.2 says.
+Ports: the gateway uses BASE_PORT..+1 (default 18500), the sweep 18510..+3, perf 18520..+1.
+The process runs at nice 19 and idle I/O class (scripts/low-priority).
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import fcntl
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))
+import scratch_owner  # noqa: E402
+
+HOME = Path.home()
+EXIT = {"PASS": 0, "FAIL": 1, "SKIPPED": 3, "INCOMPLETE": 4}
+# tests/suites.toml `task` values this script runs; scripts/ci/policy.py SCHEDULED_TASKS equals this.
+TASKS = ("sdk-probes", "sweep", "perf")
+MAX_LOAD = float(os.environ.get("SCHEDULED_MAX_LOAD", "24"))
+LOCK = Path(os.environ.get("AZIZAM_CI_LOCK", HOME / ".tmp" / "azizam-ci.lock"))
+GATE_WAITING = Path(os.environ.get("AZIZAM_CI_GATE_WAITING", HOME / ".tmp" / "azizam-ci.gate-waiting"))
+POLL_S = 2.0
+LOCK_TIMEOUT_S = int(os.environ.get("SCHEDULED_LOCK_TIMEOUT_S", str(30 * 60)))
+# Wall-clock allocation per task, seconds (TEST_STRATEGY.md 1.3; the sweep includes its web build).
+ALLOCATION_S = {"sdk-probes": 10 * 60, "sweep": 26 * 60, "perf": 20 * 60}
+
+
+class LockTimeout(Exception):
+    pass
+
+
+@dataclass
+class TaskResult:
+    name: str
+    status: str = "INCOMPLETE"
+    reason: str = "did not run"
+    wall_s: float = 0.0
+    lock_wait_s: float = 0.0
+    files: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
+def scheduled_files(suites: dict) -> dict[str, list[str]]:
+    """Task name -> repo-relative test files, from the [[scheduled]] entries."""
+    found: dict[str, list[str]] = {task: [] for task in TASKS}
+    for entry in suites.get("scheduled", []):
+        if entry.get("task") not in found:
+            raise SystemExit(f"tests/suites.toml: {entry.get('path')} has task {entry.get('task')!r}; "
+                             f"test-scheduled runs {list(TASKS)}")
+        found[entry["task"]].append(entry["path"])
+    return found
+
+
+def judge_files(rows: list[dict], files: list[str], root: Path) -> tuple[str, str, dict[str, dict[str, int]]]:
+    """Status, reason and per-file counts for the receipt rows of one task.
+
+    PASS needs, for every listed file, at least one passed case, no failed
+    case and no skipped case: a skipped probe did not probe.
+    """
+    counts = {file: {"passed": 0, "failed": 0, "skipped": 0} for file in files}
+    for row in rows:
+        try:
+            relative = Path(row["file"]).resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            continue
+        if relative in counts:
+            status = "failed" if row["status"] not in ("passed", "skipped") else row["status"]
+            counts[relative][status] += 1
+    failed = [file for file, c in counts.items() if c["failed"]]
+    if failed:
+        return "FAIL", "failed cases in " + ", ".join(failed), counts
+    silent = [file for file, c in counts.items() if not c["passed"] and not c["skipped"]]
+    if silent:
+        return "INCOMPLETE", "no case ran in " + ", ".join(silent), counts
+    skipped = [file for file, c in counts.items() if c["skipped"] or not c["passed"]]
+    if skipped:
+        return "INCOMPLETE", "skipped cases in " + ", ".join(skipped), counts
+    return "PASS", "", counts
+
+
+def read_rows(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def media_queue_url(repo: Path) -> str:
+    """Where to ask whether a media job is in flight: a read-only queue endpoint
+    (TEST_STRATEGY.md 1.3 left it UNVERIFIED). SCHEDULED_MEDIA_QUEUE_URL wins;
+    else the configured comfyui backend's /queue; else empty (nothing to ask)."""
+    if url := os.environ.get("SCHEDULED_MEDIA_QUEUE_URL"):
+        return url
+    try:
+        import yaml
+        backend = yaml.safe_load((repo / "proxy_config.yml").read_text(encoding="utf-8"))["backends"]["comfyui"]
+        return f"http://{backend['host']}:{backend['port']}/queue"
+    except Exception:  # noqa: BLE001 - no config or no such backend: nothing to ask
+        return ""
+
+
+def media_job_in_flight(url: str) -> tuple[bool, str]:
+    """(in flight, note). An unreachable queue means no engine is running a job."""
+    if not url:
+        return False, "no media queue configured"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            queue = json.load(response)
+    except (OSError, ValueError) as error:
+        return False, f"media queue {url} not answering ({type(error).__name__}): no job in flight"
+    busy = len(queue.get("queue_running") or []) + len(queue.get("queue_pending") or [])
+    return busy > 0, f"media queue {url}: {busy} job(s)"
+
+
+class Lock:
+    """The host CI lock for one task, with gate priority and a bounded wait."""
+
+    def __enter__(self) -> "Lock":
+        started = time.monotonic()
+        deadline = started + LOCK_TIMEOUT_S
+        LOCK.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = LOCK.open("a")
+        while True:
+            # A waiting gate goes first: no new task starts while it waits.
+            while GATE_WAITING.exists():
+                if time.monotonic() > deadline:
+                    raise LockTimeout("LOCK_TIMEOUT: a gate has been waiting for the lock")
+                time.sleep(POLL_S)
+            try:
+                fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise LockTimeout(f"LOCK_TIMEOUT: {LOCK} was held for {LOCK_TIMEOUT_S} s")
+                time.sleep(POLL_S)
+        self.wait_s = time.monotonic() - started
+        self.handle.truncate(0)
+        self.handle.write(f"pid {os.getpid()} scheduled since {datetime.datetime.now(datetime.UTC):%FT%TZ}\n")
+        self.handle.flush()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.handle.close()  # closing the descriptor releases the lock
+
+
+def run(command: list[str], *, cwd: Path, env: dict[str, str], log: Path, timeout: float) -> int:
+    """Run a command in its own process group; kill the group on timeout (returns 124)."""
+    with log.open("ab") as out:
+        out.write(f"\n$ {' '.join(command)}\n".encode())
+        out.flush()
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_group(process)
+            return 124
+
+
+def stop_group(process: subprocess.Popen, grace: float = 20) -> None:
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)  # stragglers in the group
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
+class Night:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.args = args
+        self.stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+        self.dir = Path(args.receipts_dir).expanduser() / f"nightly-{self.stamp}"
+        self.dir.mkdir(parents=True)
+        self.tree: Path | None = None
+        self.sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", args.ref],
+                                  capture_output=True, text=True).stdout.strip()
+        self.results: list[TaskResult] = []
+        self.note: dict[str, str] = {}
+        self.status, self.reason = "INCOMPLETE", "run did not finish"
+        self.started = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+        self.write_receipt()
+
+    def write_receipt(self) -> None:
+        receipt = {"status": self.status, "reason": self.reason, "sha": self.sha, "ref": self.args.ref,
+                   "started": self.started, "load_1min": os.getloadavg()[0], **self.note,
+                   "tasks": [vars(result) for result in self.results]}
+        temporary = self.dir / "receipt.json.partial"
+        temporary.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(self.dir / "receipt.json")
+
+    def finish(self, status: str, reason: str) -> int:
+        self.status, self.reason = status, reason
+        self.write_receipt()
+        for result in self.results:
+            print(f"  {result.name}: {result.status} {result.reason} ({result.wall_s:.0f} s, lock wait {result.lock_wait_s:.0f} s)")
+        print(f"nightly: {status}{': ' + reason if reason else ''}\nreceipt: {self.dir}/receipt.json")
+        return EXIT[status]
+
+    def preflight(self) -> tuple[str, str] | None:
+        load = os.getloadavg()[0]
+        self.note["load_1min_at_start"] = f"{load:.1f}"
+        if load > MAX_LOAD:
+            return "SKIPPED", f"1-minute load {load:.1f} is over {MAX_LOAD:g}"
+        busy, note = media_job_in_flight(media_queue_url(REPO))
+        self.note["media_check"] = note
+        if busy:
+            return "SKIPPED", f"a media job is in flight ({note})"
+        return None
+
+    def environment(self, extra: dict[str, str]) -> dict[str, str]:
+        env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "TERM", "NPM_CONFIG_CACHE", "UV_CACHE_DIR",
+                                               "XDG_CACHE_HOME", "AZIZAM_PRIORITY_SET") if key in os.environ}
+        env["CI"] = "1"
+        return {**env, **extra}
+
+    def prepare_tree(self) -> None:
+        assert self.sha, f"{self.args.ref} is not a commit"
+        scratch = Path(os.environ.get("AZIZAM_CI_SCRATCH", HOME / ".tmp"))
+        # A SIGKILLed run leaves its tree and worktree registration; remove dead owners' trees first.
+        if scratch_owner.sweep(scratch, "azizam-scheduled."):
+            subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
+        self.tree = Path(tempfile.mkdtemp(prefix="azizam-scheduled.", dir=scratch))
+        scratch_owner.mark(self.tree)
+        subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--quiet", "--detach", "--force",
+                        str(self.tree / "repo"), self.sha], check=True)
+
+    def remove_tree(self) -> None:
+        if self.tree is not None:
+            subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.tree / "repo")],
+                           capture_output=True)
+            shutil.rmtree(self.tree, ignore_errors=True)
+            subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
+
+    # -- tasks ---------------------------------------------------------------
+
+    def venv(self, repo: Path, log: Path, env: dict[str, str]) -> Path | None:
+        python = repo / "venv" / "bin" / "python"
+        if python.exists():
+            return python
+        steps = (["uv", "venv", "-q", "--python", "3.12", "venv"],
+                 ["uv", "pip", "sync", "-q", "--python", "venv/bin/python", "--require-hashes",
+                  "tests/requirements-hermetic.lock"])
+        for step in steps:
+            if run(step, cwd=repo, env=env, log=log, timeout=600):
+                return None
+        return python
+
+    def task_sdk_probes(self, files: list[str], log: Path) -> TaskResult:
+        repo = self.tree / "repo"
+        result = TaskResult("sdk-probes")
+        port = self.args.base_port
+        upstream_port = port + 1
+        env = self.environment({})
+        python = self.venv(repo, log, env)
+        if python is None:
+            result.reason = "could not build the test venv"
+            return result
+        if run(["npm", "ci", "--no-audit", "--no-fund"], cwd=repo / "tests/compat/node", env=env, log=log, timeout=300):
+            result.reason = "npm ci failed in tests/compat/node"
+            return result
+        problems_file = self.dir / "fake-upstream-problems.json"
+        fake = gateway = None
+        try:
+            fake = subprocess.Popen(
+                [str(python), "scripts/scheduled/fake_upstream_serve.py", str(upstream_port),
+                 "scripts/scheduled/sdk-probes.scenario.json", str(problems_file)],
+                cwd=repo, env=env, stdout=subprocess.PIPE, stderr=log.open("ab"), text=True, start_new_session=True)
+            if (fake.stdout.readline() or "").strip() != f"PORT {upstream_port}":
+                result.reason = f"the fake upstream did not listen on {upstream_port}"
+                return result
+            gateway_env = self.environment({
+                "UI_E2E_PORT": str(port), "UI_E2E_UPSTREAM_PORT": str(upstream_port),
+                "UI_E2E_ALLOWED_PORTS": str(upstream_port), "UI_E2E_STATE_ROOT": str(self.tree / "state")})
+            gateway = subprocess.Popen([str(python), "scripts/ui/serve.py"], cwd=repo, env=gateway_env,
+                                       stdout=log.open("ab"), stderr=subprocess.STDOUT, start_new_session=True)
+            base_url = f"http://127.0.0.1:{port}"
+            if not wait_for_health(base_url, gateway):
+                result.reason = "the disposable gateway did not become healthy"
+                return result
+            sys.path.insert(0, str(repo / "scripts" / "scheduled"))
+            import seed_instance
+            key = seed_instance.seed(base_url, upstream_port, [("probe-chat", "chat"), ("probe-embed", "embeddings")])
+            rows_file = self.dir / "sdk-probes.cases.jsonl"
+            probe_env = self.environment({
+                "AZIZAM_BASE_URL": base_url, "AZIZAM_API_KEY": key,
+                "AZIZAM_SMOKE_LIVE_LLM": "1", "AZIZAM_SMOKE_LIVE_EMBEDDINGS": "1",
+                "AZIZAM_SMOKE_OPENAI_MODEL": "probe-chat", "AZIZAM_SMOKE_ANTHROPIC_MODEL": "probe-chat",
+                "AZIZAM_SMOKE_OLLAMA_MODEL": "probe-chat", "AZIZAM_SMOKE_OLLAMA_EMBED_MODEL": "probe-embed",
+                "AZIZAM_SMOKE_EMBEDDINGS_MODEL": "probe-embed", "AZIZAM_SMOKE_TIMEOUT": "30",
+                "CASE_RECEIPTS_FILE": str(rows_file)})
+            reporter = repo / "scripts/ci/node-case-receipts.mjs"
+            relative = [Path(file).relative_to("tests/compat/node").as_posix() for file in files]
+            code = run(["node", "--test", "--test-reporter=spec", "--test-reporter-destination=stdout",
+                        f"--test-reporter={reporter}", "--test-reporter-destination=stderr", *relative],
+                       cwd=repo / "tests/compat/node", env=probe_env, log=log, timeout=ALLOCATION_S["sdk-probes"])
+            if code == 124:
+                result.reason = f"timed out after {ALLOCATION_S['sdk-probes']} s"
+                return result
+            result.status, result.reason, result.files = judge_files(read_rows(rows_file), files, repo)
+            if result.status == "PASS" and code:
+                result.status, result.reason = "FAIL", f"node --test exited {code} with every case passed"
+        except Exception as error:  # noqa: BLE001 - any setup failure is an incomplete task, never a pass
+            result.reason = f"{type(error).__name__}: {error}"
+        finally:
+            for process in (gateway, fake):
+                if process is not None:
+                    stop_group(process)
+            problems = json.loads(problems_file.read_text()) if problems_file.exists() else []
+            if problems:
+                result.status, result.reason = "FAIL", "fake upstream contract: " + "; ".join(problems[:3])
+        return result
+
+    def task_sweep(self, files: list[str], log: Path) -> TaskResult:
+        repo = self.tree / "repo"
+        result = TaskResult("sweep")
+        env = self.environment({})
+        python = self.venv(repo, log, env)
+        if python is None:
+            result.reason = "could not build the test venv"
+            return result
+        web = repo / "web"
+        started = time.monotonic()
+        budget = ALLOCATION_S["sweep"]
+        for step in (["npm", "ci", "--no-audit", "--no-fund"], ["npm", "run", "build"],
+                     ["npx", "playwright", "install", "chromium"]):
+            if run(step, cwd=web, env=env, log=log, timeout=budget - (time.monotonic() - started)):
+                result.reason = f"{' '.join(step)} failed or ran out of time"
+                return result
+        rows_file = self.dir / "sweep.cases.jsonl"
+        sweep_env = self.environment({
+            "SWEEP_PORT": str(self.args.base_port + 10), "UI_E2E_PYTHON": str(python),
+            "UI_E2E_STATE_ROOT": str(self.tree / "state-sweep"), "CASE_RECEIPTS_FILE": str(rows_file)})
+        code = run(["node", "e2e/sweep/run.mjs", "--baseline", "e2e/sweep/baseline.fixtures.json"], cwd=web,
+                   env=sweep_env, log=log, timeout=budget - (time.monotonic() - started))
+        if code == 124:
+            result.reason = f"timed out after {budget} s"
+            return result
+        result.status, result.reason, result.files = judge_files(read_rows(rows_file), files, repo)
+        if result.status == "PASS" and code:
+            result.status, result.reason = "FAIL", f"the sweep exited {code}: new findings against e2e/sweep/baseline.fixtures.json"
+        return result
+
+    def task_perf(self, files: list[str], log: Path) -> TaskResult:
+        repo = self.tree / "repo"
+        result = TaskResult("perf")
+        env = self.environment({})
+        python = self.venv(repo, log, env)
+        if python is None:
+            result.reason = "could not build the test venv"
+            return result
+        web = repo / "web"
+        started = time.monotonic()
+        budget = ALLOCATION_S["perf"]
+        if not (web / "out" / "index.html").is_file():  # the sweep, run first, already built it
+            for step in (["npm", "ci", "--no-audit", "--no-fund"], ["npm", "run", "build"],
+                         ["npx", "playwright", "install", "chromium"]):
+                if run(step, cwd=web, env=env, log=log, timeout=budget - (time.monotonic() - started)):
+                    result.reason = f"{' '.join(step)} failed or ran out of time"
+                    return result
+        out = self.dir / "perf"
+        code = run([str(python), "scripts/perf/run.py", "--port", str(self.args.base_port + 20), "--python", str(python),
+                    "--open-issue", "--out", str(out)], cwd=repo, env=env, log=log,
+                   timeout=budget - (time.monotonic() - started))
+        if code == 124:
+            result.reason = f"timed out after {budget} s"
+        elif code == 0:
+            result.status, result.reason = "PASS", ""
+        elif code == 1:
+            result.status, result.reason = "FAIL", f"over budget (scripts/perf/budgets.toml); see {out}/report.md"
+        else:
+            result.reason = f"the harness could not run (exit {code}); see {log}"
+        return result
+
+    def execute(self) -> int:
+        suites = tomllib.loads((self.tree / "repo/tests/suites.toml").read_text(encoding="utf-8"))
+        files = scheduled_files(suites)
+        for name in self.args.only or TASKS:
+            result = TaskResult(name)
+            self.results.append(result)
+            started = time.monotonic()
+            try:
+                with Lock() as lock:
+                    result.lock_wait_s = lock.wait_s
+                    started = time.monotonic()
+                    done = getattr(self, f"task_{name.replace('-', '_')}")(files[name], self.dir / f"{name}.log")
+                    done.lock_wait_s = lock.wait_s
+                    self.results[-1] = result = done
+            except LockTimeout as error:
+                result.reason = str(error)
+            result.wall_s = time.monotonic() - started
+            self.write_receipt()
+        statuses = {result.status for result in self.results}
+        failing = [f"{r.name}: {r.reason}" for r in self.results if r.status != "PASS"]
+        if "FAIL" in statuses:
+            return self.finish("FAIL", "; ".join(failing))
+        if statuses != {"PASS"}:
+            return self.finish("INCOMPLETE", "; ".join(failing))
+        if self.args.only:
+            return self.finish("INCOMPLETE", f"only {', '.join(self.args.only)} ran: a diagnostic run is not a night")
+        return self.finish("PASS", "")
+
+
+def wait_for_health(base_url: str, process: subprocess.Popen, timeout: float = 120) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and process.poll() is None:
+        try:
+            urllib.request.urlopen(f"{base_url}/health", timeout=2).close()
+            return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("tier", nargs="?", choices=["nightly"])
+    parser.add_argument("--list", action="store_true", help="print the test files each task runs")
+    parser.add_argument("--only", action="append", choices=TASKS, help="run only this task (diagnosis; never PASS)")
+    parser.add_argument("--ref", default="HEAD")
+    parser.add_argument("--base-port", type=int, default=18500)
+    parser.add_argument("--receipts-dir", default=str(HOME / ".tmp" / "azizam-ci-receipts" / "scheduled"))
+    args = parser.parse_args(argv)
+    if args.list:
+        suites = tomllib.loads((REPO / "tests" / "suites.toml").read_text(encoding="utf-8"))
+        for task, paths in scheduled_files(suites).items():
+            for path in paths:
+                print(f"{task}\t{path}")
+        return 0
+    if not args.tier:
+        parser.error("name a tier: nightly")
+    if not 18000 <= args.base_port <= 18589:
+        parser.error("--base-port must be in 18000-18589 (ad-hoc runs use 18000-18599; the sweep takes +10..+13)")
+    if not os.environ.get("AZIZAM_PRIORITY_SET"):
+        os.execv(str(REPO / "scripts" / "low-priority"), [str(REPO / "scripts" / "low-priority"), sys.executable,
+                                                         str(Path(__file__).resolve()), *argv])
+    night = Night(args)
+    # A termination signal still ends with an INCOMPLETE receipt and a removed worktree.
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        if skip := night.preflight():
+            return night.finish(*skip)
+        night.prepare_tree()
+        return night.execute()
+    except KeyboardInterrupt:
+        return night.finish("INCOMPLETE", "interrupted")
+    finally:
+        night.remove_tree()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

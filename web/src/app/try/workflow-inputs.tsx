@@ -227,11 +227,14 @@ export function WorkflowInputs({
   const settable = inputs.filter(
     (input) => !input.ignored && input.accepted !== false,
   );
-  // What is needed comes first; the options follow, in the catalog's order.
-  const shown = [
-    ...settable.filter((input) => input.required),
-    ...settable.filter((input) => !input.required),
-  ];
+  // What is needed comes first. The optional inputs wait under "More options",
+  // so Run sits right after what the workflow needs. With nothing required,
+  // the options are the form and stay open.
+  const required = settable.filter((input) => input.required);
+  const optional = settable.filter((input) => !input.required);
+  const folded = required.length > 0 ? optional : [];
+  const visible = required.length > 0 ? required : optional;
+  const foldedProblem = folded.some((input) => problems[input.name]);
 
   function update(input: WorkflowInput, value: unknown) {
     const latest = safeObject(currentJson.current);
@@ -242,6 +245,35 @@ export function WorkflowInputs({
     onChange(currentJson.current);
   }
 
+  function control(input: WorkflowInput) {
+    return (
+      <WorkflowInputControl
+        key={input.name}
+        input={input}
+        value={readWorkflowInputValue(current, inputs, input, mapping)}
+        disabled={
+          Boolean(parseError) ||
+          isUnsupportedCombinedInput(input, inputs, mapping)
+        }
+        fileInput={isFileInput(input, mapping)}
+        file={files[fileFieldOf(input, mapping)] ?? null}
+        onFileChange={
+          onFileChange &&
+          ((file) => onFileChange(fileFieldOf(input, mapping), file))
+        }
+        mediaInput={isMediaBodyInput(input, mapping)}
+        outputKind={outputKind}
+        problem={problems[input.name]}
+        unsupportedCombined={isUnsupportedCombinedInput(
+          input,
+          inputs,
+          mapping,
+        )}
+        onChange={(value) => update(input, value)}
+      />
+    );
+  }
+
   return (
     <div className="rounded-lg border">
       <div className="border-b p-3">
@@ -249,38 +281,23 @@ export function WorkflowInputs({
         {parseError && (
           <p className="text-destructive mt-2 flex items-center gap-2 text-xs">
             <AlertCircle aria-hidden="true" className="size-3.5" />
-            {parseError}
+            {technical ? parseError : UNLOADED_INPUTS}
           </p>
         )}
       </div>
       <div className="grid gap-3 p-3 md:grid-cols-2">
-        {shown.map((input) => (
-          <WorkflowInputControl
-            key={input.name}
-            input={input}
-            value={readWorkflowInputValue(current, inputs, input, mapping)}
-            disabled={
-              Boolean(parseError) ||
-              isUnsupportedCombinedInput(input, inputs, mapping)
-            }
-            fileInput={isFileInput(input, mapping)}
-            file={files[fileFieldOf(input, mapping)] ?? null}
-            onFileChange={
-              onFileChange &&
-              ((file) => onFileChange(fileFieldOf(input, mapping), file))
-            }
-            mediaInput={isMediaBodyInput(input, mapping)}
-            outputKind={outputKind}
-            problem={problems[input.name]}
-            unsupportedCombined={isUnsupportedCombinedInput(
-              input,
-              inputs,
-              mapping,
-            )}
-            onChange={(value) => update(input, value)}
-          />
-        ))}
+        {visible.map(control)}
       </div>
+      {folded.length > 0 && (
+        <details className="border-t px-3" open={foldedProblem || undefined}>
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+            More options
+          </summary>
+          <div className="grid gap-3 pb-3 md:grid-cols-2">
+            {folded.map(control)}
+          </div>
+        </details>
+      )}
       {technical && (
       <details className="border-t px-3">
         <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
@@ -455,6 +472,9 @@ function isShortSingleLine(value: string) {
   return value.length <= 80 && !value.includes("\n");
 }
 
+const UNLOADED_INPUTS =
+  "This workflow's inputs could not be loaded. Ask the owner to check the workflow.";
+
 // An example in a field must not read as something already typed.
 const PLACEHOLDER_CLASS = "placeholder:italic placeholder:opacity-80";
 
@@ -487,13 +507,19 @@ function controlFor(
   }
   if (isUnsupportedValue(value)) {
     return (
-      <Textarea
-        id={id}
-        {...aria}
-        disabled
-        value={JSON.stringify(value, null, 2)}
-        readOnly
-      />
+      <div id={id} className="space-y-1.5">
+        <p className="text-muted-foreground text-xs">
+          {UNLOADED_INPUTS}
+        </p>
+        <details className="text-xs">
+          <summary className="min-h-11 cursor-pointer py-3">
+            Technical details
+          </summary>
+          <pre className="bg-muted/40 overflow-x-auto rounded-md p-2">
+            {JSON.stringify(value, null, 2)}
+          </pre>
+        </details>
+      </div>
     );
   }
   if (input.enum?.length) {

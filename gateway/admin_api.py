@@ -1,8 +1,8 @@
 """Admin plane API router.
 
 Builds a FastAPI router that exposes JSON endpoints under ``/admin/api`` for
-managing apps (the user-facing data-plane noun), users, app profiles,
-credentials, and for inspecting audit records and policy decisions.
+managing apps (the user-facing data-plane noun), users, access plans,
+credentials, and for inspecting audit records and access decisions.
 
 This module is intentionally decoupled from persistent storage and live auth:
 
@@ -12,8 +12,8 @@ This module is intentionally decoupled from persistent storage and live auth:
   rendered as JSON.
 * Persistence is injected as an :class:`AdminStore` — any object exposing the
   duck-typed methods listed below. The router treats it as a black box.
-* Policy simulation calls :func:`gateway.policy.evaluate` directly so the
-  admin plane stays consistent with the live runtime decision logic.
+* Check access calls :func:`gateway.policy.evaluate` directly so the admin
+  plane stays consistent with the live runtime decision logic.
 
 The router never reads files, never reads ``os.environ``, never touches
 ``proxy.py``, and never returns raw key material outside one-time key creation
@@ -22,32 +22,30 @@ responses.
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import hmac
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Literal, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway.admin_oidc import validate_oidc_display_name
 from gateway.policy import (
-    AppProfile,
-    default_profile_id,
+    EffectiveAccess,
     PolicyDecision,
     PolicyRequest,
     evaluate,
-    is_default_profile_id,
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
-from gateway.model_presentation import service_presentation
+from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway.profiles import ProfileLoadError, load_profile
-from gateway import admin_catalog, admin_store, extension_packages, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
+from gateway.session_guard import BrowserSession, SessionEnded
 
 __all__ = [
     "AdminAuthError",
@@ -55,6 +53,7 @@ __all__ = [
     "AdminStore",
     "access_model_summary",
     "derive_admin_health_projection",
+    "registry_not_applied_response",
     "derive_admin_attention",
     "create_admin_router",
 ]
@@ -78,6 +77,24 @@ class AdminContext:
     roles: frozenset[str] = field(default_factory=frozenset)
     auth_method: str | None = None
     csrf_token: str | None = None
+    # Set for a browser session only. ``authenticated_at`` is when the person
+    # last proved who they are (step-up asks whether that was recent).
+    session_id: str | None = None
+    session_expires_at: int | None = None
+    authenticated_at: int | None = None
+    # The first id of the browser sign-in; revoking it ends every renewal.
+    session_family: str | None = None
+    session_absolute_expires_at: int | None = None
+    # An MCP owner operation keeps its connection binding while background work runs.
+    connection_id: str | None = None
+
+    @property
+    def browser_session(self) -> BrowserSession | None:
+        """The browser sign-in behind this request, or None for an admin key."""
+        if not self.session_id:
+            return None
+        return BrowserSession(self.audit_actor_id, self.session_id, self.session_family or self.session_id,
+                              self.session_expires_at, self.session_absolute_expires_at)
 
     @property
     def is_admin(self) -> bool:
@@ -86,6 +103,14 @@ class AdminContext:
     @property
     def audit_actor_id(self) -> str:
         return self.actor_id or self.subject
+
+
+class AdminKeyNameTaken(ValueError):
+    """The name of a new admin key is already in use."""
+
+
+class ActorOutranked(PermissionError):
+    """The App or key belongs to someone with more access than the administrator acting on it."""
 
 
 class AdminAuthError(Exception):
@@ -139,20 +164,30 @@ class AdminStore(Protocol):
         self, *, app_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def list_profiles(self) -> list[dict[str, Any]]: ...
+    def list_trusted_addresses(self, *, app_id: str) -> list[dict[str, Any]] | None: ...
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
+    def add_trusted_address(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
 
-    def create_profile(
+    def delete_trusted_address(
+        self, *, app_id: str, entry_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
+    def list_access_plans(self) -> list[dict[str, Any]]: ...
+
+    def get_access_plan(self, plan_id: str) -> dict[str, Any] | None: ...
+
+    def create_access_plan(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def delete_profile(
-        self, *, profile_id: str, actor: AdminContext
+    def delete_access_plan(
+        self, *, plan_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
     def list_credentials(self) -> list[dict[str, Any]]: ...
@@ -165,27 +200,17 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
-    def revoke_credential(
-        self, *, credential_id: str, actor: AdminContext
+    def rename_credential(
+        self, *, app_id: str, credential_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]: ...
-
-    def create_runtime_profile_mapping(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]: ...
-
-    def disable_runtime_profile_mapping(
-        self, *, mapping_id: str, actor: AdminContext
+    def revoke_credential(
+        self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
     def operator_overrides(self) -> dict[str, Any]: ...
 
     def setting_revision(self, key: str) -> str: ...
-
-    def update_user_access_defaults(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]: ...
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -235,14 +260,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
-    ) -> dict[str, Any]: ...
-
-    def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
-
-    def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext,
-        expected_revision: str | None = None,
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]: ...
 
     def recent_audit(
@@ -268,7 +287,10 @@ class AdminStore(Protocol):
 
 
 AdminAuth = Callable[[Request], AdminContext]
-ProfileResolver = Callable[[str], AppProfile | None]
+# app_id -> the access an App runs under right now (both plans), or None.
+AccessResolver = Callable[[str], "EffectiveAccess | None"]
+# async (access, full_detail=bool) -> the Check access list; ``full_detail`` is the owner's view.
+AccessPreview = Callable[..., Awaitable[dict[str, Any]]]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
 StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
@@ -278,7 +300,6 @@ StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
 # LiteLLMAdminError. Kept as a parameter (like ``service_probe``) so this module
 # never reads os.environ or touches proxy.py to find the sidecar.
 LiteLLMKeyClient = Any
-EffectiveOidcConfigProvider = Callable[[], Mapping[str, Any] | None]
 
 
 _AUDIT_DEFAULT_LIMIT = 50
@@ -289,8 +310,8 @@ _AUDIT_ACTOR_KINDS = frozenset({"user", "service_account", "system", "cli", "adm
 # producers.  Unknown keys (including nested objects) are omitted at this API
 # boundary rather than asking every client to recognize secrets.
 _AUDIT_SAFE_DETAIL_FIELDS = frozenset({
-    "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
-    "fields", "kind", "override_count", "package_hash", "prefix", "profile_id",
+    "access_plan", "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
+    "fields", "kind", "override_count", "package_hash", "plan_id", "prefix", "profile_id",
     "protocol_frontend_count", "role", "secret_changed", "service_count", "source_kind",
     "via", "workflow_count",
 })
@@ -325,17 +346,7 @@ _MEDIA_ADMISSION_FIELDS = frozenset(
 )
 
 
-def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
-    """Resolve an App's effective profile id (mirrors admin_render._app_profile_id)."""
-    profile_id = (
-        record.get("default_profile_id")
-        or record.get("profile_id")
-        or record.get("profile")
-    )
-    return str(profile_id) if profile_id else default_profile_id()
-
-
-_AUDIT_ID_RE = re.compile(r"^(?:app|prof|svc|cred)_[a-f0-9]{8,64}$")
+_AUDIT_ID_RE = re.compile(r"^(?:app|prof|plan|svc|cred)_[a-f0-9]{8,64}$")
 # ``_key_prefix`` persists exactly the first 18 characters of generated
 # operator/admin keys: the public marker plus 14 URL-safe token characters.
 # A broad "safe-looking string" grammar would also accept a full credential.
@@ -348,7 +359,7 @@ _AUDIT_ENUMS = {
     "via": frozenset({"admin", "setup", "cli", "system"}),
 }
 _AUDIT_COUNT_FIELDS = frozenset({"capability_count", "count", "override_count", "protocol_frontend_count", "service_count", "workflow_count"})
-_AUDIT_ID_FIELDS = frozenset({"app_id", "effective_profile_id", "profile_id"})
+_AUDIT_ID_FIELDS = frozenset({"app_id", "effective_profile_id", "plan_id", "profile_id"})
 
 
 def _safe_audit_detail(key: str, value: Any) -> Any:
@@ -411,7 +422,7 @@ def _admin_target_href(target_kind: str, target_id: str) -> str | None:
 
     routes = {
         "app": ("/admin/apps", "app"),
-        "profile": ("/admin/profiles", "profile"),
+        "access_plan": ("/people", "plan"),
         "service": ("/admin/services", "service"),
         "audit": ("/admin/audit", "event"),
     }
@@ -634,6 +645,7 @@ def derive_admin_health_projection(
             "role": role,
             **({"in_use": in_use} if in_use is not None else {}),
             **({"usage_label": "Not in use"} if in_use is False else {}),
+            **({"starts_on_demand": True} if starts_on_demand(raw_service) else {}),
             "observation": observation,
             "routable": routable,
             "tone": tone,
@@ -814,6 +826,64 @@ def derive_admin_health_projection(
     })
 
 
+def _registry_problem_item(problem: Mapping[str, Any]) -> dict[str, Any]:
+    """The Overview item for a stored service registry that is not what the gateway is running."""
+    mode = str(problem.get("mode") or "")
+    error = " ".join(str(problem.get("error") or "").split())[:240]
+    left_out = problem.get("left_out") if isinstance(problem.get("left_out"), Mapping) else {}
+    if mode == "partial":
+        names = ", ".join(sorted(str(name) for name in left_out)) or "some services"
+        title = "The stored service registry is only partly applied"
+        detail = (f"{problem.get('served', 0)} services are serving. Left out: {names}. "
+                  f"Fix them under Services, then reload. {error}")
+    elif mode == "empty":
+        title = "The stored service registry could not be applied"
+        detail = f"No stored services are serving. {error}"
+    else:
+        title = "The last registry change is saved but not live"
+        detail = f"The gateway is still running its previous config. {error}"
+        if left_out:
+            detail += f" Still left out: {', '.join(sorted(str(name) for name in left_out))}."
+    return _attention_item(kind="registry", severity="problem", title=title, detail=detail.strip())
+
+
+def _unsent_inject_rules(registry: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Enabled engines that have ``auth_inject`` rules and a provider route (native pass-through on).
+
+    The provider route (``/gateway/v1/providers/{provider}/...``) sends the engine's own credential and
+    never these rules, so a caller of that route reaches the engine with no key from them. The older
+    chat, speech and audio paths still send them.
+    """
+    found: list[dict[str, str]] = []
+    for service_id, record in (registry.get("services") or {}).items():
+        config = record.get("config") if isinstance(record, Mapping) else None
+        if not isinstance(config, Mapping) or not config.get("auth_inject"):
+            continue
+        if not service_registry.bool_from_config(record.get("enabled"), True):
+            continue
+        if config.get("native_passthrough") is not True or service_registry.is_remote_provider_config(config):
+            continue
+        found.append({"id": str(service_id), "name": str(record.get("name") or service_id)})
+    return found
+
+
+def _excluded_name(row: Mapping[str, Any]) -> str:
+    """The name the boot report lists a left-out record under: a service by id, any other as ``kind:id``."""
+    kinds = {"protocol_frontends": "frontend", "workflows": "workflow", "capabilities": "capability"}
+    kind = kinds.get(str(row.get("section") or ""))
+    return f"{kind}:{row.get('id')}" if kind else str(row.get("id") or "")
+
+
+def _registry_excluded_item(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """The Overview item for stored records that do not validate and that no boot or reload report names."""
+    names = "; ".join(f"{_excluded_name(row)} ({' '.join(str(row.get('error') or '').split())[:160]})" for row in rows)
+    return _attention_item(
+        kind="registry", severity="problem",
+        title="Some stored services or records are left out",
+        detail=f"They do not validate, so the gateway does not use them: {names}. Fix or remove them under Services.",
+    )
+
+
 def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return "things that want a look" — the operator's actual landing screen.
 
@@ -830,9 +900,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     Signals mirror the single current-health projection used by the detail
     surfaces, so the overview never disagrees with the sections:
-      * Apps: profile missing, or no active key. Apps without an explicit
-        profile use the built-in default profile. Disabled Apps are an operator
-        state, not a per-row incident.
+      * Apps: no access plan (the App denies every request), or no active
+        key. Disabled Apps are an operator state, not a per-row incident.
         * Services: the projected row severity.
       * Live status: the current health projection and high-error/high-latency
           Apps. Structured, independent health signals create system advisories;
@@ -840,10 +909,14 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
           the configured/enabled/role reduction.
     """
     items: list[dict[str, Any]] = []
+    for issue in snapshot.get("protocol_issues", []):
+        label = issue.get("file") or issue.get("engine_id") or "Engine protocol"
+        items.append(_attention_item(kind="service", severity="problem",
+            title=f"{label} needs attention", detail=issue["reason"],
+            target_kind="service" if issue.get("engine_id") else None,
+            target_id=issue.get("engine_id")))
 
     apps = [a for a in snapshot.get("apps", []) if isinstance(a, Mapping)]
-    profiles = [p for p in snapshot.get("profiles", []) if isinstance(p, Mapping)]
-    profile_ids = {str(p.get("id")) for p in profiles if p.get("id")}
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
     active_keys_by_app: dict[str, int] = {}
     for cred in credentials:
@@ -856,14 +929,13 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     for app in apps:
         app_id = str(app.get("id") or "")
         name = str(app.get("name") or app_id or "App")
-        profile_id = _attention_app_profile_id(app)
         if app.get("disabled_at"):
             continue
-        elif not is_default_profile_id(profile_id) and profile_id not in profile_ids:
+        elif not app.get("effective_access_plan_id"):
             items.append(_attention_item(
                 kind="app", severity="problem",
-                title=f"{name}'s profile is missing",
-                detail="Its profile was deleted; assign a new one.",
+                title=f"{name} has no access plan",
+                detail="It can't run anything. Choose a plan.",
                 target_kind="app", target_id=app_id, target_name=name,
             ))
         elif active_keys_by_app.get(app_id, 0) < 1:
@@ -873,6 +945,36 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
                 detail="Mint a key so it can reach the gateway.",
                 target_kind="app", target_id=app_id, target_name=name,
             ))
+
+    problem = snapshot.get("registry_problem")
+    if isinstance(problem, Mapping):
+        items.append(_registry_problem_item(problem))
+    for row in snapshot.get("unsent_inject_rules") or []:
+        items.append(_attention_item(
+            kind="service", severity="attention",
+            title=f"{row['name']} has key rules the provider route does not send",
+            detail=("Calls through /gateway/v1/providers/ reach this engine with the engine's own key only, "
+                    "and none from its auth_inject rules. Give the engine its own key under its connection, "
+                    "or turn off native pass-through."),
+            target_kind="service", target_id=row["id"], target_name=row["name"],
+        ))
+    excluded = snapshot.get("registry_excluded") or []
+    reported = problem.get("left_out") if isinstance(problem, Mapping) and isinstance(problem.get("left_out"), Mapping) else {}
+    unreported = [row for row in excluded if isinstance(row, Mapping) and _excluded_name(row) not in reported]
+    if unreported:
+        items.append(_registry_excluded_item(unreported))
+
+    for frontend in snapshot.get("frontends") or []:
+        if not isinstance(frontend, Mapping) or frontend.get("status") != "broken":
+            continue
+        name = str(frontend.get("name") or frontend.get("id") or "A frontend")
+        reasons = [str(error.get("message")) for error in frontend.get("errors") or [] if isinstance(error, Mapping)]
+        items.append(_attention_item(
+            kind="frontend", severity="problem",
+            title=f"{name} could not be mounted",
+            detail=(reasons[0] if reasons else "Its routes are not served.") + (
+                f" ({len(reasons) - 1} more)" if len(reasons) > 1 else ""),
+        ))
 
     current_health = snapshot.get("current_health")
     if isinstance(current_health, Mapping) and current_health.get("state") == "unavailable":
@@ -890,6 +992,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             if tone not in {"warn", "bad"}:
                 continue
             source = str(signal.get("source") or "system")
+            if source == "engine_protocol" and snapshot.get("protocol_issues"):
+                continue  # named file/engine items above already carry these diagnostics
             reasons = signal.get("reasons")
             detail = next(
                 (reason for reason in reasons if isinstance(reason, str) and reason.strip()),
@@ -968,26 +1072,22 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def access_model_summary() -> dict[str, Any]:
     return {
-        "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        "nouns": ["user", "app", "access_plan", "key", "admin_role"],
         "users": {
-            "identity": "OIDC identity",
-            "relationship": "users are not apps",
+            "identity": "OIDC or built-in identity",
+            "relationship": "a person holds one access plan, or none (cannot generate)",
         },
         "apps": {
-            "relationship": "apps inherit/default to profiles",
+            "relationship": (
+                "an app has an accountable person and one assignment: an access plan, "
+                "or the same plan as its person; it runs only what both plans allow"
+            ),
         },
-        "profiles": {
-            "relationship": "profiles are reusable runtime access policies",
+        "access_plans": {
+            "relationship": "access plans are named, reusable lists of what may run",
         },
         "keys": {
-            "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
-        },
-        "runtime_mappings": {
-            "source_kinds": list(admin_store.RUNTIME_PROFILE_MAPPING_SOURCE_KINDS),
-            "relationship": (
-                "OIDC groups, OIDC roles, emails, domains, gateway roles, "
-                "and all signed-in users can map identities to runtime profiles"
-            ),
+            "relationship": "keys act for their app; they carry no plan of their own",
         },
         "admin_roles": {
             "relationship": "admin roles control the admin plane separately from runtime access",
@@ -1005,22 +1105,28 @@ class _RouteError(Exception):
         self.message = message
 
     def as_response(self) -> JSONResponse:
-        return JSONResponse(
-            status_code=self.status_code,
-            content=_error_payload(self.code, self.message),
-        )
+        return egress.safe_error_response(self.status_code, self.code, self.message)
 
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
     return {"error": {"code": code, "message": message}}
 
 
+def registry_not_applied_response(exc: Exception) -> JSONResponse:
+    """The answer to a registry save that was stored but did not take effect on the running gateway."""
+    # The failure's own text is not repeated: it may quote what the reload read (decision D31).
+    cause = exc.__cause__ or exc
+    return egress.safe_error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "registry_saved_not_applied",
+        f"The change was saved, but the running gateway could not apply it ({type(cause).__name__}). "
+        f"Reload the settings or restart the gateway.",
+    )
+
+
 def _litellm_admin_error(exc: LiteLLMAdminError) -> JSONResponse:
     """Render a sidecar key-API failure as a protocol-shaped admin response."""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=_error_payload(exc.code, exc.message),
-    )
+    return egress.safe_error_response(exc.status_code, exc.code, exc.message)
 
 
 # Fields the operator may set when minting a virtual key. Anything else in the
@@ -1141,10 +1247,15 @@ def _mask_secret(value: str) -> str:
 
 
 def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=_error_payload(exc.code, exc.message),
-    )
+    return egress.safe_error_response(exc.status_code, exc.code, exc.message)
+
+
+def _app_outranks_you(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "app_outranks_you", str(exc)).as_response()
+
+
+def _owner_required(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
 
 
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
@@ -1154,13 +1265,8 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
     except AdminAuthError as exc:
         return _auth_error_response(exc)
     if not isinstance(ctx, AdminContext):
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=_error_payload(
-                "admin_auth_invalid",
-                "admin auth callable must return AdminContext",
-            ),
-        )
+        return egress.safe_error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "admin_auth_invalid", "admin auth callable must return AdminContext")
     if not ctx.is_admin:
         return _auth_error_response(
             AdminAuthError(
@@ -1395,8 +1501,46 @@ def _validate_media_job_admission_overrides(
     }
 
 
-def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
+def scrub_probe_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """What a connection test reports, without the credentials of the address it was given.
+
+    The probe reports the address it called. That address may hold user info or a query token the caller typed, so it
+    is shown in its public form, and the same parts are removed from every text of the report (a transport error
+    quotes the address it failed on).
+    """
+    out = dict(result)
+    address = out.get("url") if isinstance(out.get("url"), str) else ""
+    out = projection.scrub_value(out, projection.url_secret_parts(address))
+    if isinstance(out.get("url"), str):
+        out["url"] = projection.public_url(out["url"])
+    return out
+
+
+def _body_secret_texts(body: Any) -> list[str]:
+    """The secret texts a service form holds (user info and query values of its address, inline carriers), longest first."""
+    if not isinstance(body, Mapping):
+        return []
+    texts: list[str] = []
     try:
+        raw = service_registry.service_form_to_raw({**body, "name": body.get("name") or "probe"})
+    except Exception:  # noqa: BLE001 - a form that does not convert has nothing this walk can name
+        raw = {}
+    for source in (body, raw):
+        for key in ("base_url", "host", "health_endpoint", "url"):
+            value = source.get(key)
+            if isinstance(value, str):
+                texts.extend(projection.url_secret_parts(value if "://" in value else f"//{value}"))
+    for source in (body, raw):
+        texts.extend(record_carriers.legacy_secret_texts({"config": dict(source), **{k: v for k, v in source.items() if k in ("process", "lifecycle")}}))
+    return sorted(set(texts), key=len, reverse=True)
+
+
+def _validate_service_registry(
+    payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        payload = record_carriers.restore_echoed_registry(payload, before)  # a read written back unchanged (decision D27)
+        service_registry.validate_protocol_dispatch_registry(payload, before=before)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
@@ -1439,8 +1583,15 @@ def _validate_service_form(
                 "invalid_service",
                 "a base URL (or host) is required",
             )
-    # An inline plaintext key is never accepted — secrets are referenced by env
-    # var name only (api_key_env).
+    if "preset" in payload:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_service",
+            "engine presets are gone: send a definition and its values "
+            "(GET /admin/api/engine-definitions lists them)",
+        )
+    # An inline plaintext key is never accepted on this path — a raw record names
+    # an env var (api_key_env). Add engine stores a pasted key (engine_admin).
     if any(str(k).lower() == "api_key" for k in payload):
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST,
@@ -1471,10 +1622,6 @@ def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, 
     return {"source": dict(source)}
 
 
-_USER_ACCESS_DEFAULT_FIELDS = frozenset(
-    {"self_service_apps", "auto_create_personal_app"}
-)
-
 _OIDC_CONFIG_FIELDS = frozenset(
     {
         "enabled",
@@ -1483,10 +1630,6 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "client_secret",
         "redirect_uri",
         "scopes",
-        "allowed_email_domains",
-        "admin_emails",
-        "admin_groups",
-        "admin_roles",
         "authorization_endpoint",
         "token_endpoint",
         "jwks_uri",
@@ -1495,94 +1638,6 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "display_name",
     }
 )
-_OIDC_STRING_FIELDS = frozenset(
-    {
-        "issuer",
-        "client_id",
-        "client_secret",
-        "redirect_uri",
-        "authorization_endpoint",
-        "token_endpoint",
-        "jwks_uri",
-        "groups_claim",
-        "display_name",
-    }
-)
-_OIDC_LIST_FIELDS = frozenset(
-    {
-        "scopes",
-        "allowed_email_domains",
-        "admin_emails",
-        "admin_groups",
-        "admin_roles",
-    }
-)
-
-
-def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    unknown = set(payload.keys()) - _OIDC_CONFIG_FIELDS
-    if unknown:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_oidc_config",
-            f"unknown oidc fields: {sorted(unknown)}",
-        )
-    out: dict[str, Any] = {}
-    if "enabled" in payload:
-        out["enabled"] = _validate_bool_field(payload["enabled"], field="enabled")
-    for key in _OIDC_STRING_FIELDS:
-        if key not in payload:
-            continue
-        value = payload[key]
-        if value is None:
-            # ``null`` explicitly clears ordinary scalar fields. For the
-            # write-only secret it preserves the current stored value.
-            out[key] = None if key == "client_secret" else ""
-            continue
-        if not isinstance(value, str):
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                f"{key} must be a string",
-            )
-        # Empty is the explicit clear for bootstrap-backed scalar fields.
-        # Omission remains the only patch-preserve operation.
-        out[key] = validate_oidc_display_name(value) if key == "display_name" else value.strip()
-    for key in _OIDC_LIST_FIELDS:
-        if key not in payload:
-            continue
-        if payload[key] is None:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                f"{key} must be a list of strings; use [] to clear it",
-            )
-        out[key] = _validate_string_list(payload[key], field=key)
-    if "clock_skew_seconds" in payload:
-        value = payload["clock_skew_seconds"]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                "clock_skew_seconds must be a non-negative integer",
-            )
-        seconds = int(value)
-        if seconds < 0:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                "clock_skew_seconds must be a non-negative integer",
-            )
-        out["clock_skew_seconds"] = seconds
-    if out.get("enabled"):
-        for required in ("issuer", "client_id", "redirect_uri"):
-            if required in out and not out[required]:
-                raise _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_oidc_config",
-                    f"{required} is required when enabled=true",
-                )
-    return out
 
 
 def _validate_bool_field(value: Any, *, field: str) -> bool:
@@ -1601,50 +1656,6 @@ def _validate_bool_field(value: Any, *, field: str) -> bool:
         "invalid_operator_override",
         f"{field} must be true or false",
     )
-
-
-def _validate_user_access_defaults(payload: Mapping[str, Any]) -> dict[str, bool]:
-    unknown = set(payload.keys()) - _USER_ACCESS_DEFAULT_FIELDS
-    if unknown:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_operator_override",
-            f"unknown user access fields: {sorted(unknown)}",
-        )
-    return {
-        field: _validate_bool_field(payload[field], field=field)
-        for field in sorted(_USER_ACCESS_DEFAULT_FIELDS)
-        if field in payload
-    }
-
-
-def _resolve_profile(
-    profile_payload: Any,
-    *,
-    profile_resolver: ProfileResolver | None,
-) -> AppProfile:
-    """Build a profile from either an inline dict or a stored profile id."""
-    if isinstance(profile_payload, str):
-        if profile_resolver is None:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "profile_resolver_unavailable",
-                "no profile resolver configured; pass an inline profile dict",
-            )
-        profile = profile_resolver(profile_payload)
-        if profile is None:
-            raise _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_payload!r} not found",
-            )
-        return profile
-    try:
-        return load_profile(profile_payload)
-    except ProfileLoadError as exc:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST, "invalid_profile", str(exc)
-        ) from exc
 
 
 _POLICY_REQUEST_FIELDS = frozenset(
@@ -1709,49 +1720,50 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
     return {
         "decision": decision.decision,
         "allowed": decision.allowed,
+        "code": decision.code,
+        "side": decision.side,
         "sources": list(decision.sources),
         "reasons": list(decision.reasons),
         "visibility_level": decision.visibility_level,
     }
 
 
-def _plans_spend(rows: list[Mapping[str, Any]], ledger: Path | None) -> list[list[dict[str, Any]] | None]:
-    """Spend against each plan's caps, as cap enforcement counts it.
+def _stored_exclusions(store: Any) -> list[service_registry.ExcludedRecord]:
+    """The stored registry records that are left out; none for a store that cannot say (a test double)."""
+    reader = getattr(store, "get_service_registry_exclusions", None)
+    return list(reader()) if callable(reader) else []
 
-    ``None`` for a stored plan that cannot be loaded (its caps are unknown).
-    One ledger connection serves every plan.
-    """
-    from gateway import providers
 
-    loaded: list[Any] = []
-    for row in rows:
-        try:
-            loaded.append(load_profile(row.get("profile"), default_id=row.get("id")))
-        except ProfileLoadError:
-            loaded.append(None)
-    spend = providers.plan_spend_many([p for p in loaded if p is not None], path=ledger)
-    return [spend[p.id] if p is not None else None for p in loaded]
+def _excluded_summary(items: Iterable[service_registry.ExcludedRecord]) -> list[dict[str, str]]:
+    return [{"section": item.section, "id": item.id, "error": item.error} for item in items]
 
 
 def create_admin_router(
     store: AdminStore,
     *,
     auth: AdminAuth,
-    profile_resolver: ProfileResolver | None = None,
+    access_resolver: AccessResolver | None = None,
+    access_preview: AccessPreview | None = None,
     service_probe: ServiceProbe | None = None,
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
-    effective_oidc_config_provider: EffectiveOidcConfigProvider | None = None,
+    engine_fetch: engine_check.Fetch | None = None,
+    engine_hop_timeout: Callable[[], float] | None = None,
+    stt_measurements: Any = None,
+    frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
+    registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
     prefix: str = "/admin/api",
-    spend_ledger_path: Callable[[], Path | None] = lambda: None,
 ) -> APIRouter:
     """Build an admin-plane router.
 
     ``store`` provides persistence. ``auth`` is invoked on every request and
     must raise :class:`AdminAuthError` for unauthenticated or forbidden
-    callers. ``profile_resolver`` lets the policy simulator accept a stored
-    profile id (string) rather than an inline profile dict. ``service_probe`` is
+    callers. ``access_resolver`` lets Check access evaluate an App exactly as
+    the runtime does (its two plans, from the admin store). ``access_preview``
+    is an optional ``async (EffectiveAccess, full_detail=...) -> {summary, groups, entries}``
+    that lists every Models page entry with what that access can and cannot use; it is
+    injected so this router stays decoupled from ``proxy.py``. ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
     capability is unavailable rather than failing. ``status_provider`` supplies
@@ -1764,29 +1776,38 @@ def create_admin_router(
     ``known_model_names_getter`` is an optional zero-arg callable that returns
     the current set of model names in the compiled LiteLLM catalog; when
     provided and non-empty, virtual-key ``models`` allowlists are validated
-    against it at mint time. ``effective_oidc_config_provider`` exposes the
-    runtime's already-resolved OIDC view (including bootstrap provenance)
-    without coupling this router to a configuration source.
+    against it at mint time.
     """
 
-    router = APIRouter(prefix=prefix, tags=["admin"])
+    router = APIRouter(prefix=prefix, tags=["admin"], route_class=egress.ManagementRoute)
 
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
+
+    # Add engine: definitions, check, draft test, who can use the models and the engine view.
+    # Create and edit with a definition run through the services routes below.
+    engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout)
+    engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
+    from gateway.retention_fact_api import register_routes as register_retention_fact_routes
+    register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
+    from gateway.engine_protocol_admin import register_engine_protocol_routes
+    register_engine_protocol_routes(router, guard=_guard)
+    if stt_measurements is not None:
+        from gateway.stt_measurement_api import register_routes as register_stt_measurement_routes
+        register_stt_measurement_routes(router, runner=stt_measurements, guard=_guard)
 
     @router.get("/session")
     def session(request: Request) -> JSONResponse:
         """Actor identity + CSRF token for browser (cookie-session) clients.
 
-        The server-rendered admin embeds the CSRF token in its HTML; a JS
-        client (the ``/ui/`` React app) bootstraps the same data from this
-        endpoint using its session cookie. ``csrf_token`` is empty for
+        The web app (served at ``/``) bootstraps the actor and CSRF token
+        from this endpoint using its session cookie. ``csrf_token`` is empty for
         bearer-key callers, whose mutations don't require CSRF headers.
         """
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.plain_json_response(response_class="session",
             status_code=status.HTTP_200_OK,
             content={
                 "actor": {
@@ -1802,18 +1823,18 @@ def create_admin_router(
 
     @router.get("/overview")
     async def overview(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        users = store.list_users()
-        apps = store.list_apps()
-        profiles = store.list_profiles()
-        runtime_mappings = store.list_runtime_profile_mappings()
-        credentials = _scrub_credentials(store.list_credentials())
+        def read_overview_stores():
+            return (store.list_users(), store.list_apps(), store.list_access_plans(),
+                    _scrub_credentials(store.list_credentials()), store.get_service_registry(),
+                    _excluded_summary(_stored_exclusions(store)))
+
+        users, apps, plans, credentials, registry, registry_excluded = await asyncio.to_thread(read_overview_stores)
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
-        registry = store.get_service_registry()
         services_map = registry.get("services") or {}
         services_total = len(services_map)
         services_up = sum(
@@ -1833,10 +1854,19 @@ def create_admin_router(
             observation_available=status_available,
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
+        frontends = frontend_status() if frontend_status is not None else []
+        registry_apply = registry_problem() if registry_problem is not None else None
+        from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
+        await asyncio.to_thread(protocol_descriptions.load_registry)
+        protocol_issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
         attention = derive_admin_attention({
+            "registry_problem": registry_apply,
+            "registry_excluded": registry_excluded,
+            "unsent_inject_rules": _unsent_inject_rules(registry),
+            "protocol_issues": protocol_issues,
             "apps": apps,
-            "profiles": profiles,
             "credentials": credentials,
+            "frontends": frontends,
             "services": current_health["services"],
             "status": status_snap,
             "current_health": current_health,
@@ -1851,8 +1881,7 @@ def create_admin_router(
             "counts": {
                 "users": len(users),
                 "apps": len(apps),
-                "profiles": len(profiles),
-                "runtime_profile_mappings": len(runtime_mappings),
+                "access_plans": len(plans),
                 "credentials": len(credentials),
                 "active_credentials": len(active_credentials),
                 "services_total": services_total,
@@ -1866,9 +1895,14 @@ def create_admin_router(
             },
             "attention": attention,
             "current_health": current_health,
-            "runtime_profile_mappings": runtime_mappings,
+            # Every protocol frontend and whether its routes are mounted, broken (with why) or disabled.
+            "frontends": frontends,
+            # Why the running service config is not the stored registry, or None when it is.
+            "registry_apply": registry_apply,
+            # The stored records that do not validate and so are left out, each with its error.
+            "registry_excluded": registry_excluded,
         }
-        return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
+        return egress.plain_json_response(response_class="overview", status_code=status.HTTP_200_OK, content=payload)
 
     @router.get("/status")
     async def status_payload(request: Request) -> JSONResponse:
@@ -1877,7 +1911,7 @@ def create_admin_router(
         ``/v1/status`` stays a runtime API route. This endpoint gives the
         browser-session admin UI the same data through the admin API namespace.
         """
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         payload: Mapping[str, Any] = {}
@@ -1887,16 +1921,20 @@ def create_admin_router(
                 payload = await status_provider()
             except Exception:  # noqa: BLE001
                 available = False
-        registry = store.get_service_registry()
         projected = {key: value for key, value in dict(payload).items() if not str(key).startswith("_")}
         projected["backends"] = _normalize_status_backends(payload)
-        projected["current_health"] = derive_admin_health_projection(
-            registry,
-            payload,
-            observation_available=available,
-            availability_evidence=payload.get("_availability_evidence") if isinstance(payload.get("_availability_evidence"), Mapping) else None,
-        )
-        return JSONResponse(
+
+        def project_health() -> Any:
+            # Reads the registry and receipt store: blocking SQLite work.
+            return derive_admin_health_projection(
+                store.get_service_registry(),
+                payload,
+                observation_available=available,
+                availability_evidence=payload.get("_availability_evidence") if isinstance(payload.get("_availability_evidence"), Mapping) else None,
+            )
+
+        projected["current_health"] = await asyncio.to_thread(project_health)
+        return egress.plain_json_response(response_class="status",
             status_code=status.HTTP_200_OK,
             content={"status": projected},
             headers={"cache-control": "no-store"},
@@ -1907,7 +1945,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.plain_json_response(response_class="people",
             status_code=status.HTTP_200_OK,
             content={"users": list(store.list_users())},
         )
@@ -1917,14 +1955,14 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK,
             content={"apps": list(store.list_apps())},
         )
 
     @router.post("/apps")
     async def create_app(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -1940,19 +1978,21 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_app(data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_app",
                 str(exc),
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_201_CREATED, content={"app": record}
         )
 
     @router.patch("/apps/{app_id}")
     async def update_app(app_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -1967,20 +2007,16 @@ def create_admin_router(
                     "invalid_app",
                     "app name is required",
                 ).as_response()
-        profile_id = body.get("default_profile_id", body.get("profile_id"))
-        if profile_id:
-            profile_key = str(profile_id).strip()
-            if (
-                not is_default_profile_id(profile_key)
-                and store.get_profile(profile_key) is None
-            ):
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_app",
-                    f"profile {profile_key!r} not found",
-                ).as_response()
         try:
             record = store.update_app(app_id=app_id, data=body, actor=ctx)
+        except ActorOutranked as exc:
+            return _app_outranks_you(exc)
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
+        except admin_store.NameRejected as exc:
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -1993,7 +2029,7 @@ def create_admin_router(
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
@@ -2002,14 +2038,17 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.disable_app(app_id=app_id, actor=ctx)
+        try:
+            record = store.disable_app(app_id=app_id, actor=ctx)
+        except PermissionError as exc:
+            return _app_outranks_you(exc)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
@@ -2025,232 +2064,188 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.enable_app(app_id=app_id, actor=ctx)
+        try:
+            record = store.enable_app(app_id=app_id, actor=ctx)
+        except PermissionError as exc:
+            return _app_outranks_you(exc)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
-    @router.get("/profiles")
-    def list_profiles(request: Request) -> JSONResponse:
+    def _app_not_found(app_id: str) -> JSONResponse:
+        return _RouteError(
+            status.HTTP_404_NOT_FOUND, "app_not_found", f"app {app_id!r} not found",
+        ).as_response()
+
+    @router.get("/apps/{app_id}/trusted-addresses")
+    def list_trusted_addresses(app_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        rows = list(store.list_profiles())
-        spend = _plans_spend(rows, spend_ledger_path())
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"profiles": [{**row, "plan_spend": plan} for row, plan in zip(rows, spend)]},
-        )
+        entries = store.list_trusted_addresses(app_id=app_id)
+        if entries is None:
+            return _app_not_found(app_id)
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_200_OK, content={"trusted_addresses": entries})
 
-    @router.get("/policy/editor")
-    def policy_editor(request: Request) -> JSONResponse:
+    @router.post("/apps/{app_id}/trusted-addresses")
+    async def add_trusted_address(app_id: str, request: Request) -> JSONResponse:
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if "owner" not in ctx.roles:  # Trusting an address lets a device in with no key.
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "owner_required", "Only an owner can trust an address.",
+            ).as_response()
+        try:
+            record = store.add_trusted_address(app_id=app_id, data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_trusted_address", str(exc),
+            ).as_response()
+        if record is None:
+            return _app_not_found(app_id)
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_201_CREATED, content={"trusted_address": record})
+
+    @router.delete("/apps/{app_id}/trusted-addresses/{entry_id}")
+    def delete_trusted_address(app_id: str, entry_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            contract = admin_catalog.policy_editor_contract(
+            record = store.delete_trusted_address(app_id=app_id, entry_id=entry_id, actor=ctx)
+        except PermissionError as exc:
+            return _app_outranks_you(exc)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND, "trusted_address_not_found", "That trusted address was not found.",
+            ).as_response()
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_200_OK, content={"trusted_address": record})
+
+    @router.get("/access-plans")
+    def list_access_plans(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return egress.plain_json_response(response_class="access_plans",
+            status_code=status.HTTP_200_OK,
+            content={"access_plans": list(store.list_access_plans())},
+        )
+
+    @router.get("/access-plans/editor")
+    def access_plan_editor(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            contract = admin_catalog.access_plan_editor_contract(
                 store.get_service_registry()
             )
         except Exception:  # A failed projection must never look like no choices.
-            return JSONResponse(
+            return egress.plain_json_response(response_class="error",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
                     "error": {
-                        "code": "policy_editor_unavailable",
-                        "message": "Policy editor choices could not be read.",
+                        "code": "access_plan_editor_unavailable",
+                        "message": "Access plan choices could not be read.",
                     }
                 },
             )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=contract)
+        return egress.plain_json_response(response_class="access_plan_choices", status_code=status.HTTP_200_OK, content=contract)
 
-    @router.post("/profiles")
-    async def create_profile(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+    def _plan_write_error(exc: ValueError) -> JSONResponse:
+        msg = str(exc)
+        if "already in use" in msg:
+            return _RouteError(status.HTTP_409_CONFLICT, "access_plan_name_conflict", msg).as_response()
+        return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", msg).as_response()
+
+    def _owner_only(
+        ctx: AdminContext, message: str = "Only the owner can change access plans.",
+    ) -> JSONResponse | None:
+        """Plans bound what every person may do, so only the owner writes them."""
+        if "owner" in ctx.roles:
+            return None
+        return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", message).as_response()
+
+    @router.post("/access-plans")
+    async def create_access_plan(request: Request) -> JSONResponse:
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
+            record = store.create_access_plan(data=body, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        profile_block = body.get("profile") if "profile" in body else body
-        try:
-            load_profile(profile_block)
-        except ProfileLoadError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                str(exc),
-            ).as_response()
-        try:
-            record = store.create_profile(data=body, actor=ctx)
         except ValueError as exc:
-            msg = str(exc)
-            if "already in use" in msg:
-                return _RouteError(
-                    status.HTTP_409_CONFLICT,
-                    "profile_name_conflict",
-                    msg,
-                ).as_response()
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                msg,
-            ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_201_CREATED, content={"profile": record}
+            return _plan_write_error(exc)
+        return egress.plain_json_response(response_class="access_plans",
+            status_code=status.HTTP_201_CREATED, content={"access_plan": record}
         )
 
-    @router.get("/profiles/{profile_id}")
-    def get_profile(profile_id: str, request: Request) -> JSONResponse:
+    @router.get("/access-plans/{plan_id}")
+    def get_access_plan(plan_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.get_profile(profile_id)
+        record = store.get_access_plan(plan_id)
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
-    @router.patch("/profiles/{profile_id}")
-    async def update_profile(profile_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+    @router.put("/access-plans/{plan_id}")
+    async def update_access_plan(plan_id: str, request: Request) -> JSONResponse:
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
+            record = store.update_access_plan(plan_id=plan_id, data=body, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        if "profile" in body:
-            try:
-                load_profile(body.get("profile"))
-            except ProfileLoadError as exc:
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_profile",
-                    str(exc),
-                ).as_response()
-        try:
-            record = store.update_profile(
-                profile_id=profile_id, data=body, actor=ctx
-            )
         except ValueError as exc:
-            msg = str(exc)
-            if "already in use" in msg:
-                return _RouteError(
-                    status.HTTP_409_CONFLICT,
-                    "profile_name_conflict",
-                    msg,
-                ).as_response()
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                msg,
-            ).as_response()
+            return _plan_write_error(exc)
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK, content={"profile": record}
-        )
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
-    @router.delete("/profiles/{profile_id}")
-    def delete_profile(profile_id: str, request: Request) -> JSONResponse:
+    @router.delete("/access-plans/{plan_id}")
+    def delete_access_plan(plan_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
-            record = store.delete_profile(profile_id=profile_id, actor=ctx)
+            record = store.delete_access_plan(plan_id=plan_id, actor=ctx)
         except ValueError as exc:
-            return _RouteError(
-                status.HTTP_409_CONFLICT,
-                "profile_in_use",
-                str(exc),
-            ).as_response()
+            return _RouteError(status.HTTP_409_CONFLICT, "access_plan_in_use", str(exc)).as_response()
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
-
-    @router.get("/runtime-profile-mappings")
-    def list_runtime_profile_mappings(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "mappings": list(store.list_runtime_profile_mappings()),
-            },
-        )
-
-    @router.post("/runtime-profile-mappings")
-    async def create_runtime_profile_mapping(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await _read_json_body(request)
-        except _RouteError as exc:
-            return exc.as_response()
-        profile_id = str(body.get("profile_id") or "").strip()
-        if profile_id and not is_default_profile_id(profile_id):
-            if store.get_profile(profile_id) is None:
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_runtime_mapping",
-                    f"profile {profile_id!r} not found",
-                ).as_response()
-        try:
-            record = store.create_runtime_profile_mapping(data=body, actor=ctx)
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_runtime_mapping",
-                str(exc),
-            ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_201_CREATED,
-            content={"mapping": record},
-        )
-
-    @router.delete("/runtime-profile-mappings/{mapping_id}")
-    def disable_runtime_profile_mapping(
-        mapping_id: str,
-        request: Request,
-    ) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        record = store.disable_runtime_profile_mapping(
-            mapping_id=mapping_id,
-            actor=ctx,
-        )
-        if record is None:
-            return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "runtime_mapping_not_found",
-                f"runtime Profile mapping {mapping_id!r} not found",
-            ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"mapping": record})
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
     @router.post("/apps/{app_id}/keys")
     async def create_key(app_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2265,6 +2260,10 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2273,13 +2272,41 @@ def create_admin_router(
             ).as_response()
         # The store is allowed (and expected) to return a one-time ``api_key``
         # here. List/read endpoints scrub it.
-        return JSONResponse(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
 
+    @router.patch("/apps/{app_id}/keys/{credential_id}")
+    async def rename_key(app_id: str, credential_id: str, request: Request) -> JSONResponse:
+        """Give an App's key a new label. The key itself stays; this is not a credential change."""
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if store.get_app(app_id) is None:
+            return _app_not_found(app_id)
+        try:
+            record = store.rename_credential(app_id=app_id, credential_id=credential_id, data=body, actor=ctx)
+        except ActorOutranked as exc:
+            return _app_outranks_you(exc)
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
+        except admin_store.NameRejected as exc:
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND, "credential_not_found",
+                f"key {credential_id!r} not found on app {app_id!r}",
+            ).as_response()
+        return egress.plain_json_response(response_class="credentials",
+            status_code=status.HTTP_200_OK, content={"credential": _scrub_credential(record)})
+
     @router.post("/admin-keys")
     async def create_admin_key(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2310,9 +2337,15 @@ def create_admin_router(
             record = store.create_admin_automation_key(
                 data={**body, "role": role}, actor=ctx
             )
+        except SessionEnded as exc:
+            return _RouteError(status.HTTP_401_UNAUTHORIZED, exc.code, exc.message).as_response()
         except PermissionError as exc:
             return _RouteError(
                 status.HTTP_403_FORBIDDEN, "admin_role_forbidden", str(exc)
+            ).as_response()
+        except AdminKeyNameTaken as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT, "admin_key_name_taken", str(exc)
             ).as_response()
         except ValueError as exc:
             return _RouteError(
@@ -2320,7 +2353,7 @@ def create_admin_router(
                 "invalid_admin_key",
                 str(exc),
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
 
@@ -2334,7 +2367,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={
                 "credentials": _scrub_credentials(store.list_credentials())
@@ -2349,16 +2382,21 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.revoke_credential(
-            credential_id=credential_id, actor=ctx
-        )
+        try:
+            record = store.revoke_credential(
+                credential_id=credential_id, actor=ctx
+            )
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "credential_outranks_you", str(exc),
+            ).as_response()
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "credential_not_found",
                 f"credential {credential_id!r} not found",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={"credential": _scrub_credential(record)},
         )
@@ -2370,16 +2408,21 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.revoke_credential(
-            credential_id=credential_id, actor=ctx
-        )
+        try:
+            record = store.revoke_credential(
+                credential_id=credential_id, actor=ctx
+            )
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "credential_outranks_you", str(exc),
+            ).as_response()
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "credential_not_found",
                 f"credential {credential_id!r} not found",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={"credential": _scrub_credential(record)},
         )
@@ -2389,38 +2432,16 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content={"overrides": store.operator_overrides()},
-        )
-
-    @router.put("/operator/user-access-defaults")
-    async def update_user_access_defaults(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await _read_json_body(request)
-            defaults = _validate_user_access_defaults(body)
-            record = store.update_user_access_defaults(data=defaults, actor=ctx)
-        except _RouteError as exc:
-            return exc.as_response()
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_operator_override",
-                str(exc),
-            ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"user_access_defaults": record},
         )
 
     @router.put("/operator/service-availability")
     async def update_service_availability_overrides(
         request: Request,
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2450,7 +2471,7 @@ def create_admin_router(
                 "invalid_operator_override",
                 str(exc),
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="overrides",
             status_code=status.HTTP_200_OK,
             content={"service_availability": record},
         )
@@ -2460,9 +2481,14 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        response = JSONResponse(
+        response = egress.projected_response(
             status_code=status.HTTP_200_OK,
-            content={"service_registry": store.get_service_registry()},
+            content={
+                "service_registry": store.get_service_registry(),
+                # Stored records that do not validate: left out of the registry above, kept in the store.
+                "excluded": [projection_types.excluded_view(item.section, item.id, item.error, item.record)
+                             for item in _stored_exclusions(store)],
+            },
         )
         if hasattr(store, "path"):
             record = admin_store.get_service_registry_with_generation(path=store.path)
@@ -2489,12 +2515,21 @@ def create_admin_router(
             )
         return int(generation_text)
 
+    def _optional_registry_match(request: Request) -> int | None:
+        """The If-Match precondition when the client sends one; a request without it is not refused."""
+        return _registry_match(request) if "if-match" in request.headers else None
+
     def _registry_response(
-        record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK
+        record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK, extra: Mapping[str, Any] | None = None,
     ) -> JSONResponse:
-        response = JSONResponse(
+        response = egress.projected_response(
             status_code=response_status,
-            content={"service_registry": record["value"]},
+            content={
+                "service_registry": record["value"],
+                "excluded": [projection_types.excluded_view(item.section, item.id, item.error, item.record)
+                             for item in record.get("excluded") or ()],
+                **(extra or {}),
+            },
         )
         response.headers.update(
             {
@@ -2513,13 +2548,16 @@ def create_admin_router(
 
     @router.put("/operator/service-registry")
     async def update_service_registry(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            registry = _validate_service_registry(body)
+            # A carrier that holds secret entries comes back exactly as the read showed it, or is left out; the
+            # store keeps it (decision D27). Inline input becomes new entries, which only the owner may add.
+            before = store.get_service_registry()
+            registry = _validate_service_registry(body, before=before)
             record = store.update_service_registry(
                 data=registry,
                 actor=ctx,
@@ -2527,6 +2565,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
@@ -2537,9 +2577,66 @@ def create_admin_router(
             ).as_response()
         return _registry_response(record)
 
-    def _service_op_error(exc: ValueError) -> JSONResponse:
-        """Map a registry-op ValueError to the right operator-facing status."""
-        msg = str(exc)
+    def _excluded_error(exc: ValueError) -> JSONResponse:
+        if "not found" in str(exc):
+            return _RouteError(status.HTTP_404_NOT_FOUND, "record_not_found", str(exc)).as_response()
+        return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_service_registry", str(exc)).as_response()
+
+    def _excluded_section(section: str) -> str:
+        if section not in dict(service_registry._SECTIONS):
+            raise _RouteError(status.HTTP_404_NOT_FOUND, "record_not_found", f"there is no registry section {section!r}")
+        return section
+
+    @router.put("/operator/service-registry/excluded/{section}/{record_id}")
+    async def fix_excluded_record(section: str, record_id: str, request: Request) -> JSONResponse:
+        """Save an edited copy of a record the registry leaves out. Its secret entries come back as read or are left out."""
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            section = _excluded_section(section)
+            expected_generation = _registry_match(request)
+            body = await _read_json_body(request)
+            if "record" not in body:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_service_registry", "the body must hold the edited record as `record`")
+            record = await asyncio.to_thread(
+                store.replace_excluded_record, section=section, record_id=record_id, record=body["record"],
+                actor=ctx, expected_generation=expected_generation)
+        except _RouteError as exc:
+            return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        except ValueError as exc:
+            return _excluded_error(exc)
+        return _registry_response(record)
+
+    @router.delete("/operator/service-registry/excluded/{section}/{record_id}")
+    async def remove_excluded_record(section: str, record_id: str, request: Request) -> JSONResponse:
+        """Drop a record the registry leaves out."""
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            section = _excluded_section(section)
+            record = await asyncio.to_thread(
+                store.remove_excluded_record, section=section, record_id=record_id, actor=ctx,
+                expected_generation=_registry_match(request))
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        except ValueError as exc:
+            return _excluded_error(exc)
+        return _registry_response(record)
+
+    def _service_op_error(exc: ValueError, body: Any = None) -> JSONResponse:
+        """Map a registry-op ValueError to the right operator-facing status.
+
+        The text is cleaned of the secret parts of the form that caused it (an address with user info, a header value).
+        """
+        msg = projection.scrub_text(str(exc)[:600], _body_secret_texts(body))
         if "not found" in msg:
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND
         elif "already exists" in msg:
@@ -2550,93 +2647,83 @@ def create_admin_router(
             code, http = "invalid_service", status.HTTP_400_BAD_REQUEST
         return _RouteError(http, code, msg).as_response()
 
-    @router.get("/operator/service-presets")
-    def get_service_presets(request: Request) -> JSONResponse:
-        """Return the provider preset list for the Add-service dialog.
-
-        "Custom (OpenAI-compatible)" is always first; subsequent entries are
-        known backends (vLLM, Ollama, …). The client MUST consume this endpoint
-        instead of duplicating the list client-side.
-        """
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        presets = [dict(p) for p in service_registry.PROVIDER_PRESETS]
-        _cap_labels: dict[str, str] = {
-            "chat": "Chat",
-            "completions": "Completions",
-            "vision": "Vision",
-            "embeddings": "Embeddings",
-            "image": "Images",
-            "audio": "Audio",
-            "speech": "Speech",
-            "generations": "Generations",
-            "videos": "Videos",
-        }
-        capability_choices = [
-            {
-                "id": cap,
-                "label": _cap_labels.get(
-                    cap,
-                    cap.replace(".", " ").replace("_", " ").capitalize(),
-                ),
-            }
-            for cap in service_registry._CAPABILITY_CHOICES
-        ]
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"presets": presets, "capabilities": capability_choices},
-        )
-
     @router.post("/operator/services")
     async def add_service(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            form = _validate_service_form(body)
-            record = store.add_service(
-                data=form,
-                actor=ctx,
-                expected_generation=expected_generation,
-            )
+            if "definition" in body:
+                # Add engine: the server re-runs the check and enforces the gate.
+                record = await engine_service.create(ctx, body, expected_generation=expected_generation)
+                return _registry_response(record, response_status=status.HTTP_201_CREATED,
+                                          extra={"service_id": record["service_id"]})
+            else:
+                form = _validate_service_form(body)
+                record = store.add_service(
+                    data=form,
+                    actor=ctx,
+                    expected_generation=expected_generation,
+                )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_admin.EngineRouteError as exc:
+            return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _service_op_error(exc)
+            return _service_op_error(exc, body)
         return _registry_response(record, response_status=status.HTTP_201_CREATED)
 
     @router.patch("/operator/services/{service_id}")
     async def update_service(service_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            # Endpoint is only required for full edits; metadata-only edits (name,
-            # enabled, note — the only fields allowed for managed-substrate rows)
-            # may omit host/url.
-            has_host = bool(str(body.get("host") or "").strip())
-            has_url = bool(str(body.get("base_url") or "").strip())
-            require_endpoint = has_host or has_url
-            form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
-            record = store.update_service(
-                service_id=service_id,
-                data=form,
-                actor=ctx,
-                expected_generation=expected_generation,
-            )
+            if "definition" in body or "values" in body:
+                # The engine page: an edit that changes the connection re-runs the check.
+                record = await engine_service.update(ctx, service_id, body, expected_generation=expected_generation)
+            else:
+                # Endpoint is only required for full edits; metadata-only edits (name,
+                # enabled, note — the only fields allowed for managed-substrate rows)
+                # may omit host/url.
+                has_host = bool(str(body.get("host") or "").strip())
+                has_url = bool(str(body.get("base_url") or "").strip())
+                require_endpoint = has_host or has_url
+                form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
+                record = store.update_service(
+                    service_id=service_id,
+                    data=form,
+                    actor=ctx,
+                    expected_generation=expected_generation,
+                )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_admin.EngineRouteError as exc:
+            return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _service_op_error(exc)
+            return _service_op_error(exc, body)
         return _registry_response(record)
 
     @router.delete("/operator/services/{service_id}")
@@ -2658,9 +2745,37 @@ def create_admin_router(
             return _service_op_error(exc)
         return _registry_response(record)
 
+    @router.post("/operator/services/{service_id}/secret-entries")
+    async def change_secret_entries(service_id: str, request: Request) -> JSONResponse:
+        """Change the secret entries of a service by explicit commands (retain, replace, clear, add, rename, set).
+
+        The response is the registry as ``GET /operator/service-registry`` answers it: a secret shows as a
+        configured entry with its id, never as a value. See ``gateway/secret_commands.py`` for the commands.
+        """
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            expected_generation = _registry_match(request)
+            commands = secret_commands.parse_commands(await _read_json_body(request))
+            record = await asyncio.to_thread(
+                store.apply_secret_commands, service_id=service_id, commands=commands, actor=ctx,
+                expected_generation=expected_generation)
+        except _RouteError as exc:
+            return exc.as_response()
+        except secret_commands.CommandError as exc:
+            return _RouteError(status.HTTP_400_BAD_REQUEST, exc.code, exc.message).as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        except ValueError as exc:
+            return _service_op_error(exc)
+        return _registry_response(record)
+
     @router.post("/operator/services/{service_id}/enabled")
     async def set_service_enabled(service_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2683,7 +2798,7 @@ def create_admin_router(
 
     @router.post("/operator/services/test")
     async def test_service_connection(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         if service_probe is None:
@@ -2706,11 +2821,11 @@ def create_admin_router(
         port = raw.get("port")
         path = str(raw.get("health_endpoint") or (str(raw.get("base_path") or "/v1").rstrip("/") + "/models"))
         result = await service_probe(host, port, path)
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"probe": dict(result)})
+        return egress.plain_json_response(response_class="probe", status_code=status.HTTP_200_OK, content={"probe": scrub_probe_result(result)})
 
     @router.post("/operator/services/detect-models")
     async def detect_service_models(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         if service_probe is None:
@@ -2733,9 +2848,9 @@ def create_admin_router(
         base = str(raw.get("base_path") or "/v1").rstrip("/")
         models_path = base + "/models"
         try:
-            result = await service_probe(host, port, models_path)
+            result = scrub_probe_result(await service_probe(host, port, models_path))
             if not result.get("ok"):
-                return JSONResponse(
+                return egress.plain_json_response(response_class="probe",
                     status_code=status.HTTP_200_OK,
                     content={
                         "detected": {
@@ -2765,18 +2880,19 @@ def create_admin_router(
                             models.append(mid)
                     elif isinstance(item, str):
                         models.append(item)
-            return JSONResponse(
+            return egress.plain_json_response(response_class="probe",
                 status_code=status.HTTP_200_OK,
                 content={"detected": {"models": models, "ok": True, "error": ""}},
             )
         except Exception as exc:  # noqa: BLE001
-            return JSONResponse(
+            return egress.plain_json_response(response_class="probe",
                 status_code=status.HTTP_200_OK,
                 content={
                     "detected": {
                         "models": [],
                         "ok": False,
-                        "error": str(exc) or type(exc).__name__,
+                        # By its class only: the text of an exception may quote an address or a header it was given.
+                        "error": f"The model list could not be read ({type(exc).__name__}).",
                     }
                 },
             )
@@ -2790,14 +2906,14 @@ def create_admin_router(
         compiled = compile_litellm_substrate_config(
             (registry.get("services") or {}),
         )
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content={"litellm_config": compiled},
         )
 
     # -- LiteLLM virtual-key admin ------------------------------------------
     # The "LiteLLM owns LLM runtime keys" split: the gateway owns durable App
-    # keys / Profiles / policy; LiteLLM mints and meters the *virtual execution
+    # keys / access plans; LiteLLM mints and meters the *virtual execution
     # keys* used for commodity LLM calls. These routes are the operator surface
     # over the sidecar's /key/* API, via the injected ``litellm_key_client``.
 
@@ -2815,27 +2931,30 @@ def create_admin_router(
 
     @router.get("/operator/litellm/keys")
     async def list_litellm_keys(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
             keys = await client.list_keys()
         except LiteLLMAdminError as exc:
             return _litellm_admin_error(exc)
-        return JSONResponse(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_200_OK,
             content={"keys": [_redact_litellm_key(k) for k in keys]},
         )
 
     @router.post("/operator/litellm/keys")
     async def create_litellm_key(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        # A virtual key spends the owner's provider money; an administrator may not.
+        if (denied := _owner_only(ctx, "Only the owner can create provider keys.")) is not None:
+            return denied
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
@@ -2853,17 +2972,20 @@ def create_admin_router(
             return _litellm_admin_error(exc)
         # The secret ``key`` is returned exactly once (reveal-once); the panel
         # shows it to the operator and never persists it.
-        return JSONResponse(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_201_CREATED,
             content={"key": created},
         )
 
     @router.post("/operator/litellm/keys/delete")
     async def delete_litellm_keys(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        # Deleting a virtual key can cut off the owner's own Apps.
+        if (denied := _owner_only(ctx, "Only the owner can delete provider keys.")) is not None:
+            return denied
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
@@ -2874,24 +2996,38 @@ def create_admin_router(
             return exc.as_response()
         except LiteLLMAdminError as exc:
             return _litellm_admin_error(exc)
-        return JSONResponse(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_200_OK,
             content={"deleted": result},
         )
+
+    def _extension_package_response(result: Mapping[str, Any]) -> JSONResponse:
+        """Answer a package change: enable and remove share this one answer, so the projection is switched in one place.
+
+        The whole result goes through the projection, not only the registry: the package index and the package carry
+        source URLs (public form, credentials as entries), the review appears on enable, and ``affected_records`` is
+        listed. The ETag from the registry generation and ``Cache-Control: no-store`` are headers of the response, not
+        of the projected tree.
+        """
+        headers = {"Cache-Control": "no-store"}
+        generation = result.get("operator_settings_generation")
+        if generation is not None:
+            headers["ETag"] = f'"os-{generation}"'
+        return egress.projected_response(result, status_code=status.HTTP_200_OK, headers=headers)
 
     @router.get("/extensions")
     def list_extension_packages(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content={"extension_packages": store.get_extension_package_index()},
         )
 
     @router.post("/extensions/validate")
     async def validate_extension_package(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2903,14 +3039,18 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
-        return JSONResponse(
+        except PermissionError as exc:
+            return _owner_required(exc)
+        except ValueError as exc:
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_extension_package_source", str(exc)).as_response()
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content={"review": review},
         )
 
     @router.post("/extensions/enable")
     async def enable_extension_package(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2949,6 +3089,8 @@ def create_admin_router(
                 "extension_package_conflict",
                 str(exc),
             ).as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
@@ -2957,34 +3099,39 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=result,
-        )
-        generation = result.get("operator_settings_generation")
-        if generation is not None:
-            response.headers["ETag"] = f'"os-{generation}"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return _extension_package_response(result)
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str
+        request: Request,
+        package_id: str,
+        mode: Literal["remove", "disable"] = "remove",
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             result = store.remove_extension_package(
-                package_id=package_id, actor=ctx
+                package_id=package_id, actor=ctx, mode=mode,
+                expected_generation=_optional_registry_match(request),
             )
+        except _RouteError as exc:
+            return exc.as_response()
+        except extension_packages.PackageInUse as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "extension_package_referenced",
+                str(exc),
+            ).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return _extension_package_response(result)
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")
@@ -2995,11 +3142,66 @@ def create_admin_router(
     def settings_conflict() -> JSONResponse:
         return _RouteError(409, "settings_conflict", "Settings changed elsewhere; reload to see the latest").as_response()
 
+    @router.get("/operator/host-commands")
+    def get_host_commands(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = admin_store.get_operator_setting("allow_host_commands", path=store.path)
+        response = egress.plain_json_response({
+            "enabled": bool(record and record["value"].get("enabled") is True),
+            "revision": admin_store.operator_setting_revision(record),
+            "label": "Allow Azizam to run commands on this computer",
+        }, response_class="switch")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.put("/operator/host-commands")
+    async def update_host_commands(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(_guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can change command execution.").as_response()
+        try:
+            body = await _read_json_body(request)
+            if set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
+                raise _RouteError(400, "invalid_host_commands", "enabled must be a boolean")
+            record = admin_store.put_operator_setting_with_audit(
+                "allow_host_commands", {"enabled": body["enabled"]},
+                updated_by=ctx.subject,
+                audit_action="operator.host_commands.update",
+                audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id,
+                audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting",
+                audit_target_id="allow_host_commands",
+                audit_metadata={"enabled": body["enabled"]},
+                expected_revision=settings_revision(request),
+                path=store.path,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
+        result = {
+            "enabled": record["value"]["enabled"],
+            "revision": admin_store.operator_setting_revision(record),
+        }
+        if not result["enabled"]:
+            result["running_processes"] = "unchanged"
+            result["note"] = ("New starts are blocked. Processes Azizam already runs keep running "
+                              "until they are stopped or the gateway restarts.")
+        response = egress.plain_json_response(result, response_class="switch")
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        return response
+
     @router.put("/operator/media-job-admission")
     async def update_media_job_admission_overrides(
         request: Request,
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -3020,68 +3222,10 @@ def create_admin_router(
                 "invalid_operator_override",
                 str(exc),
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="overrides",
             status_code=status.HTTP_200_OK,
             content={"media_job_admission": {k: v for k, v in record.items() if k != "revision"}, "revision": record["revision"]},
         )
-
-    def oidc_config_response() -> JSONResponse:
-        # The effective projection includes bootstrap defaults and provenance.
-        # Keep that projection, but only pair it with a revision if no provider
-        # write occurred while it was being read.
-        for _ in range(3):
-            revision = store.setting_revision("oidc_provider_config")
-            record = (
-                effective_oidc_config_provider()
-                if effective_oidc_config_provider is not None
-                else store.get_oidc_config_setting()
-            )
-            if store.setting_revision("oidc_provider_config") == revision:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK,
-                    content={"oidc_config": record, "revision": revision},
-                )
-        response = _RouteError(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "settings_snapshot_unavailable",
-            "Settings are changing elsewhere; retry to read the current configuration.",
-        ).as_response()
-        response.headers["Retry-After"] = "1"
-        return response
-
-    @router.get("/oidc-config")
-    def get_oidc_config(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        return oidc_config_response()
-
-    @router.put("/oidc-config")
-    async def update_oidc_config(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        if "owner" not in ctx.roles:
-            return _RouteError(
-                status.HTTP_403_FORBIDDEN,
-                "admin_role_forbidden",
-                "owner role required to change OIDC trust configuration",
-            ).as_response()
-        try:
-            body = await _read_json_body(request)
-            payload = _validate_oidc_config_payload(body)
-            store.update_oidc_config_setting(data=payload, actor=ctx, expected_revision=settings_revision(request))
-        except _RouteError as exc:
-            return exc.as_response()
-        except admin_store.SettingsConflictError:
-            return settings_conflict()
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                str(exc),
-            ).as_response()
-        return oidc_config_response()
 
     @router.get("/audit")
     def audit(request: Request) -> JSONResponse:
@@ -3129,7 +3273,7 @@ def create_admin_router(
                     before_created_at = int(parts[0])
                     before_id = parts[1]
                 except (ValueError, TypeError):
-                    return JSONResponse(
+                    return egress.plain_json_response(response_class="error",
                         status_code=status.HTTP_400_BAD_REQUEST,
                         content={
                             "error": {
@@ -3139,7 +3283,7 @@ def create_admin_router(
                         },
                     )
             else:
-                return JSONResponse(
+                return egress.plain_json_response(response_class="error",
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={
                         "error": {
@@ -3159,7 +3303,7 @@ def create_admin_router(
             before_id=before_id,
             **page_filters,
         )
-        return JSONResponse(
+        return egress.plain_json_response(response_class="activity",
             status_code=status.HTTP_200_OK,
             content={
                 "records": [_safe_audit_record(row) for row in page["records"]],
@@ -3185,31 +3329,93 @@ def create_admin_router(
                 "audit_event_not_found",
                 "Audit event not found.",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="activity",
             status_code=status.HTTP_200_OK,
             content={"event": _safe_audit_record(record)},
         )
 
-    @router.post("/policy/simulate")
-    async def simulate(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+    def _access_for(body: Mapping[str, Any]) -> EffectiveAccess:
+        """The plans a Check access body names: an App's two plans, or one plan on both sides."""
+        if body.get("app"):
+            if access_resolver is None:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "access_resolver_unavailable",
+                                  "Checking an app is not available here; pass a plan.")
+            access = access_resolver(str(body["app"]))
+            if access is None:
+                raise _RouteError(status.HTTP_404_NOT_FOUND, "app_not_found", "App not found.")
+            return access
+        if body.get("plan"):
+            from gateway.access_plans import PlanError, plan_from_document
+
+            record = store.get_access_plan(str(body["plan"]))
+            if record is None:
+                raise _RouteError(status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.")
+            try:
+                plan = plan_from_document(record["plan"], plan_id=str(record["id"]))
+            except PlanError as exc:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", str(exc)) from exc
+            return EffectiveAccess(person_plan=plan, app_plan=plan)
+        raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_request", "Pass an app or a plan.")
+
+    @router.post("/access/check")
+    async def check_access(request: Request) -> JSONResponse:
+        """Check access (design §3.1): the decision an App's request would get.
+
+        ``{"app": app_id, "request": {...}}`` evaluates the App's two plans as
+        the runtime does; ``{"plan": plan_id, "request": {...}}`` evaluates one
+        plan on both sides (an App that is "Same as its person").
+        """
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await _read_json_body(request)
-            profile = _resolve_profile(
-                body.get("profile"), profile_resolver=profile_resolver
-            )
             policy_request = _build_policy_request(body.get("request"))
+            access = _access_for(body)
         except _RouteError as exc:
             return exc.as_response()
-        decision = evaluate(profile, policy_request)
-        return JSONResponse(
+        decision = evaluate(access, policy_request)
+        return egress.plain_json_response(response_class="plan_preview",
             status_code=status.HTTP_200_OK,
-            content={
-                "profile_id": profile.id,
-                "decision": _decision_payload(decision),
-            },
+            content={"plan_ids": list(access.plan_ids), "decision": _decision_payload(decision)},
+        )
+
+    @router.post("/access/preview")
+    async def preview_access(request: Request) -> JSONResponse:
+        """Everything one plan (or an App's two plans) can and cannot use.
+
+        ``{"plan": plan_id}`` or ``{"app": app_id}``. Returns ``plan_ids``,
+        ``summary`` (``usable`` of ``total`` entries, and how many are
+        ``blocked`` or ``unknown``), ``groups`` (the same counts per group)
+        and ``entries``: one per Models page entry with ``state`` (allowed,
+        partial, blocked, unknown), ``rule`` (the code, kind, id, name and plain
+        sentence of the rule that decided it, allowed or not), ``reason`` (the
+        sentence, when something is blocked or cannot be told), ``points_to``
+        (the model an alias reaches) and ``kinds`` when one entry is allowed for
+        some kinds of work and not others. The owner gets the full rule; an
+        administrator gets it without the name of a restricted category. It makes
+        no model request and costs nothing.
+        """
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            access = _access_for(body)
+            if access_preview is None:
+                raise _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
+                                  "The access preview is not available here.")
+        except _RouteError as exc:
+            return exc.as_response()
+        try:
+            preview = await access_preview(access, full_detail="owner" in ctx.roles,
+                                           app_id=str(body["app"]) if body.get("app") else None)
+        except Exception:  # A failed preview must never look like a plan that allows nothing.
+            return _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
+                               "What this plan can use could not be read.").as_response()
+        return egress.plain_json_response(response_class="plan_preview",
+            status_code=status.HTTP_200_OK,
+            content={"plan_ids": list(access.plan_ids), **preview},
         )
 
     return router

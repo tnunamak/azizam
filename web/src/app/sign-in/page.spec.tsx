@@ -13,7 +13,7 @@ const defaults = {
   built_in: true,
   oidc: false,
   oidc_label: "",
-  oidc_url: "/login?return_to=%2Fui%2Fusage%2F",
+  oidc_url: "/login?return_to=%2Fusage%2F",
   instance_name: "Azizam",
 };
 let options: typeof defaults;
@@ -24,7 +24,7 @@ const json = (body: unknown, status = 200) =>
 beforeEach(() => {
   options = { ...defaults };
   ownerExists = true;
-  window.history.replaceState(null, "", "/ui/sign-in/");
+  window.history.replaceState(null, "", "/sign-in/");
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -100,16 +100,56 @@ it("offers only single sign-on when passwords are disabled", async () => {
   await screen.findByRole("link", { name: "Continue with single sign-on" });
   expect(screen.queryByLabelText("Email")).toBeNull();
 });
+it("keeps the owner's password one click away while passwords are off for everyone else", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const user = userEvent.setup();
+  mount();
+  await screen.findByRole("link", { name: "Continue with single sign-on" });
+  expect(screen.queryByLabelText("Email")).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Owner? Sign in with your password" }));
+
+  expect(await screen.findByLabelText("Email")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
+  expect(screen.getByText("or use your email")).toBeVisible();
+});
+it("signs the owner in with the password form while passwords are off", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ next: "/" })
+      : original(input, init),
+  );
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+  await submit();
+  expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ method: "POST" }));
+  await waitFor(() => expect(continueTo).toHaveBeenCalledWith("/"));
+});
+it("offers no owner password link when the server does not offer one", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: false });
+  mount();
+  await screen.findByRole("link", { name: "Continue with single sign-on" });
+  expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
+});
 it("sends the original return target to the server and follows its validated next destination", async () => {
   window.history.replaceState(
     null,
     "",
-    "/ui/sign-in/?return_to=%2Fui%2Fusage%2F%3Freceipt%3Done",
+    "/sign-in/?return_to=%2Fusage%2F%3Freceipt%3Done",
   );
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((input, init) =>
     String(input) === "/auth/api/login"
-      ? json({ next: "/ui/usage/?receipt=one" })
+      ? json({ next: "/usage/?receipt=one" })
       : original(input, init),
   );
   mount();
@@ -122,12 +162,12 @@ it("sends the original return target to the server and follows its validated nex
       body: JSON.stringify({
         email: "member@example.test",
         password: "A long test password",
-        return_to: "/ui/usage/?receipt=one",
+        return_to: "/usage/?receipt=one",
       }),
     }),
   );
   await waitFor(() =>
-    expect(continueTo).toHaveBeenCalledWith("/ui/usage/?receipt=one"),
+    expect(continueTo).toHaveBeenCalledWith("/usage/?receipt=one"),
   );
 });
 it.each([
@@ -189,7 +229,7 @@ it("names the pending action and prevents duplicate submissions", async () => {
   expect(screen.getByLabelText("Email")).toBeDisabled();
 });
 it("explains an expired password reset without offering unrelated sign-in methods", async () => {
-  window.history.replaceState(null, "", "/ui/sign-in/#reset=expired-test");
+  window.history.replaceState(null, "", "/sign-in/#reset=expired-test");
   options.oidc = true;
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((input, init) =>
@@ -222,7 +262,7 @@ it("offers setup when there is no owner, and no password form", async () => {
   mount();
   expect(
     await screen.findByRole("link", { name: "Set up your gateway" }),
-  ).toHaveAttribute("href", "/ui/setup/");
+  ).toHaveAttribute("href", "/setup/");
   expect(screen.queryByLabelText("Email")).toBeNull();
 });
 it("explains when the host has disabled all sign-in methods", async () => {
@@ -243,7 +283,7 @@ it("explains provider failure without rendering untrusted error descriptions", a
   window.history.replaceState(
     null,
     "",
-    "/ui/sign-in/?error=provider&error_description=untrusted",
+    "/sign-in/?error=provider&error_description=untrusted",
   );
   options.oidc = true;
   mount();
@@ -251,6 +291,20 @@ it("explains provider failure without rendering untrusted error descriptions", a
     "Single sign-on didn’t finish.",
   );
   expect(screen.queryByText("untrusted")).toBeNull();
+});
+
+it("says a provider that reports no sign-in time cannot confirm a risky action, and how to confirm instead", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=no_sign_in_time&return_to=%2Fsettings%2F",
+  );
+  options.oidc = true;
+  mount();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("doesn’t tell Azizam when you signed in");
+  expect(alert).toHaveTextContent("Confirm with your Azizam password");
+  expect(alert).not.toHaveTextContent("Single sign-on didn’t finish");
 });
 
 it("renders provider text through React escaping", async () => {
@@ -262,4 +316,26 @@ it("renders provider text through React escaping", async () => {
   });
   expect(provider.querySelector("img")).toBeNull();
   expect(provider).toHaveTextContent(options.oidc_label);
+});
+
+it("shows a labelled email and password form for a password sign-in, with no recovery disclosure", async () => {
+  mount();
+  expect(await screen.findByLabelText("Email")).toBeVisible();
+  expect(screen.getByLabelText("Password")).toHaveAttribute(
+    "autocomplete",
+    "current-password",
+  );
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
+});
+it("keeps one heading and no form when options fail to load", async () => {
+  vi.mocked(fetch).mockRejectedValue(new Error("Offline"));
+  mount();
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(screen.getAllByRole("heading")).toHaveLength(1);
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.queryByLabelText("Email")).toBeNull();
+  expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
 });

@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Check one gate run against the test policy (docs/design/TEST_STRATEGY.md 3, 6).
+
+Usage: policy.py --root CHECKOUT --cases cases.jsonl [--base-budgets FILE] [--today YYYY-MM-DD]
+
+CHECKOUT is the clean tree the gate ran; cases.jsonl comes from
+merge_cases.py. Rules, each failing the step with one line per violation:
+
+- retries: no rerun plugin in tests/requirements-hermetic.lock; no flaky or
+  rerun marker in Python test code; no --retries/--retry/--reruns flag in
+  the gate scripts; in web test code and test configs every retry, retries
+  or repeats value is the literal 0 (or false), so a computed value fails;
+  `retries: 0` in every Playwright config the run used and `retry: 0` in the
+  vitest config; no attempt index above 0 in cases.jsonl, which also
+  catches a second run into the same receipts.
+- discovery: every test file under CHECKOUT ran in this gate, or is listed in
+  tests/suites.toml: an [[orphan]] whose expires_on has not passed, a
+  [[scheduled]] file that `scripts/test-scheduled` runs (its `task` must be a
+  task that script knows), or a [[live]] file that needs real upstreams
+  (TEST_STRATEGY.md 1.3, 1.4). An entry for a file that ran in the gate, no
+  longer exists, or is listed twice is stale and fails too.
+- skips: every skipped (xfailed) case is a [[skip]] ([[xfail]]) entry in
+  tests/suites.toml for its framework, config and project, and every entry
+  was skipped (xfailed) in this run.
+- quarantine: no quarantine manifest file and no quarantine marker in test
+  code (test files, conftest.py, tests/**/*.py, test configs).
+- counts: first-attempt cases per framework stay within tests/budgets.toml
+  [ceilings], in the units of TEST_STRATEGY.md 6.
+- ratchets: with --base-budgets FILE (the target branch's tests/budgets.toml),
+  no [ratchets] value is above its value there and none was removed, so a
+  ratchet can only fall. The ratchet's own test checks the real count against
+  the value.
+- hygiene: in browser test code (web/e2e and *.e2e.* / *.playwright.* files
+  under web/src) each pattern of TEST_STRATEGY.md 3.4 rules 1-3 occurs no
+  more often than its tests/budgets.toml [hygiene] ceiling. The ceilings only
+  fall; they are all 0 but unprobed_endpoint (malformed_stub counts the stubs
+  that say why they are unlike the server; unprobed_endpoint counts the
+  registry endpoints that have no structural oracle).
+- replay: no credential prefix (opk_, oak_, sk-), bearer token, home path or
+  private (LAN) address in a replay transcript, its media or any fixtures
+  directory; at most 256 KiB of metadata per transcript and 20 MiB for the whole
+  corpus (scripts/ci/replay_scan.py, TEST_STRATEGY.md 4.7). A line names the
+  file and the category, never the value. Every synthetic request set also has
+  one cell in tests/live/rp_cells.toml: recorded (its transcript exists) or
+  pending with owner, reason and an unexpired expires_on within 90 days.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import re
+import sys
+import tomllib
+from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import replay_scan  # noqa: E402
+
+# Dependencies and tool output only: a pruned name hides any test file below it.
+PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fresh-venv",
+               ".next", "test-results"}
+PYTHON_TEST = re.compile(r"^(test_.*|.*_test)\.py$")
+WEB_TEST = re.compile(r"^.*\.(spec|test|e2e)\.[cm]?[jt]sx?$|^.*\.household\.ts$")
+TEST_CONFIG = re.compile(r"^(playwright|vitest)\b.*\.config\.[cm]?[jt]s$")
+# The tasks scripts/test-scheduled runs (tests/test_test_scheduled.py keeps this set
+# equal to the script's own). "perf" lists no test files: its verdict is scripts/perf/run.py's.
+SCHEDULED_TASKS = {"sdk-probes", "sweep", "perf"}
+RERUN_PACKAGES = {"pytest-rerunfailures", "pytest-retry", "flaky", "pytest-flaky"}
+PYTHON_RETRY_MARKER = re.compile(r"\bmark\.flaky\b|@flaky\b|\breruns\s*=")
+RETRY_FLAG = re.compile(r"--(retries|retry|reruns)\b")
+RETRY_FLAG_FILES = ("scripts/ci-local", "scripts/test-affected", "web/package.json")
+RETRY_SETTING = re.compile(r"\b(retry|retries|repeats)\s*:\s*([^,}\n]*)")
+# An object-literal shorthand ({ retries }); `={retry}` is a JSX prop, not one.
+RETRY_SHORTHAND = re.compile(r"(?:(?<!=)\{|,)\s*(retry|retries|repeats)\s*[,}]")
+QUARANTINE_MANIFEST = re.compile(r"^quarantine.*\.(json|toml|ya?ml|txt)$", re.IGNORECASE)
+# TEST_STRATEGY.md 3.4 rules 1-3, as ratchets. These are lexical: they tolerate
+# whitespace and optional chaining, and count comments and strings too (the
+# safe direction). They do not see aliased calls or helpers outside web/e2e.
+HYGIENE_PATTERNS = {
+    "waitForTimeout": re.compile(r"\bwaitForTimeout\s*\("),
+    "networkidle": re.compile(r"""waitForLoadState\s*\(\s*["']networkidle"""),
+    "force_true": re.compile(r"\bforce\s*:\s*true\b|\[\s*[\"']force[\"']\s*\]\s*=\s*true\b"),
+    # A one-shot read of page state inside expect(); expect(await response.json())
+    # and other awaited values are fine.
+    "one_shot_expect": re.compile(
+        r"\bexpect\s*\(\s*await\s[^;]{0,200}?\??\.(isVisible|isHidden|isEnabled|isDisabled|isChecked|isEditable"
+        r"|textContent|innerText|innerHTML|inputValue|count|getAttribute|allTextContents|allInnerTexts)\s*\("),
+    # A path outside the run directory escapes the tree-unchanged check and
+    # lets two copies of a case overwrite each other.
+    "absolute_home_path": re.compile(r"""["'`]/home/[A-Za-z0-9_.-]+/"""),
+    "bare_isVisible": re.compile(r"\??\.isVisible\s*\("),
+    # A stub answered with route.fulfill() skips the check against the real
+    # gateway that web/e2e/fixtures/intercept.ts (fulfilJson, fulfilBytes) makes.
+    "raw_fulfil": re.compile(r"\.fulfill\s*\("),
+    # A JSON stub marked as deliberately unlike the server (a resilience test).
+    "malformed_stub": re.compile(r"\bmalformed\s*:"),
+    # An endpoint of the stub registry with no structural oracle: its stubs are
+    # only checked to be JSON. Counted in the registry file alone (call sites of
+    # the unprobed() helper).
+    "unprobed_endpoint": re.compile(r"\bunprobed\s*\("),
+}
+# Patterns that look only at TypeScript files outside the intercept helper.
+INTERCEPT_HELPER = "web/e2e/fixtures/intercept"
+STUB_PATTERNS = {"raw_fulfil", "malformed_stub"}
+REGISTRY_PATTERNS = {"unprobed_endpoint"}
+INTERCEPT_REGISTRY = "web/e2e/fixtures/intercept-registry.ts"
+BROWSER_CODE = re.compile(r"\.(e2e|playwright)\.|\.household\.ts$")
+QUARANTINE_MARKER = re.compile(r"\bmark\.quarantine\b|@quarantine\b|\btest(\.describe)?\.quarantine\b")
+
+
+def all_files(root: Path) -> list[str]:
+    """Every file under root outside dependency and output directories, root-relative."""
+    found = []
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in PRUNED_DIRS]
+        found += [Path(directory, name).relative_to(root).as_posix() for name in files]
+    return sorted(found)
+
+
+def discover(files: list[str]) -> list[str]:
+    """The test files among files."""
+    return [path for path in files if PYTHON_TEST.match(Path(path).name) or WEB_TEST.match(Path(path).name)]
+
+
+def test_code(files: list[str]) -> list[str]:
+    """Files whose text can configure retries or markers: test files, test
+    configs, conftest.py files and Python support code under tests/."""
+    tests = set(discover(files))
+    return [path for path in files if path in tests or TEST_CONFIG.match(Path(path).name)
+            or Path(path).name == "conftest.py" or (path.startswith("tests/") and path.endswith(".py"))]
+
+
+def load_cases(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def read(root: Path, relative: str) -> str:
+    path = root / relative
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def check_retries(root: Path, code: list[str], cases: list[dict]) -> list[str]:
+    problems = []
+    for line in read(root, "tests/requirements-hermetic.lock").splitlines():
+        package = re.split(r"[=<>~!\[ ;]", line.strip(), maxsplit=1)[0].lower().replace("_", "-")
+        if package in RERUN_PACKAGES:
+            problems.append(f"retries: rerun plugin {package} is in tests/requirements-hermetic.lock")
+    for relative in RETRY_FLAG_FILES:
+        if match := RETRY_FLAG.search(read(root, relative)):
+            problems.append(f"retries: {relative} passes {match.group(0)}")
+    for relative in code:
+        text = read(root, relative)
+        if relative.endswith(".py"):
+            # Every marker alternative names "flaky" or "reruns"; the plain substring test skips the slow regex.
+            if ("flaky" in text or "reruns" in text) and (match := PYTHON_RETRY_MARKER.search(text)):
+                problems.append(f"retries: {relative} uses {match.group(0)}")
+            continue
+        if "retr" not in text and "repeats" not in text:  # RETRY_SETTING and RETRY_SHORTHAND name one of these words
+            continue
+        for match in RETRY_SETTING.finditer(text):
+            if match.group(2).strip() not in ("0", "false"):
+                problems.append(f"retries: {relative} sets {match.group(0).strip()}; only a literal 0 is allowed")
+        if match := RETRY_SHORTHAND.search(text):
+            problems.append(f"retries: {relative} passes {match.group(1)} by shorthand; only a literal 0 is allowed")
+    used = {f"web/{row['config']}" for row in cases if row["framework"] == "playwright"}
+    for relative in sorted(used):
+        if not re.search(r"\bretries\s*:\s*0\b", read(root, relative)):
+            problems.append(f"retries: {relative} must set retries: 0")
+    if not re.search(r"\bretry\s*:\s*0\b", read(root, "web/vitest.config.ts")):
+        problems.append("retries: web/vitest.config.ts must set retry: 0")
+    for row in cases:
+        if row["attempt"] > 0:
+            problems.append(f"retries: {row['framework']} {row['case']} ran attempt {row['attempt']}")
+    return problems
+
+
+def check_discovery(tests: list[str], cases: list[dict], suites: dict, today: datetime.date) -> list[str]:
+    problems = []
+    ran = {row["file"] for row in cases}
+    listed: dict[str, str] = {}
+
+    def list_file(table: str, entry: dict) -> str:
+        path = entry.get("path", "")
+        if path in listed:
+            problems.append(f"discovery: {path} is listed in [[{listed[path]}]] and [[{table}]]; list it once")
+        listed.setdefault(path, table)
+        if path in ran:
+            problems.append(f"discovery: {table} {path} now runs in the gate; remove its tests/suites.toml entry")
+        elif path not in tests:
+            problems.append(f"discovery: {table} {path} does not exist; remove its tests/suites.toml entry")
+        if not entry.get("reason"):
+            problems.append(f"discovery: {table} {path} needs a reason")
+        return path
+
+    for entry in suites.get("orphan", []):
+        path = list_file("orphan", entry)
+        expires = entry.get("expires_on")
+        if not isinstance(expires, datetime.date):
+            problems.append(f"discovery: orphan {path} needs an expires_on date")
+        elif expires < today:
+            problems.append(f"discovery: orphan {path} expired on {expires}; run it in a gate step or delete it")
+    for entry in suites.get("scheduled", []):
+        path = list_file("scheduled", entry)
+        if entry.get("task") not in SCHEDULED_TASKS:
+            problems.append(f"discovery: scheduled {path} has task {entry.get('task')!r}; "
+                            f"scripts/test-scheduled runs {sorted(SCHEDULED_TASKS)}")
+    for entry in suites.get("live", []):
+        list_file("live", entry)
+    for path in tests:
+        if path not in ran and path not in listed:
+            problems.append(f"discovery: {path} ran in no gate step; run it in the gate, list it as a "
+                            "[[scheduled]] file that scripts/test-scheduled runs or a [[live]] file, "
+                            "or as an [[orphan]] with expires_on")
+    return problems
+
+
+def check_skips(cases: list[dict], suites: dict) -> list[str]:
+    def name(key: tuple[str, str, str, str]) -> str:
+        return " ".join(part for part in key if part)
+
+    problems = []
+    for outcome, table in (("skipped", "skip"), ("xfailed", "xfail")):
+        allowed = {(entry.get("framework", ""), entry.get("config", ""), entry.get("project", ""),
+                    entry.get("case", "")) for entry in suites.get(table, [])}
+        observed = {(row["framework"], row["config"], row["project"], row["case"])
+                    for row in cases if row["outcome"] == outcome}
+        for key in sorted(observed - allowed):
+            problems.append(f"skips: {name(key)} was {outcome} but is not a [[{table}]] entry in tests/suites.toml")
+        for key in sorted(allowed - observed):
+            problems.append(f"skips: [[{table}]] {name(key)} was not {outcome} in this run; remove the entry")
+    return problems
+
+
+def check_quarantine(root: Path, files: list[str], code: list[str]) -> list[str]:
+    problems = []
+    for relative in files:
+        if QUARANTINE_MANIFEST.match(Path(relative).name):
+            problems.append(f"quarantine: manifest {relative} exists; fix or revert the flake (TEST_STRATEGY.md 3.2)")
+    for relative in code:
+        text = read(root, relative)
+        if "quarantine" in text and (match := QUARANTINE_MARKER.search(text)):  # the substring test skips the slow regex
+            problems.append(f"quarantine: {relative} uses {match.group(0)}")
+    return problems
+
+
+def check_counts(cases: list[dict], budgets: dict) -> tuple[list[str], dict[str, int]]:
+    # First attempts count: a case ID can repeat (a vitest it.each title), and
+    # retries, which are banned anyway, must not inflate the count.
+    counts: dict[str, int] = defaultdict(int)
+    for row in cases:
+        counts[row["framework"]] += row["attempt"] == 0
+    counts = dict(sorted(counts.items()))
+    ceilings = budgets.get("ceilings", {})
+    problems = []
+    for framework, count in counts.items():
+        ceiling = ceilings.get(framework)
+        if ceiling is None:
+            problems.append(f"counts: tests/budgets.toml has no ceiling for {framework}")
+        elif count > ceiling:
+            problems.append(f"counts: {framework} has {count} cases, over its ceiling {ceiling}")
+    return problems, counts
+
+
+def check_ratchets(budgets: dict, base: dict) -> list[str]:
+    ratchets = budgets.get("ratchets", {})
+    problems = []
+    for name, base_value in base.get("ratchets", {}).items():
+        value = ratchets.get(name)
+        if value is None:
+            problems.append(f"ratchets: {name} was removed from tests/budgets.toml (the target branch has {base_value})")
+        elif value > base_value:
+            problems.append(f"ratchets: {name} is {value}, above {base_value} on the target branch; a ratchet only falls")
+    return problems
+def browser_code(files: list[str]) -> list[str]:
+    """Playwright test code: everything under web/e2e, and browser specs under web/src."""
+    code = re.compile(r"\.[cm]?[jt]sx?$")
+    return [path for path in files if code.search(path) and (
+        path.startswith("web/e2e/") or (path.startswith("web/src/") and BROWSER_CODE.search(Path(path).name)))]
+
+
+def check_hygiene(root: Path, files: list[str], budgets: dict) -> tuple[list[str], dict[str, int]]:
+    counts = dict.fromkeys(HYGIENE_PATTERNS, 0)
+    for relative in browser_code(files):
+        text = read(root, relative)
+        stubs_checked = relative.endswith((".ts", ".tsx")) and not relative.startswith(INTERCEPT_HELPER)
+        for name, pattern in HYGIENE_PATTERNS.items():
+            if name in STUB_PATTERNS and not stubs_checked:
+                continue
+            if name in REGISTRY_PATTERNS and relative != INTERCEPT_REGISTRY:
+                continue
+            counts[name] += len(pattern.findall(text))
+    ceilings = budgets.get("hygiene", {})
+    problems = []
+    for name, count in counts.items():
+        ceiling = ceilings.get(name)
+        if ceiling is None:
+            problems.append(f"hygiene: tests/budgets.toml [hygiene] has no ceiling for {name}")
+        elif count > ceiling:
+            problems.append(f"hygiene: {name} occurs {count} times in browser test code, over its ceiling {ceiling} "
+                            "(TEST_STRATEGY.md 3.4 rules 1-3)")
+    return problems, counts
+
+
+BARE_TEST_IMPORT = re.compile(r"import\s*\{[^}]*\btest\b[^}]*\}\s*from\s*[\"']@playwright/test[\"']")
+# These run against other fixture servers and keep Playwright's own `test`.
+OWN_FIXTURE_SPECS = ("web/e2e/live-data-", "web/e2e/sweep/", "web/e2e/first-run.spec.ts")
+
+
+def check_fixture_import(root: Path, files: list[str]) -> list[str]:
+    """Every gated browser spec takes `test` from e2e/fixtures/isolation.ts, which
+    adds the teardown guard and spreads workers over the pool's servers."""
+    return [f"fixture: {relative} imports test from @playwright/test; import it from ./fixtures/isolation"
+            for relative in files
+            if relative.startswith("web/e2e/") and relative.endswith(".spec.ts")
+            and not relative.startswith(OWN_FIXTURE_SPECS)
+            and BARE_TEST_IMPORT.search(read(root, relative))]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--cases", required=True, type=Path)
+    parser.add_argument("--base-budgets", type=Path, help="the target branch's tests/budgets.toml")
+    parser.add_argument("--today", type=datetime.date.fromisoformat, default=datetime.date.today())
+    args = parser.parse_args()
+    root = args.root.resolve()
+    suites = tomllib.loads(read(root, "tests/suites.toml"))
+    budgets = tomllib.loads(read(root, "tests/budgets.toml"))
+    cases = load_cases(args.cases)
+    files = all_files(root)
+    tests = discover(files)
+    code = test_code(files)
+    count_problems, counts = check_counts(cases, budgets)
+    if args.base_budgets:
+        count_problems += check_ratchets(budgets, tomllib.loads(args.base_budgets.read_text(encoding="utf-8")))
+    hygiene_problems, hygiene = check_hygiene(root, files, budgets)
+    problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
+                + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems
+                + hygiene_problems + check_fixture_import(root, files) + replay_scan.check_root(root)
+                + replay_scan.check_cells(root, args.today))
+    for problem in problems:
+        print(f"policy: {problem}")
+    summary = ", ".join(f"{framework} {count}" for framework, count in counts.items())
+    patterns = ", ".join(f"{name} {count}" for name, count in hygiene.items())
+    print(f"policy: {'FAILED' if problems else 'ok'}: {len(tests)} test files; cases {summary}; hygiene {patterns}")
+    sys.exit(1 if problems else 0)
+
+
+if __name__ == "__main__":
+    main()

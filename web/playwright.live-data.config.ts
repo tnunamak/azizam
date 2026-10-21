@@ -1,3 +1,4 @@
+import "./test-priority"; // first: nice 19 + idle I/O for the runner and everything it starts
 import { defineConfig, firefox } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -25,11 +26,15 @@ export default defineConfig({
   globalSetup: "./e2e/live-data-global-setup.ts",
   outputDir: `./test-results/live-data-artifacts-${port}`,
   workers: 1,
+  // A first failure stays a failure (TEST_STRATEGY.md 3.1).
+  retries: 0,
   timeout: 90_000,
   expect: { timeout: 15_000 },
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: `test-results/live-data-report-${port}` }],
+    // Case receipts for scripts/ci-local; writes only when CASE_RECEIPTS_FILE is set.
+    ["./e2e/case-receipts.ts"],
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,

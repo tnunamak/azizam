@@ -1,7 +1,7 @@
 # Public API support matrix
 
 Generated from the registered FastAPI app, including routes hidden from OpenAPI.
-No servers are started. Account/admin, setup, showcase, internal routes and static mounts are excluded.
+No servers are started. Account/admin, setup, internal routes and static mounts are excluded.
 Public discovery and diagnostic pages are included alongside JSON and WebSocket APIs.
 
 **Supported** means the handler exists, not complete vendor-spec conformance or backend availability.
@@ -17,9 +17,9 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 
 | Method | Route | Support | Limits | Code evidence |
 |---|---|---|---|---|
-| `GET` | `/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `root_browser_entrypoint` |
-| `HEAD` | `/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `head_root` |
 | `GET` | `/.well-known/azizam` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_azizam` |
+| `GET` | `/.well-known/oauth-authorization-server` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `as_metadata` |
+| `OPTIONS` | `/.well-known/oauth-authorization-server` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
 | `GET` | `/.well-known/oauth-protected-resource` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
 | `GET` | `/.well-known/skills` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_skills` |
@@ -44,8 +44,6 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/api/tags` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_tags` |
 | `GET` | `/api/version` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_version` |
 | `GET` | `/docs` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api_reference.py](../gateway/api_reference.py) `reference` |
-| `GET` | `/favicon.ico` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_favicon` |
-| `GET` | `/firehose` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_firehose` |
 | `GET` | `/gateway/v1/aliases` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_aliases` |
 | `GET` | `/gateway/v1/aliases/resolve` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `resolve_alias_dry_run` |
 | `GET` | `/gateway/v1/assets/{asset_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `gateway_asset_metadata` |
@@ -79,11 +77,23 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/gateway/v1/workflows/{workflow_id}/run` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `run_video_manifest_workflow` |
 | `GET` | `/health` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `health` |
 | `GET` | `/llms.txt` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `llms_txt` |
-| `GET` | `/logout` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `browser_logout_alias` |
 | `POST` | `/logout` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `admin_logout` |
 | `DELETE` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `GET` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `POST` | `/mcp` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_post` |
+| `DELETE` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `GET` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `OPTIONS` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `PATCH` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `POST` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `PUT` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `GET` | `/oauth/authorize` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `authorize` |
+| `OPTIONS` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `register_client` |
+| `OPTIONS` | `/oauth/revoke` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/revoke` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `revoke` |
+| `OPTIONS` | `/oauth/token` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/token` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `token` |
 | `HEAD` | `/ollama/api/blobs/{digest}` | unsupported | 501 after authentication and policy checks | [proxy.py](../proxy.py) `ollama_blobs` |
 | `POST` | `/ollama/api/blobs/{digest}` | unsupported | 501 after authentication and policy checks | [proxy.py](../proxy.py) `ollama_blobs` |
 | `POST` | `/ollama/api/chat` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_chat` |
@@ -161,7 +171,6 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/openai/v1/voices` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `list_voices` |
 | `GET` | `/openapi.json` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
 | `HEAD` | `/openapi.json` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
-| `GET` | `/r/{request_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `receipt_deep_link` |
 | `GET` | `/redoc` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api_reference.py](../gateway/api_reference.py) `reference` |
 | `POST` | `/rerank` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `rerank_root` |
 | `POST` | `/sdapi/v1/extra-batch-images` | unsupported | 501 after authentication and policy checks | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
@@ -180,13 +189,12 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/sdapi/v1/sd-vae` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
 | `POST` | `/sdapi/v1/txt2img` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
 | `GET` | `/sdapi/v1/upscalers` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
-| `GET` | `/status` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_index` |
-| `GET` | `/status/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_index` |
 | `GET` | `/status/raw` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_raw` |
 | `GET` | `/status/raw/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_raw` |
 | `GET` | `/typesafe/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `list_typesafe_models` |
 | `POST` | `/typesafe/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
+| `GET` | `/v1/assets/{asset_id}/thumbnail` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_thumbnail` |
 | `DELETE` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `GET` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `PATCH` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |

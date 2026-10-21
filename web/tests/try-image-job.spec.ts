@@ -75,37 +75,65 @@ describe("a picture run as a media job", () => {
     expect(deps.poll).toHaveBeenCalledTimes(1);
   });
 
-  it("says lost, never failed, when the connection never comes back", async () => {
-    const { deps } = harness({
+  it("bounds lost-submit retries to four attempts with 2/4/6 second backoff", async () => {
+    let attempts = 0;
+    const { deps, waits } = harness({
       submit: vi.fn(async () => {
+        attempts += 1;
+        if (attempts > 8) throw new Error("Retry loop exceeded the fixture bound");
         throw dropped();
       }),
     });
     expect(await runImageJob(deps)).toEqual({ kind: "lost" });
+    expect(deps.submit).toHaveBeenCalledTimes(4);
+    expect(waits).toEqual([2000, 4000, 6000]);
+    expect(deps.poll).not.toHaveBeenCalled();
+    expect(deps.content).not.toHaveBeenCalled();
   });
 
-  it("says lost after a long silence, and names the job", async () => {
-    const { deps, advance } = harness({
+  it("allows 90 seconds without an answer and reports lost at the next poll boundary", async () => {
+    expect(LOST_AFTER_MS).toBe(90000);
+    let now = 0;
+    const { deps } = harness({
+      now: () => now,
+      wait: vi.fn(async (ms: number) => {
+        expect(ms).toBe(2000);
+        now += ms;
+        if (now > 94000) throw new Error("Silence exceeded the fixture bound");
+      }),
       poll: vi.fn(async () => {
-        advance(LOST_AFTER_MS / 4);
         throw dropped();
       }),
     });
     expect(await runImageJob(deps)).toEqual({ kind: "lost", jobId: "job_1" });
+    expect(now).toBe(92000);
+    expect(deps.poll).toHaveBeenCalledTimes(46);
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+    expect(deps.content).not.toHaveBeenCalled();
   });
 
-  it("reports a picture that outlasts ten minutes as still finishing", async () => {
+  it("allows ten minutes of answering polls and reports lost at the next poll boundary", async () => {
+    expect(GIVE_UP_AFTER_MS).toBe(600000);
+    let now = 0;
+    const pollTimes: number[] = [];
     const { deps } = harness({
-      poll: vi.fn(async () => ({ status: "running" })),
-      wait: vi.fn(async function wait() {
-        return undefined;
+      now: () => now,
+      wait: vi.fn(async (ms: number) => {
+        expect(ms).toBe(2000);
+        now += ms;
+        if (now > 604000) throw new Error("Run exceeded the fixture bound");
       }),
-      now: (() => {
-        let t = 0;
-        return () => (t += GIVE_UP_AFTER_MS / 5);
-      })(),
+      poll: vi.fn(async () => {
+        pollTimes.push(now);
+        return { status: "running" };
+      }),
     });
     expect(await runImageJob(deps)).toEqual({ kind: "lost", jobId: "job_1" });
+    expect(pollTimes).toContain(600000);
+    expect(pollTimes.at(-1)).toBe(602000);
+    expect(now).toBe(602000);
+    expect(deps.submit).toHaveBeenCalledTimes(1);
+    expect(deps.content).not.toHaveBeenCalled();
   });
 
   it("reports a job the gateway failed, with its own words", async () => {

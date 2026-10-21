@@ -176,6 +176,7 @@ export interface GatewayFacts {
 
 export interface HomeProjection {
   gateway?: GatewayFacts;
+  has_access_plan: boolean;
   plan_spend?: Array<PlanSpend> | null;
   csrf_token: string;
   public_base_url: string;
@@ -354,6 +355,7 @@ export interface CatalogRow {
   alias: boolean;
   operations: Array<string>;
   resolves_to: Record<string, string>;
+  same_model_as?: Array<string>;
   description: string | null;
   technical_description?: string;
   capabilities: Array<CatalogCapability>;

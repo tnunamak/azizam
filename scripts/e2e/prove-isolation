@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Prove web/e2e/fixtures/isolation.ts (TEST_STRATEGY.md 7, BI2a).
+
+1. Parallel: every isolated case in isolation.proof.ts and invite-signin.spec.ts
+   runs in COPIES copies at once, on WORKERS workers against one fixture
+   gateway. A shared namespace, address or fake-engine log would fail a copy.
+2. Teardown: each `teardown fails ...` case must fail, on one worker, with the
+   teardown message named here and no other error.
+
+Usage: scripts/e2e/prove-isolation [--port N] [--copies N] [--workers N]
+Exit 0 only when both hold. Writes the Playwright JSON reports to --out.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+WEB = Path(__file__).resolve().parents[2] / "web"
+EXPECTED_TEARDOWN = {
+    "teardown fails a test that changes a global setting without the tag":
+        "global settings this test changed: instance; tag it @global-state",
+    "teardown fails a global-state test that leaves an untagged request open":
+        "work left running",
+    "teardown fails a test that leaves an upstream request open":
+        "fake engine requests still open for this namespace",
+}
+
+
+def run(args: list[str], out: Path, env: dict[str, str]) -> tuple[int, dict]:
+    command = ["./node_modules/.bin/playwright", "test", "--config", "playwright.isolation-proof.config.ts",
+               "--reporter=json", *args]
+    with out.open("w") as handle:
+        code = subprocess.run(command, cwd=WEB, env=env, stdout=handle, check=False).returncode
+    return code, json.loads(out.read_text())
+
+
+def results(report: dict):
+    def walk(suite):
+        for spec in suite.get("specs", []):
+            for test in spec["tests"]:
+                for result in test["results"]:
+                    yield spec["title"], result
+        for child in suite.get("suites", []):
+            yield from walk(child)
+    for suite in report["suites"]:
+        yield from walk(suite)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--port", default="18450")
+    parser.add_argument("--copies", default="4")
+    parser.add_argument("--workers", default="4")
+    parser.add_argument("--out", type=Path, default=Path.cwd())
+    args = parser.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "UI_E2E_PORT": args.port}
+    problems = []
+
+    code, parallel = run(["--repeat-each", args.copies, "--workers", args.workers, "--grep-invert", "teardown fails"],
+                   args.out / "parallel.json", env)
+    if code != 0:
+        problems.append(f"parallel: Playwright exited {code}")
+    if parallel.get("errors"):
+        problems.append(f"parallel: runner errors {parallel['errors'][:2]}")
+    seen = list(results(parallel))
+    titles = {title for title, _ in seen}
+    for title in titles:
+        count = sum(1 for name, _ in seen if name == title)
+        if count != int(args.copies):
+            problems.append(f"parallel: {title} ran {count} times, wanted {args.copies}")
+    for title, result in seen:
+        if result["status"] != "passed":
+            problems.append(f"parallel: {title} {result['status']}: {result['errors'][:1]}")
+    if len(seen) != len(titles) * int(args.copies) or len(titles) < 2:
+        problems.append(f"parallel: expected {args.copies} copies of each case, got {len(seen)} results for {sorted(titles)}")
+    workers = {result["parallelIndex"] for _, result in seen}
+    if len(workers) < 2:
+        problems.append(f"parallel: copies ran on {len(workers)} worker(s), not in parallel")
+
+    code, teardown = run(["--workers", "1", "--grep", "teardown fails"], args.out / "teardown.json", env)
+    # Expected failures (test.fail) make Playwright exit 0; anything else is a
+    # runner problem the cases cannot excuse.
+    if code != 0:
+        problems.append(f"teardown: Playwright exited {code}")
+    if teardown.get("errors"):
+        problems.append(f"teardown: runner errors {teardown['errors'][:2]}")
+    found = {}
+    for title, result in results(teardown):
+        errors = result.get("errors", [])
+        messages = " ".join(error.get("message", "") for error in errors)
+        if len(errors) != 1:
+            problems.append(f"teardown: {title} reported {len(errors)} errors, wanted exactly the teardown failure")
+        found[title] = (result["status"], messages)
+    for title, expected in EXPECTED_TEARDOWN.items():
+        status, messages = found.get(title, ("missing", ""))
+        if status != "failed" or expected not in messages:
+            problems.append(f"teardown: {title}: {status}, wanted a failure with {expected!r}; got {messages[:300]!r}")
+
+    for problem in problems:
+        print(f"prove-isolation: {problem}")
+    print(f"prove-isolation: {'FAILED' if problems else 'ok'}: {len(seen)} parallel results on "
+          f"{len(workers)} workers; {len(found)} teardown cases")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

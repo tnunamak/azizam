@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store, service_registry  # noqa: E402
+from gateway import accounts, admin_store, service_registry  # noqa: E402
 from gateway.admin_api import AdminContext, create_admin_router  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
@@ -33,6 +33,7 @@ from gateway.admin_runtime import (  # noqa: E402
 )
 from gateway.runtime_auth import hash_api_key  # noqa: E402
 from tests.registry_test_helpers import write_service_registry_for_test  # noqa: E402
+from tests.support.access import plan_document, service_app, store_plan  # noqa: E402
 
 
 def _install_registry_writer_test_helpers(store: AdminSQLiteStore, path: Path) -> None:
@@ -61,6 +62,15 @@ class AdminRuntimeTests(unittest.TestCase):
         self.db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(self.db)
         self.store = AdminSQLiteStore(self.db)
+        accounts.initialize(self.db)
+        self.owner = admin_store.upsert_oidc_user("https://idp.test", "owner", email="o@example.test", path=self.db)
+        self.plan = store_plan("Local only", path=self.db)
+        accounts.change_person(self.owner["id"], "test", path=self.db, plan_id=self.plan["id"])
+
+    def _create_app(self, client: TestClient, name: str, **body):
+        """An App accountable to the owner, "Same as its person" unless told otherwise."""
+        return client.post("/admin/api/apps", json={
+            "name": name, "owner_user_id": self.owner["id"], "access_plan": "person", **body})
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -71,14 +81,13 @@ class AdminRuntimeTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
         client.headers.update({"Authorization": f"Bearer {key}"})
         original_put = client.put
         def put_current_settings(url, **kwargs):
-            setting = {"/admin/api/oidc-config": "oidc_provider_config", "/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
+            setting = {"/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
             if setting:
                 kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
             return original_put(url, **kwargs)
@@ -97,7 +106,6 @@ class AdminRuntimeTests(unittest.TestCase):
                     signing_key=signing_key,
                     cookie=cookie,
                 ),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         session = session_from_claims(
@@ -129,7 +137,6 @@ class AdminRuntimeTests(unittest.TestCase):
                     signing_key=signing_key,
                     cookie=cookie,
                 ),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         session = session_from_claims(
@@ -156,7 +163,7 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(assignment["role"], "owner")
 
         client = self._client(admin_key)
-        app_resp = client.post("/admin/api/apps", json={"name": "brother-laptop"})
+        app_resp = self._create_app(client, "brother-laptop")
         self.assertEqual(app_resp.status_code, 201, app_resp.text)
         app_id = app_resp.json()["app"]["id"]
 
@@ -173,51 +180,35 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored["subject_kind"], "app")  # type: ignore[index]
 
-    def test_admin_key_can_update_profile_update_app_and_disable_app(self) -> None:
+    def test_admin_key_can_update_plan_update_app_and_disable_app(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
-        profile = client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "Local",
-                "profile": {
-                    "id": "local",
-                    "protocols": ["openai.chat"],
-                    "status_visibility": {"level": "basic"},
-                },
-            },
-        ).json()["profile"]
-        app_id = client.post(
-            "/admin/api/apps",
-            json={"name": "runtime-app", "default_profile_id": profile["id"]},
-        ).json()["app"]["id"]
+        plan = client.post(
+            "/admin/api/access-plans",
+            json=plan_document("Chat only", caps=("chat",)),
+        ).json()["access_plan"]
+        app_id = self._create_app(client, "runtime-app", access_plan=plan["id"]).json()["app"]["id"]
 
-        profile_resp = client.patch(
-            f"/admin/api/profiles/{profile['id']}",
-            json={
-                "name": "Local updated",
-                "profile": {
-                    "id": "local",
-                    "protocols": ["openai.chat", "openai.images"],
-                    "status_visibility": {"level": "standard"},
-                },
-            },
+        plan_resp = client.put(
+            f"/admin/api/access-plans/{plan['id']}",
+            json=plan_document("Chat and images", caps=("chat", "image")),
         )
         app_resp = client.patch(
             f"/admin/api/apps/{app_id}",
-            json={"name": "runtime-app-updated", "default_profile_id": profile["id"]},
+            json={"name": "runtime-app-updated", "access_plan": "person"},
         )
         disabled_resp = client.delete(f"/admin/api/apps/{app_id}")
 
-        self.assertEqual(profile_resp.status_code, 200, profile_resp.text)
+        self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
         self.assertEqual(app_resp.status_code, 200, app_resp.text)
         self.assertEqual(disabled_resp.status_code, 200, disabled_resp.text)
         self.assertEqual(app_resp.json()["app"]["name"], "runtime-app-updated")
+        self.assertEqual(app_resp.json()["app"]["access_plan"], "person")
         self.assertIsNotNone(disabled_resp.json()["app"]["disabled_at"])
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
-        self.assertIn("profile.update", actions)
+        self.assertIn("access_plan.update", actions)
         self.assertIn("app.update", actions)
         self.assertIn("app.disable", actions)
 
@@ -236,6 +227,7 @@ class AdminRuntimeTests(unittest.TestCase):
                 "name": "OpenWhispr",
                 "kind": "personal",
                 "owner_user_id": user["id"],
+                "access_plan": "person",
             },
         )
 
@@ -263,12 +255,8 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
 
-        first = client.post(
-            "/admin/api/apps", json={"name": "svc-one"}
-        )
-        second = client.post(
-            "/admin/api/apps", json={"name": "svc-two"}
-        )
+        first = self._create_app(client, "svc-one")
+        second = self._create_app(client, "svc-two")
 
         self.assertEqual(first.status_code, 201, first.text)
         self.assertEqual(second.status_code, 201, second.text)
@@ -278,92 +266,32 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(second_app["kind"], "service")
         self.assertNotEqual(first_app["id"], second_app["id"])
 
-    def test_default_local_profile_selection_inherits_builtin_default(self) -> None:
+    def test_app_always_has_one_assignment_and_it_can_move_but_not_clear(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
+        missing = client.post(
+            "/admin/api/apps", json={"name": "runtime-app", "owner_user_id": self.owner["id"]})
+        self.assertEqual(missing.status_code, 400, missing.text)
+        self.assertNotIn("runtime-app", {app["name"] for app in admin_store.list_apps(path=self.db)})
 
-        app_resp = client.post(
-            "/admin/api/apps",
-            json={"name": "runtime-app", "profile_id": "default-local"},
-        )
-        self.assertEqual(app_resp.status_code, 201, app_resp.text)
-        app_id = app_resp.json()["app"]["id"]
-        self.assertIsNone(app_resp.json()["app"]["default_profile_id"])
-
-        profile = client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "Local",
-                "profile": {
-                    "id": "local",
-                    "protocols": ["openai.chat"],
-                },
-            },
-        ).json()["profile"]
-        set_profile = client.patch(
-            f"/admin/api/apps/{app_id}",
-            json={"profile_id": profile["id"]},
-        )
-        self.assertEqual(set_profile.status_code, 200, set_profile.text)
-        self.assertEqual(set_profile.json()["app"]["default_profile_id"], profile["id"])
-
-        clear_profile = client.patch(
-            f"/admin/api/apps/{app_id}",
-            json={"profile_id": "default-local"},
-        )
-        self.assertEqual(clear_profile.status_code, 200, clear_profile.text)
-        self.assertIsNone(clear_profile.json()["app"]["default_profile_id"])
-
-    def test_ui_created_profile_without_inner_id_reports_its_own_identity(
-        self,
-    ) -> None:
-        """A profile created via the admin UI never carries an inner ``id``
-        (only the seeded builtins do). ``profile_for_id`` must still resolve
-        it to its own outer app-profile id, not silently fall back to the
-        global ``default-local`` identity — that would misattribute every
-        policy decision made against it (see profile identity audit)."""
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
-        profile = client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "Household media profile",
-                "profile": {
-                    "allow": {"intents": ["chat.generate"]},
-                },
-            },
-        ).json()["profile"]
-        self.assertNotEqual(profile["id"], "default-local")
-
-        resolved = self.store.profile_for_id(profile["id"])
-        self.assertIsNotNone(resolved)
-        self.assertEqual(resolved.id, profile["id"])
-
-        simulated = client.post(
-            "/admin/api/policy/simulate",
-            json={
-                "profile": profile["id"],
-                "request": {"intent": "video.generate"},
-            },
-        )
-        self.assertEqual(simulated.status_code, 200, simulated.text)
-        body = simulated.json()
-        self.assertEqual(body["profile_id"], profile["id"])
-        self.assertNotEqual(body["profile_id"], "default-local")
-        self.assertFalse(body["decision"]["allowed"])
+        app = self._create_app(client, "runtime-app").json()["app"]
+        self.assertEqual(app["access_plan"], "person")
+        other = client.post("/admin/api/access-plans", json=plan_document("Chat only", caps=("chat",))).json()["access_plan"]
+        moved = client.patch(f"/admin/api/apps/{app['id']}", json={"access_plan": other["id"]})
+        self.assertEqual(moved.status_code, 200, moved.text)
+        self.assertEqual(moved.json()["app"]["access_plan"], other["id"])
+        cleared = client.patch(f"/admin/api/apps/{app['id']}", json={"access_plan": ""})
+        self.assertEqual(cleared.status_code, 400, cleared.text)
+        self.assertEqual(admin_store.get_app(app["id"], path=self.db)["access_plan"], other["id"])
 
     def test_disabling_app_immediately_blocks_existing_runtime_keys(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
-        app_id = client.post(
-            "/admin/api/apps", json={"name": "runtime-app"}
-        ).json()["app"]["id"]
+        app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
         app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
             "credential"
         ]["api_key"]
@@ -375,18 +303,16 @@ class AdminRuntimeTests(unittest.TestCase):
 
         disabled = client.delete(f"/admin/api/apps/{app_id}")
         self.assertEqual(disabled.status_code, 200, disabled.text)
-        self.assertIsNone(
-            runtime_identity_for_app_credential_hash(key_hash, path=self.db)
-        )
+        # The key still names its App, which is refused with the reason.
+        identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertEqual(identity.denial, "app_disabled")
 
     def test_app_key_cannot_administer_gateway(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
-        app_id = client.post(
-            "/admin/api/apps", json={"name": "runtime-app"}
-        ).json()["app"]["id"]
+        app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
         app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
             "credential"
         ]["api_key"]
@@ -467,7 +393,8 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         allowed = client.get("/admin/api/overview")
         self.assertEqual(allowed.status_code, 200, allowed.text)
-        self.assertEqual(admin_store.list_users(path=self.db), [])
+        # Signing in as a service account creates no person.
+        self.assertEqual([user["id"] for user in admin_store.list_users(path=self.db)], [self.owner["id"]])
 
     def test_admin_store_hides_legacy_local_admin_key_personal_apps(self) -> None:
         placeholder = admin_store.upsert_oidc_user(
@@ -497,12 +424,7 @@ class AdminRuntimeTests(unittest.TestCase):
         service_account = admin_store.ensure_service_account(
             "shared-service", path=self.db
         )
-        admin_store.create_app(
-            "shared service",
-            kind="service",
-            owner_service_account_id=service_account["id"],
-            path=self.db,
-        )
+        service_app("shared service", path=self.db)
 
         raw_names = {app["name"] for app in admin_store.list_apps(path=self.db)}
         self.assertIn("local-admin personal access", raw_names)
@@ -511,30 +433,16 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("owner personal access", visible_names)
         self.assertIn("shared service", visible_names)
 
-    def test_admin_store_app_key_builds_runtime_identity_with_profile(self) -> None:
+    def test_admin_store_app_key_builds_runtime_identity_from_both_plans(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
-        profile = client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "brother-chat-only",
-                "profile": {
-                    "id": "brother-chat-only",
-                    "protocols": ["openai.chat"],
-                    "fallback": {"cloud_allowed": False},
-                    "status_visibility": {"level": "basic"},
-                },
-            },
-        ).json()["profile"]
-        app_id = client.post(
-            "/admin/api/apps",
-            json={
-                "name": "brother-personal",
-                "profile_id": profile["id"],
-            },
-        ).json()["app"]["id"]
+        plan = client.post(
+            "/admin/api/access-plans",
+            json=plan_document("Chat only", caps=("chat",)),
+        ).json()["access_plan"]
+        app_id = self._create_app(client, "brother-personal", access_plan=plan["id"]).json()["app"]["id"]
         app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
             "credential"
         ]["api_key"]
@@ -543,9 +451,8 @@ class AdminRuntimeTests(unittest.TestCase):
             path=self.db,
         )
         self.assertIsNotNone(stored)
-        # Dashboard/default key minting inherits the App profile at runtime;
-        # it does not freeze a copy onto the credential.
-        self.assertIsNone(stored["profile_id"])  # type: ignore[index]
+        # A key acts for its App; it carries no plan of its own.
+        self.assertNotIn("profile_id", stored)  # type: ignore[arg-type]
 
         identity = runtime_identity_for_app_credential_hash(
             hash_api_key(app_key),
@@ -553,11 +460,11 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         self.assertIsNotNone(identity)
         self.assertEqual(identity.name, "brother-personal")  # type: ignore[union-attr]
-        self.assertEqual(identity.profile.id, "brother-chat-only")  # type: ignore[union-attr]
-        self.assertEqual(
-            identity.profile.protocols,  # type: ignore[union-attr]
-            frozenset({"openai.chat"}),
-        )
+        self.assertEqual(identity.app_id, app_id)  # type: ignore[union-attr]
+        self.assertEqual(identity.accountable_person_id, self.owner["id"])  # type: ignore[union-attr]
+        self.assertEqual(identity.access.person_plan.id, self.plan["id"])  # type: ignore[union-attr]
+        self.assertEqual(identity.access.app_plan.id, plan["id"])  # type: ignore[union-attr]
+        self.assertEqual(set(identity.access.app_plan.can_use), {"chat"})  # type: ignore[union-attr]
 
         self.assertIsNone(
             runtime_identity_for_app_credential_hash(
@@ -576,44 +483,19 @@ class AdminRuntimeTests(unittest.TestCase):
                 "name": "unknown-personal",
                 "kind": "personal",
                 "owner_user_id": "user_missing",
+                "access_plan": "person",
             },
         )
         self.assertEqual(resp.status_code, 400, resp.text)
         self.assertEqual(resp.json()["error"]["code"], "invalid_app")
-
-    def test_invalid_key_profile_returns_400(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
-        app_id = client.post(
-            "/admin/api/apps", json={"name": "runtime-app"}
-        ).json()["app"]["id"]
-        resp = client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"profile_id": "prof_missing"},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_credential")
 
     def test_dashboard_snapshot_does_not_expose_hashes(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
         client = self._client(admin_key)
-        app_id = client.post(
-            "/admin/api/apps", json={"name": "runtime-app"}
-        ).json()["app"]["id"]
+        app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
         client.post(f"/admin/api/apps/{app_id}/keys", json={})
-        client.post(
-            "/admin/api/runtime-profile-mappings",
-            json={
-                "source_kind": "domain",
-                "source_value": "example.com",
-                "profile_id": "default-local",
-            },
-        )
-
         snapshot = self.store.dashboard_snapshot(
             AdminContext(
                 subject="svc_test",
@@ -623,25 +505,12 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("hash", repr(snapshot))
         self.assertEqual(snapshot["actor"]["csrf_token"], "csrf-token")
-        self.assertEqual(snapshot["counts"]["runtime_profile_mappings"], 1)
-        self.assertEqual(
-            snapshot["runtime_profile_mappings"][0]["source_kind"], "domain"
-        )
+        self.assertEqual(snapshot["counts"]["access_plans"], 1)
         self.assertEqual(
             snapshot["access_model"]["nouns"],
-            ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+            ["user", "app", "access_plan", "key", "admin_role"],
         )
-        self.assertEqual(
-            snapshot["access_model"]["runtime_mappings"]["source_kinds"],
-            [
-                "oidc_group",
-                "oidc_role",
-                "email",
-                "domain",
-                "gateway_role",
-                "all_users",
-            ],
-        )
+        self.assertNotIn("runtime_profile_mappings", snapshot)
         self.assertIn(
             "separate",
             snapshot["access_model"]["admin_roles"]["relationship"],
@@ -671,14 +540,13 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
 
-        access_resp = client.put(
-            "/admin/api/operator/user-access-defaults",
-            json={"self_service_apps": False},
-        )
-        self.assertEqual(access_resp.status_code, 200, access_resp.text)
         reopened = AdminSQLiteStore(self.db)
-        overrides = reopened.operator_overrides()
-        self.assertFalse(overrides["user_access_defaults"]["self_service_apps"])
+        self.assertNotIn("user_access_defaults", reopened.operator_overrides())
+        # The old defaults endpoint is gone; there is no runtime default plan.
+        self.assertEqual(
+            client.put("/admin/api/operator/user-access-defaults", json={"self_service_apps": False}).status_code,
+            404,
+        )
 
         resp = client.put(
             "/admin/api/operator/service-availability",
@@ -711,7 +579,6 @@ class AdminRuntimeTests(unittest.TestCase):
             ["gpu"],
         )
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
-        self.assertIn("operator.user_access_defaults.update", actions)
         self.assertIn("operator.service_availability.update", actions)
         self.assertIn("operator.media_job_admission.update", actions)
 
@@ -719,7 +586,7 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_service_registry(),
             {
-                "schema_version": 1,
+                "schema_version": 2,  # Engine record v2 is the fresh-registry contract.
                 "services": {},
                 "protocol_frontends": {},
                 "workflows": {},
@@ -905,14 +772,13 @@ class AdminOidcSettingsTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
         client.headers.update({"Authorization": f"Bearer {key}"})
         original_put = client.put
         def put_current_settings(url, **kwargs):
-            setting = {"/admin/api/oidc-config": "oidc_provider_config", "/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
+            setting = {"/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
             if setting:
                 kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
             return original_put(url, **kwargs)
@@ -922,113 +788,67 @@ class AdminOidcSettingsTests(unittest.TestCase):
     def test_get_returns_none_when_no_setting(self) -> None:
         self.assertIsNone(self.store.get_oidc_config_setting())
 
-    def test_put_redacts_secret_and_preserves_on_blank(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
+    OWNER = AdminContext(subject="owner-cli", roles=frozenset({"owner"}))
 
-        resp = client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": True,
-                "issuer": "https://idp.example.com",
-                "client_id": "client-A",
-                "client_secret": "topsecret-A",
-                "redirect_uri": "https://gw.example.com/admin/oidc/callback",
-                "scopes": ["openid", "email", "profile"],
-                "admin_emails": ["owner@example.com"],
-            },
+    def _save(self, **data):
+        return self.store.update_oidc_config_setting(data=data, actor=self.OWNER)
+
+    def test_save_redacts_secret_and_preserves_on_blank(self) -> None:
+        body = self._save(
+            enabled=True, issuer="https://idp.example.com", client_id="client-A",
+            client_secret="topsecret-A", redirect_uri="https://gw.example.com/admin/oidc/callback",
+            scopes=["openid", "email", "profile"],
         )
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()["oidc_config"]
         self.assertEqual(body["issuer"], "https://idp.example.com")
         self.assertEqual(body["client_id"], "client-A")
         self.assertEqual(body["client_secret"], "<redacted>")
         self.assertTrue(body["client_secret_set"])
-        self.assertNotIn("topsecret-A", resp.text)
+        self.assertNotIn("topsecret-A", json.dumps(body))
 
         # Raw secret is preserved internally.
-        raw = self.store.get_oidc_config_setting_raw()
-        self.assertEqual(raw["client_secret"], "topsecret-A")
+        self.assertEqual(self.store.get_oidc_config_setting_raw()["client_secret"], "topsecret-A")
 
         # Update with blank/omitted secret must NOT clobber it.
-        resp2 = client.put(
-            "/admin/api/oidc-config",
-            json={"client_secret": "", "client_id": "client-B"},
-        )
-        self.assertEqual(resp2.status_code, 200, resp2.text)
+        self._save(client_secret="", client_id="client-B")
         raw = self.store.get_oidc_config_setting_raw()
         self.assertEqual(raw["client_secret"], "topsecret-A")
         self.assertEqual(raw["client_id"], "client-B")
 
         # Sending the redacted sentinel also preserves the existing secret.
-        resp3 = client.put(
-            "/admin/api/oidc-config",
-            json={"client_secret": "<redacted>"},
-        )
-        self.assertEqual(resp3.status_code, 200, resp3.text)
-        raw = self.store.get_oidc_config_setting_raw()
-        self.assertEqual(raw["client_secret"], "topsecret-A")
+        self._save(client_secret="<redacted>")
+        self.assertEqual(self.store.get_oidc_config_setting_raw()["client_secret"], "topsecret-A")
 
         # Replacing with a real value works.
-        resp4 = client.put(
-            "/admin/api/oidc-config",
-            json={"client_secret": "rotated-B"},
-        )
-        self.assertEqual(resp4.status_code, 200, resp4.text)
-        raw = self.store.get_oidc_config_setting_raw()
-        self.assertEqual(raw["client_secret"], "rotated-B")
+        self._save(client_secret="rotated-B")
+        self.assertEqual(self.store.get_oidc_config_setting_raw()["client_secret"], "rotated-B")
 
-    def test_put_list_clear_is_stored_and_omission_preserves(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
-        client = self._client(admin_key)
-        initial = {
-            "enabled": False,
-            "scopes": ["openid", "email"],
-            "allowed_email_domains": ["example.com"],
-            "admin_emails": ["owner@example.com"],
-            "admin_groups": ["owners"],
-            "admin_roles": ["operator"],
-        }
-        self.assertEqual(client.put("/admin/api/oidc-config", json=initial).status_code, 200)
-        clear = {
-            "scopes": [], "allowed_email_domains": [], "admin_emails": [],
-            "admin_groups": [], "admin_roles": [], "issuer": "",
-        }
-        response = client.put("/admin/api/oidc-config", json=clear)
-        self.assertEqual(response.status_code, 200, response.text)
+    def test_list_clear_is_stored_and_omission_preserves(self) -> None:
+        self._save(enabled=False, scopes=["openid", "email"])
+        self._save(scopes=[], issuer="")
         stored = self.store.get_oidc_config_setting_raw()
         self.assertIsNotNone(stored)
-        for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
-            self.assertEqual(stored[field], [])  # type: ignore[index]
+        self.assertEqual(stored["scopes"], [])  # type: ignore[index]
         self.assertEqual(stored["issuer"], "")  # type: ignore[index]
-        self.assertEqual(client.put("/admin/api/oidc-config", json={"client_id": "changed"}).status_code, 200)
+        self._save(client_id="changed")
         preserved = self.store.get_oidc_config_setting_raw()
-        self.assertEqual(preserved["admin_emails"], [])  # type: ignore[index]
+        self.assertEqual(preserved["scopes"], [])  # type: ignore[index]
 
-    def test_put_null_clears_scalar_fields_and_preserves_secret(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
-        client = self._client(admin_key)
+    def test_null_clears_scalar_fields_and_preserves_secret(self) -> None:
         scalar_fields = (
             "issuer", "client_id", "redirect_uri", "authorization_endpoint",
             "token_endpoint", "jwks_uri", "groups_claim",
         )
         initial = {field: f"initial-{field}" for field in scalar_fields}
         initial["client_secret"] = "secret-A"
-        self.assertEqual(client.put("/admin/api/oidc-config", json=initial).status_code, 200)
-        response = client.put(
-            "/admin/api/oidc-config",
-            json={**{field: None for field in scalar_fields}, "client_secret": None},
-        )
-        self.assertEqual(response.status_code, 200, response.text)
+        self._save(**initial)
+        body = self._save(**{field: None for field in scalar_fields}, client_secret=None)
         stored = self.store.get_oidc_config_setting_raw()
         self.assertIsNotNone(stored)
         for field in scalar_fields:
             self.assertEqual(stored[field], "")  # type: ignore[index]
-            self.assertEqual(response.json()["oidc_config"][field], "")
+            self.assertEqual(body[field], "")
         self.assertEqual(stored["client_secret"], "secret-A")  # type: ignore[index]
-        self.assertEqual(response.json()["oidc_config"]["client_secret"], "<redacted>")
+        self.assertEqual(body["client_secret"], "<redacted>")
 
     def test_oidc_setting_and_audit_rollback_together(self) -> None:
         actor = AdminContext(
@@ -1046,116 +866,33 @@ class AdminOidcSettingsTests(unittest.TestCase):
         self.assertEqual(admin_store.get_operator_setting(OIDC_PROVIDER_SETTING_KEY, path=self.db), before)
         self.assertEqual(admin_store.list_audit(path=self.db), [])
 
-    def test_get_endpoint_redacts_secret(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
+    def test_the_stored_view_redacts_the_secret(self) -> None:
+        self._save(
+            enabled=True, issuer="https://idp.example.com", client_id="c", client_secret="sekret",
+            redirect_uri="https://gw.example.com/admin/oidc/callback",
         )
-        client = self._client(admin_key)
-        client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": True,
-                "issuer": "https://idp.example.com",
-                "client_id": "c",
-                "client_secret": "sekret",
-                "redirect_uri": "https://gw.example.com/admin/oidc/callback",
-            },
-        )
-        resp = client.get("/admin/api/oidc-config")
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()["oidc_config"]
-        self.assertEqual(body["client_secret"], "<redacted>")
-        self.assertNotIn("sekret", resp.text)
+        view = self.store.get_oidc_config_setting()
+        self.assertEqual(view["client_secret"], "<redacted>")
+        self.assertNotIn("sekret", json.dumps(view))
 
-    def test_put_rejects_unknown_fields(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
-        resp = client.put(
-            "/admin/api/oidc-config",
-            json={"unknown_field": "x"},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_oidc_config")
+    def test_save_rejects_unknown_fields(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown oidc_provider_config fields"):
+            self._save(unknown_field="x")
 
-    def test_put_rejects_enabled_without_required_fields(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
-        resp = client.put(
-            "/admin/api/oidc-config",
-            json={"enabled": True, "issuer": "", "client_id": "c", "redirect_uri": "u"},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-
-        resp2 = client.put(
-            "/admin/api/oidc-config",
-            json={"enabled": True},
-        )
-        self.assertEqual(resp2.status_code, 400, resp2.text)
-        self.assertIn("issuer is required", resp2.text)
+    def test_save_rejects_enabled_without_required_fields(self) -> None:
+        with self.assertRaises(ValueError):
+            self._save(enabled=True, issuer="", client_id="c", redirect_uri="u")
+        with self.assertRaisesRegex(ValueError, "issuer is required"):
+            self._save(enabled=True)
 
     def test_audit_records_update(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key(
-            "owner-cli", path=self.db
-        )
-        client = self._client(admin_key)
-        client.put(
-            "/admin/api/oidc-config",
-            json={"client_id": "x"},
-        )
+        self._save(client_id="x")
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
         self.assertIn("operator.oidc_provider_config.update", actions)
 
     def test_setting_key_is_stable(self) -> None:
         # External callers (config_sources, proxy.py) depend on this key.
         self.assertEqual(OIDC_PROVIDER_SETTING_KEY, "oidc_provider_config")
-
-    def test_get_effective_oidc_contract_covers_bootstrap_override_and_merge(self) -> None:
-        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
-        cases = (
-            ("bootstrap", {"issuer": "bootstrap", "client_id": "bootstrap-client"}),
-            ("database", {"issuer": "database", "client_id": "database-client"}),
-            ("merged", {"issuer": "bootstrap", "client_id": "database-client"}),
-        )
-        for summary, expected in cases:
-            with self.subTest(summary=summary):
-                app = FastAPI()
-                app.include_router(
-                    create_admin_router(
-                        self.store,
-                        auth=AdminAuthenticator(self.store),
-                        effective_oidc_config_provider=lambda summary=summary, expected=expected: {
-                            **expected,
-                            "enabled": True,
-                            "client_secret": "<redacted>",
-                            "client_secret_set": True,
-                            "source": summary,
-                            "apply_mode": "live",
-                            "provenance": {
-                                "summary": summary,
-                                "fields": {
-                                    "issuer": "bootstrap" if expected["issuer"] == "bootstrap" else "database",
-                                    "client_id": "bootstrap" if expected["client_id"] == "bootstrap-client" else "database",
-                                },
-                            },
-                        },
-                    )
-                )
-                response = TestClient(app).get(
-                    "/admin/api/oidc-config",
-                    headers={"Authorization": f"Bearer {admin_key}"},
-                )
-                self.assertEqual(response.status_code, 200, response.text)
-                config = response.json()["oidc_config"]
-                self.assertEqual(config["issuer"], expected["issuer"])
-                self.assertEqual(config["client_id"], expected["client_id"])
-                self.assertEqual(config["provenance"]["summary"], summary)
-                self.assertEqual(config["source"], summary)
-                self.assertEqual(config["apply_mode"], "live")
-                self.assertNotIn("topsecret", response.text)
 
     def test_audit_projects_human_service_and_system_actors_without_id_inference(self) -> None:
         human = admin_store.upsert_oidc_user(
@@ -1164,11 +901,11 @@ class AdminOidcSettingsTests(unittest.TestCase):
         )
         service = admin_store.ensure_service_account("release-bot", path=self.db)
         self.store.create_app(
-            data={"name": "human-app"},
+            data={"name": "human-app", "access_plan": "person"},
             actor=AdminContext(subject=human["id"], actor_kind="user", roles=frozenset({"owner"})),
         )
         self.store.create_app(
-            data={"name": "service-app"},
+            data={"name": "service-app", "access_plan": "person", "owner_user_id": human["id"]},
             actor=AdminContext(subject=service["id"], actor_kind="service_account", roles=frozenset({"owner"})),
         )
         admin_store.record_audit(
@@ -1219,7 +956,9 @@ class AdminOidcSettingsTests(unittest.TestCase):
             actor_kind="service_account", actor_label="Release bot",
             roles=frozenset({"owner"}),
         )
-        self.store.create_app(data={"name": "opaque-actor-app"}, actor=actor)
+        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="owner@example.com", path=self.db)
+        self.store.create_app(
+            data={"name": "opaque-actor-app", "access_plan": "person", "owner_user_id": owner["id"]}, actor=actor)
         event = next(event for event in admin_store.list_audit(path=self.db)
                      if event["action"] == "app.create")
         self.assertEqual(event["actor_id"], "opaque-automation-id")
@@ -1247,7 +986,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
 
     def test_new_model_mappings_use_current_policy_schema(self) -> None:
         registry = self.store.add_service(
-            data={"name": "first-chat", "preset": "openai-compatible",
+            data={"name": "first-chat", "protocol": "openai-compatible",
                   "base_url": "http://engine:18001/v1",
                   "models": [{"public": "chat", "upstream": "engine-model"}]},
             actor=self.ctx,
@@ -1279,6 +1018,55 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
         registry = self.store.update_service(service_id="legacy", data={"note": "edit"}, actor=self.ctx)
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
+
+    def test_v2_partial_patch_preserves_process_and_observations(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {
+                           "start": ["start"], "stop": ["stop"]}}},
+        }})
+        seed["services"]["legacy"]["observations"] = {"inventory": {"means": "available"}}
+        seed["services"]["legacy"]["resources"] = {"gpu": {"enforced": False}}
+        write_service_registry_for_test(seed, path=self.db)
+        before = self.store.get_service_registry()["services"]["legacy"]
+        registry = self.store.update_service(service_id="legacy", data={"name": "Renamed"}, actor=self.ctx)
+        after = registry["services"]["legacy"]
+        self.assertEqual(after["name"], "Renamed")
+        for field in ("process", "observations", "residency", "resources"):
+            self.assertEqual(after[field], before[field])
+        self.assertNotIn("lifecycle", after)
+        self.assertNotIn("lifecycle", after["config"])
+
+    def test_v2_legacy_lifecycle_edit_changes_process(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {"start": ["old"]}}},
+        }})
+        write_service_registry_for_test(seed, path=self.db)
+        registry = self.store.update_service(
+            service_id="legacy", data={"lifecycle": {"driver": "command", "driver_config": {"start": ["new"]}}},
+            actor=self.ctx,
+        )
+        process = registry["services"]["legacy"]["process"]
+        self.assertEqual(process["start"], ["new"])
+        self.assertEqual(process["legacy_lifecycle"]["driver_config"]["start"], ["new"])
+
+    def test_v2_partial_lifecycle_fields_keep_unnamed_values(self) -> None:
+        backends = {name: {"protocol": "openai-compatible", "host": name, "port": 18001,
+                           "lifecycle": {"type": "systemd", "managed": True, "service_name": "old.service"}}
+                    for name in ("rename-unit", "keep-unit", "keep-managed")}
+        seed = service_registry.build_service_registry_seed({"backends": backends})
+        write_service_registry_for_test(seed, path=self.db)
+        cases = (
+            ("rename-unit", {"service_name": "new.service"}, {"type": "systemd", "managed": True, "service_name": "new.service"}),
+            ("keep-unit", {"managed": True}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+            ("keep-managed", {"lifecycle_type": "systemd"}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+        )
+        for service_id, patch, expected in cases:
+            with self.subTest(service_id=service_id):
+                registry = self.store.update_service(service_id=service_id, data=patch, actor=self.ctx)
+                lifecycle = registry["services"][service_id]["process"]["legacy_lifecycle"]
+                self.assertEqual({key: lifecycle[key] for key in expected}, expected)
 
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""
@@ -1316,7 +1104,6 @@ class ServicePatchRoundTripTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
@@ -1608,19 +1395,39 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
         # state dir; this mirrors start.sh's LITELLM_CONFIG_PATH=data/litellm.config.yaml.
         return self.state_dir / "litellm.config.yaml"
 
+    # Engines are added and edited through an engine definition (gateway/engine_admin.py,
+    # POST/PATCH /admin/api/operator/services with "definition"); the preset form path is
+    # gone. These tests drive that path, with a check that answers like the engine would.
+    def _engines(self):
+        from gateway.engine_admin import EngineService
+        from gateway.engine_check import Answer
+
+        async def fetch(method, url, *, headers, cap_bytes, timeout_s, content=None):
+            if method == "GET" and url.endswith("/models"):
+                body = {"object": "list", "data": [{"id": "TheBloke_Llama-3-8B"}, {"id": "u"}, {"id": "old-upstream"}, {"id": "new-upstream"}]}
+                return Answer(method=method, url=url, status=200, body=json.dumps(body).encode())
+            return Answer(method=method, url=url, status=404, body=b'{"detail": "Not Found"}')
+
+        return EngineService(self.store, fetch=fetch)
+
+    def _generation(self) -> int:
+        current = admin_store.get_service_registry_with_generation(path=self.db)
+        return int(current["operator_settings_generation"]) if current else 0
+
+    def _add_engine(self, name: str, address: str, models: list[dict]) -> None:
+        import asyncio
+
+        asyncio.run(self._engines().create(self.ctx, {
+            "definition": "openai-compatible", "name": name, "values": {"address": address},
+            "capabilities": ["chat"], "models": models, "acknowledge_warnings": True,
+        }, expected_generation=self._generation()))
+
     def test_added_service_with_model_writes_routable_litellm_config_to_state_dir(self) -> None:
         fired = {"n": 0}
         self.store.on_service_registry_changed = lambda: fired.__setitem__("n", fired["n"] + 1)
 
-        self.store.add_service(
-            data={
-                "name": "text-generation-webui",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:7860/v1",
-                "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
-            },
-            actor=self.ctx,
-        )
+        self._add_engine("text-generation-webui", "http://127.0.0.1:7860/v1",
+                         [{"id": "TheBloke_Llama-3-8B", "public_name": "my-llama"}])
 
         artifact = self._artifact_path()
         self.assertTrue(
@@ -1651,15 +1458,7 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
         repo_stray = repo_root / "litellm.config.yaml"
         pre_existing = repo_stray.exists()
 
-        self.store.add_service(
-            data={
-                "name": "svc",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:9100/v1",
-                "models": [{"public": "m", "upstream": "u"}],
-            },
-            actor=self.ctx,
-        )
+        self._add_engine("svc", "http://127.0.0.1:9100/v1", [{"id": "u", "public_name": "m"}])
 
         self.assertTrue(self._artifact_path().exists())
         if not pre_existing:
@@ -1671,29 +1470,28 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
 
     def test_edit_service_model_rewrites_litellm_config(self) -> None:
         """Editing a service's model mapping must update the on-disk LiteLLM config."""
-        self.store.add_service(
-            data={
-                "name": "svc",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:9200/v1",
-                "models": [{"public": "old-name", "upstream": "old-upstream"}],
-            },
-            actor=self.ctx,
-        )
-        self.store.update_service(
-            service_id="svc",
-            data={
-                "base_url": "http://127.0.0.1:9200/v1",
-                "models": [{"public": "new-name", "upstream": "new-upstream"}],
-            },
-            actor=self.ctx,
-        )
+        import asyncio
+
+        self._add_engine("svc", "http://127.0.0.1:9200/v1", [{"id": "old-upstream", "public_name": "old-name"}])
+        asyncio.run(self._engines().update(self.ctx, "svc", {
+            "definition": "openai-compatible", "values": {"address": "http://127.0.0.1:9200/v1"},
+            "models": [{"id": "new-upstream", "public_name": "new-name"}],
+        }, expected_generation=self._generation()))
 
         import yaml
         compiled = yaml.safe_load(self._artifact_path().read_text())
         names = [m.get("model_name") for m in compiled.get("model_list", [])]
         self.assertIn("new-name", names, "Edited model mapping must be reflected in LiteLLM config")
         self.assertNotIn("old-name", names, "Stale model mapping must be removed from LiteLLM config")
+
+    def test_a_raw_add_that_names_a_preset_is_refused_not_stored_unroutable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "presets are gone"):
+            self.store.add_service(
+                data={"name": "svc", "preset": "openai-compatible", "base_url": "http://127.0.0.1:9300/v1",
+                      "models": [{"public": "m", "upstream": "u"}]},
+                actor=self.ctx,
+            )
+        self.assertNotIn("svc", self.store.get_service_registry().get("services", {}))
 
 
 if __name__ == "__main__":

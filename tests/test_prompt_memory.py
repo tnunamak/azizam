@@ -43,14 +43,26 @@ def test_get_person_prompts_batches_visible_rows(tmp_path):
     assert records["img_a"]["prompt_text"] == "first"
 
 
-def test_safe_put_fails_closed_without_logging_prompt(monkeypatch):
-    def fail(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+def test_safe_put_fails_closed_without_logging_prompt(monkeypatch, caplog, capsys):
+    import logging
+
+    prompt = "private-prompt-log-canary-519b"
+    metadata = "private-workflow-log-canary-708c"
+
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("locked: " + prompt + " " + metadata)
 
     monkeypatch.setattr(prompt_memory, "put", fail)
-    assert not prompt_memory.safe_put(
-        "img_failed", "person-a", "private prompt", kept_until=None,
-    )
+    with caplog.at_level(logging.DEBUG):
+        result = prompt_memory.safe_put(
+            "img_failed", "person-a", prompt, kept_until=None,
+            metadata={"workflow": metadata},
+        )
+    assert result is False
+    captured = capsys.readouterr()
+    observed = captured.out + captured.err + caplog.text
+    assert prompt not in observed
+    assert metadata not in observed
 
 
 def test_forget_decision_is_enforced_by_storage_route(tmp_path):
@@ -70,7 +82,7 @@ def test_forget_decision_is_enforced_by_storage_route(tmp_path):
     assert decision.reason == "request_forget"
     png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
     source = media_metadata.embed_png_text(png, {"prompt": sentinel, "workflow": sentinel})
-    context = media_delivery.begin(profile_default="none")
+    context = media_delivery.begin(plan_bound="none")
     context.prompt_decision = decision
     context.prompt_text = sentinel
     with patch.object(proxy, "IMAGE_CACHE_DIR", cache), \
@@ -117,7 +129,7 @@ def test_server_purge_deletes_prompts_for_every_person_but_not_media(tmp_path):
 
 
 def test_anonymous_direct_output_keeps_its_profile_mode_but_forget_is_clean():
-    context = media_delivery.begin(profile_default="full")
+    context = media_delivery.begin(plan_bound="full")
     context.prompt_decision = prompt_memory.decide(person_id=None, member=None, household=None, request_body={"prompt": "hello"})
     assert context.mode == "full"
     context.prompt_decision = prompt_memory.decide(
@@ -211,11 +223,6 @@ def test_removed_or_disabled_person_cannot_persist_in_flight_prompt(tmp_path):
     admin_store.init_db(admin_db)
     disabled = admin_store.upsert_oidc_user("iss", "disabled", path=admin_db)
     removed = admin_store.upsert_oidc_user("iss", "removed", path=admin_db)
-    with admin_store._conn(admin_db) as conn:
-        conn.execute(
-            "CREATE TABLE account_access (user_id TEXT PRIMARY KEY, disabled_at INTEGER, removed_at INTEGER)",
-        )
-        conn.commit()
     decisions = {
         user["id"]: prompt_memory.decide_for_person(
             user["id"], {"prompt": "private prompt"}, admin_path=admin_db,
@@ -225,8 +232,8 @@ def test_removed_or_disabled_person_cannot_persist_in_flight_prompt(tmp_path):
     assert all(decision.keep for decision in decisions.values())
     with admin_store._conn(admin_db) as conn:
         conn.executemany(
-            "INSERT INTO account_access(user_id,disabled_at,removed_at) VALUES(?,?,?)",
-            [(disabled["id"], 100, None), (removed["id"], None, 100)],
+            "UPDATE account_access SET disabled_at = ?, removed_at = ? WHERE user_id = ?",
+            [(100, None, disabled["id"]), (None, 100, removed["id"])],
         )
         conn.commit()
 

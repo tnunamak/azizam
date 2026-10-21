@@ -11,6 +11,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 import httpx
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.admin_api import AdminContext
@@ -24,7 +25,7 @@ from tests.test_video_list_delete_remix import _FakeVideoAsyncClient, _StubListR
 
 
 def _auth(app_id, person_id, key):
-    identity = proxy.AuthIdentity(name="Try", key_hash=key, app_id=app_id, person_id=person_id)
+    identity = auth_identity(name="Try", key_hash=key, app_id=app_id, person_id=person_id)
     return proxy.AuthContext(identity=identity)
 
 
@@ -34,7 +35,7 @@ def test_same_app_other_person_can_read_media_but_not_video_prompt(tmp_path, mon
     media_jobs.init_db(jobs_db)
     member = admin_store.upsert_oidc_user("test", "member", path=admin_db)
     owner = admin_store.upsert_oidc_user("test", "owner", path=admin_db)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=admin_db)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=admin_db)
     member_auth = _auth(app["id"], member["id"], "sha256:member")
     owner_auth = _auth(app["id"], owner["id"], "sha256:owner")
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", admin_db)
@@ -51,14 +52,14 @@ def test_same_app_other_person_can_read_media_but_not_video_prompt(tmp_path, mon
     client = _FakeVideoAsyncClient(history={"private": _succeeded_history_entry()})
     with patch.object(proxy.httpx, "AsyncClient", lambda **_kw: client):
         video_id = proxy._video_id_from_prompt_id("private")
-        own = asyncio.run(proxy.proxy_comfy_video_status(video_id, member_auth))
-        other = asyncio.run(proxy.proxy_comfy_video_status(video_id, owner_auth))
+        own = asyncio.run(proxy.proxy_graph_video_status(video_id, member_auth))
+        other = asyncio.run(proxy.proxy_graph_video_status(video_id, owner_auth))
     assert own.status_code == other.status_code == 200
     assert json.loads(own.body)["prompt"] == "member-secret-prompt"
     assert json.loads(other.body)["prompt"] is None
     with patch.object(proxy.httpx, "AsyncClient", lambda **_kw: client):
-        own_list = asyncio.run(proxy.proxy_comfy_video_list(_StubListRequest(), member_auth))
-        other_list = asyncio.run(proxy.proxy_comfy_video_list(_StubListRequest(), owner_auth))
+        own_list = asyncio.run(proxy.proxy_graph_video_list(_StubListRequest(), member_auth))
+        other_list = asyncio.run(proxy.proxy_graph_video_list(_StubListRequest(), owner_auth))
     assert json.loads(own_list.body)["data"][0]["prompt"] == "member-secret-prompt"
     assert json.loads(other_list.body)["data"][0]["prompt"] is None
 
@@ -81,7 +82,7 @@ def test_personal_key_must_be_minted_by_its_own_app_owner(tmp_path):
     admin_store.init_db(path)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
     owner = admin_store.upsert_oidc_user("test", "owner", path=path)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=path)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
     session = AdminSession(subject=member["id"], role="none", email=None, issued_at=1, expires_at=4_000_000_000)
     member_key = mint_user_app_key(session, app["id"], path=path)
     store = AdminSQLiteStore(path)
@@ -107,7 +108,7 @@ def test_new_output_from_owner_key_is_not_saved_as_the_app_owner(tmp_path, monke
     admin_store.init_db(path)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
     owner = admin_store.upsert_oidc_user("test", "owner", path=path)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=path)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
     key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(
         subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
@@ -139,7 +140,7 @@ def test_signed_full_metadata_checks_creator_on_same_app(tmp_path, monkeypatch):
     media_jobs.init_db(jobs_db)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
     owner = admin_store.upsert_oidc_user("test", "owner", path=path)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=path)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
     member_auth = _auth(app["id"], member["id"], "sha256:member")
     owner_auth = _auth(app["id"], owner["id"], "sha256:owner")
     unknown_auth = _auth(app["id"], None, "sha256:legacy")
@@ -167,8 +168,7 @@ def test_signed_full_metadata_checks_creator_on_same_app(tmp_path, monkeypatch):
         else:
             assert b"full-metadata-secret" not in response.content
     monkeypatch.setattr(proxy, "_oidc_session_from_request", lambda *_a: SimpleNamespace(subject=member["id"]))
-    for auth, expected in ((proxy.AuthContext(identity=proxy._identity_for("lan-bypass", "lan")), 200),
-                           (owner_auth, 403), (unknown_auth, 403)):
+    for auth, expected in ((owner_auth, 403), (unknown_auth, 403)):
         monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, _auth=auth, **_kw: _auth)
         response = client.get(f"/v1/assets/{asset_id}/content?expires={expires}&md=full&sig={sig}")
         assert response.status_code == expected
@@ -196,7 +196,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     media_jobs.init_db(jobs_db)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
     owner = admin_store.upsert_oidc_user("test", "owner", path=path)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=path)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
     member_auth = _auth(app["id"], member["id"], "sha256:member")
     owner_auth = _auth(app["id"], owner["id"], "sha256:owner")
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
@@ -226,7 +226,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
         "prompt": "video-full-secret", "workflow": "video-full-workflow-secret",
     })
     for auth, expected in ((member_auth, 200), (owner_auth, 403), (_auth(app["id"], None, "sha256:old"), 403)):
-        response = asyncio.run(proxy.proxy_comfy_video_content(
+        response = asyncio.run(proxy.proxy_graph_video_content(
             proxy._video_id_from_prompt_id("private"), auth, metadata_mode="full", index_library=False,
         ))
         assert response.status_code == expected, response.body
@@ -242,7 +242,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy.media_metadata, "strip_metadata", lambda data, *_a, **_kw: b"clean-video")
     saved_before = prompt_memory.get("video_private", member["id"])
-    internal = asyncio.run(proxy.proxy_comfy_video_content(
+    internal = asyncio.run(proxy.proxy_graph_video_content(
         proxy._video_id_from_prompt_id("private"), member_auth, metadata_mode="none", index_library=False,
     ))
     assert internal.status_code == 200, internal.body
@@ -254,7 +254,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     assert "asset_id" not in proxy._video_job_records["private"]
     proxy._begin_media_delivery(owner_auth)
     try:
-        response = asyncio.run(proxy.proxy_comfy_video_content(
+        response = asyncio.run(proxy.proxy_graph_video_content(
             proxy._video_id_from_prompt_id("private"), owner_auth, metadata_mode="none",
         ))
     finally:
@@ -307,14 +307,20 @@ def test_delete_person_before_preserves_later_and_other_person_responses(tmp_pat
 
 
 def test_home_identity_uses_session_person_or_personal_app_owner_key(tmp_path):
-    from gateway.home_api import _identity
+    from gateway import accounts
+    from gateway.home_api import _identity, _new_app_identity
+    from tests.support.access import store_plan
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    native = _identity({}, None, None, path, person_id="native-person")
-    assert native.person_id == "native-person"
-    other_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"created_by": "owner", "hash": "sha256:key"},
-                              None, path, person_id="native-person")
+    accounts.initialize(path)
+    person = admin_store.upsert_oidc_user("iss", "native", path=path)
+    accounts.change_person(person["id"], "test", path=path, plan_id=store_plan("Everything", path=path)["id"])
+    native = _new_app_identity(path, person_id=person["id"])
+    assert native.person_id == person["id"]
+    app = admin_store.create_app("member-app", kind="personal", owner_user_id=person["id"], access_plan="person", path=path)
+    other_creator = _identity(app, {"created_by": "owner", "hash": "sha256:key"}, path, person_id=person["id"])
     assert other_creator.person_id is None
-    unknown_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"hash": "sha256:old"},
-                                None, path, person_id="native-person")
+    unknown_creator = _identity(app, {"hash": "sha256:old"}, path, person_id=person["id"])
     assert unknown_creator.person_id is None
+    own_key = _identity(app, {"created_by": person["id"], "hash": "sha256:mine"}, path, person_id=person["id"])
+    assert own_key.person_id == person["id"]

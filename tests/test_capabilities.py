@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 import yaml  # noqa: E402
 
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.capabilities import (  # noqa: E402
     UNREVIEWED_WORKFLOW_CAVEAT,
     Capability,
@@ -25,15 +26,7 @@ from gateway.capabilities import (  # noqa: E402
 
 
 from gateway.discovery import WorkflowRegistry  # noqa: E402
-from gateway.policy import (  # noqa: E402
-    ALLOWED,
-    DENIED,
-    AppProfile,
-    CapabilitySelector,
-    PolicyDecision,
-    PolicyRequest,
-    evaluate,
-)
+from gateway.policy import ALLOWED, DENIED, PolicyDecision, PolicyRequest, evaluate
 
 
 CHAT_WORKFLOW_YAML = textwrap.dedent(
@@ -407,12 +400,9 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertTrue(viewed.available)
 
     def test_capability_with_policy_view_uses_profile_evaluator(self) -> None:
-        profile = AppProfile(
-            id="image-agent",
-            backends=frozenset({"comfyui.local"}),
-        )
+        profile = access(plan_for("image-agent", caps=("image",)))
         permitted = Capability(intent="image.edit", backend="comfyui.local")
-        denied = Capability(intent="image.edit", backend="cloud.openai")
+        denied = Capability(intent="chat.completions", backend="llama.cpp")
 
         permitted_view = capability_with_policy_view(permitted, profile)
         denied_view = capability_with_policy_view(denied, profile)
@@ -420,18 +410,10 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertTrue(permitted_view.policy_available)
         self.assertFalse(denied_view.policy_available)
         self.assertFalse(denied_view.available)
-        self.assertIn("profile:image-agent", denied_view.policy_sources)
+        self.assertIn("access_plan:image-agent", denied_view.policy_sources)
 
     def test_capability_with_policy_view_passes_metadata_selectors(self) -> None:
-        profile = AppProfile(
-            id="family-chat",
-            allow=CapabilitySelector(
-                intents=frozenset({"chat.completions"}),
-                exposure=frozenset({"default"}),
-                trust_tiers=frozenset({"stable"}),
-                resource_tiers=frozenset({"interactive"}),
-            ),
-        )
+        profile = access(plan_for("family-chat", caps=("chat",)))
         permitted = Capability(
             intent="chat.completions",
             backend="llama.cpp",
@@ -454,10 +436,7 @@ class PolicyIntegrationTests(unittest.TestCase):
     def test_capability_with_policy_view_honors_explicit_request(self) -> None:
         # Caller wants to layer cloud-fallback policy on top of capability
         # identity. The profile permits the backend but blocks cloud fallback.
-        profile = AppProfile(
-            id="local-only",
-            backends=frozenset({"cloud.openai"}),
-        )
+        profile = access(plan_for("local-only"))
         cap = Capability(intent="chat.generate", backend="cloud.openai")
         request = PolicyRequest(
             backend="cloud.openai", requires_cloud_fallback=True
@@ -465,7 +444,7 @@ class PolicyIntegrationTests(unittest.TestCase):
         view = capability_with_policy_view(cap, profile, request=request)
         self.assertFalse(view.policy_available)
         self.assertTrue(
-            any("cloud fallback" in r for r in view.policy_reasons),
+            any("when the engine is unavailable" in r for r in view.policy_reasons),
             view.policy_reasons,
         )
 
@@ -479,15 +458,13 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertEqual(cap.policy_reasons, ())
 
     def test_default_profile_denies_cloud_capability_view(self) -> None:
-        from gateway.policy import DEFAULT_PROFILE
-
         cap = Capability(intent="chat.generate", backend="cloud.openai")
         request = PolicyRequest(
             backend="cloud.openai", requires_cloud_fallback=True
         )
-        view = capability_with_policy_view(cap, DEFAULT_PROFILE, request=request)
+        view = capability_with_policy_view(cap, access(plan_for("default-local")), request=request)
         # Verify evaluator integration matches the policy module's behavior.
-        direct = evaluate(DEFAULT_PROFILE, request)
+        direct = evaluate(access(plan_for("default-local")), request)
         self.assertEqual(direct.decision, DENIED)
         self.assertFalse(view.policy_available)
 

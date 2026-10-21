@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway.discovery_metadata import (  # noqa: E402
     build_public_protocols,
     build_public_recipes,
@@ -189,7 +192,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         )
         self.assertEqual(metadata["links"]["login"], "/login")
         self.assertEqual(metadata["links"]["user_portal"], "/")
-        self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
+        self.assertNotIn("user_portal_alias", metadata["links"])
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
         self.assertEqual(metadata["links"]["user_apps"], "/me/api/apps")
         self.assertEqual(metadata["links"]["user_app"], "/me/api/apps/{app_id}")
@@ -366,7 +369,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/ollama/api", text)
         self.assertIn("/gateway/v1/providers/{provider}/{path...}", text)
         self.assertIn("native_passthrough", text)
-        self.assertIn("no root Tabby shim", text)
+        self.assertNotIn("Tabby", text)
         self.assertIn("unsupported_operation", text)
         self.assertIn("create/pull/push/copy/delete", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)
@@ -378,6 +381,18 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
 class TestLiveDiscoveryRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
+
+    def test_discovery_lists_the_mcp_server_tools_the_server_exposes(self) -> None:
+        from gateway import mcp_server
+
+        mcp = self.client.get("/.well-known/azizam").json()["mcp"]
+        self.assertTrue(mcp["url"].endswith("/mcp"))
+        self.assertEqual(mcp["transport"], "streamable-http")
+        self.assertEqual(
+            [tool["name"] for tool in mcp["tools"]],
+            [tool["name"] for tool in mcp_server.TOOLS],
+        )
+        self.assertTrue(all(tool["description"] for tool in mcp["tools"]))
 
     def assert_public_origin(self, origin: str, *, headers: dict[str, str]) -> None:
         metadata = self.client.get("/.well-known/azizam", headers=headers).json()
@@ -422,16 +437,13 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
                 "x-forwarded-proto": "https",
             })
 
-    def test_root_serves_user_portal(self) -> None:
+    def test_root_is_the_web_app_and_firehose_is_gone(self) -> None:
+        # The sandbox has no web build, so the root page explains that instead.
         response = self.client.get("/", follow_redirects=False)
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
-        self.assertIn("Azizam", response.text)
-
-    def test_legacy_firehose_redirects_to_technical_status(self) -> None:
-        response = self.client.get("/firehose", follow_redirects=False)
-        self.assertEqual(response.status_code, 301, response.text)
-        self.assertEqual(response.headers["location"], "/status/raw")
+        self.assertIn(response.status_code, {200, 503}, response.text)
+        self.assertNotEqual(response.status_code // 100, 3)
+        legacy = self.client.get("/firehose", headers={"accept": "application/json"}, follow_redirects=False)
+        self.assertNotEqual(legacy.status_code // 100, 3)
 
     def test_well_known_azizam_is_public(self) -> None:
         response = self.client.get("/.well-known/azizam")
@@ -441,27 +453,17 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["service"]["product"], "Azizam")
         self.assertEqual(body["service"]["canonical_host"], "http://testserver")
         self.assertEqual(body["links"]["user_portal"], "/")
-        self.assertEqual(body["links"]["user_portal_alias"], "/me")
         self.assertEqual(body["links"]["media_jobs"], "/gateway/v1/media/jobs")
         self.assertEqual(
             body["absolute_links"]["user_portal"],
             "http://testserver/",
         )
-        self.assertEqual(
-            body["absolute_links"]["user_portal_alias"],
-            "http://testserver/me",
-        )
+        self.assertNotIn("user_portal_alias", body["absolute_links"])
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
-    def test_user_portal_alias_redirects_to_home(self) -> None:
-        response = self.client.get("/me", follow_redirects=False)
-        self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/ui/home/")
-
-    def test_azizam_alias_matches_discovery_shape(self) -> None:
-        response = self.client.get("/.well-known/azizam")
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["object"], "azizam_discovery")
+    def test_old_user_portal_alias_is_gone(self) -> None:
+        response = self.client.get("/me", headers={"accept": "application/json"}, follow_redirects=False)
+        self.assertNotEqual(response.status_code // 100, 3)
 
     def test_skill_catalog_and_skill_are_public(self) -> None:
         catalog = self.client.get("/.well-known/skills")
@@ -499,7 +501,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
     # in test_protocol_route_aliases.py. (The auth tier above it is exercised
     # separately by test_unauthenticated_unmapped_path_has_no_enumeration_oracle.)
     def test_unmapped_v1_path_returns_404_not_backend_unavailable(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = self.client.get("/v1/capabilities")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
@@ -507,7 +509,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
     def test_unmapped_non_v1_path_returns_404_not_backend_passthrough(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = self.client.get("/tabby/v1/model")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
@@ -515,7 +517,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
     def test_unmapped_discovery_probes_return_404(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             for path in ("/v1", "/manifest", "/.well-known/openapi"):
                 with self.subTest(path=path):
                     response = self.client.get(path)
@@ -533,7 +535,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         reintroduce the oracle. The semantic-honesty 404 is for clients that
         HAVE passed auth (LAN bypass / valid key); see the routing tests above.
         """
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             real_gated = self.client.get("/v1/chat/completions")
             unmapped = self.client.get("/v1/capabilities")
         self.assertEqual(real_gated.status_code, 401)

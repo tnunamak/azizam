@@ -87,7 +87,7 @@ describe("Library media recovery", () => {
     mount();
     await screen.findByRole("img", { name: "Saved video" });
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Saved video" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved video, ") }),
     );
     const dialog = screen.getByRole("dialog");
     await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
@@ -127,6 +127,15 @@ describe("Library media recovery", () => {
     expect(
       await screen.findByRole("button", { name: "Refresh library" }),
     ).toBeVisible();
+  });
+  it("HL-04 refreshes the list from the unavailable-item notice without opening anything", async () => {
+    mockAssets([{ ...image, available: false }]);
+    mount();
+    const listRequests = () =>
+      vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/me/api/media?")).length;
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    await waitFor(() => expect(listRequests()).toBeGreaterThan(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
   it("HL-04 clears an old URL error after fresh signed metadata arrives", async () => {
     let renew!: (value: Response) => void;
@@ -203,7 +212,7 @@ describe("Library media recovery", () => {
     );
     await screen.findByRole("alert");
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     const count = requests.filter(
       (path) => path.startsWith("/me/api/media?") && !path.includes("cursor="),
@@ -212,7 +221,7 @@ describe("Library media recovery", () => {
       screen.getByRole("button", { name: /Load more|Retry/i }),
     );
     expect(
-      await screen.findByRole("button", { name: "Open Second image" }),
+      await screen.findByRole("button", { name: (name) => name.startsWith("Open Second image, ") }),
     ).toBeVisible();
     expect(
       requests.filter(
@@ -230,14 +239,14 @@ describe("Library media recovery", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const { client } = mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     fail = true;
     await act(async () => {
       await client.refetchQueries({ queryKey: ["library"] });
     });
     await screen.findByRole("alert");
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     fail = false;
     await userEvent.click(
@@ -258,7 +267,7 @@ describe("Library media recovery", () => {
       ),
     );
     const { container } = mount();
-    await screen.findByRole("button", { name: "Open Saved video" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
     expect(container.querySelector("video")).toBeNull();
     resolvePoster(Response.json({ download_url: "/poster.png" }));
     expect(
@@ -277,15 +286,15 @@ describe("Library media recovery", () => {
       ),
     );
     mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     fireEvent.change(screen.getByPlaceholderText("Search your creations"), {
       target: { value: "unavailable search" },
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The gateway couldn’t refresh your library. Try again.",
+      "We couldn’t refresh your library. Try again.",
     );
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
   });
   it("HL-06 defers offscreen posterless video sources", async () => {
@@ -309,7 +318,7 @@ describe("Library media recovery", () => {
     );
     mockAssets([{ ...video, poster_asset_id: null }]);
     const { container } = mount();
-    await screen.findByRole("button", { name: "Open Saved video" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
     expect(container.querySelector("video[src]")).toBeNull();
     act(() =>
       enter(
@@ -348,7 +357,7 @@ describe("Library media recovery", () => {
     await screen.findByRole("button", { name: "Play Saved image" });
     expect(container.querySelector("audio")).toHaveAttribute("preload", "none");
   });
-  it("HL-06 observes the same card after a pending poster fails offscreen", async () => {
+  it("HL-06 requests no poster link until the card is near the screen, then recovers from a failed poster", async () => {
     let enter!: IntersectionObserverCallback;
     let observed!: Element;
     vi.stubGlobal(
@@ -363,25 +372,23 @@ describe("Library media recovery", () => {
         disconnect() {}
       },
     );
-    let rejectPoster!: (error: Error) => void;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
-        String(input).includes("/poster/download")
-          ? new Promise<Response>((_resolve, reject) => {
-              rejectPoster = reject;
-            })
-          : Response.json({ assets: [video], next_cursor: null }),
-      ),
+    let rejectPoster: ((error: Error) => void) | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("/poster/download")
+        ? new Promise<Response>((_resolve, reject) => {
+            rejectPoster = reject;
+          })
+        : Response.json({ assets: [video], next_cursor: null }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const { container } = mount();
-    await screen.findByRole("status", { name: "Loading video poster" });
+    // Off-screen, no poster request is in flight, so no loader is shown.
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
+    expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
     const cardWrapper = observed;
-    await act(async () => rejectPoster(new Error("Poster unavailable")));
-    await waitFor(() =>
-      expect(container.querySelector("video")).not.toHaveAttribute("src"),
-    );
-    expect(cardWrapper.isConnected).toBe(true);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes("/poster/download")),
+    ).toHaveLength(0);
     act(() =>
       enter(
         [
@@ -393,6 +400,10 @@ describe("Library media recovery", () => {
         {} as IntersectionObserver,
       ),
     );
+    await waitFor(() => expect(rejectPoster).toBeDefined());
+    expect(await screen.findByRole("status", { name: "Loading video poster" })).toBeVisible();
+    await act(async () => rejectPoster!(new Error("Poster unavailable")));
+    expect(cardWrapper.isConnected).toBe(true);
     await waitFor(() =>
       expect(container.querySelector("video")).toHaveAttribute(
         "src",
@@ -412,7 +423,7 @@ describe("Library media recovery", () => {
       }),
     );
     mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     const input = screen.getByPlaceholderText("Search your creations");
     for (const value of ["a", "ab", "abc"])
       fireEvent.change(input, { target: { value } });
@@ -421,7 +432,7 @@ describe("Library media recovery", () => {
       expect(requests.filter((row) => row.path.includes("q="))).toHaveLength(1),
     );
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     const stale = requests.find((row) => row.path.includes("q=abc"))!;
     fireEvent.change(input, { target: { value: "abcd" } });
@@ -435,15 +446,16 @@ describe("Library media recovery", () => {
       { ...image, asset_id: "audio", kind: "audio", prompt: audioPrompt },
     ]);
     mount();
-    // Every tile's hover title is a short whole-word title on up to two
-    // lines (D1.5: audio tiles carry no words of their own).
+    // A picture's hover title is a short whole-word title on up to two
+    // lines; a playable audio tile carries no words of its own (PF-070).
     expect(
-      await screen.findByRole("button", { name: `Open ${prompt}` }),
+      await screen.findByRole("button", { name: (name) => name.startsWith(`Open ${prompt}, `) }),
     ).toBeVisible();
     expect(screen.getByText(`X${"x".repeat(55)}…`)).toHaveClass("line-clamp-2");
-    expect(screen.getByText(`Y${"y".repeat(55)}…`)).toHaveClass("line-clamp-2");
+    expect(screen.queryByText(`Y${"y".repeat(55)}…`)).toBeNull();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith(`Open ${audioPrompt}, `) })).toBeVisible();
     await userEvent.click(
-      screen.getByRole("button", { name: `Open ${prompt}` }),
+      screen.getByRole("button", { name: (name) => name.startsWith(`Open ${prompt}, `) }),
     );
     for (const text of within(screen.getByRole("dialog")).getAllByText(prompt))
       expect(text).toHaveClass("break-words");

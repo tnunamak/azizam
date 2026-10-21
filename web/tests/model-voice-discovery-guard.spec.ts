@@ -9,7 +9,7 @@ const selectionVariable = /^(?:model|voice|modelId|voiceId|selectedModel|selecte
 
 // These are capability names or UI labels, not selected model or voice IDs.
 const capabilityMaps: Record<string, string[]> = {
-  "app/home/presentation.ts": ["names"],
+  "app/_home/presentation.ts": ["names"],
   "app/people/people-api.ts": ["labels", "INVITEE_TASKS"],
   "app/try/page.tsx": ["CAPABILITY_TABS"],
   "app/usage/page.tsx": ["requestNouns"],
@@ -185,13 +185,15 @@ function hardcodedSelections(source: string, file: string): string[] {
   return findings;
 }
 
+// Parses every source file, so its time grows with the tree: 2.8-4.8 s alone,
+// and past the 5 s default beside the release gate's web build.
 it("checks known model/voice sinks with a limited local syntactic guard", () => {
   const findings = sourceFiles(sourceRoot).flatMap((path) => {
     const file = relative(sourceRoot, path);
     return hardcodedSelections(readFileSync(path, "utf8"), file);
   });
   expect(findings).toEqual([]);
-});
+}, 15000);
 
 it("catches new model and voice literals without an ID denylist", () => {
   const findings = hardcodedSelections(`

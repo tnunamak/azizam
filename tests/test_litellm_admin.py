@@ -1,200 +1,150 @@
-"""Unit tests for the thin LiteLLM virtual-key admin client.
+"""The thin LiteLLM virtual-key admin client against a fake sidecar /key/* API.
 
-These pin the transport contract against the sidecar /key/* API: master-key
-auth header, request shapes, response normalization, and the typed error
-mapping the admin endpoints rely on. httpx is faked so no sidecar is required.
+These pin the transport contract: master-key auth header, request shapes,
+response normalization, and the typed error mapping the admin endpoints rely
+on. The real client talks over httpx to the FK litellm-admin protocol fake; a
+call the fake does not expect fails the test at teardown.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-import sys
-import unittest
-from pathlib import Path
-from unittest.mock import patch
+from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+import pytest
 
-from gateway.backends.llm_execution import LiteLlmRuntimeConfig  # noqa: E402
-from gateway.backends.litellm_admin import (  # noqa: E402
-    LiteLLMAdminError,
-    LiteLLMKeyAdminClient,
-)
+from gateway.backends.llm_execution import LiteLlmRuntimeConfig
+from gateway.backends.litellm_admin import LiteLLMAdminError, LiteLLMKeyAdminClient
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, scenario_from_data  # noqa: F401
+
+MASTER_KEY = "sk-master"
+PROVENANCE = {"source": "hand-written", "reference": "https://docs.litellm.ai/docs/proxy/virtual_keys"}
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload, *, raw: bytes | None = None):
-        self.status_code = status_code
-        if raw is not None:
-            self.content = raw
-            self._payload = None
-        else:
-            body = json.dumps(payload).encode("utf-8")
-            self.content = body
-            self._payload = payload
-
-    def json(self):
-        if self._payload is None:
-            return json.loads(self.content.decode("utf-8"))
-        return self._payload
+def _sidecar(fakes: FakeUpstreams, method: str, path: str, response: dict, *, query: dict | None = None) -> FakeUpstream:
+    match: dict[str, Any] = {"method": method, "path": path, "headers": {"x-litellm-key": f"Bearer {MASTER_KEY}"}}
+    if query is not None:
+        match["query"] = query
+    scenario = scenario_from_data({
+        "protocol": "litellm-admin", "name": f"admin-{method.lower()}{path.replace('/', '-')}", "provenance": PROVENANCE,
+        "exchanges": [{"id": "call", "match": match, "response": response}],
+    })
+    return fakes.asgi(scenario, host="litellm.fk.test")
 
 
-class _FakeAsyncClient:
-    """Captures the request and returns a queued response."""
-
-    captured: list[dict] = []
-
-    def __init__(self, response, *, error: Exception | None = None):
-        self._response = response
-        self._error = error
-
-    def __call__(self, *args, **kwargs):
-        # httpx.AsyncClient(timeout=...) -> instance; our patch target is the
-        # class, so calling it returns self.
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def request(self, method, url, *, headers=None, content=None):
-        type(self).captured.append(
-            {
-                "method": method,
-                "url": url,
-                "headers": headers or {},
-                "content": content,
-            }
-        )
-        if self._error is not None:
-            raise self._error
-        return self._response
+def _client(base_url: str = "http://litellm.fk.test", *, enabled: bool = True, api_key: str = MASTER_KEY) -> LiteLLMKeyAdminClient:
+    return LiteLLMKeyAdminClient(LiteLlmRuntimeConfig(enabled=enabled, base_url=base_url, api_key=api_key, service_id="litellm"))
 
 
-def _client(*, enabled=True, base_url="http://127.0.0.1:4011", api_key="sk-master"):
-    cfg = LiteLlmRuntimeConfig(
-        enabled=enabled, base_url=base_url, api_key=api_key, service_id="litellm"
-    )
-    return LiteLLMKeyAdminClient(cfg)
+def test_list_keys_sends_master_key_and_normalizes(fake_upstreams) -> None:
+    fake = _sidecar(fake_upstreams, "GET", "/key/list", {"json": {"keys": [{"key_name": "sk-...abcd", "key_alias": "batch", "spend": 1.5}]}},
+                    query={"page": "1", "size": "100", "return_full_object": "true"})
+
+    keys = asyncio.run(_client().list_keys())
+
+    assert keys == [{"key_name": "sk-...abcd", "key_alias": "batch", "spend": 1.5}]
+    [call] = fake.calls("call")
+    assert call.headers["content-type"] == "application/json" and call.headers["accept"] == "application/json"
 
 
-def _patch_httpx(response=None, *, error=None):
-    fake = _FakeAsyncClient(response, error=error)
-    _FakeAsyncClient.captured = []
-    return patch("gateway.backends.litellm_admin.httpx.AsyncClient", fake)
+def test_list_keys_accepts_bare_list(fake_upstreams) -> None:
+    _sidecar(fake_upstreams, "GET", "/key/list", {"json": [{"key_alias": "x"}]})
+    assert asyncio.run(_client().list_keys()) == [{"key_alias": "x"}]
 
 
-class LiteLLMKeyAdminClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_list_keys_sends_master_key_and_normalizes(self) -> None:
-        resp = _FakeResponse(
-            200,
-            {"keys": [{"key_name": "sk-...abcd", "key_alias": "batch", "spend": 1.5}]},
-        )
-        with _patch_httpx(resp):
-            keys = await _client().list_keys()
-        self.assertEqual(len(keys), 1)
-        self.assertEqual(keys[0]["key_alias"], "batch")
-        req = _FakeAsyncClient.captured[0]
-        self.assertEqual(req["method"], "GET")
-        self.assertIn("/key/list", req["url"])
-        self.assertEqual(req["headers"]["X-Litellm-Key"], "Bearer sk-master")
-
-    async def test_list_keys_accepts_bare_list(self) -> None:
-        resp = _FakeResponse(200, [{"key_alias": "x"}])
-        with _patch_httpx(resp):
-            keys = await _client().list_keys()
-        self.assertEqual(keys[0]["key_alias"], "x")
-
-    async def test_list_keys_coerces_string_rows(self) -> None:
-        resp = _FakeResponse(200, {"keys": ["sk-abc123"]})
-        with _patch_httpx(resp):
-            keys = await _client().list_keys()
-        self.assertEqual(keys[0]["token"], "sk-abc123")
-
-    async def test_generate_key_returns_secret_and_posts_spec(self) -> None:
-        resp = _FakeResponse(200, {"key": "sk-new-secret", "key_alias": "batch"})
-        with _patch_httpx(resp):
-            created = await _client().generate_key({"key_alias": "batch", "max_budget": 5.0})
-        self.assertEqual(created["key"], "sk-new-secret")
-        req = _FakeAsyncClient.captured[0]
-        self.assertEqual(req["method"], "POST")
-        self.assertIn("/key/generate", req["url"])
-        sent = json.loads(req["content"].decode("utf-8"))
-        self.assertEqual(sent["key_alias"], "batch")
-        self.assertEqual(sent["max_budget"], 5.0)
-
-    async def test_generate_key_without_key_field_is_error(self) -> None:
-        resp = _FakeResponse(200, {"key_alias": "batch"})  # no "key"
-        with _patch_httpx(resp):
-            with self.assertRaises(LiteLLMAdminError) as ctx:
-                await _client().generate_key({"key_alias": "batch"})
-        self.assertEqual(ctx.exception.code, "litellm_bad_response")
-
-    async def test_delete_keys_posts_keys(self) -> None:
-        resp = _FakeResponse(200, {"deleted_keys": ["sk-1"]})
-        with _patch_httpx(resp):
-            result = await _client().delete_keys(keys=["sk-1"])
-        self.assertEqual(result["deleted_keys"], ["sk-1"])
-        sent = json.loads(_FakeAsyncClient.captured[0]["content"].decode("utf-8"))
-        self.assertEqual(sent["keys"], ["sk-1"])
-
-    async def test_delete_without_keys_or_aliases_raises(self) -> None:
-        # No transport call should happen.
-        with self.assertRaises(LiteLLMAdminError) as ctx:
-            await _client().delete_keys()
-        self.assertEqual(ctx.exception.status_code, 400)
-
-    async def test_disabled_substrate_raises_unconfigured(self) -> None:
-        with self.assertRaises(LiteLLMAdminError) as ctx:
-            await _client(enabled=False).list_keys()
-        self.assertEqual(ctx.exception.code, "litellm_unconfigured")
-        self.assertEqual(ctx.exception.status_code, 503)
-
-    async def test_missing_master_key_raises_unconfigured_without_transport(self) -> None:
-        # A base_url is wired but no master key is configured. The /key/* API is
-        # master-key protected, so the client must fail with an actionable
-        # "unconfigured" error BEFORE building an illegal "Bearer " (empty token)
-        # header that httpx would reject as a transport error -- which used to
-        # surface to the operator as a confusing "unreachable" 503. No transport
-        # call should be attempted, so we leave httpx unpatched.
-        with self.assertRaises(LiteLLMAdminError) as ctx:
-            await _client(api_key="").list_keys()
-        self.assertEqual(ctx.exception.code, "litellm_unconfigured")
-        self.assertEqual(ctx.exception.status_code, 503)
-        self.assertIn("master key", ctx.exception.message.lower())
-
-    async def test_unreachable_sidecar_maps_to_503(self) -> None:
-        import httpx
-
-        with _patch_httpx(None, error=httpx.ConnectError("refused")):
-            with self.assertRaises(LiteLLMAdminError) as ctx:
-                await _client().list_keys()
-        self.assertEqual(ctx.exception.code, "litellm_unreachable")
-        self.assertEqual(ctx.exception.status_code, 503)
-
-    async def test_master_key_rejected_maps_to_auth_failed(self) -> None:
-        resp = _FakeResponse(401, {"error": {"message": "bad key"}})
-        with _patch_httpx(resp):
-            with self.assertRaises(LiteLLMAdminError) as ctx:
-                await _client().list_keys()
-        self.assertEqual(ctx.exception.code, "litellm_admin_auth_failed")
-        self.assertEqual(ctx.exception.upstream_status, 401)
-
-    async def test_upstream_error_surfaces_message(self) -> None:
-        resp = _FakeResponse(400, {"error": {"message": "no such team"}})
-        with _patch_httpx(resp):
-            with self.assertRaises(LiteLLMAdminError) as ctx:
-                await _client().generate_key({"team_id": "ghost"})
-        self.assertEqual(ctx.exception.code, "litellm_key_api_error")
-        self.assertIn("no such team", ctx.exception.message)
-
-    async def test_enabled_property_requires_base_url(self) -> None:
-        self.assertFalse(_client(base_url="").enabled)
-        self.assertTrue(_client().enabled)
+def test_list_keys_coerces_string_rows(fake_upstreams) -> None:
+    _sidecar(fake_upstreams, "GET", "/key/list", {"json": {"keys": ["sk-abc123"]}})
+    assert asyncio.run(_client().list_keys()) == [{"token": "sk-abc123", "key_name": "sk-abc123"}]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_generate_key_returns_secret_and_posts_spec(fake_upstreams) -> None:
+    fake = _sidecar(fake_upstreams, "POST", "/key/generate", {"json": {"key": "sk-new-secret", "key_alias": "batch"}})
+
+    created = asyncio.run(_client().generate_key({"key_alias": "batch", "max_budget": 5.0}))
+
+    assert created == {"key": "sk-new-secret", "key_alias": "batch"}
+    [call] = fake.calls("call")
+    assert call.json == {"key_alias": "batch", "max_budget": 5.0}
+
+
+def test_generate_key_without_key_field_is_error(fake_upstreams) -> None:
+    _sidecar(fake_upstreams, "POST", "/key/generate", {"json": {"key_alias": "batch"}})
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client().generate_key({"key_alias": "batch"}))
+
+    assert (error.value.status_code, error.value.code) == (502, "litellm_bad_response")
+
+
+def test_delete_keys_posts_keys(fake_upstreams) -> None:
+    fake = _sidecar(fake_upstreams, "POST", "/key/delete", {"json": {"deleted_keys": ["sk-1"]}})
+
+    result = asyncio.run(_client().delete_keys(keys=["sk-1"]))
+
+    assert result == {"deleted_keys": ["sk-1"]}
+    [call] = fake.calls("call")
+    assert call.json == {"keys": ["sk-1"]}
+
+
+def test_delete_without_keys_or_aliases_raises_before_any_call(fake_upstreams) -> None:
+    fake = _sidecar(fake_upstreams, "POST", "/key/delete", {"json": {}})
+    fake.waive("call")
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client().delete_keys())
+
+    assert error.value.status_code == 400
+    assert fake.requests == []
+
+
+def test_disabled_substrate_raises_unconfigured_without_a_call() -> None:
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client(enabled=False).list_keys())
+    assert (error.value.code, error.value.status_code) == ("litellm_unconfigured", 503)
+
+
+def test_missing_master_key_raises_unconfigured_without_a_call(fake_upstreams) -> None:
+    """No illegal empty 'Bearer ' header reaches httpx, so this is not reported as 'unreachable'."""
+    fake = _sidecar(fake_upstreams, "GET", "/key/list", {"json": {}})
+    fake.waive("call")
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client(api_key="").list_keys())
+
+    assert (error.value.code, error.value.status_code) == ("litellm_unconfigured", 503)
+    assert "master key" in error.value.message.lower()
+    assert fake.requests == []
+
+
+def test_unreachable_sidecar_maps_to_503(fake_upstreams) -> None:
+    """The peer drops the connection before answering."""
+    _sidecar(fake_upstreams, "GET", "/key/list", {"disconnect_before_headers": True})
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client().list_keys())
+
+    assert (error.value.code, error.value.status_code) == ("litellm_unreachable", 503)
+
+
+def test_master_key_rejected_maps_to_auth_failed(fake_upstreams) -> None:
+    _sidecar(fake_upstreams, "GET", "/key/list", {"status": 401, "json": {"error": {"message": "bad key"}}})
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client().list_keys())
+
+    assert (error.value.code, error.value.status_code, error.value.upstream_status) == ("litellm_admin_auth_failed", 502, 401)
+
+
+def test_upstream_error_surfaces_message(fake_upstreams) -> None:
+    _sidecar(fake_upstreams, "POST", "/key/generate", {"status": 400, "json": {"error": {"message": "no such team"}}})
+
+    with pytest.raises(LiteLLMAdminError) as error:
+        asyncio.run(_client().generate_key({"team_id": "ghost"}))
+
+    assert (error.value.code, error.value.message, error.value.upstream_status) == ("litellm_key_api_error", "LiteLLM key API returned HTTP 400.", 400)
+
+
+def test_enabled_property_requires_base_url() -> None:
+    assert not _client(base_url="").enabled
+    assert _client().enabled

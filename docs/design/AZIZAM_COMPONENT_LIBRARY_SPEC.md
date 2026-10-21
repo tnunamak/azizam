@@ -242,7 +242,7 @@ Rules:
 
 - "Needs attention" without a cause and action is forbidden.
 - Prefer specific copy: "2 services disabled", "Embeddings backend unavailable",
-  "OIDC role mapping has no matching profile".
+  "OIDC role mapping has no matching access plan".
 - If no action exists, omit the action slot.
 
 ### TelemetryCard and MiniSparkline
@@ -315,7 +315,7 @@ Rules:
 
 ### AppAccessRow
 
-Purpose: app/key/profile/user access row for Apps & Access surfaces.
+Purpose: App/key/access-plan/user access row for Apps & Access surfaces.
 
 Brand primitives:
 
@@ -328,10 +328,11 @@ Brand primitives:
 React props:
 
 ```ts
+// Historical prop sketch. The v4 access-plan prop name is UNVERIFIED.
 type AppAccessRowProps = {
   name: string;
   owner?: string;
-  profile?: string;
+  profile?: string; // Historical field name; v4 replacement is UNVERIFIED.
   keyCount?: number;
   lastUsedLabel?: string;
   status?: HealthTone;
@@ -676,7 +677,8 @@ Files:
 - `web/src/app/admin/page.tsx`
 - `web/src/app/admin/apps/page.tsx`
 - `web/src/app/admin/services/page.tsx`
-- `web/src/app/admin/profiles/page.tsx`
+- Access-plan page: the old `web/src/app/admin/profiles/page.tsx` path is
+  historical; the current source path is UNVERIFIED here.
 - `web/src/app/admin/users/page.tsx`
 - `web/src/app/admin/audit/page.tsx`
 - `web/src/app/admin/settings/page.tsx`
@@ -685,7 +687,7 @@ Deliver:
 
 - Overview/status use `SystemHealthBand`, `IncidentBanner`, `TelemetryCard`,
   `ActivityFeedRow`, and `EmptyOperationalState`.
-- Apps/users/profiles use `AppAccessRow`, `FilterToolbar`, `RightContextPanel`,
+- Apps/users/access plans use `AppAccessRow`, `FilterToolbar`, `RightContextPanel`,
   `KeyRevealBlock`, and `CopyField` where applicable.
 - Services use `ServiceHealthRow`, `StatusDotLabel`, `RightContextPanel`, and
   no service-specific wizard language.

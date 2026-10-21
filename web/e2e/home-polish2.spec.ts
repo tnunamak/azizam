@@ -1,12 +1,9 @@
-import {
-  test,
-  expect,
-  type Page,
-  type APIRequestContext,
-} from "@playwright/test";
+import { type Page, type APIRequestContext } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
-import type { HomeSnapshot } from "../src/app/home/home-api";
+import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 test("the real seeded registry agrees on chat readiness across Home and Models", async ({
   page,
@@ -23,7 +20,7 @@ test("the real seeded registry agrees on chat readiness across Home and Models",
   expect(chat.status).toBe("ready");
   expect(model.availability.measured).toBe(true);
   expect(model.availability.available).toBe(true);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(
     page.getByText("Health endpoint did not respond", { exact: true }),
   ).toHaveCount(0);
@@ -69,8 +66,7 @@ async function fixture(
     },
   ];
   await page.route("**/me/api/home", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...home,
         user,
         aliases,
@@ -131,13 +127,12 @@ async function fixture(
             created_at: 1,
             disabled_at: null,
             can_mint_keys: true,
-            profile: null,
+            plan: null,
             credentials: ["chat-key", "image-key"].map((id) => ({
               id,
               subject_kind: "app",
               subject_id: "polish-app",
               app_id: "polish-app",
-              profile_id: null,
               prefix: "fixture",
               display_name: id === "chat-key" ? "Chat access" : "Images only",
               scopes: [],
@@ -159,14 +154,13 @@ async function fixture(
           counts: { total: 3, available: 1, affected: 2 },
         },
         receipts: [],
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/setup-progress", (route) =>
-    route.fulfill({ json: { complete: true, steps: [] } }),
+    fulfilJson(route, { complete: true, steps: [] }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
-    route.fulfill({ json: { assets: [] } }),
+  await page.route("**/me/api/media?limit=12", (route) =>
+    fulfilJson(route, { assets: [] }),
   );
   return home;
 }
@@ -184,7 +178,7 @@ for (const theme of ["light", "dark"] as const) {
         theme,
       );
       await fixture(page, request);
-      await page.goto("/ui/home/");
+      await page.goto("/");
       await expect(page.locator("main")).not.toContainText("Hello,");
       // D1.1: each task row says its own state. The disabled and unavailable
       // capabilities are named on their rows and are not offered as links.
@@ -253,11 +247,11 @@ test("Home omits greeting when the API display name is an email", async ({
   request,
 }) => {
   await fixture(page, request, "tim@example.test");
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(page.locator("main")).not.toContainText("Hello,");
 });
 
-test("one selected and pasted app key scopes all recipes and the gateway check", async ({
+test("one selected and pasted app key scopes the app setup and the gateway check", async ({
   page,
   request,
 }) => {
@@ -265,18 +259,16 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   const checks: unknown[] = [];
   await page.route("**/me/api/connection-test", (route) => {
     checks.push(route.request().postDataJSON());
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         ok: true,
         latency_ms: 25,
         reason: "The selected key reached the gateway.",
         path: "/v1/models",
         model: null,
         request_id: null,
-      },
-    });
+      });
   });
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
   const select = page.getByRole("combobox", { name: "API key" });
   await select.click();
@@ -290,7 +282,13 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     page.getByRole("textbox", { name: "Model", exact: true }),
   ).toHaveValue("default");
   await page.getByRole("button", { name: "Setup notes", exact: true }).click();
-  await expect(page.locator("pre code:visible")).toContainText("default");
+  // Open WebUI is set up in its admin panel: numbered steps, no code snippet.
+  const notes = page.getByRole("dialog", { name: "Setup notes" });
+  await expect(notes.getByRole("listitem").first()).toContainText("Open Admin Panel");
+  await expect(notes.getByRole("link", { name: "Open WebUI docs" })).toHaveAttribute(
+    "href",
+    /^https:\/\//,
+  );
   await page.keyboard.press("Escape");
   await expect(paste).toHaveValue("fixture-chat-secret");
   await page
@@ -339,8 +337,7 @@ test("Home recent media carries content while requests stay in receipts", async 
 }) => {
   const home = await fixture(page, request);
   await page.route("**/me/api/home", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...home,
         receipts: [
           {
@@ -350,12 +347,10 @@ test("Home recent media carries content while requests stay in receipts", async 
             status: "succeeded",
           },
         ],
-      },
-    }),
+      }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
-    route.fulfill({
-      json: {
+  await page.route("**/me/api/media?limit=12", (route) =>
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "polish-audio",
@@ -365,17 +360,16 @@ test("Home recent media carries content while requests stay in receipts", async 
             download_url: "/signed/polish-audio",
           },
         ],
-      },
-    }),
+      }),
   );
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "Recent", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Recent requests", { exact: true })).toHaveCount(
     0,
   );
-  await expect(page.locator('a[href="/r/polish-image-receipt"]')).toHaveCount(
+  await expect(page.locator('a[href="/usage/?receipt=polish-image-receipt"]')).toHaveCount(
     0,
   );
   // D1.5: the audio tile shows a waveform and a play badge; its words are
@@ -399,7 +393,7 @@ test("Home recent media carries content while requests stay in receipts", async 
 test("Home and Library render a frame from posterless video", async ({
   page,
 }) => {
-  const videoBytes = await readFile("src/app/library/preview-test.mp4");
+  const videoBytes = await readFile("e2e/fixtures/preview-test.mp4");
   await page.addInitScript(() => {
     const currentTime = Object.getOwnPropertyDescriptor(
       HTMLMediaElement.prototype,
@@ -419,8 +413,7 @@ test("Home and Library render a frame from posterless video", async ({
     });
   });
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "posterless-video",
@@ -437,15 +430,15 @@ test("Home and Library render a frame from posterless video", async ({
         ],
         models: ["local-video"],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/preview-test.mp4", (route) =>
-    route.fulfill({ body: videoBytes, contentType: "video/mp4" }),
+    fulfilBytes(route, { body: videoBytes, contentType: "video/mp4" }),
   );
 
   for (const route of ["home", "library"]) {
-    await page.goto(`/ui/${route}/`);
+    // Home is the root page; there is no /home/ page.
+    await page.goto(route === "home" ? "/" : `/${route}/`);
     const video = page.locator("main video");
     await expect(video).toBeVisible();
     // Home's tile preloads nothing until it plays; Library's posterless tile
@@ -498,8 +491,7 @@ for (const width of [390, 1440]) {
     const imageUrl =
       "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='teal'/%3E%3C/svg%3E";
     await page.route("**/me/api/media?**", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           assets: [
             {
               asset_id: "empty-prompt",
@@ -515,10 +507,9 @@ for (const width of [390, 1440]) {
             },
           ],
           has_more: false,
-        },
-      }),
+        }),
     );
-    await page.goto("/ui/home/");
+    await page.goto("/");
     await expect(
       page.getByRole("link", { name: "Open Image in Library", exact: true }),
     ).toBeVisible();
@@ -545,8 +536,7 @@ test("Home failed images show a named unavailable preview", async ({
 }) => {
   await fixture(page, request);
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "broken",
@@ -556,13 +546,12 @@ test("Home failed images show a named unavailable preview", async ({
           },
         ],
         has_more: false,
-      },
-    }),
+      }),
   );
   await page.route("**/azizam-home-broken.png", (route) =>
-    route.fulfill({ status: 404, body: "Unavailable" }),
+    fulfilBytes(route, { status: 404, body: "Unavailable" }),
   );
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(
     page.getByRole("img", { name: "Image preview unavailable" }),
   ).toBeVisible();

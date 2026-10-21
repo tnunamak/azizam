@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
+from gateway import private_tmp, request_forms
 from gateway.custom_voices import (
     VOICE_ID_RE,
     VoiceError,
@@ -55,7 +56,9 @@ class VoiceApiDeps:
     enforce_policy: Callable[[Any, str], Response | None]
     owner_of: Callable[[Any], str | None]
     probe_quality: Callable[[Path], Awaitable[dict[str, Any] | None]]
-    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (OmniVoice instruct, script, seed) -> WAV bytes
+    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (engine instruction, script, seed) -> WAV bytes
+    design_settings: Callable[[], Mapping[str, Any] | None]     # the design engine's ``voice_design`` data
+    builtin_voice_names: Callable[[], frozenset[str]]           # lower-case names a custom voice may not take
     compatible_engines: Callable[[], list[str]]
     quality_warn_below: Callable[[], float]
 
@@ -126,7 +129,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
     these routes from route enumeration (``app.routes``) that the alias and registry tests rely on.
     """
 
-    def guard(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
+    def guard_sync(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
         auth = deps.authenticate(request, policy_path)
         if isinstance(auth, Response):
             return auth
@@ -134,6 +137,10 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         if denied is not None:
             return denied
         return auth, deps.owner_of(auth)
+
+    async def guard(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
+        # Authentication reads SQLite; keep it off the event loop.
+        return await asyncio.to_thread(guard_sync, request, policy_path)
 
     def view(meta: Mapping[str, Any]) -> dict[str, Any]:
         return voice_view(meta, deps.compatible_engines())
@@ -144,11 +151,11 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             raise VoiceError(413, "sample_too_large", f"The upload is larger than {max_bytes // (1024 * 1024)} MiB.")
         if "multipart/form-data" not in request.headers.get("content-type", ""):
             raise VoiceError(400, "multipart_required", "This request must be multipart/form-data.")
-        return await request.form(max_part_size=1024 * 1024)
+        return await request_forms.read_form(request, max_part_size=1024 * 1024)
 
     # ---- consents ----------------------------------------------------------
     async def create_consent(request: Request):
-        gate = guard(request, "/v1/audio/voice_consents")
+        gate = await guard(request, "/v1/audio/voice_consents")
         if isinstance(gate, Response):
             return gate
         _, owner = gate
@@ -174,27 +181,27 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
                 await form.close()
 
     async def list_consents(request: Request):
-        gate = guard(request, "/v1/audio/voice_consents")
+        gate = await guard(request, "/v1/audio/voice_consents")
         if isinstance(gate, Response):
             return gate
         try:
             after, limit = parse_page_args(request)
-            items, more = deps.store().list_consents(gate[1], after=after, limit=limit)
+            items, more = await asyncio.to_thread(deps.store().list_consents, gate[1], after=after, limit=limit)
             return JSONResponse(list_page(items, more, dict))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def get_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
-            return JSONResponse(deps.store().get_consent(gate[1], consent_id))
+            return JSONResponse(await asyncio.to_thread(deps.store().get_consent, gate[1], consent_id))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def rename_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -207,7 +214,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def delete_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -252,7 +259,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         return store.update_voice(owner, meta["id"], {"quality": quality, "warnings": warnings})
 
     async def create_voice(request: Request):
-        gate = guard(request, "/v1/audio/voices")
+        gate = await guard(request, "/v1/audio/voices")
         if isinstance(gate, Response):
             return gate
         _, owner = gate
@@ -268,7 +275,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             voice_type = fields.get("type") or "audio_sample"
             if voice_type not in ("audio_sample", "prompt"):
                 raise VoiceError(400, "invalid_type", "type must be audio_sample or prompt.", param="type")
-            name = validate_name(fields.get("name"))
+            name = validate_name(fields.get("name"), reserved=deps.builtin_voice_names())
             store = deps.store()
             labels_raw = fields.get("labels")
             if isinstance(labels_raw, str):
@@ -289,7 +296,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
                 if consent is not None and not isinstance(consent, str):
                     raise VoiceError(400, "invalid_consent", "consent must be a consent recording id.", param="consent")
                 original, extension = await _read_upload(form, "audio_sample", limits.max_bytes)
-                processed = await asyncio.to_thread(process_sample, original, limits, denoise=denoise)
+                processed = await private_tmp.run_worker(process_sample, original, limits, denoise=denoise)
                 meta = store.create_voice(
                     owner, name=name, voice_type="audio_sample", reference_wav=processed.wav,
                     duration_seconds=processed.duration_seconds, original=original, original_extension=extension,
@@ -324,12 +331,12 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         except (TypeError, ValueError):
             raise VoiceError(400, "invalid_seed", "seed must be an integer.", param="seed") from None
         try:
-            instruct, ignored = design_instruct(prompt)
+            instruct, ignored = design_instruct(prompt, deps.design_settings())
         except DesignPromptError as exc:
             raise VoiceError(400, "invalid_prompt", str(exc), param="prompt") from exc
         wav = await deps.design_voice(instruct, script, seed)
         try:
-            processed: ProcessedSample = await asyncio.to_thread(process_sample, wav, limits, denoise=False)
+            processed: ProcessedSample = await private_tmp.run_worker(process_sample, wav, limits, denoise=False)
         except VoiceSampleError as exc:
             raise VoiceError(400, "script_too_short", f"The designed voice was too short to clone ({exc.message}); use a longer script_hint.", param="script_hint") from exc
         return deps.store().create_voice(
@@ -341,23 +348,23 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         )
 
     async def get_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
-            return JSONResponse(view(deps.store().get_voice(gate[1], voice_id)))
+            return JSONResponse(view(await asyncio.to_thread(deps.store().get_voice, gate[1], voice_id)))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def update_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
             body = await _json_body(request)
             changes: dict[str, Any] = {}
             if "name" in body:
-                changes["name"] = validate_name(body["name"])
+                changes["name"] = validate_name(body["name"], reserved=deps.builtin_voice_names())
             if "description" in body:
                 if body["description"] is not None and (not isinstance(body["description"], str) or len(body["description"]) > 1000):
                     raise VoiceError(400, "invalid_description", "description must be a string of at most 1000 characters.", param="description")
@@ -371,7 +378,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def delete_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -381,7 +388,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def voice_sample(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:

@@ -10,9 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store  # noqa: E402
+from gateway import accounts, admin_store  # noqa: E402
 from gateway.admin_oidc import AdminSession  # noqa: E402
 from gateway.runtime_auth import hash_api_key  # noqa: E402
+from tests.support.access import store_plan  # noqa: E402
 from gateway.user_runtime import (  # noqa: E402
     UserPortalError,
     build_user_portal_snapshot,
@@ -37,17 +38,14 @@ class UserRuntimeTests(unittest.TestCase):
             display_name="User Example",
             path=self.db,
         )
-        self.profile = admin_store.create_profile(
-            "chat-only",
-            {"id": "chat-only", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
+        accounts.initialize(self.db)
+        self.plan = store_plan("Chat only", path=self.db, caps=("chat",))
+        accounts.change_person(self.user["id"], "owner", path=self.db, plan_id=self.plan["id"])
         self.app = admin_store.create_app(
             "user-laptop",
             kind="personal",
             owner_user_id=self.user["id"],
-            default_profile_id=self.profile["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         self.session = AdminSession(
             subject=self.user["id"],
@@ -75,11 +73,31 @@ class UserRuntimeTests(unittest.TestCase):
         self.assertTrue(snapshot["authenticated"])
         self.assertEqual(snapshot["user"]["email"], "user@example.com")
         self.assertEqual(snapshot["apps"][0]["name"], "user-laptop")
-        self.assertEqual(snapshot["apps"][0]["profile"]["id"], self.profile["id"])
+        self.assertEqual(snapshot["apps"][0]["access_plan"], {
+            "id": self.plan["id"], "name": "Chat only", "summary": "Chat. No paid models.", "same_as_person": True,
+        })
         rendered = repr(snapshot)
         self.assertNotIn("hash", rendered)
         self.assertNotIn("opk_secret", rendered)
         self.assertNotIn("api_key", rendered)
+
+    def test_snapshot_names_the_plan_a_new_app_starts_with(self) -> None:
+        # The New app dialog says what an app may use before the app exists.
+        expected = {"id": self.plan["id"], "name": "Chat only", "summary": "Chat. No paid models.", "same_as_person": True}
+        self.assertEqual(build_user_portal_snapshot(self.session, path=self.db)["user"]["access_plan"], expected)
+        admin_store.disable_app(self.app["id"], path=self.db)  # no listed apps: the plan is read on its own
+        snapshot = build_user_portal_snapshot(self.session, path=self.db)
+        self.assertEqual(snapshot["apps"], [])
+        self.assertEqual(snapshot["user"]["access_plan"], expected)
+
+    def test_snapshot_says_a_person_without_a_plan_has_none(self) -> None:
+        new_user = admin_store.upsert_oidc_user(
+            "https://idp.example", "planless-sub", email="planless@example.com",
+            display_name="Planless", path=self.db,
+        )
+        session = AdminSession(subject=new_user["id"], email="planless@example.com", role="none",
+                               issued_at=1, expires_at=4_000_000_000)
+        self.assertIsNone(build_user_portal_snapshot(session, path=self.db)["user"]["access_plan"])
 
     def test_mint_and_revoke_user_owned_app_key(self) -> None:
         created = mint_user_app_key(
@@ -103,7 +121,7 @@ class UserRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["apps"][0]["credentials"], [])
         self.assertEqual(snapshot["apps"][0]["active_credentials"], 0)
 
-    def test_access_request_creates_self_service_app_with_inherited_mint_power(self) -> None:
+    def test_access_request_for_a_person_without_a_plan_shows_no_plan(self) -> None:
         new_user = admin_store.upsert_oidc_user(
             "https://idp.example",
             "new-user-sub",
@@ -120,62 +138,21 @@ class UserRuntimeTests(unittest.TestCase):
         )
 
         requested = request_user_access(session, path=self.db)
-        self.assertFalse(requested["app"]["profile_required"])
-        self.assertEqual(requested["app"]["effective_profile_id"], "default-local")
+        self.assertIsNone(requested["app"]["access_plan"])
         snapshot = build_user_portal_snapshot(session, path=self.db)
         self.assertEqual(requested["app"], snapshot["apps"][0])
         self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
-        self.assertTrue(snapshot["apps"][0]["inherits_profile"])
 
         created = mint_user_app_key(session, requested["app"]["id"], path=self.db)
         self.assertTrue(created["api_key"].startswith("opk_"))
 
-    def test_self_service_app_can_inherit_configured_default_profile(self) -> None:
-        new_user = admin_store.upsert_oidc_user(
-            "https://idp.example",
-            "profiled-user-sub",
-            email="profiled@example.com",
-            display_name="Profiled User",
-            path=self.db,
-        )
-        session = AdminSession(
-            subject=new_user["id"],
-            email="profiled@example.com",
-            role="none",
-            issued_at=1,
-            expires_at=4_000_000_000,
-        )
-
-        requested = request_user_access(
-            session,
-            default_profile_id=self.profile["id"],
-            path=self.db,
-        )
-        stored = admin_store.get_app(requested["app"]["id"], path=self.db)
-        self.assertEqual(stored["default_profile_id"], self.profile["id"])
-        self.assertEqual(requested["app"]["default_profile_id"], self.profile["id"])
-        self.assertEqual(requested["app"]["profile_id"], self.profile["id"])
-        self.assertEqual(requested["app"]["effective_profile_id"], self.profile["id"])
-        self.assertFalse(requested["app"]["inherits_profile"])
-        snapshot = build_user_portal_snapshot(session, path=self.db)
-        self.assertEqual(requested["app"], snapshot["apps"][0])
-        self.assertEqual(snapshot["apps"][0]["effective_profile_id"], self.profile["id"])
-        self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
-
-    def test_user_can_create_named_apps(self) -> None:
-        created = create_user_app(
-            self.session,
-            name="Open WebUI",
-            default_profile_id=self.profile["id"],
-            path=self.db,
-        )
+    def test_user_can_create_named_apps_that_follow_their_plan(self) -> None:
+        created = create_user_app(self.session, name="Open WebUI", path=self.db)
         stored = admin_store.get_app(created["app"]["id"], path=self.db)
-        self.assertEqual(stored["default_profile_id"], self.profile["id"])
+        self.assertEqual(stored["access_plan"], "person")
         self.assertEqual(created["app"]["name"], "Open WebUI")
-        self.assertEqual(created["app"]["default_profile_id"], self.profile["id"])
-        self.assertEqual(created["app"]["profile_id"], self.profile["id"])
-        self.assertEqual(created["app"]["effective_profile_id"], self.profile["id"])
-        self.assertFalse(created["app"]["inherits_profile"])
+        self.assertEqual(created["app"]["access_plan"]["id"], self.plan["id"])
+        self.assertTrue(created["app"]["access_plan"]["same_as_person"])
 
         apps = admin_store.list_apps_for_user(self.user["id"], path=self.db)
         self.assertEqual({app["name"] for app in apps}, {"user-laptop", "Open WebUI"})
@@ -221,7 +198,7 @@ class UserRuntimeTests(unittest.TestCase):
             "other-laptop",
             kind="personal",
             owner_user_id=other["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         credential = admin_store.create_credential_hash(
             subject_kind="app",

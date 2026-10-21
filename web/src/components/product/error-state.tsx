@@ -49,7 +49,7 @@ export function ErrorState({
     )
   ) : recovery === "sign-in" ? (
     <Button variant="outline" size="sm" asChild>
-      <a href="/ui/sign-in/">Sign in</a>
+      <a href="/sign-in/">Sign in</a>
     </Button>
   ) : retry ? (
     <Button variant="outline" size="sm" disabled={retrying} onClick={onRetry}>
@@ -65,18 +65,20 @@ export function ErrorState({
     <Callout
       as="div"
       severity={severity}
-      title={heading ?? (error ? copy.heading : "Couldn’t load this")}
+      title={heading ?? (error ? copy.heading : "Something didn’t load")}
       actions={actionNode}
     >
       {message === null ? null : (
         <p className="text-muted-foreground">
           {message ??
-            (error ? copy.message : onRetry ? "Try again." : "Reload this page.")}
+            (error
+              ? copy.message
+              : `We couldn't tell where this stopped. ${onRetry ? "Try again." : "Reload this page."}`)}
         </p>
       )}
       {copy.details && (
         <details className="text-muted-foreground">
-          <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
+          <summary className="flex min-h-8 w-fit items-center max-sm:min-h-11">
             Technical details
           </summary>
           <p className="font-mono break-words">{copy.details}</p>

@@ -7,14 +7,13 @@ from unittest.mock import AsyncMock, patch
 from test_provider_reconciliation import ReconciliationExecutionFixture
 from test_provider_execution import _Client, _Response
 from gateway import providers
-from gateway.policy import AppProfile, RemoteProviderPolicy
+from tests.support.access import plan_for  # noqa: E402
 from decimal import Decimal
 
 
 class CrashSnapshotExecutionTests(ReconciliationExecutionFixture):
     async def test_restored_mid_request_snapshot_cannot_admit_a_second_charge(self):
-        self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
-            providers=frozenset({'openrouter'}), budget_usd_per_day=Decimal('0.02')))
+        self.profile = plan_for('paid-app', paid=['openrouter'], usd_per_day='0.02')
         snapshot = self.ledger.with_name('mid_request.db')
         billed = []
         async def billed_before_settlement(execution, **kwargs):

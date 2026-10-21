@@ -5,9 +5,25 @@ from pathlib import Path
 import pytest
 
 from gateway import receipt_store
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, evidence_from_status_rows, merge_evidence, project_capabilities, project_service
 from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
+
+
+@pytest.fixture(autouse=True)
+def _isolated_health_success(monkeypatch):
+    """A successful probe records its time per service id in a module-level map;
+    tests that reuse an id ("svc") would otherwise inherit each other's success."""
+    from gateway import models_catalog
+
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+
+
+@pytest.fixture
+def evidence_now():
+    """A fixed epoch passed through production's explicit now_s/now_ms seams."""
+    return 1_800_000_000
 
 
 _FACES = {"enabled": True, "name": "Face service", "config": {"lifecycle": {"driver": "systemd"}}}
@@ -273,8 +289,8 @@ def test_missing_service_projects_unconfigured_without_fallback():
     assert projection.configured is False
 
 
-def test_future_request_evidence_is_ignored():
-    now = int(time.time())
+def test_future_request_evidence_is_ignored(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "future", "backend": "svc", "status": "succeeded", "updated_at_ms": (now + 60) * 1000}
     ], now_s=now)
@@ -282,8 +298,8 @@ def test_future_request_evidence_is_ignored():
     assert evidence == {}
 
 
-def test_same_second_terminal_failure_supersedes_success_by_milliseconds():
-    now = int(time.time())
+def test_same_second_terminal_failure_supersedes_success_by_milliseconds(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "success", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000 + 100},
         {"request_id": "failure", "backend": "svc", "status": "failed", "status_code": 503, "updated_at_ms": now * 1000 + 900},
@@ -291,6 +307,7 @@ def test_same_second_terminal_failure_supersedes_success_by_milliseconds():
 
     assert evidence["svc"]["request_id"] == "failure"
     assert evidence["svc"]["available"] is False
+    assert evidence["svc"]["observed_at_ms"] == now * 1000 + 900
 
 
 def test_top_level_lifecycle_declaration_projects_idle_when_stopped():
@@ -303,8 +320,8 @@ def test_top_level_lifecycle_declaration_projects_idle_when_stopped():
     assert projection.status == "idle"
     assert projection.idle_startable is True
 
-def test_recent_successful_request_marks_service_ready():
-    now = int(time.time())
+def test_recent_successful_request_marks_service_ready(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
     ], now_s=now)
@@ -320,8 +337,8 @@ def test_recent_successful_request_marks_service_ready():
     assert projection.evidence["source"] == "request"
 
 
-def test_newer_backend_failure_supersedes_success():
-    now = int(time.time())
+def test_newer_backend_failure_supersedes_success(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "req_old", "backend": "svc", "status": "succeeded", "_stored_at": now - 2},
         {"request_id": "req_new", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 1},
@@ -338,8 +355,8 @@ def test_newer_backend_failure_supersedes_success():
     assert projection.evidence["request_id"] == "req_new"
 
 
-def test_client_failure_does_not_become_backend_down_evidence():
-    now = int(time.time())
+def test_client_failure_does_not_become_backend_down_evidence(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "req_bad_input", "backend": "svc", "status": "failed", "status_code": 400, "_stored_at": now}
     ], now_s=now)
@@ -359,6 +376,20 @@ def test_startable_stopped_probe_projects_idle():
 
     assert projection.status == "idle"
     assert projection.available is True
+    assert projection.idle_startable is True
+
+
+def test_on_demand_residency_projects_a_stopped_probe_as_idle_without_a_lifecycle_driver():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "base_url": "http://svc/v1",
+            "residency": "on_demand",
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "health"}},
+    )
+
+    assert projection.status == "idle"
     assert projection.idle_startable is True
 
 
@@ -402,8 +433,8 @@ def test_startable_unhealthy_probe_is_unavailable_not_idle():
     assert projection.idle_startable is True
 
 
-def test_request_evidence_wins_over_probe_evidence():
-    now = int(time.time())
+def test_request_evidence_wins_over_probe_evidence(evidence_now):
+    now = evidence_now
     request = evidence_from_receipts([
         {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
     ], now_s=now)
@@ -422,8 +453,8 @@ def test_request_evidence_wins_over_probe_evidence():
     assert projection.evidence["source"] == "request"
 
 
-def test_receipt_metadata_service_id_is_evidence_backend():
-    now = int(time.time())
+def test_receipt_metadata_service_id_is_evidence_backend(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "req_1", "backend": "litellm", "metadata": {"service_id": "capture-engine"}, "status": "succeeded", "_stored_at": now}
     ], now_s=now)
@@ -432,8 +463,8 @@ def test_receipt_metadata_service_id_is_evidence_backend():
     assert "litellm" not in evidence
 
 
-def test_current_probe_beats_older_request_evidence():
-    now = int(time.time())
+def test_current_probe_beats_older_request_evidence(evidence_now):
+    now = evidence_now
     request = evidence_from_receipts([
         {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now - 600}
     ], now_s=now)
@@ -452,8 +483,8 @@ def test_current_probe_beats_older_request_evidence():
     assert projection.evidence["source"] == "health"
 
 
-def test_request_success_beats_health_no_response():
-    now = int(time.time())
+def test_request_success_beats_health_no_response(evidence_now):
+    now = evidence_now
     request = evidence_from_receipts([
         {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
     ], now_s=now)
@@ -465,8 +496,8 @@ def test_request_success_beats_health_no_response():
     assert merged["svc"]["source"] == "request"
 
 
-def test_public_projection_omits_request_id():
-    now = int(time.time())
+def test_public_projection_omits_request_id(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "req_private", "backend": "svc", "status": "succeeded", "_stored_at": now}
     ], now_s=now)
@@ -482,10 +513,10 @@ def test_public_projection_omits_request_id():
     assert "request_id" not in public["evidence"]
 
 
-def test_receipt_store_evidence_uses_terminal_updated_time(tmp_path: Path):
+def test_receipt_store_evidence_uses_terminal_updated_time(tmp_path: Path, evidence_now):
     db = tmp_path / "receipts.db"
     receipt_store.init_db(db)
-    now = int(time.time())
+    now = evidence_now
     receipt_store.record({
         "request_id": "long_success",
         "backend": "svc",
@@ -494,15 +525,15 @@ def test_receipt_store_evidence_uses_terminal_updated_time(tmp_path: Path):
         "updated_at_ms": now * 1000,
     }, created_at=now - 3600, path=db)
 
-    evidence = evidence_from_receipt_store(db, now_s=int(time.time()) + 1, max_age_s=900)
+    evidence = evidence_from_receipt_store(db, now_s=now + 1, max_age_s=900)
 
     assert evidence["svc"]["request_id"] == "long_success"
 
 
-def test_receipt_store_evidence_reads_internal_metadata_status_code(tmp_path: Path):
+def test_receipt_store_evidence_reads_internal_metadata_status_code(tmp_path: Path, evidence_now):
     db = tmp_path / "receipts.db"
     receipt_store.init_db(db)
-    now = int(time.time())
+    now = evidence_now
     old = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
     old.finish("ok", now_ms=(now - 2) * 1000)
     receipt_store.record(old, created_at=now - 2, path=db)
@@ -517,8 +548,8 @@ def test_receipt_store_evidence_reads_internal_metadata_status_code(tmp_path: Pa
     assert evidence["svc"]["available"] is False
 
 
-def test_receipt_order_uses_terminal_updated_time():
-    now = int(time.time())
+def test_receipt_order_uses_terminal_updated_time(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "accepted_later", "backend": "svc", "status": "succeeded", "accepted_at_ms": (now - 10) * 1000, "updated_at_ms": (now - 10) * 1000},
         {"request_id": "finished_later", "backend": "svc", "status": "failed", "status_code": 503, "accepted_at_ms": (now - 100) * 1000, "updated_at_ms": now * 1000},
@@ -670,8 +701,8 @@ def test_backend_grid_excludes_http_load_unload_from_process_lifecycle(monkeypat
     assert rows == []
 
 
-def test_status_rows_preserve_no_response_kind_so_request_can_win():
-    now = int(time.time())
+def test_status_rows_preserve_no_response_kind_so_request_can_win(evidence_now):
+    now = evidence_now
     status = evidence_from_status_rows([
         {"service_id": "svc", "live_status": "down", "source": "status", "kind": "no_response"}
     ], observed_at_s=now)
@@ -783,8 +814,8 @@ def test_status_probe_404_missing_health_route_is_weak_no_response():
     assert row["kind"] == "no_response"
 
 
-def test_status_404_missing_health_route_does_not_override_recent_success():
-    now = int(time.time())
+def test_status_404_missing_health_route_does_not_override_recent_success(evidence_now):
+    now = evidence_now
     status = evidence_from_status_rows([
         {"service_id": "svc", "live_status": "unknown", "source": "status", "kind": "no_response"}
     ], observed_at_s=now)
@@ -1035,14 +1066,14 @@ def test_stopped_lifecycle_is_not_overridden_by_later_connect_failure(reverse):
 def test_workflow_alias_policy_uses_resolved_workflow_without_changing_alias(monkeypatch, allowed, expected):
     import proxy
     from gateway.capabilities import resolve_capability_targets, summarize_capability
-    from gateway.policy import AppProfile
-    monkeypatch.setattr(proxy, "_profile_for_auth_context", lambda context: AppProfile(id="workflow-policy", workflows=allowed))
+    granted = plan_for("workflow-policy", caps=("image",), workflows=sorted(allowed))
+    auth = proxy.AuthContext(identity=identity(granted))
     alias, concrete = resolve_capability_targets([
         Capability(intent="image.generate", backend="gateway", model="image", tags=("alias", "resolves_to:workflow-id")),
         Capability(intent="image.generate", backend="fixture", workflow="workflow-id"),
     ])
-    assert proxy._capability_for_profile(concrete, None).policy_available is expected
-    projected = proxy._capability_for_profile(alias, None)
+    assert proxy._capability_for_access(concrete, auth).policy_available is expected
+    projected = proxy._capability_for_access(alias, auth)
     assert projected.policy_available is expected
     assert projected.model == "image"
     assert projected.workflow is None
@@ -1179,8 +1210,8 @@ def test_unmeasured_placeholder_does_not_mask_a_real_status_observation():
     assert merged["svc"]["status"] == "down"
 
 
-def test_request_evidence_carries_last_success_separately_from_latest_failure():
-    now = int(time.time())
+def test_request_evidence_carries_last_success_separately_from_latest_failure(evidence_now):
+    now = evidence_now
     evidence = evidence_from_receipts([
         {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 100},
         {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 10},
@@ -1197,8 +1228,8 @@ def test_request_evidence_carries_last_success_separately_from_latest_failure():
 
 @pytest.mark.parametrize("raw_status", ["busy", "degraded"])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse):
-    now = int(time.time())
+def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse, evidence_now):
+    now = evidence_now
     request = evidence_from_receipts([
         {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
     ], now_s=now)
@@ -1213,8 +1244,8 @@ def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse
     assert projection.evidence["source"] == "request"
 
 
-def test_later_request_success_clears_the_failure_and_busy_stays_busy():
-    now = int(time.time())
+def test_later_request_success_clears_the_failure_and_busy_stays_busy(evidence_now):
+    now = evidence_now
     request = evidence_from_receipts([
         {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
         {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 60},
@@ -1225,8 +1256,8 @@ def test_later_request_success_clears_the_failure_and_busy_stays_busy():
     assert projection.status == "busy"
 
 
-def test_busy_without_request_failure_stays_busy():
-    now = int(time.time())
+def test_busy_without_request_failure_stays_busy(evidence_now):
+    now = evidence_now
     status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
     # A client-side failure (4xx) proves nothing about the backend.
     request = evidence_from_receipts([

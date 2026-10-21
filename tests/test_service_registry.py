@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 from pathlib import Path
 
@@ -7,6 +8,115 @@ import pytest
 
 from gateway import admin_store, service_registry
 from tests.registry_test_helpers import write_service_registry_for_test
+
+
+
+_PROTOCOL_REFUSAL = r"protocol dispatch does not enforce paid-provider access or spend limits; use the existing provider route"
+
+
+@pytest.mark.parametrize("extra", [
+    {"paid_remote": True}, {"paid_remote": "yes"},
+    {"remote_provider": True}, {"remote_provider": "true"},
+    {"provider_type": "remote"}, {"provider_type": "Paid-Remote"},
+    {"provider_type": "cloud"}, {"cost_class": "PAID-REMOTE"},
+    {"connection": {"dispatch": "protocol", "address": "https://provider.invalid/v1"}},
+    {"connection": {"dispatch": "protocol", "address": "https://8.8.8.8/v1"}},
+])
+@pytest.mark.parametrize("boundary", ["validate", "save", "import"])
+def test_protocol_dispatch_refuses_paid_or_remote_config(extra: dict, boundary: str) -> None:
+    config = {
+        "api_key_env": "TEST_PROVIDER_KEY",
+        "connection": {"dispatch": "protocol", "address": "http://127.0.0.1:8000"},
+        **extra,
+    }
+    registry = {"schema_version": 2, "services": {}}
+    before = copy.deepcopy(registry)
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        if boundary == "validate":
+            service_registry.validate_protocol_dispatch_local_only({"config": config})
+        elif boundary == "save":
+            service_registry.upsert_service_in_registry(registry, service_id="protocol-engine", raw=config)
+        else:
+            service_registry.merge_imported_records(registry, services={"protocol-engine": {"config": config}})
+    assert registry == before
+
+
+@pytest.mark.parametrize("dispatch", [None, "legacy"])
+def test_non_protocol_paid_records_remain_accepted(dispatch: str | None) -> None:
+    connection = {"address": "https://provider.invalid/v1"}
+    if dispatch is not None:
+        connection["dispatch"] = dispatch
+    config = {"paid_remote": True, "api_key_env": "TEST_PROVIDER_KEY", "connection": connection}
+    record = service_registry.normalize_service_record("provider", {"config": config})
+    assert record["config"]["connection"] == connection
+    assert record["config"]["paid_remote"] is True
+
+
+@pytest.mark.parametrize("address", ["http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"])
+def test_local_protocol_executor_survives_save_and_import(address: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_dns(*args, **kwargs):
+        raise AssertionError("save validation must not resolve DNS")
+    monkeypatch.setattr("socket.getaddrinfo", no_dns)
+    config = {
+        "connection": {"dispatch": "protocol", "address": address},
+        "process": {"driver": "process", "command": ["synthetic-executor"]},
+    }
+    registry, saved = service_registry.upsert_service_in_registry(
+        {"schema_version": 2, "services": {}}, service_id="local-executor", raw=config,
+    )
+    assert saved["config"]["connection"] == config["connection"]
+    imported = service_registry.merge_imported_records(
+        {"schema_version": 2, "services": {}}, services={"local-executor": saved},
+    )
+    assert imported["services"]["local-executor"]["config"]["connection"] == config["connection"]
+
+
+def test_remote_protocol_validation_does_not_resolve_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_dns(*args, **kwargs):
+        raise AssertionError("save validation must not resolve DNS")
+    monkeypatch.setattr("socket.getaddrinfo", no_dns)
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        service_registry.validate_protocol_dispatch_local_only({
+            "config": {"connection": {"dispatch": "protocol", "address": "https://provider.invalid"}},
+        })
+
+
+
+@pytest.mark.parametrize("address", [
+    "http://192.168.1.2:8000", "http://executor:8000", "",
+    "https://provider.invalid/v1", "https://8.8.8.8/v1",
+])
+@pytest.mark.parametrize("placement", ["local", None])
+def test_protocol_dispatch_requires_proven_connection_locality(address, placement) -> None:
+    raw = {"placement": placement, "base_url": "http://localhost:8000", "config": {
+        "locality": placement,
+        "connection": {"dispatch": "protocol", "address": address},
+    }}
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        service_registry.validate_protocol_dispatch_local_only(raw)
+
+
+@pytest.mark.parametrize("marker", [
+    {"paid_remote": True}, {"remote_provider": "yes"},
+    {"provider_type": "cloud"}, {"cost_class": "PAID-REMOTE"},
+])
+@pytest.mark.parametrize("remote_at_top", [True, False])
+def test_protocol_dispatch_remote_marker_cannot_be_shadowed(marker, remote_at_top) -> None:
+    local = {"paid_remote": False, "remote_provider": False,
+             "provider_type": "local", "cost_class": "local"}
+    raw = {**(marker if remote_at_top else local), "config": {
+        **(local if remote_at_top else marker),
+        "connection": {"dispatch": "protocol", "address": "http://localhost:8000"},
+    }}
+    # No provider key: the dispatch refusal must precede unrelated key errors.
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        service_registry.validate_protocol_dispatch_local_only(raw)
+
+
+@pytest.mark.parametrize("address", ["http://LOCALHOST.:8000", "http://127.12.34.56:8000"])
+def test_protocol_dispatch_accepts_normalized_loopback(address) -> None:
+    config = {"connection": {"dispatch": "protocol", "address": address}}
+    assert service_registry.normalize_service_record("executor", {"config": config})["config"] == config
 
 
 def test_shaped_remote_service_rejects_inline_config_key() -> None:
@@ -77,40 +187,63 @@ def _run_concurrent_ensure(
     *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> list[dict]:
     original_get = admin_store.get_service_registry_with_generation
+    original_write = admin_store.write_service_registry_with_audit
     first_reads = threading.Barrier(2)
-    read_count = 0
-    read_lock = threading.Lock()
-
-    def synchronized_get(*, path: Path) -> dict | None:
-        nonlocal read_count
-        with read_lock:
-            should_wait = read_count < 2
-            read_count += 1
-        if should_wait:
-            first_reads.wait(timeout=5)
-        return original_get(path=path)
-
-    monkeypatch.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+    mutex = threading.Lock()
+    snapshots: list[dict | None] = []
+    conflicts: list[int] = []
     results: list[dict] = []
     errors: list[BaseException] = []
 
+    def synchronized_get(*, path: Path) -> dict | None:
+        # Read first, then barrier: both callers hold a real snapshot before
+        # either one may write, so the second writer must see a stale CAS.
+        snapshot = original_get(path=path)
+        with mutex:
+            initial_read = len(snapshots) < 2
+            if initial_read:
+                snapshots.append(copy.deepcopy(snapshot))
+        if initial_read:
+            first_reads.wait(timeout=5)
+        return snapshot
+
+    def counted_write(*args, **kwargs):
+        try:
+            return original_write(*args, **kwargs)
+        except admin_store.OperatorSettingsGenerationConflict:
+            with mutex:
+                conflicts.append(kwargs["expected_generation"])
+            raise
+
     def worker() -> None:
         try:
-            results.append(
-                service_registry.ensure_service_registry(
-                    proxy_config, path=path, actor="boot"
-                )
+            result = service_registry.ensure_service_registry(
+                proxy_config, path=path, actor="boot"
             )
+            with mutex:
+                results.append(result)
         except BaseException as exc:  # assertion below makes failures visible
-            errors.append(exc)
+            with mutex:
+                errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-    assert all(not thread.is_alive() for thread in threads)
-    assert not errors
+    with monkeypatch.context() as patcher:
+        patcher.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+        patcher.setattr(admin_store, "write_service_registry_with_audit", counted_write)
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(2)]
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+            assert all(not thread.is_alive() for thread in threads)
+        finally:
+            first_reads.abort()
+
+    assert len(snapshots) == 2
+    assert snapshots[0] == snapshots[1]
+    assert not errors, errors
+    assert len(conflicts) == 1, conflicts
+    assert len(results) == 2
     return results
 
 
@@ -686,11 +819,10 @@ def _seed_with_provisioned() -> dict:
     )
 
 
-def test_service_form_to_raw_parses_base_url_and_applies_preset() -> None:
+def test_service_form_to_raw_parses_base_url() -> None:
     raw = service_registry.service_form_to_raw(
         {
-            "name": "My vLLM",
-            "preset": "vllm",
+            "name": "My server",
             "base_url": "http://10.0.0.5:8000/v1",
             "role": "required",
         }
@@ -698,9 +830,6 @@ def test_service_form_to_raw_parses_base_url_and_applies_preset() -> None:
     assert raw["host"] == "10.0.0.5"
     assert raw["port"] == 8000
     assert raw["base_path"] == "/v1"
-    # The vLLM preset supplies default capabilities when the form omits them.
-    assert raw["capabilities"] == ["chat", "completions"]
-    assert raw["native_passthrough"] is True
 
 
 def test_service_form_to_raw_keeps_secret_as_env_ref_only() -> None:
@@ -715,7 +844,7 @@ def test_service_form_to_raw_keeps_secret_as_env_ref_only() -> None:
 def test_upsert_creates_ui_service_and_rejects_duplicate() -> None:
     reg = _seed_with_provisioned()
     raw = service_registry.service_form_to_raw(
-        {"name": "My vLLM", "preset": "vllm", "base_url": "http://h:8000/v1"}
+        {"name": "My vLLM", "base_url": "http://h:8000/v1"}
     )
     reg2, rec = service_registry.upsert_service_in_registry(
         reg, service_id="my-vllm", raw=raw, source="ui"
@@ -836,31 +965,17 @@ def test_set_service_enabled_toggles_any_source() -> None:
     assert reg["services"]["tabby"]["enabled"] is True
 
 
-def test_provider_presets_have_a_custom_escape_hatch() -> None:
-    ids = [p["id"] for p in service_registry.PROVIDER_PRESETS]
-    assert "openai-compatible" in ids
-    assert service_registry.provider_preset("vllm")["default_port"] == 8000
-    assert service_registry.provider_preset("nope") is None
-
-
 # ---------------------------------------------------------------------------
 # Model/deployment mapping: an OpenAI-compatible service added via the form
 # must produce a routable LiteLLM model_list entry (the SLVP gap fix).
 # ---------------------------------------------------------------------------
 
 
-def test_openai_compatible_preset_sets_routing_protocol() -> None:
-    raw = service_registry.service_form_to_raw(
-        {"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
-    )
-    assert raw["protocol"] == "openai-compatible"
-
-
 def test_form_models_become_deployment_records() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "tgw",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://h:7860/v1",
             "models": [{"public": "my-llama", "upstream": "TheBloke_Llama"}],
         }
@@ -874,7 +989,7 @@ def test_form_model_row_defaults_public_to_upstream() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "tgw",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://h:7860/v1",
             "models": [{"upstream": "only-upstream"}, {"public": "only-public"}],
         }
@@ -893,7 +1008,7 @@ def test_added_openai_service_with_model_is_routable() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "text-generation-webui",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://127.0.0.1:7860/v1",
             "capabilities": ["chat", "completions"],
             "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
@@ -952,7 +1067,7 @@ def test_added_service_without_models_is_inert() -> None:
     from gateway import litellm_substrate
 
     raw = service_registry.service_form_to_raw(
-        {"name": "bare", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
+        {"name": "bare", "protocol": "openai-compatible", "base_url": "http://h:7860/v1"}
     )
     svc = service_registry.service_from_backend_config("bare", raw, source="ui")
     registry = {
@@ -1347,7 +1462,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
     # Simulate what the PATCH route does: form -> raw -> upsert.
     form = {
         "name": "my-tgw",
-        "preset": "openai-compatible",
+        "protocol": "openai-compatible",
         "base_url": "http://127.0.0.1:7860/v1",
         "models": [
             {"public": "llama-3-8b", "upstream": "Meta-Llama-3-8B-Instruct"},
@@ -1393,13 +1508,6 @@ def test_provisioned_service_is_editable_true_after_editability_law() -> None:
     reg = _seed_with_provisioned()
     assert reg["services"]["tabby"]["source"] == "provisioned"
     assert reg["services"]["tabby"]["editable"] is True
-
-
-def test_provider_presets_custom_is_first() -> None:
-    """The custom/openai-compatible preset must be the first entry."""
-    presets = service_registry.PROVIDER_PRESETS
-    assert presets[0]["id"] == "openai-compatible"
-    assert presets[0]["label"].lower().startswith("openai")
 
 
 # ---------------------------------------------------------------------------
@@ -1589,12 +1697,6 @@ def test_comfyui_protocol_fields_stored_in_config() -> None:
 # ---------------------------------------------------------------------------
 # Capability vocabulary — generations and videos
 # ---------------------------------------------------------------------------
-
-def test_capability_choices_includes_generations_and_videos() -> None:
-    """_CAPABILITY_CHOICES must include generations and videos (honesty H2)."""
-    assert "generations" in service_registry._CAPABILITY_CHOICES
-    assert "videos" in service_registry._CAPABILITY_CHOICES
-
 
 def test_unknown_config_key_survives_form_to_raw_passthrough() -> None:
     """An unknown config key present in the form dict passes through unchanged.

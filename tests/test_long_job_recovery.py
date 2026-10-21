@@ -6,6 +6,7 @@ import pytest
 from fastapi import Response
 
 import proxy
+from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs, me_make
 
 
@@ -113,11 +114,12 @@ def test_video_restart_polls_existing_submission(store, monkeypatch):
     monkeypatch.setattr(proxy, "_video_media_job_semaphore", asyncio.Semaphore(1))
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
     monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
-    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: proxy.NO_AUTH_CONTEXT)
+    # The worker checks its caller's plan before each poll: a caller whose plan allows video.
+    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     submit = AsyncMock(side_effect=AssertionError("must not submit twice"))
     status = AsyncMock(return_value=Response(content='{"status":"failed"}', media_type="application/json"))
-    monkeypatch.setattr(proxy, "proxy_comfy_video_create", submit)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_status", status)
+    monkeypatch.setattr(proxy, "proxy_graph_video_create", submit)
+    monkeypatch.setattr(proxy, "proxy_graph_video_status", status)
     monkeypatch.setattr(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0)
     asyncio.run(proxy._run_video_media_job(job.job_id))
     submit.assert_not_called()

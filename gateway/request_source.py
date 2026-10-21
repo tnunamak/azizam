@@ -10,6 +10,40 @@ from urllib.parse import urlsplit
 
 _client_hint: ContextVar[str | None] = ContextVar("receipt_client_hint", default=None)
 _gateway_ui: ContextVar[bool] = ContextVar("receipt_gateway_ui", default=False)
+# One dict per request, made at the ASGI boundary. Authentication runs in a
+# worker thread whose context is a copy, so it fills this shared dict rather
+# than setting a variable.
+_trusted_address: ContextVar[dict | None] = ContextVar("receipt_trusted_address", default=None)
+
+
+def note_trusted_address(app_id: str, address: str) -> None:
+    """Record that this request ran as ``app_id`` because ``address`` is trusted."""
+    holder = _trusted_address.get()
+    if holder is not None:
+        holder.update(app_id=app_id, address=address)
+
+
+def trusted_address_for(app_id: str | None) -> str | None:
+    """The trusted client address this request ran under, when it ran as ``app_id``."""
+    holder = _trusted_address.get()
+    if app_id and holder and holder.get("app_id") == app_id:
+        return holder.get("address")
+    return None
+
+
+def note_connection(app_id: str, connection_id: str) -> None:
+    """Record that this request ran as ``app_id`` for one MCP sign-in connection."""
+    holder = _trusted_address.get()
+    if holder is not None:
+        holder.update(connection_app_id=app_id, connection_id=connection_id)
+
+
+def connection_for(app_id: str | None) -> str | None:
+    """The MCP connection (grant id) this request ran under, when it ran as ``app_id``."""
+    holder = _trusted_address.get()
+    if app_id and holder and holder.get("connection_app_id") == app_id:
+        return holder.get("connection_id")
+    return None
 
 
 def current_gateway_ui() -> bool:
@@ -52,13 +86,15 @@ class RequestSourceMiddleware:
         try:
             referer = urlsplit(headers.get(b"referer", ""))
             ui_origin = (referer.netloc == headers.get(b"host")
-                         and referer.path.rstrip("/") in {"/ui/try", "/ui/home"})
+                         and referer.path in {"/", "/try/"})
         except ValueError:
             ui_origin = False
         ui_token = _gateway_ui.set(current_gateway_ui() or ui_origin)
         token = _client_hint.set(hint)
+        address_token = _trusted_address.set({})
         try:
             await self.app(scope, receive, send)
         finally:
+            _trusted_address.reset(address_token)
             _client_hint.reset(token)
             _gateway_ui.reset(ui_token)

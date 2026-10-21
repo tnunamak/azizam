@@ -76,32 +76,13 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
         admin_store.init_db(self.db)
         self.assertEqual(admin_store.schema_version(self.db), admin_store.SCHEMA_VERSION)
 
-    # -- 2. default profiles seeded -------------------------------------------
+    # -- 2. no plan is seeded for anyone ----------------------------------------
 
-    def test_seed_default_profiles_populates_blank_db(self) -> None:
-        from gateway import admin_store, default_profiles
-
-        admin_store.init_db(self.db)
-        seeded = default_profiles.seed_default_profiles(path=self.db)
-        profiles = admin_store.list_profiles(path=self.db)
-        self.assertGreater(
-            len(profiles), 0,
-            "At least one default profile should be present after seeding",
-        )
-        # seeded returns the rows that were actually inserted (empty if already present)
-        self.assertIsInstance(seeded, list)
-
-    def test_seed_default_profiles_is_idempotent(self) -> None:
-        from gateway import admin_store, default_profiles
+    def test_a_fresh_database_has_no_access_plans(self) -> None:
+        from gateway import admin_store
 
         admin_store.init_db(self.db)
-        default_profiles.seed_default_profiles(path=self.db)
-        second = default_profiles.seed_default_profiles(path=self.db)
-        # Second call should not raise and should return empty (nothing new to insert)
-        self.assertIsInstance(second, list)
-        count_after_first = len(admin_store.list_profiles(path=self.db))
-        count_after_second = len(admin_store.list_profiles(path=self.db))
-        self.assertEqual(count_after_first, count_after_second)
+        self.assertEqual(admin_store.list_access_plans(path=self.db), [])
 
     # -- 3. service_registry with minimal config -------------------------------
 
@@ -152,6 +133,35 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
             )
         else:
             self.skipTest("Live DB not present; isolation trivially satisfied")
+
+
+def test_bootstrap_admin_path_uses_env_then_yaml_then_repo_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gateway import bootstrap_config
+
+    root = tmp_path / "checkout"
+    elsewhere = tmp_path / "working-directory"
+    root.mkdir()
+    elsewhere.mkdir()
+    monkeypatch.setattr(bootstrap_config, "ROOT", root)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("AZIZAM_ADMIN_DB", "env/admin.db")
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == root / "env/admin.db"
+
+    monkeypatch.delenv("AZIZAM_ADMIN_DB")
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == root / "yaml/admin.db"
+    assert bootstrap_config.configured_admin_db_path({}) == root / "data/admin.db"
+
+    absolute = tmp_path / "absolute.db"
+    monkeypatch.setenv("AZIZAM_ADMIN_DB", str(absolute))
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == absolute
 
 
 if __name__ == "__main__":

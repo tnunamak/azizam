@@ -117,7 +117,7 @@ function State({ title, children }: { title: string; children: ReactNode }) {
 const grid = "grid min-w-0 gap-5 sm:grid-cols-2 lg:grid-cols-3";
 export default function DesignPage() {
   const { setTheme } = useTheme();
-  const [model, setModel] = useState("");
+  const [capability, setCapability] = useState("");
   const [retrying, setRetrying] = useState(false);
   const id = useId();
   const options = [
@@ -191,7 +191,10 @@ export default function DesignPage() {
           <div className={grid}>
             {(["Default", "Filled", "Disabled", "Error"] as const).map(
               (state) => (
-                <State key={state} title={`Input · ${state}`}>
+                <State
+                  key={state}
+                  title={`Input · ${state === "Error" ? "Error demonstration" : state}`}
+                >
                   <Label htmlFor={`${id}-input-${state}`}>App name</Label>
                   <Input
                     id={`${id}-input-${state}`}
@@ -212,7 +215,7 @@ export default function DesignPage() {
                       id={`${id}-input-help`}
                       className="text-destructive text-xs"
                     >
-                      Enter an app name.
+                      The app name is missing. Enter a name.
                     </p>
                   )}
                 </State>
@@ -225,7 +228,10 @@ export default function DesignPage() {
               </span>
             </State>
             {(["Default", "Disabled", "Error"] as const).map((state) => (
-              <State key={state} title={`Textarea · ${state}`}>
+              <State
+                key={state}
+                title={`Textarea · ${state === "Error" ? "Error demonstration" : state}`}
+              >
                 <Label htmlFor={`${id}-textarea-${state}`}>Prompt</Label>
                 <Textarea
                   id={`${id}-textarea-${state}`}
@@ -241,7 +247,7 @@ export default function DesignPage() {
                     id={`${id}-textarea-help`}
                     className="text-destructive text-xs"
                   >
-                    Enter a prompt.
+                    The prompt is empty. Enter a prompt.
                   </p>
                 )}
               </State>
@@ -251,13 +257,16 @@ export default function DesignPage() {
         <Section title="Selection">
           <div className={grid}>
             {(["Default", "Disabled", "Error"] as const).map((state) => (
-              <State key={state} title={`Select · ${state}`}>
+              <State
+                key={state}
+                title={`Select · ${state === "Error" ? "Error demonstration" : state}`}
+              >
                 <Select disabled={state === "Disabled"}>
                   <SelectTrigger
-                    aria-label={`${state} model`}
+                    aria-label={`${state} capability`}
                     aria-invalid={state === "Error"}
                   >
-                    <SelectValue placeholder="Choose a model" />
+                    <SelectValue placeholder="Choose a capability" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
@@ -270,47 +279,47 @@ export default function DesignPage() {
                   </SelectContent>
                 </Select>
                 {state === "Error" && (
-                  <p className="text-destructive text-xs">Choose a model.</p>
+                  <p className="text-destructive text-xs">Choose a capability.</p>
                 )}
               </State>
             ))}
             <State title="Combobox · default">
               <Combobox
-                label="Model"
+                label="Capability"
                 options={options}
-                value={model}
-                onValueChange={setModel}
+                value={capability}
+                onValueChange={setCapability}
               />
             </State>
             <State title="Combobox · empty">
               <Combobox
-                label="Empty models"
+                label="Empty capabilities"
                 options={[]}
-                onValueChange={setModel}
+                onValueChange={setCapability}
               />
             </State>
             <State title="Combobox · loading">
               <Combobox
-                label="Loading models"
+                label="Loading capabilities"
                 options={[]}
                 loading
-                onValueChange={setModel}
+                onValueChange={setCapability}
               />
             </State>
             <State title="Combobox · disabled">
               <Combobox
-                label="Disabled models"
+                label="Disabled capabilities"
                 options={options}
                 disabled
-                onValueChange={setModel}
+                onValueChange={setCapability}
               />
             </State>
-            <State title="Combobox · error">
+            <State title="Combobox · error demonstration">
               <Combobox
-                label="Unavailable models"
+                label="Unavailable capabilities"
                 options={[]}
-                error="Models could not be loaded. Try again."
-                onValueChange={setModel}
+                error="Capabilities could not be loaded from the gateway. Reload this page."
+                onValueChange={setCapability}
               />
             </State>
             <State title="Switch">
@@ -376,7 +385,7 @@ export default function DesignPage() {
                 <DialogHeader>
                   <DialogTitle>Create an app</DialogTitle>
                   <DialogDescription>
-                    Give each client its own key and access plan.
+                    Give each app its own key and access plan.
                   </DialogDescription>
                 </DialogHeader>
                 <Label htmlFor={`${id}-dialog-name`}>App name</Label>
@@ -426,7 +435,9 @@ export default function DesignPage() {
                   <DropdownMenuItem
                     variant="destructive"
                     onSelect={() =>
-                      toast.error("Example error: could not revoke key")
+                      toast.error(
+                        "Demonstration: The gateway could not revoke this key. Try again.",
+                      )
                     }
                   >
                     Revoke key
@@ -478,7 +489,12 @@ export default function DesignPage() {
                 />
               </TabsContent>
               <TabsContent value="error">
-                <ErrorState onRetry={() => toast.info("Example retry")} />
+                <State title="Error demonstration">
+                  <ErrorState
+                    message="Requests could not be loaded from the gateway. Try again."
+                    onRetry={() => toast.info("Demonstration: retrying requests.")}
+                  />
+                </State>
               </TabsContent>
             </Tabs>
             <Accordion type="single" collapsible>
@@ -539,7 +555,7 @@ export default function DesignPage() {
                 <Badge variant="destructive">Action needed</Badge>
               </div>
             </State>
-            <State title="Toast">
+            <State title="Toast · demonstration">
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
@@ -549,7 +565,11 @@ export default function DesignPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => toast.error("Couldn’t save. Try again.")}
+                  onClick={() =>
+                    toast.error(
+                      "Demonstration: The gateway could not save these changes. Try again.",
+                    )
+                  }
                 >
                   Error
                 </Button>
@@ -617,7 +637,7 @@ export default function DesignPage() {
         </Section>
         <Section title="Product vocabulary">
           <div className="grid min-w-0 gap-5 sm:grid-cols-2">
-            <State title="Status pills">
+            <State title="Status pills · demonstration">
               <StatusPill status="ready" reason="Accepting requests." />
               <StatusPill
                 status="starting"
@@ -629,7 +649,7 @@ export default function DesignPage() {
               />
               <StatusPill
                 status="unavailable"
-                reason="The engine is offline."
+                reason="The engine is offline. Try another model."
               />
             </State>
             <State title="Capability icons">
@@ -649,14 +669,14 @@ export default function DesignPage() {
                 ))}
               </div>
             </State>
-            <State title="Copy field">
+            <State title="Copy field · demonstration">
               <CopyField value="https://gateway.example/v1" />
               <CopyField value="" label="Unavailable endpoint" disabled />
               <CopyField value="" label="Loading endpoint" loading />
               <CopyField
                 value=""
-                label="Endpoint error"
-                error="The endpoint could not be loaded."
+                label="Endpoint error demonstration"
+                error="The gateway endpoint could not be loaded. Reload this page."
               />
             </State>
             <State title="Secret reveal · example only">
@@ -704,19 +724,21 @@ export default function DesignPage() {
                   variant="outline"
                   onClick={() => toast.info("Example creation action")}
                 >
-                  Try a model
+                  Try a request
                 </Button>
               }
             />
             <div className="flex flex-col gap-4">
-              <ErrorState
-                message="The request list could not be loaded. Check your connection and try again."
-                onRetry={() => {
-                  setRetrying(true);
-                  setTimeout(() => setRetrying(false), 1500);
-                }}
-                retrying={retrying}
-              />
+              <State title="Request list error demonstration">
+                <ErrorState
+                  message="The request list could not be loaded from the gateway. Try again."
+                  onRetry={() => {
+                    setRetrying(true);
+                    setTimeout(() => setRetrying(false), 1500);
+                  }}
+                  retrying={retrying}
+                />
+              </State>
               <div
                 role="status"
                 aria-label="Loading list"
@@ -737,7 +759,7 @@ export default function DesignPage() {
             </TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead>Model</TableHead>
+                <TableHead>Capability</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Cost</TableHead>
               </TableRow>
@@ -745,7 +767,7 @@ export default function DesignPage() {
             <TableBody>
               <TableRow>
                 <TableCell>
-                  <EntityName name="Chat" detail="Example model" />
+                  <EntityName name="Chat" detail="Example capability" />
                 </TableCell>
                 <TableCell>
                   <StatusPill status="ready" />
@@ -755,7 +777,7 @@ export default function DesignPage() {
                 </TableCell>
               </TableRow>
               <TableRow>
-                <TableCell>Image</TableCell>
+                <TableCell>Images</TableCell>
                 <TableCell>
                   <StatusPill status="unavailable" />
                 </TableCell>
@@ -768,7 +790,7 @@ export default function DesignPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Model</TableHead>
+                <TableHead>Capability</TableHead>
                 <TableHead>Cost</TableHead>
               </TableRow>
             </TableHeader>
@@ -783,7 +805,14 @@ export default function DesignPage() {
               </TableRow>
             </TableBody>
           </Table>
-          <ErrorState message="Example table could not be loaded." />
+          <State title="Table error demonstration">
+            <ErrorState
+              message="The request table could not be loaded from the gateway. Try again."
+              onRetry={() =>
+                toast.info("Demonstration: retrying the request table.")
+              }
+            />
+          </State>
           <Table>
             <TableBody>
               <TableRow>

@@ -135,16 +135,31 @@ def snapshot(destination):
     shutil.copy2(REPO / "tests/e2e/fake_engine.py", destination / "tests/e2e/fake_engine.py")
 
 
+def write_bringup_time(clock, ready):
+    """Record the Compose bring-up: pull, build, and up until /health answers.
+
+    scripts/ci-local sets FRESH_INSTANCE_TIMING_OUT and adds this to the browser
+    journey's time (scripts/ci/journey_clock.py). A cached image layer makes
+    `build` faster than on a new machine; the number is a floor, not a ceiling.
+    """
+    started, pulled, built = clock
+    timing = {"pull_s": round(pulled - started, 1), "build_s": round(built - pulled, 1),
+              "up_s": round(ready - built, 1), "bringup_s": round(ready - started, 1)}
+    print(f"PASS Compose bring-up took {timing['bringup_s']} s "
+          f"(pull {timing['pull_s']}, build {timing['build_s']}, up {timing['up_s']})", flush=True)
+    if os.environ.get("FRESH_INSTANCE_TIMING_OUT"):
+        Path(os.environ["FRESH_INSTANCE_TIMING_OUT"]).write_text(json.dumps(timing) + "\n")
+
+
 def assert_fresh_setup_entry(client, compose):
     if not compose:
-        setup = expect(client.get("/setup"), 200)
+        # A source checkout has no web build; the server console still works.
+        setup = expect(client.get("/setup/console"), 200)
         assert '/setup/local-owner' in setup.text, "Fresh install has no owner claim form"
         print("PASS fresh setup renders the local owner claim form", flush=True)
         return
 
-    setup = expect(client.get("/setup"), 303)
-    assert setup.headers["location"] == "/ui/setup/", "Fresh setup did not redirect to exported UI"
-    exported = expect(client.get("/ui/setup/"), 200)
+    exported = expect(client.get("/setup/"), 200)
     assert "text/html" in exported.headers.get("content-type", ""), "Exported setup page is not HTML"
     state = expect(client.get("/setup/api/state"), 200).json()
     assert state["owner_exists"] is False, "Fresh setup API state already has an owner"
@@ -197,8 +212,13 @@ def run(compose):
     # All scratch files remain in this worktree, on disk rather than /tmp.
     scratch = REPO / "venv"
     scratch.mkdir(exist_ok=True)
+    sys.path.insert(0, str(REPO / "scripts"))
+    import scratch_owner  # the repo's own harness helper, not a gateway module
+    scratch_owner.sweep(scratch, "fresh-instance-")  # what a SIGKILLed run left
+    scratch_owner.exit_on_signals()  # TERM must unwind the TemporaryDirectory below
     with ExitStack() as stack:
         root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="fresh-instance-", dir=scratch)))
+        scratch_owner.mark(root)
         source = root / "source"
         source.mkdir()
         snapshot(source)
@@ -262,10 +282,15 @@ def run(compose):
                                env=env, stdout=log, stderr=log, check=True, timeout=90)
             stack.callback(down)
             print("Starting disposable Compose gateway, LiteLLM, and fake engine...", flush=True)
+            # What `docker compose up` does for a new operator, timed in its three
+            # parts (release bar 1: the ten minutes start here).
+            clock = [time.monotonic()]
             subprocess.run(command + ["pull", "litellm"], env=env, stdout=log,
                            stderr=log, check=True, timeout=600)
+            clock.append(time.monotonic())
             subprocess.run(command + ["build", "gateway"], env=env, stdout=log,
                            stderr=log, check=True, timeout=600)
+            clock.append(time.monotonic())
             gateway_socket.close()
             subprocess.run(command + ["up", "--no-build", "--pull", "never", "-d"], env=env, stdout=log,
                            stderr=log, check=True, timeout=90)
@@ -282,6 +307,8 @@ def run(compose):
                                                  trust_env=False, timeout=10, follow_redirects=False))
         wait_ready(client, "/health")
         print("PASS fresh gateway health", flush=True)
+        if compose:
+            write_bringup_time(clock, time.monotonic())
         assert_fresh_setup_entry(client, compose)
         password = "Fresh-test-password-" + os.urandom(8).hex()
         expect(client.post("/setup/local-owner", data={"email": "owner@example.test",
@@ -301,7 +328,7 @@ def run(compose):
         registry = expect(client.get("/admin/api/operator/service-registry"), 200)
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
-            "name": "First chat engine", "preset": "openai-compatible", "base_url": engine_url,
+            "name": "First chat engine", "protocol": "openai-compatible", "base_url": engine_url,
             "health_endpoint": "/v1/models",
             "capabilities": ["chat"], "models": [{"public": MODEL, "upstream": MODEL}]
         }), 201).json()["service_registry"]

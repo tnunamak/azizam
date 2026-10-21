@@ -3,6 +3,7 @@
 import { request } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { widenStepUpWindow } from "../fixtures/session-policy";
 import { sweepPaths, sweepTarget } from "./target";
 
 interface Seed {
@@ -50,13 +51,17 @@ export default async function setup() {
   const paths = sweepPaths(target);
   await mkdir(paths.dir, { recursive: true });
   // SWEEP_KEEP=1 reruns part of the matrix and keeps the other results (same-named files are replaced).
-  if (process.env.SWEEP_KEEP !== "1") await rm(paths.findings, { recursive: true, force: true });
+  if (process.env.SWEEP_KEEP !== "1") await rm(paths.findings, { recursive: true }).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
   await mkdir(paths.findings, { recursive: true });
   await mkdir(paths.shots, { recursive: true });
   await waitForFile(paths.seedManifest);
   const seed = JSON.parse(await readFile(paths.seedManifest, "utf8")) as Seed;
   const base = target.baseURL;
   const owner = await signIn(base, seed.owner_email, seed.password, paths.ownerState);
+  // The saved owner sign-in outlives the 15-minute step-up window (fixtures/session-policy.ts).
+  await widenStepUpWindow(owner);
   const member = await signIn(base, seed.member_email, seed.password, paths.memberState);
   await member.dispose();
   await writeFile(paths.anonymousState, JSON.stringify({ cookies: [], origins: [] }));
@@ -86,12 +91,12 @@ export default async function setup() {
   } else {
     const session = await (await owner.get("/admin/api/session")).json();
     const csrf = session?.actor?.csrf_token;
-    const listing = await owner.get("/admin/api/profiles");
-    const profiles = listing.ok() ? (await listing.json()).profiles ?? [] : [];
-    if (csrf && profiles[0]?.id) {
+    const listing = await owner.get("/admin/api/access-plans");
+    const plans = listing.ok() ? (await listing.json()).access_plans ?? [] : [];
+    if (csrf && plans[0]?.id) {
       const created = await owner.post("/admin/api/invites", {
         headers: { "x-azizam-csrf": csrf, "x-azizam-admin-action": "1" },
-        data: { profile_id: profiles[0].id, email: "sweep-invitee@example.test", expires_in: 86_400 },
+        data: { access_plan: plans[0].id, email: "sweep-invitee@example.test", expires_in: 86_400 },
       });
       if (created.ok()) {
         const { url } = await created.json();

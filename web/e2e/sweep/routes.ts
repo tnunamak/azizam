@@ -71,6 +71,16 @@ const firstMenu: StateAction = async (page) => {
   return true;
 };
 
+/** Open Details for the first model name on the Models page. */
+const firstModelDetails: StateAction = async (page) => {
+  const name = page.locator('main button[aria-haspopup="dialog"]').filter({ visible: true }).first();
+  if (!(await appears(name))) return "no model name in main";
+  await name.scrollIntoViewIfNeeded();
+  await name.click();
+  await page.getByRole("dialog").waitFor({ state: "visible", timeout: 5_000 });
+  return true;
+};
+
 const tab = (name: string): SweepState => ({
   id: `tab-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
   act: click(name, "tab"),
@@ -87,15 +97,18 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/",
     surface: "Home",
-    path: "/ui/",
+    path: "/",
     roles: ["owner", "member", "anonymous"],
-    states: [{ id: "landing" }],
+    // Signed out, "/" is the landing; signed in, it is Home.
+    states: [
+      { id: "landing", roles: ["anonymous"] },
+      { id: "default", roles: signedIn },
+    ],
   },
-  { appRoute: "/home", surface: "Home", path: "/ui/home/", roles: signedIn, states: [{ id: "default" }] },
   {
     appRoute: "/status",
     surface: "Status",
-    path: "/ui/status/",
+    path: "/status/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -105,7 +118,7 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/library",
     surface: "Library",
-    path: "/ui/library/",
+    path: "/library/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -116,20 +129,20 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/try",
     surface: "Try",
-    path: "/ui/try/",
+    path: "/try/",
     roles: signedIn,
     states: [
-      ...tryTabs.map((name) => ({ id: `tab-${name}`, url: () => `/ui/try/?capability=${name}` })),
-      ...tryLinks.map((name) => ({ id: `link-${name}`, url: () => `/ui/try/?capability=${name}` })),
+      ...tryTabs.map((name) => ({ id: `tab-${name}`, url: () => `/try/?capability=${name}` })),
+      ...tryLinks.map((name) => ({ id: `link-${name}`, url: () => `/try/?capability=${name}` })),
       {
         id: "workflow-picture",
         url: (ctx: SweepContext) =>
-          ctx.pictureWorkflow ? `/ui/try/?workflow=${encodeURIComponent(ctx.pictureWorkflow)}` : null,
+          ctx.pictureWorkflow ? `/try/?workflow=${encodeURIComponent(ctx.pictureWorkflow)}` : null,
       },
       {
         id: "workflow-picture-run-empty",
         url: (ctx: SweepContext) =>
-          ctx.pictureWorkflow ? `/ui/try/?workflow=${encodeURIComponent(ctx.pictureWorkflow)}` : null,
+          ctx.pictureWorkflow ? `/try/?workflow=${encodeURIComponent(ctx.pictureWorkflow)}` : null,
         // Pressing Run with nothing filled shows each field's message; it sends nothing.
         act: async (page) => {
           const run = page.locator("main [role=tabpanel]:visible").getByRole("button", { name: /^Run/ }).first();
@@ -145,20 +158,20 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/people",
     surface: "People and invites",
-    path: "/ui/people/",
+    path: "/people/",
     roles: signedIn,
     states: [
       { id: "default" },
       { ...tab("Invites"), roles: owner },
       { ...tab("Access plans"), roles: owner },
-      { id: "invite-dialog", url: () => "/ui/people/?tab=invites", act: click(/invite someone/i), roles: owner },
+      { id: "invite-dialog", url: () => "/people/?tab=invites", act: click(/invite someone/i), roles: owner },
       { id: "row-menu", act: firstMenu, roles: owner },
     ],
   },
   {
     appRoute: "/sign-in",
     surface: "Sign-in and invite acceptance",
-    path: "/ui/sign-in/",
+    path: "/sign-in/",
     roles: ["anonymous", "owner"],
     states: [
       { id: "default" },
@@ -168,8 +181,9 @@ export const ROUTES: SweepRoute[] = [
         act: async (page) => {
           await page.getByLabel("Email", { exact: true }).fill("nobody@example.test");
           await page.getByLabel("Password", { exact: true }).fill("not the password");
+          const answered = page.waitForResponse((response) => response.request().method() === "POST");
           await page.getByRole("button", { name: "Sign in", exact: true }).click();
-          await page.waitForTimeout(1_000);
+          await answered;
           return true;
         },
       },
@@ -178,14 +192,14 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/invite",
     surface: "Sign-in and invite acceptance",
-    path: "/ui/invite/",
+    path: "/invite/",
     roles: ["anonymous", "member"],
     states: [
       { id: "no-token" },
-      { id: "bad-token", url: () => "/ui/invite/#token=not-a-real-invitation" },
+      { id: "bad-token", url: () => "/invite/#token=not-a-real-invitation" },
       {
         id: "valid-token",
-        url: (ctx) => (ctx.inviteToken ? `/ui/invite/#token=${encodeURIComponent(ctx.inviteToken)}` : null),
+        url: (ctx) => (ctx.inviteToken ? `/invite/#token=${encodeURIComponent(ctx.inviteToken)}` : null),
         optional: true,
       },
     ],
@@ -193,7 +207,7 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/usage",
     surface: "Usage",
-    path: "/ui/usage/",
+    path: "/usage/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -215,7 +229,7 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/activity",
     surface: "Activity",
-    path: "/ui/activity/",
+    path: "/activity/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -241,14 +255,14 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/models",
     surface: "Models",
-    path: "/ui/models/",
+    path: "/models/",
     roles: signedIn,
-    states: [{ id: "default" }, { id: "row-menu", act: firstMenu, roles: owner, optional: true }],
+    states: [{ id: "default" }, { id: "details", act: firstModelDetails, roles: owner, optional: true }],
   },
   {
     appRoute: "/workflows",
     surface: "Workflows",
-    path: "/ui/workflows/",
+    path: "/workflows/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -269,7 +283,7 @@ export const ROUTES: SweepRoute[] = [
   {
     appRoute: "/engines",
     surface: "Engines",
-    path: "/ui/engines/",
+    path: "/engines/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -288,23 +302,16 @@ export const ROUTES: SweepRoute[] = [
     ],
   },
   {
-    appRoute: "/services",
-    surface: "Engines",
-    path: "/ui/services/",
-    roles: owner,
-    states: [{ id: "legacy-path" }],
-  },
-  {
     appRoute: "/providers",
     surface: "Providers",
-    path: "/ui/providers/",
+    path: "/providers/",
     roles: signedIn,
     states: [{ id: "default" }, { id: "row-menu", act: firstMenu, roles: owner, optional: true }],
   },
   {
     appRoute: "/apps",
     surface: "Apps and keys",
-    path: "/ui/apps/",
+    path: "/apps/",
     roles: signedIn,
     states: [
       { id: "default" },
@@ -312,27 +319,36 @@ export const ROUTES: SweepRoute[] = [
       { id: "row-menu", act: firstMenu, optional: true },
     ],
   },
-  { appRoute: "/settings", surface: "Settings", path: "/ui/settings/", roles: signedIn, states: [{ id: "default" }] },
+  { appRoute: "/settings", surface: "Settings", path: "/settings/", roles: signedIn, states: [{ id: "default" }] },
+  { appRoute: "/account", surface: "Account", path: "/account/", roles: signedIn, states: [{ id: "default" }] },
+  { appRoute: "/categories", surface: "Categories", path: "/categories/", roles: owner, states: [{ id: "default" }] },
   {
     appRoute: "/setup",
     surface: "Setup and first run",
-    path: "/ui/setup/",
+    path: "/setup/",
     roles: ["anonymous", "owner"],
     states: [
       { id: "first-run", firstRun: true, roles: ["anonymous"] },
       { id: "claimed" },
     ],
   },
-  { appRoute: "/design", surface: "Design reference (dev)", path: "/ui/design/", roles: owner, dev: true, states: [{ id: "default" }] },
-  { appRoute: "/gallery", surface: "Design reference (dev)", path: "/ui/gallery/", roles: owner, dev: true, states: [{ id: "default" }] },
-  { appRoute: "/showcase", surface: "Design reference (dev)", path: "/ui/showcase/", roles: owner, dev: true, states: [{ id: "default" }] },
   {
     appRoute: "(not-found)",
     surface: "Page not found",
-    path: "/ui/no-such-page/",
+    path: "/no-such-page/",
     roles: ["owner", "member"],
     states: [{ id: "default" }],
   },
+];
+
+/**
+ * Dev reference pages (route.dev === true) are not product surfaces and stay out of ROUTES:
+ * the design page shows permanent loading examples (aria-busy, skeletons) by design, which
+ * the sweep's settle contract would always report as never finished. They stay listed here so
+ * the every-app-route coverage check still sees them.
+ */
+export const DEV_REFERENCE_ROUTES: SweepRoute[] = [
+  { appRoute: "/design", surface: "Design reference (dev)", path: "/design/", roles: owner, dev: true, states: [{ id: "default" }] },
 ];
 
 /** App routes discovered from src/app: every directory holding a page.tsx. */

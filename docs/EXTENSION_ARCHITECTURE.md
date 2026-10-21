@@ -34,6 +34,10 @@ The pattern is a blend of:
 
 ## Core Object Kinds
 
+The following extension schema sketch predates access plans v4.
+UNVERIFIED: the replacement for `profile_template` and the `profiles/` package
+path. They are historical identifiers, not current plan configuration guidance.
+
 Extension packages can provide these data objects:
 
 - `extension_package`
@@ -165,14 +169,14 @@ The admin UI is the normal extension surface:
 1. **Import** package, directory, URL, or bundled extension.
 2. **Review** publisher, version, signature/trust, object counts, permissions,
    adapters/translators, staged code objects, required secrets, and affected
-   Profiles.
+   Access plans.
 3. **Validate** schemas, unique IDs, adapter presence, route collisions, binding
    targets, dependency declarations, and policy impact.
 4. **Configure** service URLs, secret refs, provenance, and which records to
    enable.
 5. **Test** health checks, inventory, dry-run binding, and optional smoke jobs.
 6. **Enable** DB registry records. New capabilities do not become available to
-   Apps until Profiles allow them.
+   Apps until Access plans allow them.
 7. **Operate** disable, update, rollback, repair dependencies, edit
    non-managed service rows, or uninstall when no active references remain.
 
@@ -350,6 +354,9 @@ Current admin API:
 - `GET /admin/api/extensions`
 - `POST /admin/api/extensions/validate`
 - `POST /admin/api/extensions/enable`
+- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable` removes or
+  disables the package with its installed records. See
+  [KNOWN_WORK item 6](KNOWN_WORK.md#6-finish-extension-package-disableremoval-semantics).
 
 Validation returns package metadata, object counts, normalized candidate
 records, warnings, and errors without mutating state. Enable writes the service
@@ -357,3 +364,37 @@ registry and package index, records audit events, and persists Git-backed
 packages under `data/extensions/installed`. Imported records carry package
 provenance: package id, version, hash, source summary, and resolved commit when
 available.
+
+The package index keeps a keyed digest (`mac`, an HMAC-SHA-256 under a key
+derived from the gateway's own key file) of each normalized record a package
+installed, with the record's kind and id, and never a copy of the record. The
+digest is of the record in the form the registry stores it: with secret
+references and not secrets (decision D26), so a record with a short secret has
+no bare hash an offline guess can test. A record can carry a command or
+environment secret, and the index is returned by the list, enable and remove
+routes. A stored index written before the digests is digested once at startup,
+and the schema 11 migration that moves secrets into the store makes every proof
+again (`installed_records_version: 3`): a record that still matched its old
+proof gets the keyed proof of its new form, one an operator had changed gets a
+proof that matches nothing, so removal still detaches it. Removing a package
+deletes the secrets of the records and the source it removed.
+A row still matches its install when its digest, its provenance version all match the package; any other row is detached.
+
+Remove and disable change a package in one write transaction with the registry,
+the index and their audit facts. Remove refuses, with `409
+extension_package_referenced`, when an access plan still names a record the
+package would remove; the plan is checked under the same write lock, so a plan
+saved during the removal waits for it. The 409 names the plan. Disable switches
+off each record the package owns and turns it back on when the package is
+enabled again. An operator edit to a record detaches it from the package instead
+of removing it, so the edit is kept. Reinstalling over a kept record fails with
+`409 extension_package_conflict` and says the record was kept.
+
+The DELETE takes an optional `If-Match: "os-N"`; a stale value gets `412
+generation_mismatch`, as the service registry routes do. Its response is the
+registry through the same redacted projection as enable, with `ETag` and
+`Cache-Control: no-store`. The reference check runs before the revision check,
+so a removal that an access plan blocks returns `409 extension_package_referenced`
+even when `If-Match` is stale; the client gets the plan's name, not a 412. A
+package id the index does not hold returns `404 extension_package_not_found`
+for either mode.

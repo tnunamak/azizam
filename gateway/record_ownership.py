@@ -9,12 +9,9 @@ from typing import Any
 
 
 def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
-                key_hash: str | None = None, owner_keys: tuple[str, ...] = (),
-                unrestricted: bool = False) -> bool:
+                key_hash: str | None = None, owner_keys: tuple[str, ...] = ()) -> bool:
     if kind not in {"receipt", "media_job"}:
         return False
-    if unrestricted:
-        return True
     if record.get("app_id"):
         return bool(app_id and record["app_id"] == app_id)
     if record.get("owner_key_hash"):

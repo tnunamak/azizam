@@ -4,7 +4,7 @@ import { JobNotices } from "@/components/jobs/job-notices";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
 import {
@@ -22,6 +22,7 @@ import {
   Menu,
   Moon,
   Play,
+  Plug,
   ReceiptText,
   Tags,
   CornerDownRight,
@@ -34,9 +35,13 @@ import { createQueryClient } from "@/lib/api";
 import {
   canonicalDestinationPath,
   destinations,
+  pageAccess,
+  pageNameFor,
   PRODUCT_NAME,
+  uiPages,
 } from "@/lib/product";
 import { useCapabilityViews } from "@/lib/use-capability-views";
+import { SHELL_CHECKS_DELAY_MS, useAfterFirstLoad } from "./use-after-first-load";
 import {
   STATE_WORDS,
   type CapabilityView,
@@ -60,6 +65,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ReauthGate } from "./reauth-gate";
 import { ToastGate } from "./toast-gate";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
@@ -69,6 +75,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useAvatarSetting } from "./avatar-setting";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 // Keep the shortcut listener in the shell; load the palette and account menu
 // outside the first paint, then fetch them once the page is idle so the first
@@ -103,6 +110,7 @@ const icons: Record<string, LucideIcon> = {
   Library: Images,
   Try: Play,
   "Apps & keys": KeyRound,
+  Connect: Plug,
   Models: Box,
   Workflows: GitBranch,
   Usage: ChartColumn,
@@ -115,22 +123,16 @@ const icons: Record<string, LucideIcon> = {
   Settings,
 };
 const queryClient = createQueryClient();
-const publicPages = ["/sign-in", "/setup", "/invite", "/showcase"];
 
 function signInReturnPath(pathname: string, search: string): string {
-  if (typeof window !== "undefined") {
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (current.startsWith("/ui/")) return current;
-  }
+  if (typeof window !== "undefined")
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const uiPath = normalizedPath.startsWith("/ui/")
-    ? normalizedPath
-    : `/ui${normalizedPath}`;
-  return `${uiPath}${search ? `?${search}` : ""}`;
+  return `${normalizedPath}${search ? `?${search}` : ""}`;
 }
 
 function signInHref(returnPath: string): string {
-  return `/ui/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
+  return `/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
 }
 
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
@@ -166,6 +168,7 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
 
 function AccountMenu({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
+  const avatar = useAvatarSetting();
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const openMenu = () => {
@@ -178,24 +181,32 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
       {loaded ? (
         <Suspense
           fallback={
-            <AccountMenuPlaceholder
-              compact={compact}
-              name={viewer.name}
-              expanded={open}
-              onClick={openMenu}
-            />
+            <>
+              <AccountMenuPlaceholder
+                compact={compact}
+                name={viewer.name}
+                personId={viewer.id}
+                avatar={viewer.avatar}
+                expanded={open}
+                onClick={openMenu}
+              />
+              {open && <p role="status">Loading navigation…</p>}
+            </>
           }
         >
           <AccountMenuContent
             compact={compact}
             open={open}
             onOpenChange={setOpen}
+            {...avatar}
           />
         </Suspense>
       ) : (
         <AccountMenuPlaceholder
           compact={compact}
           name={viewer.name}
+          personId={viewer.id}
+          avatar={viewer.avatar}
           onClick={openMenu}
           onFocus={() => void import("./account-menu-content")}
           onPointerEnter={() => void import("./account-menu-content")}
@@ -214,12 +225,16 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
 function AccountMenuPlaceholder({
   compact,
   name,
+  personId,
+  avatar,
   expanded = false,
   onClick,
   ...props
 }: {
   compact: boolean;
   name: string;
+  personId?: string | null;
+  avatar?: { choice: string; picture_url: string | null } | null;
   expanded?: boolean;
   onClick: () => void;
   onFocus?: () => void;
@@ -240,7 +255,12 @@ function AccountMenuPlaceholder({
       onClick={onClick}
       {...props}
     >
-      <PersonMark name={name} size={compact ? "md" : "sm"} />
+      <PersonMark
+        name={name}
+        personId={personId}
+        avatar={avatar}
+        size={compact ? "md" : "sm"}
+      />
       {!compact && (
         <span className="shell-nav-label text-chrome-foreground min-w-0 flex-1 truncate text-left font-medium">
           {name}
@@ -310,7 +330,9 @@ function dotClass(tone: StateTone): string {
   }
 }
 
-function HealthLink({ compact = false }: { compact?: boolean }) {
+/** The gateway pill's state. Shell reads it once, so the polite announcement
+ *  and both responsive copies of the pill come from the same render. */
+function useGatewayHealth() {
   const viewer = useViewer();
   const {
     data: gatewayData,
@@ -327,9 +349,12 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   });
   // The same capability model as Home and Status: the dot cannot say
   // "fine" while something the viewer depends on is failing.
-  const model = useCapabilityViews(viewer.admin && viewer.authenticated);
+  const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
+  const model = useCapabilityViews(viewer.admin && viewer.authenticated, {
+    deferOwnerChecks: !checksReady,
+  });
   // Owners also see the engine or provider at fault, in the banner's words.
-  const ownerAlert = useOwnerAlertTarget(viewer.admin);
+  const ownerAlert = useOwnerAlertTarget(viewer.admin && checksReady);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
   // One rule (problemPill): faults are issues; Unknown (no fresh check) is
   // listed after them in the popover but never counted; Busy is neither.
@@ -337,19 +362,16 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   const listedProblems = [...sorted.faults, ...sorted.unchecked];
   const busy = sorted.busy.length;
   const pill = problemPill(model.verdict.problems);
+  const statusError = model.isError || model.ownerHealthError;
+  const currentCapabilities = !!gatewayData && !gatewayError && !model.isPending && !statusError;
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
     : !gatewayData
       ? { label: "Checking", tone: "unknown" as const }
       : !signedIn
         ? { label: "Gateway reachable", tone: "ok" as const }
-        : model.isError || model.ownerHealthError
-          ? // Reachable, but the capability states (or, for an owner, the
-            // engine checks) did not load: no count from old data, no
-            // all-clear (red team round 2).
-            { label: "Status unknown", tone: "unknown" as const }
-          : model.isPending
-            ? { label: "Checking", tone: "unknown" as const }
+        : !currentCapabilities
+          ? { label: statusError ? "Status unknown" : "Checking", tone: "unknown" as const }
             : pill
               ? pill
               : busy
@@ -357,12 +379,63 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
                 : model.verdict.tone === "off"
                   ? { label: "Nothing turned on", tone: "off" as const }
                   : { label: "All working", tone: "ok" as const };
-  const visibleLabel = label;
-  const dot = dotClass(tone);
+  const checking = label === "Checking";
   // The capabilities behind the count: tapping the pill must explain it.
-  const listed =
-    signedIn && !gatewayError && !model.isPending && !model.isError;
-  const reasons = listed ? listedProblems : [];
+  const listed = signedIn && currentCapabilities;
+  return {
+    label,
+    tone,
+    checking,
+    gatewayData,
+    gatewayError,
+    gatewayCheckedAt,
+    model,
+    ownerAlert,
+    listed,
+    reasons: listed ? listedProblems : [],
+  };
+}
+
+type GatewayHealth = ReturnType<typeof useGatewayHealth>;
+
+const GatewayHealthContext = createContext<GatewayHealth | null>(null);
+
+/** Reads the pill's state once and shares it: both responsive copies of the
+ *  pill and the single polite announcement come from the same render. */
+function GatewayHealthProvider({ children }: { children: React.ReactNode }) {
+  const health = useGatewayHealth();
+  return (
+    <GatewayHealthContext.Provider value={health}>
+      {children}
+      <span
+        role="status"
+        aria-label="Gateway status announcement"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {health.checking ? "" : `Gateway status: ${health.label}`}
+      </span>
+    </GatewayHealthContext.Provider>
+  );
+}
+
+function HealthLink({ compact = false }: { compact?: boolean }) {
+  const health = useContext(GatewayHealthContext);
+  if (!health) throw new Error("HealthLink needs GatewayHealthProvider");
+  const {
+    label: visibleLabel,
+    tone,
+    checking,
+    gatewayData,
+    gatewayError,
+    gatewayCheckedAt,
+    model,
+    ownerAlert,
+    listed,
+    reasons,
+  } = health;
+  const dot = dotClass(tone);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -374,6 +447,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}
+          aria-busy={checking}
         >
           <span
             aria-hidden="true"
@@ -405,7 +479,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
             )}
           </dd>
           {/* With the gateway unreachable, nothing current can be said about it. */}
-          {signedIn && !gatewayError && !model.isPending && !model.isError ? (
+          {listed ? (
             <>
               <dt className="text-muted-foreground">Your AI</dt>
               <dd>
@@ -433,7 +507,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               </dd>
             </>
           ) : null}
-          {ownerAlert ? (
+          {listed && ownerAlert ? (
             <>
               <dt className="text-muted-foreground">{ownerAlert.section}</dt>
               <dd>{ownerAlert.message}</dd>
@@ -441,7 +515,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
           ) : null}
         </dl>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/status">
+          <Link prefetch={false} href="/status">
             {reasons.length ? "See why" : "View status"}
             <ChevronRight aria-hidden="true" />
           </Link>
@@ -449,6 +523,19 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
       </PopoverContent>
     </Popover>
   );
+}
+
+// The lg breakpoint is where shell-nav-label becomes visible; below it the rail is icon-only.
+const WIDE_SIDEBAR_QUERY = "(min-width: 64rem)";
+
+function subscribeWideSidebar(onChange: () => void) {
+  const query = window.matchMedia(WIDE_SIDEBAR_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function isWideSidebar() {
+  return window.matchMedia(WIDE_SIDEBAR_QUERY).matches;
 }
 
 function Nav({
@@ -460,6 +547,8 @@ function Nav({
 }) {
   const viewer = useViewer();
   const pathname = usePathname();
+  const wideSidebar = useSyncExternalStore(subscribeWideSidebar, isWideSidebar, () => true);
+  const collapsed = !expanded && !wideSidebar;
   return (
     <nav
       aria-label="Main navigation"
@@ -493,24 +582,28 @@ function Nav({
                 const active =
                   canonicalDestinationPath(pathname) ===
                   canonicalDestinationPath(item.href);
-                return (
+                const link = (
+                  <Link prefetch={false}
+                    key={item.href}
+                    href={item.href}
+                    className="shell-nav-link"
+                    aria-label={item.title}
+                    aria-current={active ? "page" : undefined}
+                    onClick={onNavigate}
+                  >
+                    <Icon />
+                    <span className={expanded ? "" : "shell-nav-label"}>
+                      {item.title}
+                    </span>
+                  </Link>
+                );
+                return !expanded && collapsed ? (
                   <Tooltip key={item.href}>
-                    <TooltipTrigger asChild>
-                      <Link
-                        href={item.href}
-                        className="shell-nav-link"
-                        aria-label={item.title}
-                        aria-current={active ? "page" : undefined}
-                        onClick={onNavigate}
-                      >
-                        <Icon />
-                        <span className={expanded ? "" : "shell-nav-label"}>
-                          {item.title}
-                        </span>
-                      </Link>
-                    </TooltipTrigger>
+                    <TooltipTrigger asChild>{link}</TooltipTrigger>
                     <TooltipContent side="right">{item.title}</TooltipContent>
                   </Tooltip>
+                ) : (
+                  link
                 );
               })}
           </div>
@@ -524,7 +617,8 @@ function AlertSlot() {
   const viewer = useViewer();
   const pathname = usePathname();
   const onStatus = canonicalDestinationPath(pathname) === "/status";
-  const alert = useOwnerAlertTarget(viewer.admin && !onStatus);
+  const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
+  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && checksReady);
   // Status owns its section markup. Resolve its visible heading after route
   // loading so the banner can hand keyboard focus to the affected section.
   useEffect(() => {
@@ -541,8 +635,11 @@ function AlertSlot() {
       ).find((node) => node.textContent === section);
       if (!heading) return false;
       heading.tabIndex = -1;
-      heading.focus();
-      heading.scrollIntoView({ block: "start" });
+      heading.focus({ preventScroll: true });
+      heading.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "auto",
+      });
       return true;
     };
     const observer = new MutationObserver(() => {
@@ -628,9 +725,13 @@ function Shell({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-  const publicPage = publicPages.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`),
-  );
+  // Public pages come from gateway/ui_pages.json. A path outside it is the
+  // 404 page, which needs no session either. Home ("/") and the 404 page give
+  // a signed-in person the member shell; a signed-out one sees them as is.
+  const pageName = pageNameFor(pathname);
+  const publicPage =
+    (pageName === undefined || uiPages[pageName] === "public") &&
+    !((pageName === undefined || pageName === "") && viewer?.authenticated);
   const showPublicShell =
     publicPage || sessionPending || sessionError || !viewer?.authenticated;
   const currentPath = canonicalDestinationPath(pathname);
@@ -643,8 +744,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       !sessionError &&
       !viewer?.authenticated
     ) {
-      // Next adds /ui; the destination itself stays encoded for server validation.
-      router.replace(`/sign-in/?return_to=${encodeURIComponent(returnPath)}`);
+      // The destination stays encoded for server validation.
+      router.replace(signInHref(returnPath));
     }
   }, [
     publicPage,
@@ -654,12 +755,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     returnPath,
     router,
   ]);
-  const ownerPage = destinations.some(
-    (d) =>
-      d.group === "Gateway" &&
-      d.title !== "Status" &&
-      currentPath === canonicalDestinationPath(d.href),
-  );
+  const ownerPage = pageAccess(pathname) === "admin";
   const content = publicPage ? (
     children
   ) : sessionPending ? (
@@ -669,7 +765,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       aria-busy="true"
       className="text-muted-foreground text-body mx-auto max-w-md py-12"
     >
-      Checking your session…
+      Loading your account…
     </p>
   ) : sessionError ? (
     <>
@@ -682,7 +778,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       <ErrorState
         heading="Couldn’t load your account"
-        message="Check your connection and try again."
+        message="We couldn't tell why your account didn't load. Try again."
         onRetry={() => {
           void refreshSession();
         }}
@@ -703,9 +799,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         (d.group === "You" || ["People", "Activity"].includes(d.title)),
     ) ? (
     <>
-      <PageHeader title="Service admin session" />
+      <PageHeader title="Admin key" />
       <p className="text-muted-foreground">
-        This session uses a key to manage the gateway. Sign in as a person to
+        This admin key manages the gateway. Sign in as a person to
         use your AI, view your library and usage, or manage people.
       </p>
       <Button variant="outline" asChild>
@@ -755,7 +851,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         {showPublicShell ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4 sm:px-8">
-              <Link
+              <Link prefetch={false}
                 href="/"
                 className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight"
               >
@@ -771,148 +867,150 @@ function Shell({ children }: { children: React.ReactNode }) {
             </main>
           </div>
         ) : (
-          <div className="min-h-dvh">
-            <aside className="shell-sidebar">
-              <Link
-                href="/"
-                className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
-                aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
-              >
-                <BrandMark />
-                <span className="shell-nav-label min-w-0">
-                  <span className="block text-base leading-tight font-semibold tracking-tight">
-                    {PRODUCT_NAME}{" "}
-                  </span>
-                  {instanceSubtitle && (
-                    <span className="text-chrome-muted block truncate text-xs">
-                      {instanceSubtitle}
-                    </span>
-                  )}
-                </span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => setCommandOpen(true)}
-                aria-label="Go to"
-                // A jump list, not a search field: pages search their own
-                // content (Library searches creations), so this reads as a
-                // navigation row with its shortcut.
-                className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
-              >
-                <CornerDownRight
-                  className="size-4 shrink-0"
-                  aria-hidden="true"
-                />
-                <span className="shell-nav-label flex-1 text-left">Go to…</span>
-                <kbd
-                  aria-hidden="true"
-                  className="shell-nav-label font-sans text-xs"
-                >
-                  {shortcut}
-                </kbd>
-              </button>
-              <Button
-                variant="ghost"
-                onClick={(event) => {
-                  navigationInvoker.current = event.currentTarget;
-                  setRailOpen(true);
-                }}
-                aria-label="Expand navigation"
-                aria-haspopup="dialog"
-                aria-expanded={railOpen}
-                className="text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground mb-3 lg:hidden"
-              >
-                <Menu />
-              </Button>
-              <Nav />
-              <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
-                <HealthLink />
-                <div className="flex items-center gap-1 max-lg:flex-col">
-                  <div className="min-w-0 flex-1 max-lg:w-full">
-                    <AccountMenu />
-                  </div>
-                  <ThemeToggle chrome />
-                </div>
-              </div>
-            </aside>
-            <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
-              <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
-                <Link
+          <GatewayHealthProvider>
+            <div className="min-h-dvh">
+              <aside className="shell-sidebar">
+                <Link prefetch={false}
                   href="/"
+                  className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
                   aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
-                  className="flex min-h-11 min-w-0 items-center gap-2.5"
                 >
                   <BrandMark />
-                  <span className="min-w-0">
+                  <span className="shell-nav-label min-w-0">
                     <span className="block text-base leading-tight font-semibold tracking-tight">
-                      {PRODUCT_NAME}
+                      {PRODUCT_NAME}{" "}
                     </span>
                     {instanceSubtitle && (
-                      <span className="text-chrome-muted block max-w-44 truncate text-xs">
+                      <span className="text-chrome-muted block truncate text-xs">
                         {instanceSubtitle}
                       </span>
                     )}
                   </span>
                 </Link>
-                <div className="flex items-center">
-                  {/* Home and Status open with their own verdict; the
-                      header pill would say it a third time (D1.5). */}
-                  {/^\/(home|status)?\/?$/.test(pathname ?? "") ? null : (
-                    <HealthLink compact />
-                  )}
-                  <AccountMenu compact />
+                <button
+                  type="button"
+                  onClick={() => setCommandOpen(true)}
+                  aria-label="Go to"
+                  // A jump list, not a search field: pages search their own
+                  // content (Library searches creations), so this reads as a
+                  // navigation row with its shortcut.
+                  className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
+                >
+                  <CornerDownRight
+                    className="size-4 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="shell-nav-label flex-1 text-left">Go to…</span>
+                  <kbd
+                    aria-hidden="true"
+                    className="shell-nav-label font-sans text-xs"
+                  >
+                    {shortcut}
+                  </kbd>
+                </button>
+                <Button
+                  variant="ghost"
+                  onClick={(event) => {
+                    navigationInvoker.current = event.currentTarget;
+                    setRailOpen(true);
+                  }}
+                  aria-label="Expand navigation"
+                  aria-haspopup="dialog"
+                  aria-expanded={railOpen}
+                  className="text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground mb-3 lg:hidden"
+                >
+                  <Menu />
+                </Button>
+                <Nav />
+                <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
+                  <HealthLink />
+                  <div className="flex items-center gap-1 max-lg:flex-col">
+                    <div className="min-w-0 flex-1 max-lg:w-full">
+                      <AccountMenu />
+                    </div>
+                    <ThemeToggle chrome />
+                  </div>
                 </div>
-              </header>
-              <AlertSlot />
-              <main id="main-content" className="shell-content pb-28 sm:pb-12">
-                <JobNotices />
-                {content}
-              </main>
-            </div>
-            <nav
-              aria-label="Phone navigation"
-              className={`bg-background/95 fixed inset-x-0 bottom-0 z-30 grid backdrop-blur ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
-            >
-              {destinations
-                .filter((d) =>
-                  viewer?.serviceAdmin
-                    ? ["Home", "Status"].includes(d.title)
-                    : ["Home", "Library", "Apps & keys"].includes(d.title),
-                )
-                .map((d) => {
-                  const Icon = icons[d.title];
-                  return (
-                    <Link
-                      key={d.href}
-                      href={d.href}
-                      className="mobile-tab"
-                      aria-current={
-                        canonicalDestinationPath(pathname) ===
-                        canonicalDestinationPath(d.href)
-                          ? "page"
-                          : undefined
-                      }
-                    >
-                      <Icon aria-hidden="true" />
-                      {d.title === "Apps & keys" ? "Apps" : d.title}
-                    </Link>
-                  );
-                })}
-              <button
-                type="button"
-                className="mobile-tab"
-                aria-haspopup="dialog"
-                aria-expanded={moreOpen}
-                onClick={(event) => {
-                  navigationInvoker.current = event.currentTarget;
-                  setMoreOpen(true);
-                }}
+              </aside>
+              <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
+                <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
+                  <Link prefetch={false}
+                    href="/"
+                    aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
+                    className="flex min-h-11 min-w-0 items-center gap-2.5"
+                  >
+                    <BrandMark />
+                    <span className="min-w-0">
+                      <span className="block text-base leading-tight font-semibold tracking-tight">
+                        {PRODUCT_NAME}
+                      </span>
+                      {instanceSubtitle && (
+                        <span className="text-chrome-muted block max-w-44 truncate text-xs">
+                          {instanceSubtitle}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                  <div className="flex items-center">
+                    {/* Home and Status open with their own verdict; the
+                        header pill would say it a third time (D1.5). */}
+                    {/^\/(home|status)?\/?$/.test(pathname ?? "") ? null : (
+                      <HealthLink compact />
+                    )}
+                    <AccountMenu compact />
+                  </div>
+                </header>
+                <AlertSlot />
+                <main id="main-content" className="shell-content pb-28 sm:pb-12">
+                  <JobNotices />
+                  {content}
+                </main>
+              </div>
+              <nav
+                aria-label="Phone navigation"
+                className={`bg-background/95 fixed inset-x-0 bottom-0 z-30 grid backdrop-blur ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
               >
-                <Menu aria-hidden="true" />
-                More
-              </button>
-            </nav>
-          </div>
+                {destinations
+                  .filter((d) =>
+                    viewer?.serviceAdmin
+                      ? ["Home", "Status"].includes(d.title)
+                      : ["Home", "Library", "Apps & keys"].includes(d.title),
+                  )
+                  .map((d) => {
+                    const Icon = icons[d.title];
+                    return (
+                      <Link prefetch={false}
+                        key={d.href}
+                        href={d.href}
+                        className="mobile-tab"
+                        aria-current={
+                          canonicalDestinationPath(pathname) ===
+                          canonicalDestinationPath(d.href)
+                            ? "page"
+                            : undefined
+                        }
+                      >
+                        <Icon aria-hidden="true" />
+                        {d.title === "Apps & keys" ? "Apps" : d.title}
+                      </Link>
+                    );
+                  })}
+                <button
+                  type="button"
+                  className="mobile-tab"
+                  aria-haspopup="dialog"
+                  aria-expanded={moreOpen}
+                  onClick={(event) => {
+                    navigationInvoker.current = event.currentTarget;
+                    setMoreOpen(true);
+                  }}
+                >
+                  <Menu aria-hidden="true" />
+                  More
+                </button>
+              </nav>
+            </div>
+          </GatewayHealthProvider>
         )}
         <Sheet
           open={!showPublicShell && (moreOpen || railOpen)}
@@ -965,7 +1063,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </SheetContent>
         </Sheet>
         {!showPublicShell && commandMounted && (
-          <Suspense fallback={null}>
+          <Suspense fallback={commandOpen ? <p role="status" className="bg-background fixed inset-x-4 top-20 z-50 rounded-lg border p-4">Loading navigation…</p> : null}>
             <CommandPalette
               open={commandOpen}
               setOpen={setCommandOpen}
@@ -985,6 +1083,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <Shell>{children}</Shell>
+        <ReauthGate />
         <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>

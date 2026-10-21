@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
-from gateway.public_failure import PublicFailure, describe
+from gateway.public_failure import PublicFailure, describe, project_job
 from gateway.receipts import RouteReceipt, new_request_id
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ APP_NAME = "Azizam"
 JOB_MODE = "session_make"
 # Shown while a canceled job's work settles; it then becomes ``canceled``.
 CANCEL_REQUESTED = "cancel_requested"
-_CANCELED = "Canceled by requester"
+_CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
 SUPPORTED_INTENTS = frozenset({"image.generate", "image.edit"})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
@@ -60,10 +60,13 @@ class MakeCanceled(Exception):
 class MakeBackendError(Exception):
     """A backend failure whose ``public_message`` is safe to store and show."""
 
-    def __init__(self, public_message: str, *, http_status: int | None = None) -> None:
+    def __init__(self, public_message: str, *, http_status: int | None = None,
+                 error_info: Mapping[str, Any] | None = None) -> None:
         super().__init__(public_message)
         self.public_message = public_message
         self.http_status = http_status
+        # Typed failure facts (``media_jobs.ERROR_FIELDS``), never free text.
+        self.error_info = error_info
 
 
 @dataclass(frozen=True)
@@ -493,7 +496,7 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     except MakeBackendError as exc:
         # Even a public backend message must not carry the prompt into storage.
         message = exc.public_message.replace(prompt, "[prompt]") if prompt else exc.public_message
-        _fail(job_id, message, jobs_path, http_status=exc.http_status)
+        _fail(job_id, message, jobs_path, http_status=exc.http_status, error_info=exc.error_info)
         return
     except Exception as exc:  # noqa: BLE001
         # Arbitrary exception text may hold the prompt or a backend secret,
@@ -529,10 +532,11 @@ def _settle_canceled(job_id: str, jobs_path: Path) -> None:
     _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path, progress=100)
 
 
-def _fail(job_id: str, message: str, jobs_path: Path, *, http_status: int | None = None) -> None:
+def _fail(job_id: str, message: str, jobs_path: Path, *, http_status: int | None = None,
+          error_info: Mapping[str, Any] | None = None) -> None:
     try:
         media_jobs.update_status(
-            job_id, media_jobs.STATUS_FAILED, error=message[:500],
+            job_id, media_jobs.STATUS_FAILED, error=message[:500], error_info=error_info,
             metadata_patch={"last_http_status": int(http_status)} if http_status else None,
             path=jobs_path,
         )
@@ -576,7 +580,7 @@ def _client_view(job: Mapping[str, Any]) -> dict[str, Any]:
     """The client's view of a job. A running job whose cancel has not settled
     shows ``cancel_requested``: its work may still be running, but it will
     publish nothing."""
-    view = media_jobs.for_audience(job, "client")
+    view = project_job(media_jobs.for_audience(job, "client"))
     if (job.get("status") == media_jobs.STATUS_RUNNING
             and (job.get("metadata") or {}).get("cancel_requested_at")):
         view["status"] = CANCEL_REQUESTED

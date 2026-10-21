@@ -19,6 +19,8 @@ llm:
   #   timeout_s: 120          # longest a swap waits for requests in flight
 backends:
   azizam:
+    display_name: Azizam
+    description: Access the available AI tools.
     name: Azizam (self)
     native_passthrough: false
     host: 127.0.0.1
@@ -26,50 +28,9 @@ backends:
     health_endpoint: /health
     role: required
     managed: false
-  tabby:
-    transforms: [reasoning-effort-final-chat]
-    name: TabbyAPI (Qwen3-VL)
-    native_passthrough: true
-    protocol: openai-compatible
-    base_path: /v1
-    api_key_env: TABBY_API_KEY
-    host: 127.0.0.1
-    port: 5050
-    model_id: qwen3-vl-30b
-    health_endpoint: /v1/models
-    # Downstream auth injection (DATA — replaces the old hardcoded apply_tabby_auth):
-    # TabbyAPI wants the admin key for model-list endpoints, the api key otherwise.
-    # First matching rule wins; secret resolves per-identity, falling back to env.
-    auth_inject:
-      - paths: ["/v1/models", "/v1/model/list"]
-        header: x-admin-key
-        secret: admin_key
-        secret_env: TABBY_ADMIN_KEY
-      - header: x-api-key
-        secret: api_key
-        secret_env: TABBY_API_KEY
-    load_timeout: 300
-    idle_timeout: 0
-    role: standby
-    note: "On-demand vision backend; cold-started by ensure_target() when a vision-capable role is invoked. Down at idle is expected."
-    capabilities:
-      - vision
-      - chat
-      - completions
-    managed: false
-    lifecycle:
-      driver: http-load-unload
-      driver_config:
-        load_url: /v1/model/load
-        unload_url: /v1/model/unload
-        admin_header: x-admin-key
-        admin_key_env: TABBY_ADMIN_KEY
-        load_body_params: tabby-config
-        load_timeout_s: 300
-        success_marker: '"status":"finished"'
-        verify_endpoint: /v1/model
-        # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
+    display_name: Local chat
+    description: Chat, write, reason, and work with code.
     transforms: [reasoning-effort-final-chat]
     name: Local llama.cpp server (official; Bee rollback available)
     vram_budget_key: GPU1_LLM
@@ -82,6 +43,20 @@ backends:
     host: 127.0.0.1
     port: 5051
     state_type: llama_cpp
+    # The server reports its loaded model as a filesystem path, which is
+    # compared with the path being activated (instead of an HTTP model id).
+    loaded_model_identity: path
+    # When no model record declares a window, read it from the server itself.
+    context_window_probe:
+      endpoint: /v1/models
+    # The vision projector file is not reported over HTTP; read it from the
+    # server's command line (the process on this service's port).
+    aux:
+      probe: process-cmdline
+      process: llama-server
+      flag: --mmproj
+      # A loaded aux file lets this service take image input.
+      grants_input_modalities: [image]
     health_endpoint: /v1/models
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.
@@ -95,6 +70,8 @@ backends:
     # scripts/local/sync_model_metadata_from_config.py.
     models:
       - id: default
+        display_name: General chat
+        description: Chat, reason, and ask questions about images.
         model_group: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -115,6 +92,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder
+        display_name: Coding assistant
+        description: Write, explain, and improve code.
         model_group: coder
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -125,6 +104,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-q5
+        display_name: Balanced coding
+        description: Write, explain, and improve code.
         model_group: coder-q5
         base_model_id: coder
         # Unique internal lifecycle aliases preserve the selected KV profile
@@ -139,6 +120,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-q8
+        display_name: Conservative coding
+        description: Write, explain, and improve code.
         model_group: coder-q8
         base_model_id: coder
         upstream_model: coder-q8
@@ -151,6 +134,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-unchained
+        display_name: Unchained coding
+        description: Write, explain, and improve code.
         model_group: coder-unchained
         upstream_model: coder-unchained
         backend_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -164,6 +149,8 @@ backends:
       # Public aliases inherit the logical base policy by stable id. Physical
       # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
+        display_name: Fast chat
+        description: Get quick answers and help with everyday tasks.
         model_group: default-fast
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -185,6 +172,8 @@ backends:
       # reasoning, vision, tool use). Loading text-only cydonia-24b here is a
       # known exception the fallback does not describe.
       - id: current
+        display_name: Current chat model
+        description: Chat with the currently selected model.
         model_group: current
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -192,6 +181,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: current-fast
+        display_name: Current model fast chat
+        description: Get quick answers from the currently selected model.
         model_group: current-fast
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -202,6 +193,8 @@ backends:
           input_modalities: [text, image]
           tags: [tool-use, vision]
       - id: rp
+        display_name: Roleplay
+        description: Create characters and explore fictional conversations.
         model_group: rp
         # Keep the logical alias across LiteLLM's internal gateway hop so the
         # RP-specific context profile cannot collapse into generic q5.
@@ -229,6 +222,8 @@ backends:
         # activation cannot change the selected engine.
         dropin: 95-activation.conf
         swap_strategy: dropin-env-restart
+        # A relative activation model path is cleared before activation.
+        activation_requires_absolute_path: true
         health_endpoint: /v1/models
         health_timeout_s: 180
         # LLAMA_BEE_* is the retained compatibility API for the local service.
@@ -259,6 +254,8 @@ backends:
         # Precheck type: validate model is an absolute, existing .gguf path.
         precheck: gguf_path
   tts:
+    display_name: OmniVoice speech
+    description: Turn text into speech with a consistent voice.
     name: omnivoice-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -282,11 +279,15 @@ backends:
         health_endpoint: /health
         health_timeout_s: 150
   stt:
+    display_name: Parakeet transcription
+    description: Turn recorded speech into text.
     name: parakeet-stt
     native_passthrough: true
     host: 127.0.0.1
     port: 5092
     default_model: parakeet-tdt-0.6b-v3
+    # Per-chunk fields the engine adds beside the text; dropped before chunked transcripts merge.
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     health_endpoint: /health
     timeout: 120
     # Generic long-audio protection. This storage root must be on a durable
@@ -305,9 +306,7 @@ backends:
       # concurrent load in the same test.
       threshold_seconds: 180
       target_seconds: 150
-      silence_noise_db: -30dB
-      silence_min_seconds: 0.5
-      silence_search_seconds: 120
+      search_seconds: 2
       max_input_bytes: 536870912
       max_decoded_bytes: 1073741824
       max_duration_seconds: 14400
@@ -319,9 +318,10 @@ backends:
       max_field_bytes: 65536
       max_response_bytes: 16777216
       max_media_output_bytes: 8388608
+      # A relative spool_dir is inside the gateway's private temporary directory (data/private-tmp), emptied at start.
       spool_dir: data/stt-spool
       min_free_bytes: 67108864
-      # Despite its legacy name, this admission limit is per gateway Python
+      # This admission limit applies separately to each gateway Python
       # process. Multiple workers multiply this limit and its reserved-disk
       # budget; use one worker until a durable cross-process coordinator exists.
       global_concurrency: 2
@@ -338,6 +338,8 @@ backends:
       - transcriptions
     managed: false
   tts-supertonic:
+    display_name: Supertonic speech
+    description: Turn text into speech with preset voices.
     name: supertonic-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -363,6 +365,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   tts-kokoro:
+    display_name: Kokoro speech
+    description: Read text aloud with a choice of voices.
     name: kokoro-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -385,6 +389,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   tts-chatterbox:
+    display_name: Chatterbox speech
+    description: Create speech using a reference voice.
     name: chatterbox-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -412,6 +418,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-nemotron:
+    display_name: Nemotron transcription
+    description: Transcribe speech as it arrives.
     name: nemotron-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -429,15 +437,18 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3.5-asr-streaming-0.6b
-    # Offline mode handles about 120 s per request, so longer audio is cut at silences.
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
+    # Offline mode handles about 120 s per request, so longer audio is cut at the quietest point near each target.
     # (stream=true uses streaming mode, which has no length limit.)
     chunking:
       enabled: true
       threshold_seconds: 110
       target_seconds: 60
-      silence_search_seconds: 30
+      search_seconds: 2
+      max_segment_seconds: 120
       max_duration_seconds: 3600
       max_segments: 64
+      # A relative spool_dir is inside the gateway's private temporary directory (data/private-tmp), emptied at start.
       spool_dir: data/stt-spool
       backend_timeout_seconds: 180
       deadline_seconds: 360
@@ -449,6 +460,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-canary:
+    display_name: Canary transcription
+    description: Turn recorded speech into text.
     name: canary-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -464,14 +477,17 @@ backends:
       - transcriptions
     managed: false
     default_model: canary-180m-flash
-    # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at silences.
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
+    # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at the quietest point near each target.
     chunking:
       enabled: true
       threshold_seconds: 200
       target_seconds: 120
-      silence_search_seconds: 40
+      search_seconds: 2
+      max_segment_seconds: 240
       max_duration_seconds: 3600
       max_segments: 64
+      # A relative spool_dir is inside the gateway's private temporary directory (data/private-tmp), emptied at start.
       spool_dir: data/stt-spool
       backend_timeout_seconds: 180
       deadline_seconds: 360
@@ -483,6 +499,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-parakeet-gpu:
+    display_name: Parakeet fast transcription
+    description: Quickly turn recorded speech into text.
     name: parakeet-gpu-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -497,17 +515,25 @@ backends:
       - audio
       - transcriptions
     managed: false
+    # Declared demand for operator measurement admission (the engine catalog notes 2.3-3.2 GB).
+    resources:
+      gpu_required: true
+      vram_gb_estimate: 3.2
+      gpu: {devices: [0]}
     default_model: parakeet-tdt-0.6b-v3
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured on 313 s and 1576 s read speech (WER): 15 s 1.7/3.3%, 20 s 1.5/3.8%, 30 s 1.5/3.3%, 45 s -/3.8%,
     # 60 s 2.0/4.8%, 90 s 2.0/5.4%, 200 s 6.0%; one 313 s request fails outright. Shorter than the 60 s the CPU
-    # service needs: cut at silences into about 30 s pieces.
+    # service needs: cut at the quietest point near each 30 s target, never past 40 s.
     chunking:
       enabled: true
       threshold_seconds: 40
       target_seconds: 30
-      silence_search_seconds: 10
+      search_seconds: 2
+      max_segment_seconds: 40
       max_duration_seconds: 3600
       max_segments: 128
+      # A relative spool_dir is inside the gateway's private temporary directory (data/private-tmp), emptied at start.
       spool_dir: data/stt-spool
       backend_timeout_seconds: 180
       deadline_seconds: 360
@@ -519,6 +545,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-diarize:
+    display_name: Speaker transcription
+    description: Transcribe audio and identify different speakers.
     name: diarize-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -536,10 +564,12 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3-diarization
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Gateway chunking would split speakers across chunks; the service chunks the audio itself.
     # known_speaker_references[] are base64 data URLs, so the field limit is raised from 64 KiB.
     chunking:
       enabled: false
+      # A relative spool_dir is inside the gateway's private temporary directory (data/private-tmp), emptied at start.
       spool_dir: data/stt-spool
       max_field_bytes: 8388608
       max_duration_seconds: 14400
@@ -553,6 +583,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 120
   rerank:
+    display_name: Search ranking
+    description: Rank search results by relevance to your question.
     name: rerank-cpu
     host: 127.0.0.1
     port: 8018
@@ -574,6 +606,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   decisions:
+    display_name: Fast decisions
+    description: Choose among a set of options.
     name: Local decisions
     host: 127.0.0.1
     port: 8023
@@ -595,6 +629,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   decisions-quality:
+    display_name: Quality decisions
+    description: Evaluate a set of options for a careful choice.
     name: Local quality decisions
     host: 127.0.0.1
     port: 8025
@@ -616,6 +652,7 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   realtime:
+    description: Have a spoken conversation.
     name: speech-to-speech
     display_name: Realtime voice
     host: 127.0.0.1
@@ -637,6 +674,8 @@ backends:
         health_endpoint: /v1/pool
         health_timeout_s: 120
   embeddings:
+    display_name: Nomic text embeddings
+    description: Represent text for semantic search and comparison.
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true
     protocol: openai-compatible
@@ -646,6 +685,8 @@ backends:
     model_id: nomic-embed-text-v1.5
     models:
       - id: nomic-embed-text-v1.5
+        display_name: Nomic Embed
+        description: Represent text for semantic search and comparison.
         model_group: nomic-embed-text-v1.5
         upstream_model: nomic-embed-text-v1.5.f16.gguf
     health_endpoint: /health
@@ -662,6 +703,8 @@ backends:
       max_parallel: 4
     managed: false
   comfyui:
+    display_name: Image and video creation
+    description: Create images and videos from your ideas.
     name: ComfyUI (Image + Video Generation)
     native_passthrough: true
     host: 127.0.0.1
@@ -719,11 +762,8 @@ images:
     # edit workflow. Explicit model choices remain pinned to that workflow.
     multiref_default_workflow: qwen-image-2.1-edit-multiref
 model_routing:
-  model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
-  tabby_service: tabbyapi.service
   kobold_service: llama-bee.service
-  kobold_service_legacy: llama-turbo.service
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes
@@ -738,7 +778,6 @@ model_routing:
 routing:
   default_backend: kobold
   audio_backend: tts
-  check_interval: 30
 
 identity:
   # CPU face sidecar (services/face-service) used by the likeness check and image-identity.
@@ -770,6 +809,7 @@ reasoning:
     xhigh: unlimited
 roles:
   default:
+    display_name: General chat
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -789,6 +829,7 @@ roles:
   # Same physical model as `default`; the model record's declarative alias
   # overlay owns its reasoning default so explicit callers still win.
   default-fast:
+    display_name: Fast chat
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -802,10 +843,8 @@ roles:
       min_p: 0.0
       presence_penalty: 0.0
       repetition_penalty: 1.0
-  vision:
-    backend: tabby
-    description: Vision-capable EXL3 model (when tabbyapi.service is active on :5050)
   rp:
+    display_name: Roleplay
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -821,6 +860,7 @@ roles:
       presence_penalty: 1.5
       repetition_penalty: 1.0
   coder:
+    display_name: Coding assistant
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -838,6 +878,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-q5:
+    display_name: Balanced coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -852,6 +893,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-q8:
+    display_name: Conservative coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -866,6 +908,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-unchained:
+    display_name: Unchained coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -888,6 +931,7 @@ roles:
 # want to expose without inventing a new role.
 models:
   - id: cydonia-24b
+    display_name: Cydonia 24B
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
     mmproj: null # 24B Cydonia is text-only — no companion mmproj on disk
@@ -1185,6 +1229,7 @@ model_aliases:
       video: video-ltx-2.5-t2v             # text-to-video; input_reference switches to image-to-video
       video-fast: video-ltx-2.5-t2v          # same graph as `video`; 960x512 default is the quick setting
       video-long: video-ltx-2.5-long
+      video-quality: video-minimax-h3-t2v  # slower, highest quality; input_reference switches to image-to-video (r/StableDiffusion, Oct 2026)
       video-remix: video-bernini-r-remix     # needs extensions.source_video; also what POST /v1/videos/{id}/remix runs
       character-replace: video-scail-2-replace  # needs extensions.source_video + reference_image
     openai:
@@ -1199,27 +1244,108 @@ model_aliases:
     # listed for discovery only. Every engine id is also a valid `model`.
     # Engine data keys: streaming (answers with incremental PCM when asked),
     # native_sample_rate (Hz of that PCM; the gateway resamples to OpenAI's
-    # 24 kHz), voice_map (OpenAI voice name -> the engine's voice), voices.
+    # 24 kHz), voices (the complete list: an id, or {id, name, language,
+    # gender, description}; a voice not in it is refused with 400
+    # voice_not_available; an engine without the list takes any voice id),
+    # voice_map (accepted spelling, such as an OpenAI voice name -> a voice id;
+    # never listed as a voice), default_voice (used only when the request
+    # names no voice).
+    # Older voice spellings (Voxtral presets, retired names) -> the OpenAI voice name each means.
+    # They are accepted spellings only: applied before an engine's voice_map, never listed as voices.
+    voice_aliases: {neutral_female: alloy, casual_female: coral, cheerful_female: shimmer, neutral_male: ash, casual_male: echo, sophia: alloy, isabella: shimmer, lily: coral, juniper: coral, evan: echo, adam: ash}
     engines:
       omnivoice:
+        display_name: OmniVoice speech
         service: tts
         model: k2-fsa/OmniVoice
-        voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
+        default_voice: alloy
+        # The 13 OpenAI voice names, each one fixed speaker identity (a reference clip the engine clones),
+        # then the multilingual design presets. `voices` is the complete list: another voice is refused.
+        voices:
+          - {id: alloy, name: Alloy, language: en, gender: female, description: "Neutral, balanced, versatile."}
+          - {id: ash, name: Ash, language: en, gender: male, description: "Clear, steady, conversational."}
+          - {id: ballad, name: Ballad, language: en, gender: male, description: "Gentle, soft, melodic."}
+          - {id: cedar, name: Cedar, language: en, gender: male, description: "Warm, grounded, natural."}
+          - {id: coral, name: Coral, language: en, gender: female, description: "Warm, friendly, upbeat."}
+          - {id: echo, name: Echo, language: en, gender: male, description: "Smooth, calm, even."}
+          - {id: fable, name: Fable, language: en, gender: male, description: "Expressive storyteller."}
+          - {id: marin, name: Marin, language: en, gender: female, description: "Natural, polished, composed."}
+          - {id: nova, name: Nova, language: en, gender: female, description: "Energetic, bright, upbeat."}
+          - {id: onyx, name: Onyx, language: en, gender: male, description: "Deep, authoritative."}
+          - {id: sage, name: Sage, language: en, gender: female, description: "Calm, thoughtful, measured."}
+          - {id: shimmer, name: Shimmer, language: en, gender: female, description: "Bright, cheerful, light."}
+          - {id: verse, name: Verse, language: en, gender: male, description: "Expressive, dynamic."}
+          - {id: ar_female, name: Arabic Female, language: ar, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: ar_male, name: Arabic Male, language: ar, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: de_female, name: German Female, language: de, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: de_male, name: German Male, language: de, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: es_female, name: Spanish Female, language: es, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: es_male, name: Spanish Male, language: es, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: fr_female, name: French Female, language: fr, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: fr_male, name: French Male, language: fr, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: hi_female, name: Hindi Female, language: hi, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: hi_male, name: Hindi Male, language: hi, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: it_female, name: Italian Female, language: it, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: it_male, name: Italian Male, language: it, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: nl_female, name: Dutch Female, language: nl, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: nl_male, name: Dutch Male, language: nl, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: pt_female, name: Portuguese Female, language: pt, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: pt_male, name: Portuguese Male, language: pt, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
         description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Supertonic, first engine of tts-quality, and the only voice-cloning engine while Chatterbox is disabled
+        # Voice design (POST /v1/audio/voices, type prompt) when voices.design_engine names this engine.
+        # OmniVoice designs from a fixed vocabulary, not free text: at most one attribute per category.
+        # Categories and attributes are in precedence order (the first attribute whose word appears
+        # wins its category, so the more specific pitch comes first); `ignore` lists words that are
+        # not reported as unused. An engine with no vocabulary receives the description unchanged.
+        voice_design:
+          request: {input: "{input}", voice: alloy, instructions: "{instructions}", seed: "{seed}", response_format: wav}
+          separator: ", "
+          ignore: [a, an, the, and, with, voice, pitch, accent, sounding, sounds, like, who, is, of, in, very, tone, speaker, narrator, person]
+          vocabulary:
+            gender:
+              female: [female, woman, women, girl, lady, feminine]
+              male: [male, man, men, boy, guy, masculine]
+            age:
+              child: [child, kid, childlike]
+              teenager: [teenager, teen, teenage, adolescent]
+              young adult: [young adult, young, twenties, thirties, youthful]
+              middle-aged: [middle-aged, middle aged, middle age, forties, fifties, mature]
+              elderly: [elderly, old, older, senior, aged]
+            pitch:
+              very low pitch: [very low, very deep, bass, booming]
+              very high pitch: [very high, squeaky, shrill]
+              low pitch: [low, deep, baritone, husky]
+              high pitch: [high, bright, light, soprano]
+              moderate pitch: [moderate, medium, mid-range, midrange, mid pitch]
+            style:
+              whisper: [whisper, whispering, whispered, hushed]
+            accent:
+              american accent: [american]
+              british accent: [british, uk, u.k., london]
+              australian accent: [australian, aussie]
+              canadian accent: [canadian]
+              indian accent: [indian]
+              chinese accent: [chinese]
+              japanese accent: [japanese]
+              korean accent: [korean]
+              portuguese accent: [portuguese]
+              russian accent: [russian]
       chatterbox:
+        display_name: Chatterbox speech
         service: tts-chatterbox
         model: chatterbox-turbo
-        voice_transform: voxtral-voices    # OpenAI voice names -> the 13 reference clips the engine clones
         streaming: true                    # response_format=pcm streams one chunk per sentence group
         native_sample_rate: 24000
         custom_voices: true                # accepts a user-created voice (voice_ref = its stored clip)
         placement: "Python server on GPU0 (about 3.1 GB while running, weights never unloaded while the process lives), on-demand unit. Temporarily disabled since 2026-10-08."
         default_voice: alloy
-        voices: [alloy, ash, ballad, cedar, coral, echo, fable, marin, nova, onyx, sage, shimmer, verse]
+        # The 13 OpenAI-named reference clips OmniVoice also clones (described there).
+        voices: [{id: alloy, name: Alloy}, {id: ash, name: Ash}, {id: ballad, name: Ballad}, {id: cedar, name: Cedar}, {id: coral, name: Coral}, {id: echo, name: Echo}, {id: fable, name: Fable}, {id: marin, name: Marin}, {id: nova, name: Nova}, {id: onyx, name: Onyx}, {id: sage, name: Sage}, {id: shimmer, name: Shimmer}, {id: verse, name: Verse}]
         voice_map: {alloy: alloy, ash: ash, ballad: ballad, cedar: cedar, coral: coral, echo: echo, fable: fable, marin: marin, nova: nova, onyx: onyx, sage: sage, shimmer: shimmer, verse: verse}
         description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
       supertonic:
+        display_name: Supertonic speech
         service: tts-supertonic
         model: supertonic
         streaming: true
@@ -1232,13 +1358,43 @@ model_aliases:
         voice_map: {alloy: F1, marin: F1, coral: F3, nova: F2, sage: F5, shimmer: F4, ash: M3, echo: M4, ballad: M4, cedar: M2, fable: M1, verse: M1, onyx: M5}
         description: "Supertonic realtime engine (bake-off: 49 ms first audio)"
       kokoro:
+        display_name: Kokoro speech
         service: tts-kokoro
         model: kokoro
         streaming: true
         native_sample_rate: 24000
         placement: "Python server on GPU0 (~1.7 GB while running; exits after 10 min idle), on-demand unit"
         default_voice: af_heart
-        voices: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
+        # Vendor ids; the name drops the prefix (a = American, b = British English; f/m = female/male).
+        voices:
+          - {id: af_alloy, name: Alloy, language: en-US, gender: female}
+          - {id: af_aoede, name: Aoede, language: en-US, gender: female}
+          - {id: af_bella, name: Bella, language: en-US, gender: female}
+          - {id: af_heart, name: Heart, language: en-US, gender: female}
+          - {id: af_jessica, name: Jessica, language: en-US, gender: female}
+          - {id: af_kore, name: Kore, language: en-US, gender: female}
+          - {id: af_nicole, name: Nicole, language: en-US, gender: female}
+          - {id: af_nova, name: Nova, language: en-US, gender: female}
+          - {id: af_river, name: River, language: en-US, gender: female}
+          - {id: af_sarah, name: Sarah, language: en-US, gender: female}
+          - {id: af_sky, name: Sky, language: en-US, gender: female}
+          - {id: am_adam, name: Adam, language: en-US, gender: male}
+          - {id: am_echo, name: Echo, language: en-US, gender: male}
+          - {id: am_eric, name: Eric, language: en-US, gender: male}
+          - {id: am_fenrir, name: Fenrir, language: en-US, gender: male}
+          - {id: am_liam, name: Liam, language: en-US, gender: male}
+          - {id: am_michael, name: Michael, language: en-US, gender: male}
+          - {id: am_onyx, name: Onyx, language: en-US, gender: male}
+          - {id: am_puck, name: Puck, language: en-US, gender: male}
+          - {id: am_santa, name: Santa, language: en-US, gender: male}
+          - {id: bf_alice, name: Alice, language: en-GB, gender: female}
+          - {id: bf_emma, name: Emma, language: en-GB, gender: female}
+          - {id: bf_isabella, name: Isabella, language: en-GB, gender: female}
+          - {id: bf_lily, name: Lily, language: en-GB, gender: female}
+          - {id: bm_daniel, name: Daniel, language: en-GB, gender: male}
+          - {id: bm_fable, name: Fable, language: en-GB, gender: male}
+          - {id: bm_george, name: George, language: en-GB, gender: male}
+          - {id: bm_lewis, name: Lewis, language: en-GB, gender: male}
         # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
         # (see ~/.tmp/media-refresh/speech-tiers/REPORT.md). Preset voices only, no cloning.
         voice_map: {alloy: af_alloy, ash: am_michael, ballad: am_puck, cedar: am_adam, coral: af_sky, echo: am_echo, fable: bm_fable, marin: af_bella, nova: af_nova, onyx: am_onyx, sage: af_river, shimmer: af_heart, verse: am_liam}
@@ -1270,16 +1426,19 @@ model_aliases:
   transcriptions:
     engines:
       parakeet:
+        display_name: Parakeet transcription
         service: stt
         model: parakeet-tdt-0.6b-v3
         description: NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)
       parakeet-gpu:
+        display_name: Parakeet fast transcription
         service: stt-parakeet-gpu
         model: parakeet-tdt-0.6b-v3
         upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
         placement: "audio.cpp on GPU0 (about 2.3-3.2 GB while loaded; weights unload after 5 min idle), on-demand unit"
         description: "Parakeet TDT 0.6B v3 q8 on GPU0 (same model as `parakeet`, no blanked spans: 5 min set WER 1.5% in 1.1 s vs 2.05% in 13.8 s on CPU)"
       nemotron-streaming:
+        display_name: Nemotron streaming transcription
         service: stt-nemotron
         model: nemotron-3.5-asr-streaming-0.6b          # served in offline mode: fastest final text
         stream_model: nemotron-3.5-asr-streaming-0.6b-stream  # same weights in streaming mode, used when stream=true
@@ -1288,12 +1447,14 @@ model_aliases:
         placement: "audio.cpp on GPU0 (~2.2 GB with both modes loaded, always loaded: never unloaded when idle), always-warm unit started at boot"
         description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
       canary:
+        display_name: Canary transcription
         service: stt-canary
         model: canary-180m-flash
         upload_format: wav16k
         placement: "audio.cpp on GPU0 (~0.9 GB while loaded; weights unload after 5 min idle), on-demand unit"
         description: Canary 180M Flash (low VRAM, strong clean-speech WER)
       nemotron-diarize:
+        display_name: Speaker transcription
         service: stt-diarize
         model: nemotron-3-diarization
         streaming: true            # stream=true sends transcript.text.segment events as windows finish
@@ -1318,6 +1479,7 @@ model_aliases:
   decisions:
     engines:
       decider-2b:
+        display_name: Fast decisions
         service: decisions
         model: decider-2b-v11
         placement: cpu
@@ -1329,6 +1491,7 @@ model_aliases:
         max_levels: 10
         calibrated: true
       decider-4b:
+        display_name: Quality decisions
         service: decisions-quality
         model: decider-4b-v2.1
         placement: cpu
@@ -1343,11 +1506,12 @@ model_aliases:
       decide: [decider-2b]
       decide-quality: [decider-4b, decider-2b]
     openai:
-      - {match: "jev-*", to: decide}
+      - {match: "jev-*", to: decide, names: [jev-latest, jev-preview]}  # names: the ones model lists show; the pattern accepts any jev-* name
       - {match: "*/*", passthrough: true}
   rerank:
     engines:
       qwen3-reranker-0.6b:
+        display_name: Qwen search ranking
         service: rerank
         model: qwen3-reranker-0.6b
         max_documents: 1000
@@ -1400,57 +1564,33 @@ model_compatibility:
     nomic-embed-text-v1.5.f16.gguf:
       category: embeddings
 auth:
-  enabled: true
+  # Every data-plane request needs an App key (Apps) or a browser sign-in.
+  # There is no keyless access: no LAN bypass, no path tokens, no auth-off
+  # switch and no public Ollama discovery. Startup refuses those settings.
   public_paths:
     - /health
-  api_key_env: TABBY_API_KEY
-  admin_key_env: TABBY_ADMIN_KEY
-  # Set to true to allow unauthenticated access to Ollama read-only discovery
-  # routes (/api/tags, /api/version and their /ollama/api/* aliases).
-  # Matches how a local Ollama daemon behaves so Open WebUI / LM Studio can
-  # auto-discover models without bearer token wiring.
-  # Default: false — keep off on internet-facing gateways.
-  # Env override: OLLAMA_COMPAT_DISCOVERY=true
-  ollama_compat_discovery: false
-
-  # ---- Optional frictionless-auth features (all OFF by default) -------------
-  # With every option below left at its default, auth is unchanged: a valid
-  # Authorization: Bearer / x-api-key is required on every non-public route.
-  #
-  # 1) LAN / localhost bypass — clients whose REAL IP is in lan_bypass_cidrs skip
-  #    the API key. The public URL still requires it. Real IP defaults to the raw
-  #    TCP socket peer; X-Forwarded-For is honored ONLY from proxies you list in
-  #    trusted_proxies (rightmost-first, spoof-resistant).
-  #      lan_bypass_enabled: true
-  #      lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
-  #      trusted_proxies: ["127.0.0.1"]      # your reverse proxy's IP/CIDR; empty = no proxy
-  #    Env overrides: AZIZAM_LAN_BYPASS=true
-  lan_bypass_enabled: true
-  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
+  # The real client IP defaults to the raw TCP socket peer. X-Forwarded-For is
+  # honored ONLY from proxies you list here (rightmost-first, spoof-resistant).
+  # It decides throttling and first-run setup, never access.
   trusted_proxies: ["192.168.1.4"]
+  # First-run setup (claiming the owner account) is allowed only from these
+  # client networks. They grant no other access.
+  #   Env override: AZIZAM_SETUP_ALLOWED_CIDRS
+  setup_allowed_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
   #
   # Cloudflare Tunnel: honor CF-Connecting-IP, but ONLY when the connection comes
   # from a verified Cloudflare edge IP (ranges fetched at startup; fail-closed).
   #   Env override: AZIZAM_CF_MODE=true
   cloudflare_mode: false
   #
-  # 2) Query-param key — for clients with no auth-header field (e.g. dictation
-  #    apps): accept ?api_key=<key>. Note: appears in some logs; redact upstream.
-  #    Env override: AZIZAM_QUERY_PARAM_KEY=true
+  # Query-param key — for clients with no auth-header field (e.g. dictation
+  # apps): accept ?api_key=<key>. It is still a key. It appears in some logs;
+  # redact upstream. Env override: AZIZAM_QUERY_PARAM_KEY=true
   allow_query_param_key: false
-  #
-  # 3) Per-device path tokens — the URL path IS the credential, e.g. base URL
-  #    https://host/tok_livingroom/v1 . Each token is independently revocable.
-  #    NOT ROUTED: no public route accepts a token prefix, so every
-  #    /<token>/... request authenticates and then gets 404. Use an App key.
-  #      path_tokens:
-  #        tok_livingroom: living-room-speaker
-  #        tok_workshop: workshop-pi
-  path_tokens: {}
 admin:
   db_path: data/admin.db
   # Deployment brand (data, not product code). A generic install shows only the
-  # neutral product label; this deployment opts into the vivid.fish wordmark.
+  # neutral product label; this deployment opts into a wordmark.
   brand:
     product: Azizam
     wordmark: vivid.fish

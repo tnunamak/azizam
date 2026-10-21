@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
 from gateway.provider_catalog import load_provider_catalog, normalize_provider_preset
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.providers import (
     BudgetExceeded, Cost, ProviderRef, estimate_chat_cost, extract_provider_cost,
     reserve_provider_spend, settle_provider_spend,
@@ -38,12 +38,7 @@ def test_custom_endpoint_uses_its_prices_instead_of_installed_sdk_vendor_prices(
 def test_sequential_custom_requests_cannot_under_settle_the_one_dollar_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("PRICING_REGRESSION_KEY", "synthetic-pricing-key")
     provider = _provider()
-    profile = DEFAULT_PROFILE.with_overrides(
-        id="paid", remote=RemoteProviderPolicy(
-            providers=frozenset({provider.id}), max_usd_per_request=None,
-            budget_usd_per_day=Decimal("1"), budget_usd_per_month=None,
-        ),
-    )
+    profile = identity("paid" and plan_for("paid", paid=sorted({provider.id}), usd_per_day="1"))
     ledger = tmp_path / "ledger.db"
     accepted = 0
     for _ in range(10):
@@ -95,10 +90,7 @@ def test_official_sdk_fallback_normalizes_host_case_and_default_port(monkeypatch
 def test_custom_unknown_prices_are_denied_even_without_caps(tmp_path, monkeypatch):
     monkeypatch.setenv("PRICING_REGRESSION_KEY", "synthetic-pricing-key")
     provider = _provider(price={})
-    profile = DEFAULT_PROFILE.with_overrides(id="uncapped", remote=RemoteProviderPolicy(
-        providers=frozenset({provider.id}), max_usd_per_request=None,
-        budget_usd_per_day=None, budget_usd_per_month=None,
-    ))
+    profile = identity(plan_for("uncapped", paid=sorted({provider.id})))
     estimate = estimate_chat_cost(provider, {"model": "gpt-4.1-mini", "messages": [], "max_tokens": 1000})
     assert estimate.usd is None
     with pytest.raises(BudgetExceeded, match="known model prices"):

@@ -22,21 +22,26 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Mapping
+from datetime import datetime
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from gateway import admin_store
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers, url_binding
+from gateway import secret_refs as _refs
+from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
 
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
-SERVICE_REGISTRY_SCHEMA_VERSION = 1
+SERVICE_REGISTRY_SCHEMA_VERSION = 2
+ENGINE_RECORD_VIEW_VERSION = 2
 MODEL_POLICY_SCHEMA_VERSION = 1
 
 SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "imported"})
@@ -44,17 +49,20 @@ PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported
 DATA_OBJECT_SOURCES = frozenset({"builtin", "ui", "provisioned", "discovered", "imported"})
 DEFAULT_CATALOG_DIR = Path(__file__).resolve().parent.parent / "registry"
 REMOTE_PROVIDER_TYPES = frozenset({"remote", "paid-remote", "cloud"})
+# Protocol dispatch accepts only these classes. Any other provider type or cost class is refused,
+# so a new paid or remote name fails closed rather than needing its own entry here.
+LOCAL_PROVIDER_CLASSES = frozenset({"local", "free-local"})
 ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_SECRET_HINTS = (
-    "api_key",
-    "authorization",
-    "client_secret",
-    "credential",
-    "password",
-    "secret",
-    "token",
-)
+# Where a plaintext credential is kept (the secret store, not the record) is decided by the name parts and
+# fields below; what a view shows is decided by the projection types, by structure, not by these.
+_SECRET_HINTS = ("api_key", "authorization", "client_secret", "credential", "password", "secret", "token")
+# Config fields that hold a credential inline. The stored form moves these into ``secret_refs``; a record from an
+# older install or a hand edit may still hold one, and a remote provider may not.
+_INLINE_SECRET_FIELDS = frozenset({
+    "api_key", "authorization", "x_api_key", "client_secret", "password", "secret", "token", "access_token",
+    "bearer_token", "credential",
+})
 
 
 def ensure_service_registry(
@@ -97,6 +105,7 @@ def ensure_service_registry(
                     "service_count": len(registry.get("services") or {}),
                     "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
                 },
+                session=None,  # the gateway seeding its own registry at start: no browser sign-in asked
                 path=path,
             )
         except admin_store.OperatorSettingsGenerationConflict:
@@ -110,7 +119,7 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     record = admin_store.get_service_registry_json_with_generation(path=path)
     if record is None:
         return None
-    snapshot, default_timestamp = _normalized_registry_snapshot(
+    snapshot, _excluded, default_timestamp = _normalized_registry_snapshot(
         record["operator_settings_generation"], record["value_json"],
     )
     # Existing callers may edit these dictionaries before submitting a CAS
@@ -121,8 +130,19 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     return registry
 
 
+def load_service_registry_exclusions(*, path: Path = admin_store.DB_PATH) -> list[ExcludedRecord]:
+    """The stored records ``load_service_registry`` leaves out, each with its reason; none for a healthy registry."""
+    record = admin_store.get_service_registry_json_with_generation(path=path)
+    if record is None:
+        return []
+    _registry, excluded, _default = _normalized_registry_snapshot(
+        record["operator_settings_generation"], record["value_json"],
+    )
+    return [replace(item, record=copy.deepcopy(item.record)) for item in excluded]
+
+
 @lru_cache(maxsize=16)
-def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], bool]:
+def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], tuple["ExcludedRecord", ...], bool]:
     # The CAS generation and JSON are read by one SELECT. Including the JSON
     # also separates databases and protects against a restored/recreated DB
     # reusing a generation. No TTL or process-local writer notification.
@@ -133,7 +153,11 @@ def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[
         value = {}
     if not isinstance(value, dict):
         value = {}
-    return normalize_service_registry(value), not bool(value.get("updated_at"))
+    registry, excluded = read_registry(value)
+    for record in excluded:
+        # Once per stored document, not once per request: this body runs only when the cache misses.
+        print(f"[service_registry] ERROR: {record.section} record {record.id!r} is left out of the registry: {record.error}", flush=True)
+    return registry, tuple(excluded), not bool(value.get("updated_at"))
 
 
 def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, Any]:
@@ -156,8 +180,8 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
             },
         )
 
-    return normalize_service_registry({
-        "schema_version": SERVICE_REGISTRY_SCHEMA_VERSION,
+    seeded = normalize_service_registry({
+        "schema_version": 1,
         "services": services,
         "protocol_frontends": catalogs.get("protocol_frontends") or {},
         "workflows": catalogs.get("workflows") or {},
@@ -171,53 +195,151 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
         ),
         "updated_at": int(time.time()),
     })
+    # The seed comes from the operator's own files, so a key it names is meant for the host it names.
+    seeded = bind_credential_origins(seeded, seeded["services"])
+    migrate_engine_records_v2(seeded)
+    return seeded
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
-    services = {}
-    for raw_id, raw in (value.get("services") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        service_id = normalize_id(raw.get("id") or raw_id)
-        if not service_id:
-            continue
-        services[service_id] = normalize_service_record(service_id, raw)
+    """The whole registry, normalized. Raises on the first record that does not validate (see ``read_registry``)."""
+    return _read_registry(value, strict=True)[0]
 
-    frontends = {}
-    for raw_id, raw in (value.get("protocol_frontends") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        frontend_id = normalize_id(raw.get("id") or raw_id)
-        if not frontend_id:
-            continue
-        frontends[frontend_id] = normalize_protocol_frontend(frontend_id, raw)
 
-    workflows = {}
-    for raw_id, raw in (value.get("workflows") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        workflow_id = normalize_id(raw.get("id") or raw_id)
-        if not workflow_id:
-            continue
-        record = normalize_workflow_record(workflow_id, raw)
-        workflows[record["id"]] = record
+# The sections of a registry document, with the word the Overview puts before a record's id.
+_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("services", "service"),
+    ("protocol_frontends", "frontend"),
+    ("workflows", "workflow"),
+    ("capabilities", "capability"),
+)
 
-    capabilities = {}
-    for raw_id, raw in (value.get("capabilities") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        capability_id = normalize_id(raw.get("id") or raw_id)
-        if not capability_id:
-            continue
-        record = normalize_capability_record(capability_id, raw)
-        capabilities[record["id"]] = record
 
-    _validate_model_policy_schema_markers(services)
-    _validate_model_policy_graphs(services)
-    _validate_public_alias_uniqueness(services)
+@dataclass(frozen=True)
+class ExcludedRecord:
+    """One stored record the gateway does not use because it does not validate, with the reason and the stored value."""
+
+    section: str
+    key: str
+    id: str
+    error: str
+    record: Any
+
+    @property
+    def name(self) -> str:
+        """The key the Overview lists it under: a service by its id, any other record as ``kind:id``."""
+        kind = dict(_SECTIONS)[self.section]
+        return self.id if self.section == "services" else f"{kind}:{self.id}"
+
+
+def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
+    """The records of a stored registry that validate, and each one that does not, with why.
+
+    A record that is not an object, has no usable id, fails its own checks, or shares a public model
+    alias with another service is left out; the rest are normalized exactly as ``normalize_service_registry``
+    does. This is the read every request and operator path uses, so one bad record never stops the others.
+    Nothing is written back: a writer carries the excluded records through (``gateway/admin_runtime.py``).
+    """
+    return _read_registry(value, strict=False)
+
+
+def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """``read_registry`` with the exclusions as ``{name: error}`` (a service by id, any other as ``kind:id``)."""
+    registry, excluded = read_registry(value)
+    return registry, {record.name: record.error for record in excluded}
+
+
+def registry_error_text(text: str, value: Mapping[str, Any]) -> str:
+    """``text``, an error about a stored registry, without any value a left-out record of it holds."""
+    secrets = [secret for item in read_registry(value)[1]
+               for secret in (*record_carriers.legacy_secret_texts(item.record), *record_carriers.typed_value_texts(item.record))]
+    return projection.scrub_text(text, secrets)
+
+
+def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str, Any], list[ExcludedRecord]]:
+    """Both reads in one place. ``strict`` raises where the lenient read leaves a record out."""
+    schema_version = int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION)
+    excluded: list[ExcludedRecord] = []
+    stored_services: dict[str, tuple[str, Any]] = {}
+
+    def read(section: str, build: Any) -> dict[str, Any]:
+        kept: dict[str, Any] = {}
+        collection = value.get(section) or {}
+        if not isinstance(collection, Mapping):
+            raise ValueError(f"registry {section} must be an object")
+        kind = dict(_SECTIONS)[section]
+        for raw_key, raw in collection.items():
+            record_id = normalize_id(raw.get("id") or raw_key) if isinstance(raw, Mapping) else normalize_id(raw_key)
+            try:
+                if not isinstance(raw, Mapping):
+                    raise ValueError(f"{kind} {raw_key!r} is not an object")
+                if not record_id:
+                    raise ValueError(f"{kind} {raw_key!r} has no usable id")
+                if normalize_id(raw_key) != record_id:
+                    # A record under one key that names another id would, once normalized, replace or be replaced by the
+                    # record that has that id, and take its secrets with it: the key and the id must say the same.
+                    raise ValueError(f"{kind} {raw_key!r} names a different id; a record's id must match the key it is stored under")
+                key, record = build(record_id, raw)
+                if key in kept:
+                    raise ValueError(f"{kind} {key!r} is defined twice")
+            except Exception as error:  # noqa: BLE001 - one record's refusal never decides the others
+                if strict:
+                    raise
+                message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
+                message = projection.scrub_text(
+                    message[:300], [*record_carriers.legacy_secret_texts(raw), *record_carriers.typed_value_texts(raw)])
+                excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
+                continue
+            kept[key] = record
+            if section == "services":
+                stored_services[key] = (str(raw_key), raw)
+        return kept
+
+    def build_service(service_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        check_service_shape(service_id, raw)  # before the migration below, which would rewrite a block of the wrong shape
+        prepared = raw
+        if schema_version >= ENGINE_RECORD_VIEW_VERSION:
+            prepared = copy.deepcopy(dict(raw))
+            if "process" in prepared:
+                prepared.pop("lifecycle", None)
+                if isinstance(prepared.get("config"), dict):
+                    prepared["config"].pop("lifecycle", None)
+            else:
+                temporary = {"schema_version": 1, "services": {service_id: prepared}}
+                migrate_engine_records_v2(temporary)
+                prepared = temporary["services"][service_id]
+        record = normalize_service_record(service_id, prepared, schema_version=schema_version)
+        if not strict:
+            _validate_model_policy_schema_markers({service_id: record})
+            _validate_model_policy_graphs({service_id: record})
+        return service_id, record
+
+    def build_with_id(normalize: Any) -> Any:
+        def build(record_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+            record = normalize(record_id, raw)
+            return record["id"], record
+        return build
+
+    def build_frontend(frontend_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        return frontend_id, normalize_protocol_frontend(frontend_id, raw)
+
+    services = read("services", build_service)
+    frontends = read("protocol_frontends", build_frontend)
+    workflows = read("workflows", build_with_id(normalize_workflow_record))
+    capabilities = read("capabilities", build_with_id(normalize_capability_record))
+
+    if strict:
+        _validate_model_policy_schema_markers(services)
+        _validate_model_policy_graphs(services)
+        _validate_public_alias_uniqueness(services)
+    else:
+        for service_id, why in _later_alias_claimants(services).items():
+            del services[service_id]
+            stored_key, stored = stored_services[service_id]
+            excluded.append(ExcludedRecord("services", stored_key, service_id, why, copy.deepcopy(stored)))
 
     return {
-        "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
+        "schema_version": schema_version,
         "services": services,
         "protocol_frontends": frontends,
         "workflows": workflows,
@@ -225,7 +347,7 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         "seeded_from": str(value.get("seeded_from") or ""),
         "seed_hash": str(value.get("seed_hash") or ""),
         "updated_at": int(value.get("updated_at") or time.time()),
-    }
+    }, excluded
 
 
 def _validate_model_policy_schema_markers(services: Mapping[str, Mapping[str, Any]]) -> None:
@@ -317,28 +439,77 @@ def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> 
             visit(model_id)
 
 
+def _public_aliases(service: Any) -> list[str]:
+    """The public model names (lowercased) a service claims: each alias record's id and model group."""
+    config = service.get("config") if isinstance(service, Mapping) else None
+    records = config.get("models") if isinstance(config, Mapping) else None
+    if not isinstance(records, list):
+        return []
+    names: list[str] = []
+    for record in records:
+        if not isinstance(record, Mapping) or record.get("base_model_id") in (None, ""):
+            continue
+        names.extend(str(public_name or "").strip().lower() for public_name in (record.get("id"), record.get("model_group")))
+    return [name for name in names if name]
+
+
+def _public_alias_conflicts(services: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, str, str]]:
+    """(alias, first service, other service) for each public alias two services both claim."""
+    owners: dict[str, str] = {}
+    conflicts: list[tuple[str, str, str]] = []
+    for service_id, service in services.items():
+        for alias in _public_aliases(service):
+            owner = owners.get(alias)
+            if owner is not None and owner != service_id:
+                conflicts.append((alias, owner, service_id))
+            owners[alias] = service_id
+    return conflicts
+
+
+def _claim_order(item: tuple[str, Any]) -> tuple[int, float, str]:
+    """Which of two services stored here claimed a public alias first (decision D22).
+
+    The creation time in the service's provenance (``created_at``: seconds, or an ISO 8601 text) comes
+    first; a service with none comes after every service that has one; the id breaks every tie.
+    """
+    service_id, service = item
+    provenance = service.get("provenance") if isinstance(service, Mapping) else None
+    created = provenance.get("created_at") if isinstance(provenance, Mapping) else None
+    if isinstance(created, str):
+        try:
+            created = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            created = None
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return (1, 0.0, service_id)
+    return (0, float(created), service_id)
+
+
+def _later_alias_claimants(services: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    """``{service id: why}`` for each service that claims a public alias an earlier-stored service already holds.
+
+    Services are taken in claim order, and a service that is left out holds no alias, so a clash between it
+    and a third service does not leave the third out.
+    """
+    held: dict[str, str] = {}
+    later: dict[str, str] = {}
+    for service_id, service in sorted(services.items(), key=_claim_order):
+        clash = next(((alias, held[alias]) for alias in _public_aliases(service) if alias in held), None)
+        if clash is not None:
+            later[service_id] = (f"its public model alias {clash[0]!r} is also claimed by service {clash[1]!r}, "
+                                 "which was stored first")
+            continue
+        held.update({alias: service_id for alias in _public_aliases(service)})
+    return later
+
+
 def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
     """Make unscoped public-alias resolution deterministic across services."""
-    owners: dict[str, str] = {}
-    for service_id, service in services.items():
-        config = service.get("config") if isinstance(service, Mapping) else None
-        records = config.get("models") if isinstance(config, Mapping) else None
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, Mapping) or record.get("base_model_id") in (None, ""):
-                continue
-            for public_name in (record.get("id"), record.get("model_group")):
-                alias = str(public_name or "").strip().lower()
-                if not alias:
-                    continue
-                owner = owners.get(alias)
-                if owner is not None and owner != service_id:
-                    raise ValueError(
-                        f"public alias {alias!r} is ambiguous across services "
-                        f"{owner!r} and {service_id!r}"
-                    )
-                owners[alias] = service_id
+    for alias, owner, service_id in _public_alias_conflicts(services)[:1]:
+        raise ValueError(
+            f"public alias {alias!r} is ambiguous across services "
+            f"{owner!r} and {service_id!r}"
+        )
 
 
 def backfill_seed_catalog_metadata(
@@ -347,8 +518,25 @@ def backfill_seed_catalog_metadata(
     proxy_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge new bundled metadata into older DB-owned registry records."""
+    return backfill_normalized_registry(normalize_service_registry(registry), proxy_config=proxy_config)
 
-    out = normalize_service_registry(registry)
+
+def servable_registry_with_backfill(
+    registry: Mapping[str, Any],
+    *,
+    proxy_config: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """``servable_part_of_registry`` with the bundled metadata backfilled into the records that validate.
+
+    A partial boot serves the managed LiteLLM row and every bundled field an older store lacks, as a
+    healthy boot does. Nothing is written: the stored document keeps its left-out records exactly.
+    """
+    servable, left_out = servable_part_of_registry(registry)
+    return backfill_normalized_registry(servable, proxy_config=proxy_config), left_out
+
+
+def backfill_normalized_registry(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """``out`` (an already normalized registry, changed in place) with the bundled metadata merged in."""
     proxy_config = proxy_config or {}
     catalogs = load_seed_catalogs(proxy_config)
     _backfill_missing_records(
@@ -499,9 +687,16 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
         value = service.get(field)
         if value not in (None, ""):
             out[field] = copy.deepcopy(value)
+    # Legacy external-key placeholders are execution context too: readiness
+    # must resolve the same inference key as the eventual request.
+    if service.get("secret_refs"):
+        out["secret_refs"] = copy.deepcopy(service["secret_refs"])
+    if isinstance(service.get("offerings"), list):
+        out["offerings"] = copy.deepcopy(service["offerings"])
     # ``managed`` and the systemd service name live under ``lifecycle`` in the
     # record but flat on the backend dict; promote them for managed backends.
-    lifecycle = service.get("lifecycle")
+    process = service.get("process")
+    lifecycle = (process.get("legacy_lifecycle") if isinstance(process, Mapping) else None) or service.get("lifecycle")
     if isinstance(lifecycle, Mapping):
         if lifecycle.get("managed"):
             out["managed"] = True
@@ -513,6 +708,265 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
         # agnostic: a service declares its driver as DATA; we only project it.
         out["lifecycle"] = copy.deepcopy(dict(lifecycle))
     return {key: value for key, value in out.items() if value not in (None, "")}
+
+
+def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """Use the old normalized runtime block; reject any divergent nested copy."""
+    config = record.get("config")
+    nested = config.get("lifecycle") if isinstance(config, Mapping) else None
+    nested = dict(nested) if isinstance(nested, Mapping) else {}
+    # This helper reconciles lifecycle structure, including already-projected
+    # records whose credential references are configured metadata.
+    top = normalize_service_record(service_id, record, schema_version=1, check_secrets=False)["lifecycle"]
+
+    def check(dst: Mapping[str, Any], src: Mapping[str, Any], path: str) -> None:
+        for key, value in src.items():
+            if key in dst and isinstance(dst[key], Mapping) and isinstance(value, Mapping):
+                check(dst[key], value, f"{path}.{key}")
+            elif key not in dst or dst[key] != value:
+                raise ValueError(
+                    f"service {service_id!r} lifecycle {path}.{key} conflict between lifecycle and "
+                    "config.lifecycle; remove the conflicting nested copy before retrying"
+                )
+
+    check(top, nested, "lifecycle")
+    return top
+
+
+def legacy_lifecycle_from_service(record: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the one compatibility lifecycle source, including unmigrated rows."""
+    process = record.get("process")
+    if isinstance(process, Mapping) and isinstance(process.get("legacy_lifecycle"), Mapping):
+        return process["legacy_lifecycle"]
+    lifecycle = record.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        return lifecycle
+    config = record.get("config")
+    nested = config.get("lifecycle") if isinstance(config, Mapping) else None
+    return nested if isinstance(nested, Mapping) else {}
+
+
+def _is_argument_entry(arg: Any) -> bool:
+    """A command argument that is a secret entry (stored) or its view (``{"id", "configured"}``): not text, but not unknown."""
+    return isinstance(arg, Mapping) and (_refs.is_secret_entry(arg) or ("id" in arg and "configured" in arg))
+
+
+def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
+    if not lifecycle:
+        return None
+    driver = str(lifecycle.get("driver") or "external")
+    driver_config = lifecycle.get("driver_config") if isinstance(lifecycle.get("driver_config"), Mapping) else {}
+    driver_map = {"none": "none", "external": "none", "http-load-unload": "none", "command": "command",
+                  "systemd": "command", "docker": "command", "process": "process"}
+    process: dict[str, Any] = {"driver": driver_map.get(driver, "none")}
+    if driver in {"docker", "http-load-unload"} or driver not in driver_map:
+        process["legacy_driver"] = driver
+        process["needs_owner_conversion"] = True
+    for key in ("start", "stop", "status", "env", "cwd"):
+        if key in driver_config:
+            value = driver_config[key]
+            if key in {"start", "stop", "status"} and (
+                not isinstance(value, list) or not all(isinstance(arg, str) or _is_argument_entry(arg) for arg in value)
+            ):
+                process["needs_owner_conversion"] = True
+            else:
+                process[key] = copy.deepcopy(value)
+    if driver == "systemd":
+        unit = driver_config.get("unit")
+        scope = ["--user"] if driver_config.get("scope") == "user" else []
+        if unit:
+            process.setdefault("start", ["systemctl", *scope, "start", unit])
+            process.setdefault("stop", ["systemctl", *scope, "stop", unit])
+            process.setdefault("status", ["systemctl", *scope, "is-active", unit])
+        if driver_config.get("dropin"):
+            process["profile_apply"] = {
+                "kind": "write_env_file_then_restart", "file": driver_config["dropin"],
+                "reload": ["systemctl", *scope, "daemon-reload"], "restore": "on_failure",
+            }
+    # The existing drivers still consume this one compatibility payload. It is
+    # the only persisted lifecycle source after migration; there is no second
+    # config.lifecycle to silently override an owner's edit.
+    process["legacy_lifecycle"] = copy.deepcopy(dict(lifecycle))
+    return process
+
+
+def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict[str, Any]:
+    """Return the additive v2.1 view of a legacy or migrated service record.
+
+    ``public`` hides the credential a scalar may hold (an address with a user name or a query token, a
+    probe path with a query token); migration reads the stored values with ``public=False``.
+    """
+    if public:
+        record = projection.project("ServiceRecord", record).tree or {}
+    service_id = str(record.get("id") or "")
+    config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
+    system = is_litellm_service_record(service_id, record)
+    address = str(config.get("address") or service_base_url(config) or "")
+    origin = str(config.get("credential_origin") or origin_of(address) or "")
+    inference = None
+    if config.get("api_key_secret_id") or config.get("api_key_env"):
+        inference = {"secret_ref": "configured" if config.get("api_key_secret_id") else None,
+                     "env": config.get("api_key_env") or None, "origin": origin,
+                     "header": "Authorization", "scheme": "Bearer"}
+    models = config.get("models") if isinstance(config.get("models"), list) else []
+    offerings = []
+    for model in models:
+        if not isinstance(model, Mapping):
+            continue
+        offering_id = str(model.get("id") or model.get("upstream_model") or "")
+        if not offering_id:
+            continue
+        capabilities = normalize_string_list(model.get("capabilities") or record.get("capabilities"))
+        offerings.append({"id": offering_id, "kind": "model", "upstream": model.get("upstream_model") or None,
+                          "selection": {"mode": "request_field", "implicit_load": "unknown"},
+                          "tasks": [{"task": cap, "evidence": "declared"} for cap in capabilities],
+                          "inputs": {}, "options": {}, "start_profile": {},
+                          "adjustments": copy.deepcopy(config.get("transforms") or [])})
+    if not offerings and not system:
+        offerings.append({"id": service_id, "kind": "model", "upstream": config.get("default_model") or None,
+                          "selection": {"mode": "request_field", "implicit_load": "unknown"},
+                          "tasks": [{"task": cap, "evidence": "declared"} for cap in normalize_string_list(record.get("capabilities"))],
+                          "inputs": {}, "options": {}, "start_profile": {},
+                          "adjustments": copy.deepcopy(config.get("transforms") or [])})
+    # Structured declarations already describe switch selection and workflow
+    # inputs. Legacy models supply defaults only when no declaration exists.
+    declared = record.get("offerings")
+    if not isinstance(declared, list):
+        declared = config.get("offerings")
+    if isinstance(declared, list):
+        offerings = copy.deepcopy(declared)
+    lifecycle = _agreed_lifecycle(service_id, record) if "process" not in record else {}
+    process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
+    if process is not None and public:
+        # The projected block narrowed to an allow-list of fields. It is never a copy of what the gateway runs.
+        process = projection.public_process(process, projected=True)  # the record above is already the projection
+    observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
+    if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
+        endpoint = lifecycle["driver_config"].get("health_endpoint")
+        if endpoint:
+            probe: dict[str, Any] = {"path": endpoint, "expect": 200}
+            held = lifecycle["driver_config"].get("health_endpoint_entries")
+            if not public and held:
+                # The stored credentials of the probe path go with it; a public view shows none.
+                probe["path_entries"] = copy.deepcopy(held)
+            observations["process_ready"] = {"http": probe}
+    residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
+    if lifecycle.get("driver") == "http-load-unload":
+        residency.setdefault("legacy_driver", "http-load-unload")
+        residency.setdefault("needs_owner_conversion", True)
+    raw_resources = record.get("resources") if isinstance(record.get("resources"), Mapping) else config.get("resources")
+    resources = copy.deepcopy(dict(raw_resources)) if isinstance(raw_resources, Mapping) else {}
+    return {"schema_version": ENGINE_RECORD_VIEW_VERSION, "id": service_id, "name": record.get("name") or service_id,
+            "enabled": bool(record.get("enabled", True)), "record_type": "system" if system else "engine",
+            "derived": system, "editable": bool(record.get("editable", not system)) and not system,
+            "provenance": {"source": record.get("source") or "ui", "package": (record.get("provenance") or {}).get("package_id")},
+            "connection": {"transport": "http", "address": address,
+                           "protocol": config.get("protocol") or None,
+                           "credentials": {"inference": inference, "control": None},
+                           "headers": [{"name": row.get("name"), "value": "configured"}
+                                       for row in (config.get("headers") or []) if isinstance(row, Mapping)],
+                           "timeouts": {"total_s": config.get("timeout") or 600}},
+            "offerings": offerings, "process": process, "observations": observations,
+            "residency": residency, "resources": resources}
+
+
+def _declares_process(block: Any) -> bool:
+    """True when a process block says more than "Azizam does not run this"."""
+    if not isinstance(block, Mapping):
+        return False
+    return str(block.get("driver") or "none").strip().lower() != "none" or any(
+        key not in {"driver", "legacy_lifecycle"} for key in block
+    )
+
+
+def _declares_lifecycle(lifecycle: Mapping[str, Any]) -> bool:
+    """True when a normalized legacy lifecycle runs, or names, something on the host."""
+    driver = str(lifecycle.get("driver") or "external").strip().lower()
+    return driver not in {"external", "none"} or bool(
+        lifecycle.get("driver_config") or lifecycle.get("managed") or lifecycle.get("service_name")
+    )
+
+
+def _native_process(service_id: str, record: dict[str, Any], lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The record's own process block when it holds one, or ``None`` when the legacy lifecycle is the source.
+
+    Two sources that both run something are refused: Azizam does not guess which one the owner meant.
+    """
+    config = record.get("config") if isinstance(record.get("config"), dict) else {}
+    top, nested = record.get("process"), config.get("process")
+    block = top if isinstance(top, Mapping) else nested
+    if isinstance(top, Mapping) and isinstance(nested, Mapping) and top != nested and (
+            _declares_process(top) or _declares_process(nested)):
+        raise ValueError(
+            f"service {service_id!r} has both a process block and a config.process block, and they differ. "
+            "Azizam cannot tell which one you mean. Keep one: delete `process` or `config.process` "
+            "from the service, then save again."
+        )
+    if not _declares_process(block):
+        return None
+    if "legacy_lifecycle" not in block and _declares_lifecycle(lifecycle):
+        where = "process" if isinstance(top, Mapping) else "config.process"
+        raise ValueError(
+            f"service {service_id!r} has both a process block and a lifecycle block that run commands "
+            f"(`{where}` and `lifecycle`), and Azizam cannot tell which one you mean. "
+            f"Keep one: delete `{where}` or delete `lifecycle` (and `config.lifecycle`), then save again."
+        )
+    return copy.deepcopy(dict(block))
+
+
+MIGRATION_REFUSED_KEY = "migration_refused"
+
+
+def migrate_engine_records_v2(registry: dict[str, Any], *, refused: dict[str, str] | None = None) -> list[str]:
+    """Collapse duplicate lifecycle sources atomically in a registry document.
+
+    A record that holds two sources that both run something is refused. With no ``refused`` dict the
+    refusal raises ``ValueError`` and the registry is untouched. With one, the migration records the
+    message under the service id and leaves that one record as stored, marked with
+    ``migration_refused``: the record does not validate until the owner keeps one block, so boot serves
+    the other services and reports this one as left out.
+    """
+    if int(registry.get("schema_version") or 1) >= ENGINE_RECORD_VIEW_VERSION:
+        return []
+    services = registry.get("services") or {}
+    migrated = copy.deepcopy(services)
+    changed: list[str] = []
+    for service_id, record in sorted(migrated.items()):
+        if not isinstance(record, dict):
+            continue
+        try:
+            lifecycle = _agreed_lifecycle(service_id, record)
+            stored_view = service_record_v2(record, public=False)
+            observations = stored_view["observations"]
+            residency = stored_view["residency"]
+            native = _native_process(service_id, record, lifecycle)
+        except ValueError as error:
+            if refused is None:
+                raise
+            refused[service_id] = str(error)
+            record[MIGRATION_REFUSED_KEY] = str(error)
+            continue
+        if native is not None:
+            # The block is the owner's: keep every field. A legacy lifecycle wrapper the runtime
+            # projection carried today stays beside it, so the backend the gateway builds is unchanged.
+            if isinstance(record.get("lifecycle"), Mapping):
+                native.setdefault("legacy_lifecycle", copy.deepcopy(dict(lifecycle)))
+            record["process"] = native
+            if isinstance(record.get("config"), dict):
+                record["config"].pop("process", None)
+        else:
+            process = _v2_process(lifecycle)
+            if process is not None:
+                record["process"] = process
+        record["observations"] = observations
+        record["residency"] = residency
+        if isinstance(record.get("config"), dict):
+            record["config"].pop("lifecycle", None)
+        record.pop("lifecycle", None)
+        changed.append(service_id)
+    registry["services"] = migrated
+    registry["schema_version"] = ENGINE_RECORD_VIEW_VERSION
+    return changed
 
 
 def runtime_backends(registry: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -542,6 +996,15 @@ def apply_service_registry_to_config(
     return out
 
 
+def builtin_frontend_ids(proxy_config: Mapping[str, Any] | None = None) -> frozenset[str]:
+    """The ids of the protocol frontends that ship with the code. A stored record may not take one."""
+    seed = load_seed_catalogs(proxy_config or {}).get("protocol_frontends", {})
+    return frozenset(
+        str(frontend_id) for frontend_id, record in seed.items()
+        if isinstance(record, Mapping) and record.get("source") == "builtin"
+    )
+
+
 class ServiceRegistryConflict(ValueError):
     """Raised when imported registry records collide with existing ownership."""
 
@@ -568,6 +1031,7 @@ def merge_imported_records(
         service_id = normalize_id(raw.get("id") or raw_id)
         if not service_id:
             continue
+        validate_protocol_dispatch_local_only(raw)
         record = normalize_service_record(service_id, raw)
         _merge_imported_record(out["services"], service_id, record, "service")
 
@@ -577,6 +1041,10 @@ def merge_imported_records(
         frontend_id = normalize_id(raw.get("id") or raw_id)
         if not frontend_id:
             continue
+        if frontend_id in builtin_frontend_ids():
+            raise ServiceRegistryConflict(
+                f"protocol_frontend {frontend_id!r} is a builtin frontend; a package cannot replace it"
+            )
         record = normalize_protocol_frontend(frontend_id, raw)
         _merge_imported_record(
             out["protocol_frontends"],
@@ -609,7 +1077,9 @@ def merge_imported_records(
         )
 
     out["updated_at"] = int(time.time())
-    return out
+    # Imported legacy records enter the current registry schema through the
+    # same lifecycle collapse and graph checks as operator-authored records.
+    return normalize_service_registry(out)
 
 
 def _merge_imported_record(
@@ -620,8 +1090,19 @@ def _merge_imported_record(
 ) -> None:
     existing = target.get(record_id)
     if existing is not None and not _same_imported_package_record(existing, record):
+        if _kept_after_operator_edit(existing):
+            raise ServiceRegistryConflict(
+                f"{kind} {record_id!r} was kept when an earlier install was removed after an operator "
+                "edited it; remove or rename it, then install the package again"
+            )
         raise ServiceRegistryConflict(f"{kind} {record_id!r} already exists")
     target[record_id] = record
+
+
+def _kept_after_operator_edit(existing: Mapping[str, Any]) -> bool:
+    """A package record whose package detached it: imported, and no longer naming a package."""
+    provenance = existing.get("provenance")
+    return existing.get("source") == "imported" and isinstance(provenance, Mapping) and "package_id" not in provenance
 
 
 def _same_imported_package_record(
@@ -645,6 +1126,30 @@ def _same_imported_package_record(
     )
 
 
+def _priority(service_id: str, value: Any) -> int:
+    """A record's priority as a whole number (100 when unset). The refusal names the record and never the value."""
+    try:
+        return int(value or 100)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"service {service_id!r} has a priority that is not a whole number") from None
+
+
+def validate_service_numbers(service_id: str, config: Mapping[str, Any]) -> None:
+    """A port that is set must be a whole number from 1 to 65535 (text of digits counts), and a priority a whole number.
+
+    The port becomes part of an address the gateway dials and shows, so a value of another kind (a word, a secret
+    typed in the wrong slot) is refused here, with text that does not repeat it.
+    """
+    _priority(service_id, config.get("priority"))
+    port = config.get("port")
+    if port is None or port == "":
+        return
+    if isinstance(port, str) and port.strip().isascii() and port.strip().isdigit():
+        port = int(port.strip())
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"service {service_id!r} has a port that is not a whole number from 1 to 65535")
+
+
 def service_from_backend_config(
     service_id: str,
     raw: Mapping[str, Any],
@@ -653,6 +1158,7 @@ def service_from_backend_config(
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
+    validate_service_numbers(service_id, safe_config)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
     validate_provider_native_passthrough_disabled(service_id, safe_config)
     if is_remote_provider_config(safe_config):
@@ -697,7 +1203,7 @@ def service_from_backend_config(
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or "required"),
         "capabilities": capabilities,
         "config": safe_config,
@@ -711,7 +1217,64 @@ def service_from_backend_config(
     return record
 
 
-def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+_PROTOCOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}")
+# Where a record of kind ``engine`` can say which address it is at.
+_ADDRESS_KEYS = ("host", "url", "address", "base_url", "api_base", "default_base_url", "base_url_env")
+
+
+def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
+    """Refuse a stored service whose blocks have the wrong shape, rather than read them as empty and rewrite them on the next save.
+
+    The protocol name is checked for its form only: which names an engine can speak is data (protocol
+    descriptions, packages), and the gateway keeps no list of them in code.
+    """
+    where = f"service {service_id!r}"
+    for field in ("config", "lifecycle", "secret_refs", "provenance"):
+        if raw.get(field) is not None and not isinstance(raw[field], Mapping):
+            raise ValueError(f"{where}: {field} must be an object")
+    config = raw.get("config") if isinstance(raw.get("config"), Mapping) else {}
+    if config.get("models") is not None and not isinstance(config["models"], (list, Mapping)):
+        raise ValueError(f"{where}: models must be a list")
+    protocol = config.get("protocol")
+    if protocol is not None and not (isinstance(protocol, str) and _PROTOCOL_NAME.fullmatch(protocol)):
+        raise ValueError(f"{where}: protocol must be a plain name such as 'openai-compatible'")
+    if str(raw.get("kind") or "") == "engine" and not any(str(config.get(key) or "").strip() for key in _ADDRESS_KEYS):
+        raise ValueError(f"{where}: an engine needs a host or an address")
+
+
+def _migration_refusal_text(service_id: str, raw: Mapping[str, Any]) -> str:
+    """Why a record carrying ``migration_refused`` does not validate, said again from its blocks.
+
+    The stored field is text a hand edit may have changed, so the error is never taken from it: the check
+    the migration ran is run again, and its message names the service and the two blocks and nothing else.
+    """
+    record = {key: copy.deepcopy(value) for key, value in raw.items() if key != MIGRATION_REFUSED_KEY}
+    try:
+        _native_process(service_id, record, _agreed_lifecycle(service_id, record))
+        why = "Its two blocks no longer conflict."
+    except ValueError as error:
+        why = str(error)
+    return (f"service {service_id!r} was left out by the schema 2 migration. {why} "
+            f"After you keep one block, delete the `{MIGRATION_REFUSED_KEY}` field from the service.")
+
+
+# Every field a normalized service record can hold. ``gateway/projection_types.verify`` fails when one is here
+# and not classified there, so a new field cannot be added without deciding what it is.
+SERVICE_RECORD_FIELDS = (
+    "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable", "offerings",
+)
+
+
+def normalize_service_record(
+    service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None, check_secrets: bool = True,
+) -> dict[str, Any]:
+    """Return the stored form of ``raw``. ``check_secrets=False`` compares rows without refusing legacy ones."""
+    if raw.get(MIGRATION_REFUSED_KEY):
+        raise ValueError(_migration_refusal_text(service_id, raw))
+    check_service_shape(service_id, raw)
+    if schema_version is None:
+        schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
     if source not in SERVICE_SOURCES:
         source = "ui"
@@ -738,14 +1301,17 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
             normalized_models.append(normalized_model)
         config["models"] = normalized_models
     capabilities = normalize_string_list(raw.get("capabilities") or config.get("capabilities"))
-    lifecycle = raw.get("lifecycle")
+    process = raw.get("process")
+    lifecycle = (process.get("legacy_lifecycle") if isinstance(process, Mapping) else None) or raw.get("lifecycle")
     if not isinstance(lifecycle, Mapping):
         lifecycle = {}
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
-    validate_provider_secret_refs(service_id, config, secret_refs)
-    validate_provider_native_passthrough_disabled(service_id, config)
+    validate_service_numbers(service_id, config)
+    if check_secrets:
+        validate_provider_secret_refs(service_id, config, secret_refs)
+        validate_provider_native_passthrough_disabled(service_id, config)
     if is_remote_provider_config(config):
         config["provider_id"] = canonical_provider_id(
             config.get("provider_id") or service_id
@@ -759,7 +1325,7 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or config.get("role") or "required"),
         "capabilities": capabilities,
         "config": config,
@@ -778,10 +1344,119 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
         },
         "provenance": copy.deepcopy(dict(provenance)),
     }
+    for key in ("process", "observations", "residency", "resources", "offerings"):
+        if key in raw:
+            record[key] = copy.deepcopy(raw[key])
+    if schema_version >= ENGINE_RECORD_VIEW_VERSION:
+        record.pop("lifecycle", None)
+        record["config"].pop("lifecycle", None)
     # EDITABILITY LAW: editable is true for all records except managed-substrate
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
     return record
+
+
+def validate_protocol_dispatch_registry(
+    registry: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> None:
+    """Check mutations without blocking repair of an older refused record.
+
+    An unchanged stored record can remain, or be disabled with no other change.
+    Every new record, other edit, and re-enable must satisfy the current policy.
+    Compare raw records so normalization cannot hide a newly supplied paid flag.
+    """
+    previous = (before or {}).get("services") or {}
+    for service_id, service in (registry.get("services") or {}).items():
+        if not isinstance(service, Mapping):
+            continue
+        old = previous.get(service_id)
+        if isinstance(old, Mapping):
+            # Compare what would be stored. A client may echo a stored row with defaults the
+            # normalizer adds (enabled, editable, provenance); that echo is not a change.
+            if _same_stored_row(service_id, service, old):
+                continue
+            if bool_from_config(old.get("enabled"), True) and _same_stored_row(
+                    service_id, service, dict(old, enabled=False)):
+                continue
+        try:
+            validate_protocol_dispatch_local_only(service)
+        except ValueError as exc:
+            raise ValueError(f"service {service_id!r}: {exc}") from exc
+
+
+# Top-level keys the normalizer stores (or defaults). Any other top-level key is policy-relevant
+# raw data that normalization drops, so a change to it is a change, never a normalized no-op.
+_NORMALIZED_ROW_KEYS = frozenset({
+    "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+})
+
+
+def _same_stored_row(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Whether two rows store the same thing. Secret checks are skipped: a refused legacy row must still compare."""
+    if any(left.get(key) != right.get(key) for key in (set(left) | set(right)) - _NORMALIZED_ROW_KEYS):
+        return False
+    try:
+        return (normalize_service_record(service_id, left, check_secrets=False)
+                == normalize_service_record(service_id, right, check_secrets=False))
+    except (TypeError, ValueError):
+        return dict(left) == dict(right)
+
+
+def _paid_remote_or_substrate(source: Mapping[str, Any]) -> bool:
+    """True when one level of a record (record, config, connection or offering) names a paid, remote or substrate target."""
+    for key in ("provider_type", "cost_class"):
+        value = str(source.get(key) or "").strip().lower()
+        if value and value not in LOCAL_PROVIDER_CLASSES:
+            return True
+    if any(bool_from_config(source.get(key), False) for key in ("paid_remote", "remote_provider")):
+        return True
+    if any(str(source.get(key) or "").strip().lower() == "remote" for key in ("locality", "placement")):
+        return True
+    if str(source.get("execution_substrate") or "").strip().lower() == "litellm":
+        return True
+    return str(source.get("kind") or "").strip().lower() in {"litellm", "llm-substrate"}
+
+
+def _unsafe_address(address: str) -> bool:
+    """Userinfo, backslashes and control or space characters make parsers disagree about the host."""
+    return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
+
+
+def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
+    """Protocol dispatch lacks paid-provider controls; accept only proven local addresses.
+
+    Every level of the record is checked: the record, its config, each connection and each
+    offering. Any paid, remote or substrate marker refuses it, and so does any provider type
+    or cost class outside LOCAL_PROVIDER_CLASSES. The connection's address must classify as
+    loopback, with no userinfo. This intentionally narrow rule does not resolve DNS: LAN and
+    container names remain unknown. Placement labels cannot override the connection's address.
+    Dispatch calls the same check at request time.
+    """
+    config = service.get("config")
+    config = config if isinstance(config, Mapping) else {}
+    connections = [source for source in (service.get("connection"), config.get("connection")) if isinstance(source, Mapping)]
+    opted = [connection for connection in connections if connection.get("dispatch") == "protocol"]
+    if not opted:
+        return
+    reason = ("protocol dispatch does not enforce paid-provider access or spend limits; "
+              "use the existing provider route")
+    offerings = service.get("offerings") if isinstance(service.get("offerings"), list) else config.get("offerings")
+    levels = [service, config, *connections, *(item for item in offerings or [] if isinstance(item, Mapping))]
+    if any(_paid_remote_or_substrate(level) for level in levels):
+        raise ValueError(reason)
+    if is_litellm_service_record(service.get("id"), service):
+        raise ValueError(reason)
+    # Import lazily: presentation also imports registry classifiers. Reuse its
+    # address classifier with only the actual target, never placement metadata
+    # or a second legacy endpoint that could mask a public connection address.
+    from gateway.model_presentation import model_locality
+
+    for connection in opted:
+        address = connection.get("address")
+        if (not isinstance(address, str) or _unsafe_address(address)
+                or model_locality({"base_url": address}, None) != "local"):
+            raise ValueError(reason)
 
 
 def validate_provider_secret_refs(
@@ -797,11 +1472,13 @@ def validate_provider_secret_refs(
 
     def inspect_secrets(value: Any, prefix: str = "") -> None:
         if isinstance(value, Mapping):
+            if _refs.is_secret_entry(value):
+                return  # a secret entry points at the encrypted store; it holds no inline secret
             for raw_key, item in value.items():
                 key = str(raw_key)
                 normalized = key.lower().replace("-", "_")
                 path = f"{prefix}.{key}" if prefix else key
-                secret_field = normalized in {"api_key", "authorization", "x_api_key", "client_secret", "password", "secret", "token", "access_token", "bearer_token", "credential"}
+                secret_field = normalized in _INLINE_SECRET_FIELDS
                 if secret_field:
                     inline_keys.append(path)
                 elif is_secret_key(key) and is_secret_reference_key(key):
@@ -856,6 +1533,27 @@ def validate_provider_native_passthrough_disabled(
         raise ValueError(
             f"remote provider {service_id!r} cannot enable native_passthrough"
         )
+    try:
+        native_lane.validate_native_block(config.get("native"))
+        native_lane.validate_connection(config.get("connection"))
+    except ValueError as error:
+        raise ValueError(f"service {service_id!r}: {error}") from error
+    if bool_from_config(config.get("native_passthrough"), False):
+        reason = engine_check.static_blocked_reason(native_host_url(config))
+        if reason:
+            raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
+
+
+def native_host_url(config: Mapping[str, Any]) -> str:
+    """Where the native lane sends a record's calls: its ``url``, else its base URL, else its host and port."""
+    explicit = str(config.get("url") or "").strip()
+    if explicit:
+        return explicit
+    host = str(config.get("host") or "").strip()
+    if ":" in host and not host.startswith("[") and not str(config.get("base_url") or config.get("api_base") or "").strip():
+        # An IPv6 address needs its brackets to be a URL host.
+        config = {**config, "host": f"[{host}]"}
+    return service_base_url(config)
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
@@ -864,6 +1562,317 @@ def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
         or bool_from_config(config.get("remote_provider"), False)
         or bool_from_config(config.get("paid_remote"), False)
     )
+
+
+# -- where a record's credential goes ---------------------------------------
+# A credential reference is a name the compiler turns into a secret
+# (``os.environ/NAME``). Whoever can attach one, or move the host that holds
+# one, decides where that secret is sent. These helpers find both so a caller
+# can hold them back for the owner. They name no engine.
+
+CREDENTIAL_REFERENCE_KEYS = ("api_key_env", "api_key_ref", "api_key_secret_id")
+_ENV_REFERENCE_PREFIX = "os.environ/"
+_ENDPOINT_KEYS = (
+    "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
+)
+LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+# The origin the keys of a lifecycle driver (its admin key and API key) are bound to. The driver sends them only
+# to the address it dials when that address has this origin; only the owner records it.
+DRIVER_CREDENTIAL_ORIGIN_KEY = "driver_credential_origin"
+_DRIVER_KEY_FIELDS = ("admin_key", "api_key")
+_DRIVER_KEY_ENV_FIELDS = ("admin_key_env", "api_key_env")
+
+
+def service_base_url(config: Mapping[str, Any]) -> str:
+    raw = str(
+        config.get("base_url")
+        or config.get("api_base")
+        or config.get("default_base_url")
+        or ""
+    ).strip()
+    if raw:
+        return raw.rstrip("/")
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port is None:
+        return ""
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
+    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+
+
+def origin_of(url: str) -> str:
+    """Scheme, host and port of a URL, or ``""`` when it is not an HTTP(S) URL."""
+    try:
+        return credential_origin_from_url(url)
+    except Exception:  # noqa: BLE001 - an unreadable URL has no origin
+        return ""
+
+
+_REFERENCE_KEY_SUFFIXES = ("_env", "_ref", "_secret_id")
+_EXTERNAL_DRIVER = "external"
+
+
+def _names_credential(key: str) -> bool:
+    """Deny by default: a key that looks like it names a secret is treated as one.
+
+    Matches ``credential_origin``, ``api_key`` and any key ending in ``_env``,
+    ``_ref`` or ``_secret_id``, at any depth and in any block of the record.
+    """
+    lowered = key.strip().lower()
+    return (
+        lowered in ("credential_origin", DRIVER_CREDENTIAL_ORIGIN_KEY, "api_key")
+        or lowered.endswith(_REFERENCE_KEY_SUFFIXES)
+        or (is_secret_key(lowered) and is_secret_reference_key(lowered))
+    )
+
+
+def _is_inject_secret(path: str, key: str) -> bool:
+    """An ``auth_inject`` rule's ``secret`` names a downstream secret, though no suffix says it is a reference."""
+    return key.strip().lower() == "secret" and "auth_inject[" in path
+
+
+def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
+    """Every field of a service record that names a credential, keyed by its path.
+
+    The whole record is scanned (``config``, ``secret_refs``, the ``lifecycle``
+    block and anything else), so a new block cannot become a place to hide a
+    key reference.
+
+    A secret entry (``secret_ref``) is a reference like any other here, so moving the host of a record that holds
+    one is the owner's. A record holds no secret value itself (decision D26).
+    """
+    found: dict[str, str] = {}
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                here = f"{path}.{key}" if path else str(key)
+                if _names_credential(str(key)) or path == "secret_refs" or _is_inject_secret(path, str(key)):
+                    found[here] = repr(item)
+                else:
+                    walk(item, here)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+        elif isinstance(value, str) and value.strip().lower().startswith(_ENV_REFERENCE_PREFIX):
+            found[path] = repr(value)
+
+    walk(record, "")
+    return found
+
+
+def _driven_lifecycle_blocks(record: Mapping[str, Any]) -> frozenset[str]:
+    """The record's lifecycle blocks that name a driver, as comparable text.
+
+    Looks at the record's ``lifecycle`` block and at the copy the form path keeps
+    in ``config``. Blocks that name no driver (or ``external``) are left out.
+    """
+    process = record.get("process")
+    config = record.get("config")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+    driven = {json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block)}
+    if isinstance(process, Mapping):
+        legacy = process.get("legacy_lifecycle")
+        controls_host = _is_driven(process) or _is_driven(legacy) or any(
+            key in process for key in ("start", "stop", "status", "profile_apply", "env", "cwd")
+        )
+        if controls_host:
+            driven.add(json.dumps(process, sort_keys=True, default=str))
+    return frozenset(driven)
+
+
+def _is_driven(block: Any) -> bool:
+    """True when a lifecycle block names a driver other than ``external``."""
+    if not isinstance(block, Mapping):
+        return False
+    for field in ("driver", "type"):
+        name = str(block.get(field) or "").strip().lower()
+        if name and name not in {_EXTERNAL_DRIVER, "none"}:
+            return True
+    return False
+
+
+def driver_keys_held(record: Mapping[str, Any]) -> bool:
+    """True when a lifecycle block of the record names a key its driver sends (an admin key or an API key).
+
+    The key may be stored (an entry) or named by an environment variable (``admin_key_env``, ``api_key_env``).
+    """
+    config = record.get("config")
+    process = record.get("process")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None,
+              process.get("legacy_lifecycle") if isinstance(process, Mapping) else None]
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        driver_config = block.get("driver_config")
+        if any(block.get(field) for field in _DRIVER_KEY_FIELDS):
+            return True
+        if isinstance(driver_config, Mapping) and any(driver_config.get(field) for field in _DRIVER_KEY_ENV_FIELDS):
+            return True
+    return False
+
+
+def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    """Whether a lifecycle block that names a driver was created, changed or removed.
+
+    A driver other than ``external`` runs commands on the host or sends a stored
+    key to the record's host, so only the owner may set, change or remove one.
+    A block that stays as it is, and an ``external`` block, are not changes.
+    """
+    return _driven_lifecycle_blocks(before) != _driven_lifecycle_blocks(after)
+
+
+# Config fields whose value makes the gateway touch the host's files or processes.
+# ``config_path`` is where the compiled LiteLLM config is written.
+OWNER_ONLY_CONFIG_KEYS = ("config_path",)
+
+
+def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
+    """True when ``aux`` asks the gateway to read the command lines of host processes."""
+    aux = config.get("aux")
+    return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
+
+
+def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
+    """Where a lifecycle driver of this record dials: its host and port, else the origin of its base URL.
+
+    The driver's keys (an admin key, an API key) go to this address. It is one of the addresses the credential
+    fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
+    no address; the driver then has nowhere to send a key.
+    """
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if host and port not in (None, ""):
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
+        scheme = str(config.get("scheme") or "http").strip() or "http"
+        return f"{scheme}://{host}:{port}"
+    return origin_of(service_base_url(config))
+
+
+def _dialed_origins(config: Mapping[str, Any]) -> frozenset[str]:
+    """The origins of every address the gateway can dial for this record, however the record spells them.
+
+    ``service_base_url`` returns the first of ``base_url``, ``api_base`` and ``default_base_url`` that is set, and the
+    host and port apply only when none is, so comparing just its result would hide a change to the others. The
+    lifecycle driver reads the host and port whatever the base URL says. A set, because naming an address a second
+    time sends a key nowhere new.
+    """
+    addresses = [str(config.get(key) or "").strip() for key in ("base_url", "api_base", "default_base_url")]
+    addresses.append(lifecycle_dial_url(config))
+    return frozenset(origin_of(address) or address for address in addresses if address)
+
+
+def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Every address a credential of this record can be sent to, and every origin it is bound to.
+
+    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``),
+    the address the form stores and the host and port a lifecycle driver dials; a native credential goes
+    only to the origin written beside it. A change to any of these moves a key, so each has its own place
+    in the fingerprint.
+    """
+    connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
+    credentials = connection.get("credentials") if isinstance(connection.get("credentials"), Mapping) else {}
+    bound = tuple(
+        (str(name), str(item.get("origin") or ""))
+        for name, item in sorted(credentials.items(), key=lambda pair: str(pair[0]))
+        if isinstance(item, Mapping)
+    )
+    addresses = (
+        service_base_url(config), native_host_url(config),
+        str(config.get("address") or "").strip(), str(connection.get("address") or "").strip(),
+    )
+    return (
+        tuple(origin_of(address) or address for address in addresses),
+        tuple(sorted(_dialed_origins(config))),
+        bound,
+        str(config.get(LIFECYCLE_BASE_KEY) or ""),
+    )
+
+
+def credential_binding_changes(
+    old_registry: Mapping[str, Any], new_registry: Mapping[str, Any]
+) -> dict[str, list[str]]:
+    """Services whose credential or credential host differs between two registries.
+
+    A service is listed when it gains, changes or loses a credential reference
+    (a lost one leaves its secret in the store with no record that owns it), when it
+    sets the base of the gateway's own internal key, when it already carries a
+    credential and its origin moves, when its lifecycle driver is set, changed
+    or removed (a driver runs commands or sends a stored key), when its
+    ``auth_inject`` rules change, when the origin a URL field with stored
+    credentials is bound to changes (decision D39), or when it sets a field that
+    makes the gateway write a file or read process command lines.
+    The value says which.
+    """
+    old = (normalize_service_registry(old_registry).get("services")) or {}
+    new = (normalize_service_registry(new_registry).get("services")) or {}
+    changed: dict[str, list[str]] = {}
+    for service_id, record in new.items():
+        before = old.get(service_id) or {}
+        refs, prior = credential_references(record), credential_references(before)
+        reasons = [path for path, value in refs.items() if prior.get(path) != value]
+        # Taking a reference away detaches the secret it names and leaves it in the store with nothing to own it.
+        reasons += [path for path in prior if path not in refs]
+        config = record.get("config") or {}
+        before_config = before.get("config") or {}
+        if config.get(LIFECYCLE_BASE_KEY) and config.get(LIFECYCLE_BASE_KEY) != before_config.get(LIFECYCLE_BASE_KEY):
+            reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
+        if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
+            reasons.append("host")
+        # Credentials stored with a URL go where that URL goes: a change to the address of such a field (or to the base
+        # a path joins) moves them (decision D39).
+        marks_before, marks_after = dict(url_binding.binding_marks(before)), dict(url_binding.binding_marks(record))
+        reasons += [path for path, mark in marks_before.items() if path in marks_after and marks_after[path] != mark]
+        if lifecycle_driver_changed(before, record):
+            reasons.append("lifecycle")
+        if (config.get("auth_inject") or None) != (before_config.get("auth_inject") or None):
+            # The rules name the keys the gateway sends to the host, and are never edited through the admin surface.
+            reasons.append("config.auth_inject")
+        for key in OWNER_ONLY_CONFIG_KEYS:
+            if config.get(key) and config.get(key) != before_config.get(key):
+                reasons.append(f"config.{key}")
+        if _reads_process_command_lines(config) and config.get("aux") != before_config.get("aux"):
+            reasons.append("config.aux")
+        if reasons:
+            changed[service_id] = reasons
+    return changed
+
+
+def bind_credential_origins(
+    registry: Mapping[str, Any], service_ids: Iterable[str]
+) -> dict[str, Any]:
+    """Record, for each named service, the origin its credential was attached for.
+
+    Only the owner reaches this: it states "this key goes to this host". The
+    compiler sends a local service's key only to the origin recorded here.
+    """
+    out = normalize_service_registry(registry)
+    for service_id in service_ids:
+        record = out["services"].get(service_id)
+        if record is None:
+            continue
+        config = record["config"]
+        if is_remote_provider_config(config):
+            continue
+        if any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+            origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+            if origin:
+                config["credential_origin"] = origin
+        if driver_keys_held(record):
+            # The driver's keys go to the address it dials, which may not be the one the base URL names.
+            driver_origin = origin_of(lifecycle_dial_url(config))
+            if driver_origin:
+                config[DRIVER_CREDENTIAL_ORIGIN_KEY] = driver_origin
+        # Each per-class native credential is bound to the host the native lane sends to.
+        connection = config.get("connection")
+        credentials = connection.get("credentials") if isinstance(connection, Mapping) else None
+        native_origin = origin_of(native_host_url(config))
+        for credential in credentials.values() if isinstance(credentials, Mapping) else ():
+            if native_origin and isinstance(credential, dict) and (credential.get("secret_env") or credential.get("secret_ref")):
+                credential["origin"] = native_origin
+    return out
 
 
 def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
@@ -894,87 +1903,6 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
 # derived and locked; rename/enable/note are still allowed; removal is blocked.
 # ---------------------------------------------------------------------------
 
-# Provider presets for the "add a backend" form. Each pre-fills the connection
-# fields for a common upstream; "openai-compatible" is the custom escape hatch.
-# Kept here (not in the renderer) so the form and any API consumer share one
-# source of truth. base_path/default_port are hints; the operator can override.
-# ``protocol: "openai-compatible"`` is what marks a service as routable through
-# the LiteLLM substrate (litellm_substrate._is_openai_compatible). Every LLM
-# preset sets it; ComfyUI (image) does not.
-PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
-    {
-        "id": "openai-compatible",
-        "label": "OpenAI-compatible (custom)",
-        "base_path": "/v1",
-        "default_port": None,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "vllm",
-        "label": "vLLM",
-        "base_path": "/v1",
-        "default_port": 8000,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "ollama",
-        "label": "Ollama",
-        "base_path": "/v1",
-        "default_port": 11434,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "tabbyapi",
-        "label": "TabbyAPI",
-        "base_path": "/v1",
-        "default_port": 5000,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions", "vision"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "lmstudio",
-        "label": "LM Studio",
-        "base_path": "/v1",
-        "default_port": 1234,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "comfyui",
-        "label": "ComfyUI",
-        "base_path": "",
-        "default_port": 8188,
-        "protocol": None,
-        "capabilities": ["image"],
-        "native_passthrough": False,
-    },
-)
-
-_CAPABILITY_CHOICES: tuple[str, ...] = (
-    "chat",
-    "completions",
-    "vision",
-    "embeddings",
-    "image",
-    "audio",
-    "speech",
-    "generations",
-    "videos",
-)
-
 # Per-protocol fields beyond the generic openai-compatible set.  Each entry
 # lists fields that service_form_to_raw should accept and round-trip for that
 # protocol.  Fields not listed here for a given protocol pass through the
@@ -984,14 +1912,6 @@ _PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
     # openai-compatible uses the generic path; listed here for documentation.
     "openai-compatible": (),
 }
-
-
-def provider_preset(preset_id: Any) -> dict[str, Any] | None:
-    pid = normalize_id(preset_id)
-    for preset in PROVIDER_PRESETS:
-        if preset["id"] == pid:
-            return preset
-    return None
 
 
 def upsert_service_in_registry(
@@ -1013,6 +1933,7 @@ def upsert_service_in_registry(
     that process, so endpoint/protocol fields are derived and locked; only
     name, enabled, and note may be changed.
     """
+    validate_protocol_dispatch_local_only(raw)
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
     if not sid:
@@ -1064,10 +1985,52 @@ def upsert_service_in_registry(
                 effective_source = existing_source
         record = service_from_backend_config(sid, raw, source=effective_source)
 
+    if "retention_facts" in record["config"]:
+        from gateway.retention_facts import validate_facts
+        try:
+            record["config"]["retention_facts"] = validate_facts(
+                record["config"]["retention_facts"], for_write=True,
+            )
+        except ValueError as exc:
+            raise ValueError(f"service {sid!r} config.retention_facts: {exc}") from None
     out["services"][sid] = record
     out["updated_at"] = int(time.time())
     out = normalize_service_registry(out)
     return out, out["services"][sid]
+
+
+# Top-level record fields a service edit form has no widget for. A partial edit
+# must carry them over unless the caller names them.
+_LIFECYCLE_FORM_KEYS = {"lifecycle_type": "type", "managed": "managed", "service_name": "service_name"}
+
+
+def carry_unnamed_record_fields(
+    existing: Mapping[str, Any], updated: dict[str, Any], *, named: Mapping[str, Any]
+) -> None:
+    """Keep what a partial edit did not name: ``secret_refs``, ``lifecycle``, ``kind``, ``provenance``.
+
+    The edit path rebuilds the record from flat form fields, and those blocks
+    are not form fields. Without this, a note edit drops a key held in
+    ``secret_refs`` and turns a managed lifecycle back into ``external``.
+    ``updated`` changes in place. A field the caller names keeps the caller's value.
+    """
+    if isinstance(existing.get("secret_refs"), Mapping):
+        updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
+    lifecycle_named = "lifecycle" in named or any(key in named for key in _LIFECYCLE_FORM_KEYS)
+    for field in ("process", "observations", "residency", "resources", "offerings"):
+        if lifecycle_named and field in ("process", "observations", "residency"):
+            continue
+        if field in existing and field not in named:
+            updated[field] = copy.deepcopy(existing[field])
+    if isinstance(existing.get("lifecycle"), Mapping) and "lifecycle" not in named:
+        kept = copy.deepcopy(dict(existing["lifecycle"]))
+        for form_key, block_key in _LIFECYCLE_FORM_KEYS.items():
+            if form_key in named:
+                kept[block_key] = updated["lifecycle"][block_key]
+        updated["lifecycle"] = kept
+    for field in ("kind", "provenance"):
+        if field in existing and field not in named:
+            updated[field] = copy.deepcopy(existing[field])
 
 
 def remove_service_from_registry(
@@ -1142,8 +2105,6 @@ def split_base_url(value: Any) -> dict[str, Any]:
 _FORM_CONSUMED_KEYS: frozenset[str] = frozenset({
     # Parsed/derived — stored as host+port+base_path instead.
     "base_url",
-    # Form-only routing hint — not stored in config.
-    "preset",
     # Top-level record fields, not config fields.
     "name",
     "enabled",
@@ -1182,29 +2143,18 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     drops stored config keys the form has no widget for (e.g. comfyui protocol
     fields, or any future extension field).
     """
+    if "preset" in form:
+        # The preset list is gone (engine definitions replace it). Passed through,
+        # the key would be stored and the record would silently not route.
+        raise ValueError("engine presets are gone: add an engine with a definition and its values "
+                         "(registry/engine_definitions.json), or send a raw record with its protocol")
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
     base_url = str(form.get("base_url") or "").strip().rstrip("/")
     if base_url and is_remote_provider_config(form):
         raw["base_url"] = base_url
 
-    preset = provider_preset(form.get("preset"))
-    if preset:
-        raw.setdefault("base_path", preset["base_path"])
-        if preset.get("default_port") and "port" not in raw:
-            raw["port"] = int(preset["default_port"])
-        raw.setdefault("native_passthrough", preset["native_passthrough"])
-        if "transforms" in preset and "transforms" not in form:
-            raw["transforms"] = copy.deepcopy(preset["transforms"])
-        # The preset's protocol is what makes the service routable through the
-        # LiteLLM substrate (openai-compatible). It's a config default the
-        # operator rarely needs to see; an explicit form `protocol` overrides it.
-        if preset.get("protocol"):
-            raw.setdefault("protocol", preset["protocol"])
-        if not normalize_string_list(form.get("capabilities")):
-            raw["capabilities"] = list(preset["capabilities"])
-
-    # Explicit fields win over preset/URL-derived values.
+    # Explicit fields win over URL-derived values.
     for key in ("name", "host", "base_path", "protocol", "health_endpoint",
                 "api_key_env", "note", "service_name"):
         value = form.get(key)
@@ -1217,7 +2167,7 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     if form.get("priority") not in (None, ""):
         raw["priority"] = int(form["priority"])
 
-    # resources is a nested dict; merge over any preset-derived defaults.
+    # resources is a nested dict.
     resources = form.get("resources")
     if isinstance(resources, Mapping) and resources:
         raw["resources"] = dict(resources)
@@ -1572,7 +2522,7 @@ def split_secret_refs(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str,
     secret_refs: dict[str, Any] = {}
     for key, value in raw.items():
         key_str = str(key)
-        if is_secret_key(key_str) and not is_secret_reference_key(key_str):
+        if is_secret_key(key_str) and not is_secret_reference_key(key_str) and key_str != "credential_origin":
             secret_refs[key_str] = "<external-secret>"
             continue
         safe[key_str] = copy.deepcopy(value)

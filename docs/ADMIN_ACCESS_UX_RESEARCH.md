@@ -12,7 +12,7 @@ without hand-authoring policy documents.
 Keep the existing model:
 
 ```text
-User or service account -> App -> Profile -> API keys
+User or service account -> App -> Access plan -> API keys
 ```
 
 Use these nouns consistently:
@@ -20,7 +20,7 @@ Use these nouns consistently:
 - **App**: the thing using the gateway, such as LibreChat, Open WebUI,
   Continue, Home Assistant, a Telegram bot, a cron job, or a family member's
   device.
-- **Profile**: a reusable access policy and runtime envelope. A Profile says
+- **Access plan**: a reusable access policy and runtime envelope. An access plan says
   what an App may use.
 - **App API key**: an `opk_...` runtime credential issued to one App. Apps can
   have multiple keys for rotation.
@@ -31,17 +31,16 @@ Use these nouns consistently:
 - **API surface**: a client-facing compatibility surface, such as
   OpenAI-compatible `/v1`, Anthropic Messages, Ollama-compatible `/api`, or
   gateway-native `/gateway/v1`. API surfaces are request shapes; they are not
-  backend services and they are not Profiles.
+  backend services and they are not Access plans.
 
 The admin mental model should be:
 
 ```text
-This App uses this App API key, and the key runs under this Profile.
+This App uses this App API key, and the key runs under this Access plan.
 ```
 
-Do not add another stored abstraction called Access, Plan, Template, or Grant
-unless the implementation proves it needs one. Presets/templates are UI helpers
-for generating existing objects.
+Access plans v4 replace Profiles. Use access plans as the runtime policy
+object. Presets/templates are UI helpers for creating plans.
 
 The gateway has two sides that must both be visible to operators:
 
@@ -51,7 +50,7 @@ compatible APIs -> gateway policy/routing -> hosted Services
 
 For example, LibreChat talks to the OpenAI-compatible API; the gateway may route
 that to llama.cpp, TabbyAPI, ComfyUI, Voxtral, Parakeet, or another configured
-Service depending on the request and Profile.
+Service depending on the request and Access plan.
 
 Keep the plane split explicit:
 
@@ -62,7 +61,7 @@ oak_... -> admin automation key -> /admin/api, /status, gateway management
 
 `Full runtime access` and `Gateway admin automation` are different products.
 The former can spend GPU/storage/time on runtime capabilities. The latter can
-change gateway configuration, Apps, Profiles, and keys. Never blur them in the
+change gateway configuration, Apps, Access plans, and keys. Never blur them in the
 same creation flow.
 
 ## Prior Art
@@ -94,11 +93,11 @@ Reference docs:
 
 1. **Start from a task, not a schema.**
    The primary flow is "Create an API key for an app" or "Create a family
-   chat policy", not "create service account, profile id, app name, protocol,
+   chat policy", not "create service account, access plan id, app name, protocol,
    intent, tags, JSON".
 
-2. **Keep Apps and Profiles separate.**
-   Many Apps can share one Profile, and an App can move Profiles without
+2. **Keep Apps and Access plans separate.**
+   Many Apps can share one Access plan, and an App can move Access plans without
    rotating all of its keys.
 
 3. **Keep Keys separate from Apps.**
@@ -107,15 +106,15 @@ Reference docs:
 
 4. **Separate runtime access from gateway administration.**
    Runtime App keys are for apps and SDK tools. Admin automation keys are for
-   trusted scripts that mutate gateway state. A broad runtime Profile must not
+   trusted scripts that mutate gateway state. A broad runtime Access plan must not
    imply control-plane permission.
 
-5. **Make Profiles understandable as reusable policies.**
-   A Profile should read like "Family chat: chat only, local stable routes,
+5. **Make Access plans understandable as reusable policies.**
+   An access plan should read like "Family chat: chat only, local stable routes,
    no cloud fallback" before it reads like JSON.
 
 6. **Progressively disclose implementation details.**
-   Profile ids, service account owner names, protocol selectors, exact
+   Access plan ids, service account owner names, protocol selectors, exact
    intents, status visibility, native passthrough, and raw JSON belong in
    advanced sections.
 
@@ -124,11 +123,11 @@ Reference docs:
    and safety implications from chat.
 
 8. **Never grant newly discovered services implicitly.**
-   A service can be available without being allowed by any Profile.
+   A service can be available without being allowed by any Access plan.
 
 9. **Make denials and routing explainable.**
    Self-hosted operators need to know whether a failure was authentication,
-   profile denial, upstream unavailable, queue/resource pressure, timeout, or
+   access plan denial, upstream unavailable, queue/resource pressure, timeout, or
    invalid request shape.
 
 ## Holistic Admin IA
@@ -136,16 +135,17 @@ Reference docs:
 The admin UI should be organized around operator jobs, not storage tables:
 
 - **APIs**: exposed compatible protocol surfaces, route bases, support tier,
-  common clients, and which Profile protocol families gate them.
+  common clients, and which Access plan protocol families gate them.
 - **Services**: configured backends and workflow hosts, health/readiness,
   capabilities, queues, current loaded LLM, and runtime notes.
 - **Apps & Keys**: create App API keys, see active Apps, rotate/revoke runtime
   keys.
-- **Profiles**: reusable runtime access policies, created from named templates
+- **Access plans**: reusable runtime access policies, created from named templates
   and summarized in plain language.
-- **Identity**: runtime Profile mappings from OIDC groups/roles, exact emails,
-  domains, gateway admin roles, or all signed-in users. These mappings choose
-  defaults for self-service Apps; they do not grant admin access.
+- **Identity (unbuilt proposal)**: automatic Access plan assignment from identity
+  claims is not a current admin API capability. The migration removed the
+  legacy runtime mapping table; no replacement mapping route is registered in
+  `gateway/admin_api.py`.
 - **Workflows**: media workflow catalog, dependency/status checks, manifest
   controls.
 - **Activity**: receipts, jobs, denials, and audit events.
@@ -156,7 +156,7 @@ The current thin dashboard may render several of these on one page, but the
 mental model should follow this IA.
 
 APIs and Services are visibility/debug surfaces in the SLVP. They should not
-become a second policy editor. Policy remains on Profiles; keys remain under
+become a second policy editor. Policy remains on Access plans; keys remain under
 Apps; Services hide provider credentials and backend implementation detail.
 
 ## SLVP Policy Choices
@@ -179,7 +179,7 @@ The best first product surface is a short set of named choices:
   - Use for friends/family, game-dev collaborators, and normal creative use.
 - **Images + audio**
   - Approved image, edit, speech, transcription, music, and sound workflows.
-  - No video by default. This avoids making a normal media Profile implicitly
+  - No video by default. This avoids making a normal media Access plan implicitly
     grant the most expensive queue.
 - **Video producer**
   - Explicitly grants expensive video-generation capabilities.
@@ -188,7 +188,7 @@ The best first product surface is a short set of named choices:
   - Broad runtime access to local models and workflows.
   - May include stable, opt-in, experimental, batch, and expensive runtime
     capabilities, depending on the gateway policy.
-  - Does not grant permission to manage Apps, Profiles, keys, users, or
+  - Does not grant permission to manage Apps, Access plans, keys, users, or
     gateway settings.
 - **Gateway admin automation**
   - Creates an `oak_...` admin automation key, not an `opk_...` App API key.
@@ -212,19 +212,19 @@ Visible fields:
 
 - App or service name
 - ownership: shared App or personal/user-owned App
-- Profile selection
+- Access plan selection
 
-Creating an App, creating a Profile, and minting a key must remain separate
-flows. Operators need to reuse Profiles across Apps, move an App between
-Profiles without rotating keys, and rotate/revoke individual keys without
+Creating an App, creating an access plan, and minting a key must remain separate
+flows. Operators need to reuse Access plans across Apps, move an App between
+Access plans without rotating keys, and rotate/revoke individual keys without
 deleting the App.
 
 Derived fields:
 
 - service account owner
 - App name
-- Profile id
-- Profile label
+- Access plan id
+- Access plan label
 - protocol list
 - intent list
 - tags
@@ -233,7 +233,7 @@ Do not put generated ids, owner overrides, raw policy JSON, or service-account
 language in this first flow. Those controls belong in separate advanced
 maintenance tools, not the primary path.
 
-### Create reusable Profile
+### Create reusable Access plan
 
 Use when the admin wants to define a policy that several Apps can share, such
 as Chat only, Chat + embeddings, Chat + images, Images + audio, Video producer,
@@ -242,7 +242,7 @@ Full runtime access, or a custom advanced policy.
 Visible fields:
 
 - Policy name
-- Start from Profile template
+- Start from Access plan template
 - Target policy:
   - allowed catalog vs available now
   - may activate vs existing only
@@ -261,37 +261,43 @@ Advanced fields:
 
 ### Model visibility and current-loaded mode
 
-Self-hosted LLM operators are often VRAM-bound. A Profile therefore needs two
+Self-hosted LLM operators are often VRAM-bound. An access plan therefore needs two
 separate controls:
 
-- **static model allow-list**: exact model/workflow ids that a Profile may use.
+- **static model allow-list**: exact model/workflow ids that an access plan may use.
 - **current loaded LLM mode**: dynamic behavior that only advertises and accepts
   ids resolving to the active loaded LLM.
 
-This is not a new durable noun. It is a Profile field because it changes what
+This is not a new durable noun. It is an access plan field because it changes what
 an App can see on `/v1/models` and whether chat/completions requests can trigger
-model/backend swaps. The runtime must fail clearly when a current-loaded Profile
+model/backend swaps. The runtime must fail clearly when a current-loaded Access plan
 requests a non-loaded model instead of silently swapping or serving a different
 model.
 
 The operator-facing explanation should be:
 
 ```text
-/v1/models is filtered by the caller's Profile.
-Current-loaded Profiles only see the active loaded LLM ids.
+/v1/models is filtered by the caller's Access plan.
+Current-loaded Access plans only see the active loaded LLM ids.
 ```
 
-### Map OIDC identities to runtime Profiles
+### Map OIDC identities to runtime Access plans (unbuilt proposal)
 
-Use when the admin wants signed-in users to create personal Apps and keys
-without hand-picking a Profile every time.
+This is historical design intent, not an implemented workflow. The schema-7
+migration drops `runtime_profile_mappings`, and `gateway/admin_api.py` has no
+mapping CRUD routes. The proposed fields and rules below are not a current
+contract. UNVERIFIED: identity-claim persistence and readers outside those
+reviewed source files.
+
+Proposed use: signed-in users create personal Apps and keys without
+hand-picking an access plan every time.
 
 Visible fields:
 
 - identity source type: OIDC group, OIDC role, exact email, email domain,
   gateway admin role, or all signed-in users
 - identity source value
-- default runtime Profile
+- default runtime Access plan
 
 Rules:
 
@@ -301,12 +307,12 @@ Rules:
   `trusted-users`, `trusted_users`, and `trusted users`.
 - More specific mappings should win over broad mappings: email, domain, OIDC
   group, OIDC role, gateway role, then all signed-in users.
-- Existing Apps keep their assigned Profile unless the admin changes the App or
+- Existing Apps keep their assigned Access plan unless the admin changes the App or
   the App inherits a default dynamically.
 
 ### Create admin automation key
 
-Use when the admin wants a script to manage Apps, Profiles, keys, status, or
+Use when the admin wants a script to manage Apps, Access plans, keys, status, or
 audit data.
 
 Visible fields:
@@ -338,7 +344,7 @@ named as policy testing, not part of the everyday creation path.
 It should help answer:
 
 - Which App/key made the request?
-- Which Profile applied?
+- Which Access plan applied?
 - What model/workflow/backend was requested?
 - Was the request allowed, denied, queued, or failed upstream?
 - What changed would allow it?
@@ -369,15 +375,16 @@ Ship:
 
 - task-shaped App API key creation
 - separate admin automation key creation
-- plain-language reusable Profile creation
-- runtime Profile mapping for OIDC groups/roles, emails, domains, and defaults
+- plain-language reusable Access plan creation
+- unbuilt requirement: automatic Access plan assignment from identity claims;
+  the former group/role/email/domain/default mapping implementation was removed
 - key creation/revocation with one-time key handling
-- readable summaries of what each App/Profile can use
+- readable summaries of what each App/access-plan can use
 - advanced escape hatches for the operator who needs exact control
 
 Do not ship:
 
-- Profile creation that requires handtyping ids, protocols, intents, resource
+- Access plan creation that requires handtyping ids, protocols, intents, resource
   tiers, tags, and JSON for normal cases
 - service access flows that show duplicated generated names as separate
   required fields

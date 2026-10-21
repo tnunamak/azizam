@@ -1,39 +1,36 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
-  ChevronDown,
-  ChevronRight,
+  CircleHelp,
+  CircleSlash,
+  Clock3,
   Copy,
+  Loader2,
   Search,
   SlidersHorizontal,
-  AudioLines,
-  GitBranch,
-  Image,
-  Layers,
-  ListFilter,
-  MessageSquare,
-  Mic,
-  Music2,
-  Video,
-  Waves,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
-import {
-  capabilityLabels as terms,
-  preferredTerms,
-  taskNames,
-} from "@/lib/terms";
+import { accountApi } from "@/lib/account-api";
+import { capabilityLabels as terms, preferredTerms, taskNames } from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { copyText } from "@/components/ui/copy-button";
 import { useViewer } from "@/components/shell/session";
-import { FilterToggle } from "@/components/product/filter-toggle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -42,20 +39,22 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   CodeBlock,
   EmptyState,
   ErrorState,
   PageHeader,
   StatusPill,
 } from "@/components/product";
+
+/**
+ * The Models page answers two questions on one list:
+ * - a builder's "which model name do I put in my app for this task?", and
+ * - the owner's "what is on this gateway, what does it cost, is it ready?".
+ *
+ * Every model name is one row, grouped under its task. Nothing hides behind
+ * "N more" or a collapsed "All models": OpenRouter, Vercel's AI Gateway and
+ * OpenAI's model pages all show the full list and let search narrow it.
+ */
 
 type AvailabilityState =
   | "ready"
@@ -69,20 +68,20 @@ type AvailabilityState =
   | "unavailable"
   | "not_measured";
 
-type ProductCapability =
-  | "music"
-  | "sfx"
-  | "speech"
-  | "transcribe"
+type Task =
   | "chat"
   | "image"
   | "video"
+  | "music"
+  | "sfx"
+  | "speech"
+  | "audio"
+  | "transcribe"
   | "decide"
   | "embed"
-  | "rerank"
-  | "audio";
+  | "rerank";
 
-const productCapabilityOrder: ProductCapability[] = [
+const taskOrder: Task[] = [
   "chat",
   "image",
   "video",
@@ -96,7 +95,12 @@ const productCapabilityOrder: ProductCapability[] = [
   "rerank",
 ];
 
-const capabilityLabels: Record<ProductCapability, string> = {
+/**
+ * Section names: the capability names (lib/terms.ts). Decisions and
+ * embeddings use the plain task names Try uses, which the sweep requires on
+ * member screens; the sentence under each name says what it is for.
+ */
+const taskLabels: Record<Task, string> = {
   chat: terms.chat,
   image: terms.image,
   video: terms.video,
@@ -110,218 +114,106 @@ const capabilityLabels: Record<ProductCapability, string> = {
   rerank: terms.reranking,
 };
 
-/**
- * What apps use embeddings and decisions for, in the words Try uses
- * (lib/terms.ts taskNames), in place of the server's "Embeddings" and
- * "Decisions".
- */
-const PLAIN_TASK: Partial<Record<ProductCapability, string>> = {
-  decide: taskNames.decisions,
-  embed: taskNames.embeddings,
+/** One plain sentence per task: what an app uses it for. */
+const taskExplainers: Record<Task, string> = {
+  chat: "Answers, writing and code, for chat apps and agents.",
+  image: "Make or edit a picture from a description.",
+  video: "Make a short video from a description or a picture.",
+  music: "Songs and instrumentals from a description.",
+  sfx: "Short sounds from a description.",
+  speech: "Read text aloud.",
+  audio: "Music and sounds from a description.",
+  transcribe: "Turn a recording into text.",
+  decide: "Pick one answer from options you give, for routing and yes-or-no checks.",
+  embed: "Vectors that let apps search text and find similar passages.",
+  rerank: "Sort search results by how well they match.",
 };
-
-/** The name for one capability: the plain task name, else the server's label. */
-function capabilityName(cap: ProductCapability, serverLabel?: string | null) {
-  return PLAIN_TASK[cap] ?? serverLabel ?? capabilityLabels[cap];
-}
-
-/** Input and output kinds as people read them ("text → numbers"). */
-const MODALITY_WORDS: Record<string, string> = {
-  embedding: "numbers",
-  embeddings: "numbers",
-};
-
-// The server owns taxonomy and labels; this map only selects a glyph.
-const capabilityGlyphs = {
-  chat: MessageSquare,
-  image: Image,
-  video: Video,
-  music: Music2,
-  sfx: Waves,
-  speech: AudioLines,
-  transcribe: Mic,
-  decide: GitBranch,
-  embed: Layers,
-  rerank: ListFilter,
-};
-
-function CatalogIcon({ row }: { row: CatalogRow }) {
-  const key =
-    row.icon_key ?? row.capabilities[0]?.icon_key ?? primaryCapability(row);
-  const Icon = capabilityGlyphs[key as keyof typeof capabilityGlyphs] ?? Layers;
-  return (
-    <span
-      role="img"
-      aria-label={primaryCapabilityLabel(row)}
-      className="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center"
-    >
-      <Icon aria-hidden="true" className="size-4" />
-    </span>
-  );
-}
-
-// The server classifies each row from its /v1/models type and modalities.
-function primaryCapability(row: CatalogRow): ProductCapability {
-  return (row.capability ??
-    row.capabilities[0]?.capability ??
-    "chat") as ProductCapability;
-}
-
-function primaryCapabilityLabel(row: CatalogRow): string {
-  return capabilityName(
-    primaryCapability(row),
-    row.capability_title ?? row.capabilities[0]?.label,
-  );
-}
-
-function hasCapability(
-  row: CatalogRow,
-  capability: ProductCapability,
-): boolean {
-  return (
-    primaryCapability(row) === capability ||
-    row.capabilities.some((entry) => entry.capability === capability)
-  );
-}
 
 const tagLabels: Record<ModelTag, string> = {
-  reasoning: "Reasoning",
-  "tool-use": "Tool use",
-  vision: "Vision",
-  "file-input": "File input",
+  reasoning: "Thinks through questions",
+  "tool-use": "Uses tools",
+  vision: "Understands images",
+  "file-input": "Reads files",
 };
 
-// The same cells form a task line and an inline alias/cost/status line on phones.
-const phoneRowClass =
-  "max-sm:relative max-sm:has-[input]:h-auto max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] max-sm:grid-rows-2 max-sm:h-(--row-phone-2) max-sm:items-center max-sm:gap-x-2 max-sm:px-4 max-sm:py-2";
-const phoneCellClass = "max-sm:h-auto! max-sm:p-0! max-sm:min-w-0";
-const phoneTaskClass = "flex min-w-0 items-center gap-3 max-sm:col-span-3 max-sm:row-start-1 max-sm:pr-24";
-const phoneCostClass = "max-sm:col-start-2 max-sm:row-start-2 max-sm:truncate max-sm:text-left";
-const phoneStatusClass = "max-sm:col-start-3 max-sm:row-start-2";
-const phoneActionsClass = "max-sm:absolute max-sm:right-2 max-sm:top-0";
-
-const rowTaskNames: Record<ProductCapability, string> = {
-  chat: taskNames.chat,
-  image: taskNames.image,
-  video: taskNames.video,
-  music: taskNames.music,
-  sfx: taskNames.sound_effects,
-  speech: taskNames.speech,
-  audio: taskNames.audio,
-  transcribe: taskNames.transcribe,
-  decide: taskNames.decisions,
-  embed: taskNames.embeddings,
-  rerank: taskNames.reranking,
-};
-
-function rowTaskName(row: CatalogRow): string {
-  return rowTaskNames[primaryCapability(row)] ?? primaryCapabilityLabel(row);
+// The server classifies each row from its /v1/models type and modalities.
+function rowTask(row: CatalogRow): Task {
+  const task = (row.capability ?? row.capabilities[0]?.capability ?? "chat") as Task;
+  return taskOrder.includes(task) ? task : "chat";
 }
 
-// Inputs -> outputs and the chat capability tags /v1/models reports.
-function ModelFacts({
-  row,
-  className,
-}: {
-  row: CatalogRow;
-  className?: string;
-}) {
-  const inputs = row.architecture?.input_modalities ?? [];
-  const outputs = row.architecture?.output_modalities ?? [];
-  const tags = row.tags ?? [];
-  const showIo = inputs.length > 0 && outputs.length > 0;
-  if (!showIo && tags.length === 0) return null;
-  return (
-    <ul
-      aria-label="Model facts"
-      className={cn("flex flex-wrap items-center gap-1", className)}
-    >
-      {showIo && (
-        <li>
-          <Badge
-            variant="outline"
-            className="text-muted-foreground font-normal"
-          >
-            {inputs.map((word) => MODALITY_WORDS[word] ?? word).join(", ")}
-            <span aria-hidden="true">→</span>
-            <span className="sr-only">to</span>
-            {outputs.map((word) => MODALITY_WORDS[word] ?? word).join(", ")}
-          </Badge>
-        </li>
-      )}
-      {tags.map((tag) => (
-        <li key={tag}>
-          <Badge variant="secondary">{tagLabels[tag]}</Badge>
-        </li>
-      ))}
-    </ul>
-  );
+function taskLabel(row: CatalogRow): string {
+  return taskLabels[rowTask(row)];
 }
 
-function descriptionFor(row: CatalogRow): string {
-  return row.description ?? "";
+function letters(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function titleFor(row: CatalogRow): string | undefined {
-  // A title that only repeats the capability ("Embed" for Embeddings) adds
-  // nothing; the plain capability name stands in for it.
-  const names = [
-    primaryCapabilityLabel(row),
-    row.capability_title,
-    row.capabilities[0]?.label,
-  ].filter((name): name is string => Boolean(name));
-  const repeatsCapability = (value: string) => {
-    const normalize = (part: string) => {
-      const word = part
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z]/g, "");
-      return word === "embed" || word === "embedding" ? "embeddings" : word;
-    };
-    const parts = value.split("·").map(normalize).filter(Boolean);
-    return (
-      parts.length > 0 &&
-      parts.every((part) => names.some((name) => part === normalize(name)))
-    );
-  };
-
-  const title = row.title ?? row.display_name;
-  if (title && !repeatsCapability(title)) return title;
-  return undefined;
-}
-
-function hasNoProviderCharge(row: CatalogRow): boolean {
-  return row.locality === "local" || row.cost.kind === "free";
-}
-
-function costLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "remote" && row.cost.kind === "unknown")
-    return "Cost not recorded";
-  if (row.cost.kind === "paid") {
-    return row.cost.price === null
-      ? "Paid · price unavailable"
-      : `Paid · ${String(row.cost.price)}`;
+/**
+ * The model's own name when it adds something to the model name: "Supertonic"
+ * for `tts`, but nothing for `coder-q5` ("Coder Q5") or a title that only
+ * names the task ("Speech" for `tts`).
+ */
+export function modelTitle(row: CatalogRow): string | undefined {
+  const id = letters(row.id);
+  const task = letters(taskLabel(row));
+  const serverTask = letters(row.capability_title ?? "");
+  // "Embeddings · Embed" only names the task twice; "embed" is the task too.
+  const plain = (word: string) => (word.startsWith("embed") ? "embed" : word);
+  const known = new Set([id, task, serverTask, letters(row.capability ?? "")].map(plain));
+  for (const candidate of [row.title ?? row.display_name, row.recommended_model]) {
+    if (!candidate) continue;
+    const parts = candidate.split("·").map((part) => plain(letters(part))).filter(Boolean);
+    if (!parts.length || parts.every((part) => known.has(part))) continue;
+    return candidate;
   }
   return undefined;
 }
 
-function localityLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "local") return "Local";
-  if (row.locality === "remote") return "Remote";
-  return undefined;
+function isLocalFree(row: CatalogRow): boolean {
+  return row.locality === "local" && row.cost.kind !== "paid";
+}
+
+type CostKind = "none" | "paid" | "unknown";
+
+function costKind(row: CatalogRow): CostKind {
+  if (row.cost.kind === "paid") return "paid";
+  if (isLocalFree(row) || row.cost.kind === "free") return "none";
+  return "unknown";
+}
+
+/** VOICE.md money words; a cost cell is never blank (ban 26). */
+export function costLabel(row: CatalogRow): string {
+  if (row.cost.kind === "paid") {
+    const price = row.cost.price;
+    if (typeof price === "string" && price.trim()) return price;
+    if (typeof price === "number" && Number.isFinite(price)) return `Paid · ${price}`;
+    return "Paid · price not recorded";
+  }
+  if (isLocalFree(row)) return preferredTerms.localPricing;
+  if (row.cost.kind === "free") return "No provider charge";
+  return "Cost not recorded";
+}
+
+function providerLabel(row: CatalogRow): string | undefined {
+  // A local row's provider field is a service id, not a name.
+  if (row.locality !== "remote") return undefined;
+  return row.engine_label ?? row.provider ?? undefined;
 }
 
 function engineLabel(row: CatalogRow): string {
   return (
     row.engine_label ??
-    // A local row's provider field is a service id, not a name.
     (row.locality === "remote" ? row.provider : undefined) ??
     "Engine or provider not specified"
   );
 }
 
-function summaryEngineLabel(row: CatalogRow): string {
-  return engineLabel(row);
+function localityLabel(row: CatalogRow): string | undefined {
+  if (row.locality === "local") return "On your equipment";
+  if (row.locality === "remote") return providerLabel(row) ?? "Online provider";
+  return undefined;
 }
 
 function timingLabel(row: CatalogRow): string | undefined {
@@ -331,15 +223,11 @@ function timingLabel(row: CatalogRow): string | undefined {
   }
   const duration =
     value < 1
-      ? `~${Math.round(value * 1000)} ms`
-      : `~${value.toFixed(value >= 10 ? 0 : 1)} s`;
-  const source =
-    row.timing.source === "receipts"
-      ? "Measured"
-      : row.timing.source === "configured"
-        ? "Typical"
-        : undefined;
-  return source ? `${duration} · ${source}` : duration;
+      ? `About ${Math.round(value * 1000)} ms`
+      : `About ${value.toFixed(value >= 10 ? 0 : 1)} s`;
+  if (row.timing.source === "receipts") return `${duration}, measured`;
+  if (row.timing.source === "configured") return `${duration}, typical`;
+  return duration;
 }
 
 function readString(value: unknown): string | null {
@@ -376,44 +264,50 @@ function availabilityState(row: CatalogRow): AvailabilityState {
   return row.availability.available ? "ready" : "unavailable";
 }
 
-// Quiet summary states render no status value in catalog rows.
-function hasSummaryStatus(row: CatalogRow): boolean {
-  return availabilityState(row) !== "ready";
-}
+const quietStates: Record<
+  AvailabilityState,
+  { label: string; icon: typeof Check; tone: string }
+> = {
+  ready: { label: "Ready", icon: Check, tone: "text-success" },
+  idle: { label: "Ready to start", icon: Check, tone: "text-success" },
+  "idle-startable": { label: "Ready to start", icon: Check, tone: "text-success" },
+  standby_stopped: { label: "Ready to start", icon: Check, tone: "text-success" },
+  starting: { label: "Starting", icon: Loader2, tone: "text-info" },
+  busy: { label: "Busy", icon: Clock3, tone: "text-warning" },
+  degraded: { label: "Degraded", icon: CircleSlash, tone: "text-warning" },
+  unavailable: { label: "Unavailable", icon: CircleSlash, tone: "text-destructive" },
+  unknown: { label: "Not checked yet", icon: CircleHelp, tone: "text-muted-foreground" },
+  not_measured: { label: "Not checked yet", icon: CircleHelp, tone: "text-muted-foreground" },
+};
 
-function evidenceLabel(row: CatalogRow): string | undefined {
-  const source = row.availability.evidence?.source;
-  if (row.availability.measured) {
-    if (source === "registry") return "From configuration";
+function statusWords(row: CatalogRow): { label: string; icon: typeof Check; tone: string } {
+  const state = availabilityState(row);
+  if (state === "unknown" && row.availability.measured) {
+    return { label: "Couldn't check", icon: CircleHelp, tone: "text-muted-foreground" };
   }
-  return undefined;
+  return quietStates[state];
 }
 
-function configurationLabel(row: CatalogRow): string | undefined {
-  if (row.availability.configured === false) return "Catalog only";
-  if (row.availability.configured === true) return "Configured";
-  return undefined;
-}
-
-function enabledLabel(row: CatalogRow): string | null {
-  if (row.availability.enabled === true) return "Enabled";
-  if (row.availability.enabled === false) return "Disabled";
-  return null;
+/** Quiet status (DESIGN "Status display"): a 14 icon and the word, muted. */
+function QuietStatus({ row }: { row: CatalogRow }) {
+  const { label, icon: Icon, tone } = statusWords(row);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Icon aria-hidden="true" className={cn("size-3.5 shrink-0", tone)} />
+      {label}
+    </span>
+  );
 }
 
 function availabilityAction(
   row: CatalogRow,
   viewerAdmin: boolean,
 ): { label: string; href: string } | null {
-  const configHref =
-    row.locality === "remote" ? "/ui/providers/" : "/ui/engines/";
+  const configHref = row.locality === "remote" ? "/providers/" : "/engines/";
   if (viewerAdmin) {
     if (row.availability.configured === false) {
       return {
-        label:
-          row.locality === "remote"
-            ? "Connect a provider"
-            : "Connect an engine",
+        label: row.locality === "remote" ? "Connect a provider" : "Connect an engine",
         href: configHref,
       };
     }
@@ -426,84 +320,32 @@ function availabilityAction(
   }
   const state = availabilityState(row);
   if (["unavailable", "unknown", "not_measured"].includes(state)) {
-    return { label: "Check status", href: "/ui/status/" };
+    return { label: "Check status", href: "/status/" };
   }
   return null;
 }
 
-function AvailabilityFacts({ row }: { row: CatalogRow }) {
-  const enabled = enabledLabel(row);
-  return (
-    <div className="flex flex-wrap gap-2 text-meta">
-      <Badge variant="secondary">Allowed by your access</Badge>
-      {configurationLabel(row) && (
-        <Badge variant="outline">{configurationLabel(row)}</Badge>
-      )}
-      {evidenceLabel(row) && (
-        <Badge variant="outline">{evidenceLabel(row)}</Badge>
-      )}
-      {enabled && <Badge variant="outline">{enabled}</Badge>}
-    </div>
-  );
-}
-
-function CopyModelName({ row }: { row: CatalogRow }) {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-  async function copyName() {
-    try {
-      await navigator.clipboard.writeText(row.id);
-      setCopyError(false);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-      setCopyError(true);
-    }
+function Availability({ row }: { row: CatalogRow }) {
+  const state = availabilityState(row);
+  if (state === "unknown" || state === "not_measured") {
+    return (
+      <span className="text-muted-foreground text-meta">
+        {statusWords(row).label}
+      </span>
+    );
   }
   return (
-    <div className={cn(
-      "min-w-0 max-sm:col-start-1",
-      copyError
-        ? "max-sm:col-span-3 max-sm:row-start-3"
-        : "max-sm:row-start-2",
-      !copyError && !costLabel(row) && (
-        hasSummaryStatus(row) ? "max-sm:col-span-2" : "max-sm:col-span-3"
-      ),
-    )}>
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          void copyName();
-        }}
-        aria-label={`Copy model name ${row.id}`}
-        className="text-muted-foreground bg-muted hover:bg-muted/80 flex h-8 max-sm:min-h-11 sm:-my-1 max-sm:-my-3 max-sm:bg-transparent max-sm:px-0 max-w-full min-w-0 items-center justify-between gap-2 rounded-control px-3 text-left font-mono text-meta transition"
-      >
-        <code className="truncate">{row.id}</code>
-        {copied ? (
-          <Check aria-label="Model name copied" className="size-4 shrink-0" />
-        ) : (
-          <Copy aria-hidden="true" className="size-4 shrink-0" />
-        )}
-      </button>
-      {copyError && (
-        <div
-          className="mt-2 space-y-2"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <p role="alert" className="text-destructive text-meta">
-            Copy failed. Select the model name and copy it manually.
-          </p>
-          <Input
-            aria-label="Model name for manual copy"
-            readOnly
-            value={row.id}
-            onFocus={(event) => event.currentTarget.select()}
-          />
-        </div>
-      )}
-    </div>
+    <StatusPill
+      status={state}
+      reason={[
+        availabilityReason(state, row.availability.reason_code ?? state),
+        state === "unavailable" || state === "degraded"
+          ? "Choose another model, or check Status for help."
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    />
   );
 }
 
@@ -513,16 +355,13 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     row.id,
     row.name,
     row.display_name,
-    titleFor(row),
-    descriptionFor(row),
-    primaryCapabilityLabel(row),
-    rowTaskName(row),
-    ...(row.use_names ?? []),
+    row.title,
     row.recommended_model,
-    row.provider,
-    row.engine_label,
-    ...row.operations,
-    ...row.capabilities.map((cap) => cap.label),
+    row.description,
+    modelDescription(row.description),
+    taskLabel(row),
+    ...(row.use_names ?? []),
+    providerLabel(row),
     ...Object.values(row.resolves_to),
   ]
     .filter(Boolean)
@@ -531,12 +370,41 @@ function itemMatches(row: CatalogRow, query: string): boolean {
   return haystack.includes(query.toLowerCase());
 }
 
+/** Rewrite only known catalog prose; custom text and identifiers stay intact. */
+export function modelDescription(description: string | null | undefined) {
+  return description === "Speech synthesis when a backend is configured."
+    ? "Read text aloud when a speech engine or provider is connected."
+    : description;
+}
+
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function exampleBody(row: CatalogRow): Record<string, unknown> {
   return row.examples[0]?.body ?? { model: row.use.model };
+}
+
+/** App configuration uses public identifiers only, never catalog examples or keys. */
+export function appSnippetsFor(row: CatalogRow, origin: string) {
+  // Next replaces this with next.config's basePath in the client build.
+  const basePath = process.env.__NEXT_ROUTER_BASEPATH ?? "";
+  const baseUrl = `${new URL(origin).origin}${basePath}/openai/v1`;
+  const model = JSON.stringify(row.id);
+  return [
+    {
+      language: "curl",
+      code: `OPENAI_BASE_URL=${shellSingleQuote(baseUrl)}\nMODEL=${shellSingleQuote(row.id)}\n# Use $MODEL in the model field of your requests.\ncurl "$OPENAI_BASE_URL/models" \\\n  -H "Authorization: Bearer YOUR_KEY"`,
+    },
+    {
+      language: "Python",
+      code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url=${JSON.stringify(baseUrl)},\n    api_key="YOUR_KEY",\n)\nmodel = ${model}\n# Use model in requests for this model\u0027s task.`,
+    },
+    {
+      language: "JavaScript",
+      code: `import OpenAI from "openai";\n\nconst client = new OpenAI({\n  baseURL: ${JSON.stringify(baseUrl)},\n  apiKey: "YOUR_KEY",\n});\nconst model = ${model};\n// Use model in requests for this model\u0027s task.`,
+    },
+  ];
 }
 
 export function snippetsFor(row: CatalogRow, origin: string) {
@@ -576,168 +444,188 @@ export function snippetsFor(row: CatalogRow, origin: string) {
   ];
 }
 
-function Availability({
-  row,
-  showReason = true,
-}: {
-  row: CatalogRow;
-  showReason?: boolean;
-}) {
-  const state = availabilityState(row);
-  if (state === "unknown" || state === "not_measured") {
-    return <span className="text-muted-foreground text-meta whitespace-normal">
-      <span>{state === "not_measured" || !row.availability.measured ? "Not checked yet" : "Couldn\'t check"}</span>
-      {!showReason && <> · <a href="/ui/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</a></>}
-    </span>;
+/** Copy one model name. A refused clipboard leaves a field to copy by hand. */
+function CopyModelName({ row }: { row: CatalogRow }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+  async function copy() {
+    const ok = await copyText(row.id);
+    setState(ok ? "copied" : "failed");
+    window.clearTimeout(resetTimer.current);
+    if (ok) resetTimer.current = window.setTimeout(() => setState("idle"), 1500);
   }
   return (
-    <StatusPill
-      status={state}
-      reason={
-        showReason
-          ? availabilityReason(state, row.availability.reason_code ?? state)
-          : undefined
-      }
-      summary={!showReason}
-    />
-  );
-}
-
-function AliasOptionRow({
-  row,
-  onDetail,
-  showCost,
-  showStatus,
-}: {
-  row: CatalogRow;
-  onDetail: (row: CatalogRow) => void;
-  showCost: boolean;
-  showStatus: boolean;
-}) {
-  return (
-    <TableRow onClick={() => onDetail(row)} className={cn("cursor-pointer h-(--row-2)", phoneRowClass)}>
-      <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
-        <h3 className={cn("text-body font-medium", phoneTaskClass)} title={rowTaskName(row)}>
-          <span className="truncate">{rowTaskName(row)}</span>
-        </h3>
-        <CopyModelName row={row} />
-      </TableCell>
-      <TableCell className={cn("h-(--row-2) py-1!", phoneCellClass, "max-sm:hidden")}>
-        <h3 className="text-body font-medium">{titleFor(row) ?? ""}</h3>
-        <p className="text-muted-foreground text-meta mt-0.5 max-w-80 truncate" title={descriptionFor(row)}>
-          {descriptionFor(row)}
-        </p>
-      </TableCell>
-      <TableCell className="py-1! max-sm:hidden"><ModelFacts row={row} /></TableCell>
-      {showCost && <TableCell numeric title={costLabel(row)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(row)}</TableCell>}
-      {showStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
-        {hasSummaryStatus(row) && (
-          <Availability row={row} showReason={false} />
-        )}
-      </TableCell>}
-      <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDetail(row);
-          }}
-        >
-          <span className="sr-only">Details</span>
-          <ChevronRight aria-hidden="true" />
-        </Button>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-function CapabilityRow({
-  rows,
-  onDetail,
-  searching,
-  showCost,
-  showStatus,
-}: {
-  rows: CatalogRow[];
-  onDetail: (row: CatalogRow) => void;
-  searching: boolean;
-  showCost: boolean;
-  showStatus: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  // An unmarked catalog has a neutral first option, never an inferred recommendation.
-  const primary = rows.find((row) => row.recommended) ?? rows[0];
-  const alternatives = rows.filter((row) => row !== primary);
-  const open = expanded || searching;
-  const alternativesId = `model-alternatives-${primaryCapability(primary)}`;
-  return (
     <>
-    <TableBody className="max-sm:block" aria-label={`${primaryCapabilityLabel(primary)} models`}>
-      <TableRow className={cn("cursor-pointer h-(--row-2)", phoneRowClass)} onClick={() => onDetail(primary)}>
-        <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
-          <div className={phoneTaskClass}>
-            <CatalogIcon row={primary} />
-            <h2 className="text-body truncate font-medium" title={rowTaskName(primary)}>
-              {rowTaskName(primary)}
-            </h2>
-          </div>
-          <CopyModelName row={primary} />
-        </TableCell>
-        <TableCell className="py-1! max-sm:hidden">
-          <h3 className="text-body font-medium">{titleFor(primary)}</h3>
-        </TableCell>
-        <TableCell className="py-1! max-sm:hidden"><ModelFacts row={primary} /></TableCell>
-        {showCost && <TableCell numeric title={costLabel(primary)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(primary)}</TableCell>}
-        {showStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
-          {hasSummaryStatus(primary) && (
-            <Availability row={primary} showReason={false} />
-          )}
-        </TableCell>}
-        <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
-          <div className="flex items-center justify-end gap-2">
-            {alternatives.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`${alternatives.length} more ${primaryCapabilityLabel(primary)} models`}
-                aria-expanded={open}
-                aria-controls={alternativesId}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setExpanded((value) => !value);
-                }}
-              >
-                <span className="max-sm:sr-only">{alternatives.length} more</span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={cn("size-4 transition", open && "rotate-180")}
-                />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDetail(primary);
-              }}
-            >
-              <span className="sr-only">Details</span>
-              <ChevronRight aria-hidden="true" />
-            </Button>
-          </div>
-        </TableCell>
-      </TableRow>
-    </TableBody>
-      {open && alternatives.length > 0 && (
-        <TableBody id={alternativesId} className="bg-muted/20 max-sm:block">
-          {alternatives.map((row) => (
-            <AliasOptionRow key={row.id} row={row} onDetail={onDetail} showCost={showCost} showStatus={showStatus} />
-          ))}
-        </TableBody>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="relative z-10 shrink-0"
+        aria-label={`Copy model name ${row.id}`}
+        onClick={() => void copy()}
+      >
+        {state === "copied" ? (
+          <Check aria-hidden="true" className="text-success" />
+        ) : (
+          <Copy aria-hidden="true" />
+        )}
+      </Button>
+      <span role="status" className="sr-only">
+        {state === "copied" ? `${row.id} copied` : ""}
+      </span>
+      {state === "failed" && (
+        <div className="bg-popover relative z-10 w-full min-w-0 space-y-2 rounded-panel border p-3">
+          <p role="alert" className="text-destructive text-meta">
+            Copy failed. Select the model name and copy it yourself.
+          </p>
+          <Input
+            aria-label="Model name for manual copy"
+            readOnly
+            value={row.id}
+            autoFocus
+            onFocus={(event) => event.currentTarget.select()}
+            onBlur={() => setState("idle")}
+          />
+        </div>
       )}
     </>
+  );
+}
+
+/**
+ * One model name. The name opens Details; the copy button sits beside it.
+ * The second line carries what tells options apart: the model behind the
+ * name and its description, unless every row in the task shares it.
+ */
+function ModelRow({
+  row,
+  sharedDescriptions,
+  onDetail,
+}: {
+  row: CatalogRow;
+  sharedDescriptions: Set<string>;
+  onDetail: (row: CatalogRow) => void;
+}) {
+  const title = modelTitle(row);
+  // Facts on one line are joined by " · ", so a sentence drops its full stop.
+  const description =
+    row.description && !sharedDescriptions.has(row.description)
+      ? modelDescription(row.description)?.replace(/\.$/, "")
+      : undefined;
+  const provider = providerLabel(row);
+  const tags = (row.tags ?? []).map((tag) => tagLabels[tag]).join(", ");
+  const meta = [title, provider && `via ${provider}`, description, tags].filter(
+    (part): part is string => Boolean(part),
+  );
+  const cost = costLabel(row);
+  const status = statusWords(row).label;
+  const usual = availabilityState(row) === "ready" || status === "Ready to start";
+  // A phone has one line for facts: a state that needs attention first, and a
+  // price only when it is not the usual local "no provider charge".
+  const phoneFacts = [
+    usual ? null : status,
+    ...meta,
+    isLocalFree(row) ? null : cost,
+  ].filter((part): part is string => Boolean(part));
+  return (
+    <li
+      data-slot="list-row"
+      data-model={row.id}
+      className={cn(
+        "hover:bg-muted/50 relative flex flex-wrap items-center gap-3 px-4 py-1.5 transition-colors duration-(--motion-fast) max-sm:min-h-(--row-phone-2)",
+        meta.length ? "min-h-(--row-2)" : "min-h-(--row-1)",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="min-w-0 truncate">
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => onDetail(row)}
+              className="text-body rounded-control font-mono font-medium after:absolute after:inset-0 after:content-[''] hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+            >
+              {row.id}
+            </button>
+          </p>
+          {row.recommended && (
+            <Badge variant="secondary" className="shrink-0">
+              Recommended
+            </Badge>
+          )}
+        </div>
+        {meta.length > 0 && (
+          <p
+            className="text-muted-foreground text-meta mt-0.5 truncate max-sm:hidden"
+            title={meta.join(" · ")}
+          >
+            {meta.join(" · ")}
+          </p>
+        )}
+        <p className="text-muted-foreground text-meta mt-0.5 truncate sm:hidden">
+          {phoneFacts.length ? phoneFacts.join(" · ") : cost}
+        </p>
+      </div>
+      <div className="text-muted-foreground text-meta flex shrink-0 items-center gap-4 max-sm:hidden">
+        {/* The usual case (local, ready) is quieter, so a price or a
+            problem stands out in a long list. */}
+        <span
+          className={cn(
+            "line-clamp-2 w-56 text-right",
+            isLocalFree(row) ? "text-subtle-foreground" : "text-foreground",
+          )}
+          title={cost}
+        >
+          {cost}
+        </span>
+        <span className={cn("w-32", usual ? "text-subtle-foreground" : "text-foreground")}>
+          <QuietStatus row={row} />
+        </span>
+      </div>
+      <CopyModelName row={row} />
+    </li>
+  );
+}
+
+function TaskSection({
+  task,
+  rows,
+  onDetail,
+}: {
+  task: Task;
+  rows: CatalogRow[];
+  onDetail: (row: CatalogRow) => void;
+}) {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.description) counts.set(row.description, (counts.get(row.description) ?? 0) + 1);
+  }
+  // A description two names share tells neither apart (VOICE rule 2), and a
+  // task's only name needs none beside the task's own sentence.
+  const shared = new Set(
+    [...counts]
+      .filter(([, count]) => count > 1 || rows.length === 1)
+      .map(([text]) => text),
+  );
+  const headingId = `models-${task}`;
+  return (
+    <section aria-labelledby={headingId} id={`task-${task}`} className="scroll-mt-20">
+      <div className="bg-muted/40 flex min-h-9 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b px-4 py-2">
+        <h2 id={headingId} className="text-body font-medium">
+          {taskLabels[task]}
+          <span className="text-muted-foreground ml-2 font-normal">{rows.length}</span>
+        </h2>
+        <p className="text-muted-foreground text-meta min-w-0">
+          {taskExplainers[task]}
+        </p>
+      </div>
+      <ul role="list" aria-labelledby={headingId} className="divide-y border-b last:border-b-0">
+        {rows.map((row) => (
+          <ModelRow key={row.id} row={row} sharedDescriptions={shared} onDetail={onDetail} />
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -745,13 +633,11 @@ function LoadingCatalog() {
   return (
     <div aria-label="Loading models" aria-busy="true" role="status">
       <div className="mb-6 flex flex-wrap gap-3">
-        <Skeleton className="h-8 max-sm:h-11 w-56" />
-        <Skeleton className="h-8 max-sm:h-11 w-28" />
-        <Skeleton className="h-8 max-sm:h-11 w-28" />
+        <Skeleton className="h-8 w-80 max-sm:h-11" />
       </div>
       <div className="space-y-px overflow-hidden rounded-panel border">
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-(--row-2) max-sm:h-(--row-phone-2) rounded-none" />
+        {Array.from({ length: 5 }, (_, index) => (
+          <Skeleton key={index} className="h-(--row-2) rounded-none max-sm:h-(--row-phone-2)" />
         ))}
       </div>
     </div>
@@ -760,135 +646,146 @@ function LoadingCatalog() {
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-panel border p-3">
-      <div className="text-muted-foreground text-meta">{label}</div>
-      <div className="mt-1 font-medium break-words">{value}</div>
+    <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-4">
+      <dt className="text-muted-foreground text-meta sm:w-36 sm:shrink-0">{label}</dt>
+      <dd className="text-body min-w-0 break-words">{value}</dd>
     </div>
   );
 }
+
+const technicalTermHints = [
+  {
+    pattern: /\bcontext window\b/i,
+    hint: "Context window is how much text a model can handle in one request, including its reply.",
+  },
+  {
+    pattern: /\bquantization\b/i,
+    hint: "Quantization makes a model smaller and uses less memory. It can affect answer quality.",
+  },
+  {
+    pattern: /\btokens per second\b/i,
+    hint: "Tokens per second measures how fast text is produced. A token is a small piece of text.",
+  },
+];
 
 function DetailSheet({
   row,
   onOpenChange,
   viewerAdmin,
+  knownNames,
 }: {
   row: CatalogRow | null;
   onOpenChange: (open: boolean) => void;
   viewerAdmin: boolean;
+  knownNames: ReadonlySet<string>;
 }) {
   const action = row ? availabilityAction(row, viewerAdmin) : null;
   const timing = row ? timingLabel(row) : undefined;
   const locality = row ? localityLabel(row) : undefined;
-  const cost = row ? costLabel(row) : undefined;
+  const title = row ? modelTitle(row) : undefined;
+  // An alias says what it points at, when that is a name the person can use too
+  // (owners see every target under Technical details); every row says which
+  // other names reach the same model.
+  const pointsTo = row?.alias
+    ? [...new Set(Object.values(row.resolves_to))].filter((target) => viewerAdmin || knownNames.has(target))
+    : [];
+  const sameModelAs = row ? (row.same_model_as ?? []) : [];
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
       <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
-              <SheetTitle>
-                {titleFor(row) ?? primaryCapabilityLabel(row)}
-              </SheetTitle>
-              <SheetDescription>{descriptionFor(row)}</SheetDescription>
+              <SheetTitle className="min-w-0 font-mono [overflow-wrap:anywhere]">{row.id}</SheetTitle>
+              <SheetDescription>
+                {[title, modelDescription(row.description)].filter(Boolean).join(". ")}
+              </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
-              <div className="grid gap-3 text-meta sm:grid-cols-2">
-                <Fact
-                  label={row.alias ? "Model name" : "Exact model"}
-                  value={row.id}
-                />
-                {engineLabel(row) !== titleFor(row) && (
-                  <Fact label="Engine or provider" value={engineLabel(row)} />
+              <dl className="divide-y">
+                <Fact label="Task" value={taskLabel(row)} />
+                {pointsTo.length > 0 && <Fact label="Points to" value={pointsTo.join(", ")} />}
+                {sameModelAs.length > 0 && (
+                  <Fact label="Same model as" value={sameModelAs.join(", ")} />
                 )}
-                {locality && <Fact label="Location" value={locality} />}
-                {cost && <Fact label="Cost" value={cost} />}
-                {timing && (
+                {locality && <Fact label="Runs on" value={locality} />}
+                <Fact label="Price" value={costLabel(row)} />
+                {timing && <Fact label="Time per request" value={timing} />}
+                {row.tags && row.tags.length > 0 && (
+                  <Fact label="Can also" value={row.tags.map((tag) => tagLabels[tag]).join(", ")} />
+                )}
+                {(row.io.input.length > 0 || row.io.output.length > 0) && (
                   <Fact
-                    label={
-                      row.timing.source === "receipts"
-                        ? "Measured time"
-                        : "Typical time"
-                    }
-                    value={timing}
+                    label="What you send and receive"
+                    value={`${row.io.input.join(", ") || "—"} to ${row.io.output.join(", ") || "—"}`}
                   />
                 )}
-              </div>
-              {viewerAdmin && (Object.keys(row.resolves_to).length > 0 || row.technical_description) && (
-                <section className="space-y-3">
-                  <h3 className="font-medium">Technical details</h3>
-                  <div className="grid gap-3 text-meta sm:grid-cols-2">
-                    {Object.keys(row.resolves_to).length > 0 && (
-                      <Fact
-                        label="Resolves to"
-                        value={Object.entries(row.resolves_to)
-                          .map(([op, target]) => `${op}: ${target}`)
-                          .join(", ")}
-                      />
-                    )}
-                    {row.technical_description && (
-                      <Fact
-                        label="Technical description"
-                        value={row.technical_description}
-                      />
-                    )}
-                  </div>
-                </section>
-              )}
-              <div>
-                <h3 className="font-medium">Availability</h3>
-                <div className="mt-3 space-y-3 rounded-panel border p-3">
+              </dl>
+              <section className="space-y-3">
+                <h3 className="text-body font-medium">Availability</h3>
+                <div className="flex flex-col items-start gap-3">
                   <Availability row={row} />
-                  <AvailabilityFacts row={row} />
                   {action && (
                     <Button variant="outline" size="sm" asChild>
                       <a href={action.href}>{action.label}</a>
                     </Button>
                   )}
                 </div>
-              </div>
-              <div>
-                <h3 className="font-medium">Names you can use</h3>
-                {row.use_names?.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {row.use_names.map((name) => (
-                      <Badge key={name} variant="secondary">
-                        {name}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground mt-2 text-meta">{row.id}</p>
+              </section>
+              {viewerAdmin &&
+                (Object.keys(row.resolves_to).length > 0 ||
+                  row.technical_description ||
+                  row.engine_label) && (
+                  <section className="space-y-2">
+                    <h3 className="text-body font-medium">Technical details</h3>
+                    <dl className="divide-y">
+                      <Fact label="Engine or provider" value={engineLabel(row)} />
+                      {Object.keys(row.resolves_to).length > 0 && (
+                        <Fact
+                          label="Sends requests to"
+                          value={Object.entries(row.resolves_to)
+                            .map(([op, target]) => `${op}: ${target}`)
+                            .join(", ")}
+                        />
+                      )}
+                      {row.technical_description && (
+                        <Fact
+                          label="How this model runs"
+                          value={[
+                            row.technical_description,
+                            ...technicalTermHints
+                              .filter(({ pattern }) => pattern.test(row.technical_description ?? ""))
+                              .map(({ hint }) => hint),
+                          ].join(" ")}
+                        />
+                      )}
+                    </dl>
+                  </section>
                 )}
-              </div>
-              {(row.io.input.length > 0 || row.io.output.length > 0) && <div>
-                <h3 className="font-medium">Inputs and outputs</h3>
-                {(row.io.input.length > 0 || row.io.output.length > 0) && (
-                  <dl className="text-muted-foreground mt-2 space-y-1 text-meta">
-                    {row.io.input.length > 0 && (
-                      <div>
-                        <dt className="inline">Inputs: </dt>
-                        <dd className="inline">{row.io.input.join(", ")}</dd>
-                      </div>
-                    )}
-                    {row.io.output.length > 0 && (
-                      <div>
-                        <dt className="inline">Outputs: </dt>
-                        <dd className="inline">{row.io.output.join(", ")}</dd>
-                      </div>
-                    )}
-                  </dl>
-                )}
-              </div>}
-              <div>
-                <h3 className="font-medium">Example request</h3>
-                <div className="mt-3 [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock
-                    snippets={snippetsFor(row, window.location.origin)}
-                  />
+              <section className="space-y-3">
+                <h3 className="text-body font-medium">Use it from an app</h3>
+                <p className="text-muted-foreground text-meta">
+                  Set your OpenAI connection address and model name with these examples.
+                  Replace YOUR_KEY with your own key in your server-side app.
+                </p>
+                <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
+                  <CodeBlock key={row.id} snippets={appSnippetsFor(row, window.location.origin)} />
                 </div>
-              </div>
-              <div>
-                <h3 className="font-medium">Recent receipts</h3>
+              </section>
+              <section className="space-y-3">
+                <h3 className="text-body font-medium">Example for app setup</h3>
+                <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
+                  {snippetsFor(row, window.location.origin).length > 0 ? (
+                    <CodeBlock snippets={snippetsFor(row, window.location.origin)} />
+                  ) : (
+                    <p className="text-muted-foreground text-meta">
+                      No example was provided. Use the model name above when connecting your app.
+                    </p>
+                  )}
+                </div>
+              </section>
+              <section>
+                <h3 className="text-body font-medium">Recent activity</h3>
                 {row.recent_receipts.length ? (
                   <ul className="mt-3 space-y-2 text-meta">
                     {row.recent_receipts.slice(0, 5).map((receipt, index) => (
@@ -897,8 +794,7 @@ function DetailSheet({
                         className="rounded-panel border p-3"
                       >
                         {[
-                          readString(receipt.status)?.toLowerCase() ===
-                          "unknown"
+                          readString(receipt.status)?.toLowerCase() === "unknown"
                             ? undefined
                             : readString(receipt.status),
                           readNumber(receipt.latency_ms) !== null
@@ -909,10 +805,10 @@ function DetailSheet({
                           .join(" · ")}
                         {readString(receipt.request_id) && (
                           <a
-                            className="mt-2 block min-h-8 max-sm:min-h-11 content-center underline underline-offset-4"
-                            href={`/r/${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
+                            className="mt-2 block min-h-8 content-center underline underline-offset-4 max-sm:min-h-11"
+                            href={`/usage/?receipt=${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
-                            View receipt
+                            View request details
                           </a>
                         )}
                       </li>
@@ -920,10 +816,10 @@ function DetailSheet({
                   </ul>
                 ) : (
                   <p className="text-muted-foreground mt-2 text-meta">
-                    No recent receipts were reported for this model.
+                    No recent requests were reported. Use this model in an app, then check Usage for results.
                   </p>
                 )}
-              </div>
+              </section>
             </div>
           </>
         )}
@@ -932,16 +828,64 @@ function DetailSheet({
   );
 }
 
+/** The address an app pastes beside a model name. */
+function GatewayAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return (
+    <div className="text-meta flex min-w-0 flex-wrap items-center gap-2 max-sm:w-full">
+      <span className="text-muted-foreground shrink-0">{preferredTerms.connectionAddress}</span>
+      <code className="min-w-0 truncate font-mono">{address}</code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={`Copy ${preferredTerms.connectionAddress.toLowerCase()}`}
+        onClick={async () => {
+          const ok = await copyText(address);
+          setCopied(ok);
+          setFailed(!ok);
+          window.clearTimeout(timer.current);
+          if (ok) timer.current = window.setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? <Check aria-hidden="true" className="text-success" /> : <Copy aria-hidden="true" />}
+      </Button>
+      <span role="status" className="sr-only">
+        {copied ? `${preferredTerms.connectionAddress} copied` : ""}
+      </span>
+      {failed && (
+        <div className="w-full min-w-0 space-y-2">
+          <p role="alert">Could not copy. Select the address below and copy it yourself.</p>
+          <Input
+            aria-label="Gateway address for manual copy"
+            readOnly
+            value={address}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PriceFilter = "all" | CostKind;
+type TaskFilter = "all" | Task;
+
+const priceFilterLabels: Record<PriceFilter, string> = {
+  all: "Any price",
+  none: "No provider charge",
+  paid: "Paid",
+  unknown: "Cost not recorded",
+};
+
 export default function ModelsClient() {
   const viewer = useViewer();
   const [query, setQuery] = useState("");
-  const [capability, setCapability] = useState<ProductCapability | "all">(
-    "all",
-  );
-  const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
-  const [showPaid, setShowPaid] = useState(true);
-  const [showUnknownCost, setShowUnknownCost] = useState(true);
-  const [tableOpen, setTableOpen] = useState(false);
+  const [price, setPrice] = useState<PriceFilter>("all");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailNote, setDetailNote] = useState<string | null>(null);
   const {
@@ -954,10 +898,26 @@ export default function ModelsClient() {
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
-  const allRows = useMemo(
-    () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
-    [catalogData],
-  );
+  const { data: discovery } = useQuery({
+    queryKey: ["gateway", "discovery"],
+    queryFn: accountApi.discovery,
+  });
+  const address =
+    discovery?.recipes?.openai?.canonical_base_url ??
+    (typeof window === "undefined" ? "" : `${window.location.origin}/openai/v1`);
+
+  // Aliases first, then exact models; a name listed as both appears once.
+  const allRows = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: CatalogRow[] = [];
+    for (const row of [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])]) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+    return rows;
+  }, [catalogData]);
+  const knownNames = useMemo(() => new Set(allRows.map((row) => row.id)), [allRows]);
   const detail = allRows.find((row) => row.id === detailId) ?? null;
   useEffect(() => {
     if (detailId !== null && catalogData && !detail) {
@@ -972,69 +932,62 @@ export default function ModelsClient() {
     setDetailNote(null);
     setDetailId(row.id);
   }
+  // ?model=<name> opens that model; ?capability=<task> scrolls to its section.
   const appliedDeepLink = useRef(false);
   useEffect(() => {
     if (!catalogData || appliedDeepLink.current) return;
     appliedDeepLink.current = true;
     const params = new URLSearchParams(window.location.search);
-    const requestedCapability = params.get("capability");
-    const initialCapability = productCapabilityOrder.find(
-      (cap) => cap === requestedCapability,
-    );
-    if (initialCapability) setCapability(initialCapability);
     const model = allRows.find((row) => row.id === params.get("model"));
-    if (model) {
-      setQuery(model.id);
-      if (!model.alias) setTableOpen(true);
-    }
+    if (model) setDetailId(model.id);
+    const task = taskOrder.find((value) => value === params.get("capability"));
+    if (task && allRows.some((row) => rowTask(row) === task)) setTaskFilter(task);
   }, [catalogData, allRows]);
-  const sectionRows = allRows.filter(
-    (row) => row.alias || row.secondary_profile,
+
+  const priceKinds = (["none", "paid", "unknown"] as CostKind[]).filter((kind) =>
+    allRows.some((row) => costKind(row) === kind),
   );
-  const availableCapabilities = productCapabilityOrder.filter((cap) =>
-    allRows.some((row) => hasCapability(row, cap)),
+  const tasksPresent = taskOrder.filter((task) => allRows.some((row) => rowTask(row) === task));
+  // Facet counts respect search and the other filter, not their own selection.
+  const searched = allRows.filter((row) => itemMatches(row, query.trim()));
+  const taskCandidates = searched.filter((row) => price === "all" || costKind(row) === price);
+  const priceCandidates = searched.filter((row) => taskFilter === "all" || rowTask(row) === taskFilter);
+  const taskCount = (task: TaskFilter) =>
+    task === "all" ? taskCandidates.length : taskCandidates.filter((row) => rowTask(row) === task).length;
+  const priceCount = (kind: PriceFilter) =>
+    kind === "all" ? priceCandidates.length : priceCandidates.filter((row) => costKind(row) === kind).length;
+  const visible = allRows.filter(
+    (row) =>
+      itemMatches(row, query.trim()) &&
+      (price === "all" || costKind(row) === price) &&
+      (taskFilter === "all" || rowTask(row) === taskFilter),
   );
-  const passesFilters = (row: CatalogRow) => {
-    if (!itemMatches(row, query)) return false;
-    if (capability !== "all" && !hasCapability(row, capability)) {
-      return false;
-    }
-    if (row.locality === "remote" && row.cost.kind === "unknown")
-      return showUnknownCost;
-    if (hasNoProviderCharge(row) && !showNoProviderCharge) return false;
-    if (!hasNoProviderCharge(row) && row.cost.kind === "paid" && !showPaid)
-      return false;
-    return true;
-  };
-  const groupedAliases = productCapabilityOrder
-    .map((cap) => ({
-      capability: cap,
-      rows: sectionRows.filter(
-        (row) => passesFilters(row) && primaryCapability(row) === cap,
-      ),
+  // Within a task: the recommended name, other names, then exact models.
+  const rank = (row: CatalogRow) =>
+    row.recommended ? 0 : row.alias && !row.secondary_profile ? 1 : row.alias ? 2 : 3;
+  const groups = taskOrder
+    .map((task) => ({
+      task,
+      rows: visible
+        .filter((row) => rowTask(row) === task)
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index)
+        .map(({ row }) => row),
     }))
     .filter((group) => group.rows.length > 0);
-  const aliasRows = groupedAliases.flatMap((group) => group.rows);
-  const sectionIds = new Set(aliasRows.map((row) => row.id));
-  // All models lists the rows not already shown above, so nothing repeats.
-  const otherModels = (catalogData?.models ?? []).filter((row) => !sectionIds.has(row.id));
-  const modelRows = otherModels.filter(passesFilters);
-  const aliasHasCost = aliasRows.some((row) => Boolean(costLabel(row)));
-  const aliasHasStatus = aliasRows.some((row) => hasSummaryStatus(row));
-  const modelHasCost = modelRows.some((row) => Boolean(costLabel(row)));
-  const modelHasStatus = modelRows.some(hasSummaryStatus);
-  const showLocalCostNote = [...aliasRows, ...(tableOpen ? modelRows : [])].some(
-    (row) => row.locality === "local" && !costLabel(row),
-  );
+  const filtered = Boolean(query.trim()) || price !== "all" || taskFilter !== "all";
 
   return (
-    <div className="space-y-(--space-section)">
-      <PageHeader title="Models" answer="Pick a model name." />
+    <div>
+      <PageHeader
+        title="Models"
+        subtitle="Names your apps put in the model field."
+      />
       {catalogPending ? (
         <LoadingCatalog />
       ) : catalogError ? (
         <ErrorState
-          message="Models catalog could not be loaded. Try again."
+          message="We couldn't load the models. Try again."
           onRetry={() => refetchCatalog()}
           retrying={catalogFetching}
         />
@@ -1042,237 +995,145 @@ export default function ModelsClient() {
         <EmptyState
           icon={SlidersHorizontal}
           title="No models are available yet"
-          description="Ask the owner to connect models your access plan allows."
+          description={
+            viewer.admin
+              ? "Connect an engine to run models on your equipment, or connect an online provider."
+              : "Ask the owner to connect an engine or online provider and give you access to a model."
+          }
           action={
             <Button variant="outline" asChild>
-              <a href="/ui/home/">Review setup</a>
+              <Link prefetch={false} href={viewer.admin ? "/engines/" : "/"}>
+                {viewer.admin ? "Connect an engine" : "Review setup"}
+              </Link>
             </Button>
           }
         />
       ) : (
-        <>
-          <section aria-label="Model filters" className="space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <label className="relative min-w-0 flex-1 sm:max-w-80">
-                <span className="sr-only">Search models</span>
-                <Search
-                  aria-hidden="true"
-                  className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2"
-                />
-                <Input
-                  size="sm"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={`Search ${preferredTerms.requestSelector.toLowerCase()}s or providers`}
-                  className="pl-9"
-                />
-              </label>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 pb-1">
-              <FilterToggle
-                className="px-3 text-meta [&>svg]:hidden"
-                pressed={capability === "all"}
-                onClick={() => setCapability("all")}
-              >
-                All
-              </FilterToggle>
-              {availableCapabilities.map((cap) => (
-                <FilterToggle
-                  key={cap}
-                  className="px-3 text-meta [&>svg]:hidden"
-                  pressed={capability === cap}
-                  onClick={() => setCapability(cap)}
-                >
-                  {capabilityName(
-                    cap,
-                    allRows
-                      .flatMap((row) => row.capabilities)
-                      .find((entry) => entry.capability === cap)?.label,
-                  )}
-                </FilterToggle>
-              ))}
-              <div
-                role="group"
-                aria-label="Price filters (choose any)"
-                className="ml-auto flex min-w-0 max-w-full flex-wrap gap-1 border-l pl-3 max-sm:ml-0 max-sm:border-l-0 max-sm:pl-0"
-              >
-                <button
-                  type="button"
-                  aria-pressed={showNoProviderCharge}
-                  onClick={() => setShowNoProviderCharge((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
-                >
-                  No provider charge
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={showPaid}
-                  onClick={() => setShowPaid((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
-                >
-                  Paid
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={showUnknownCost}
-                  onClick={() => setShowUnknownCost((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
-                >
-                  Cost not recorded
-                </button>
+        <div className="space-y-4">
+          <section
+            aria-label="Model filters"
+            className="flex flex-wrap items-center gap-3"
+          >
+            <label className="relative w-full min-w-0 sm:w-80">
+              <span className="sr-only">Search models</span>
+              <Search
+                aria-hidden="true"
+                className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2"
+              />
+              <Input
+                size="sm"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search models, tasks or providers"
+                className="pl-9"
+              />
+            </label>
+            {tasksPresent.length > 1 && (
+              <Select value={taskFilter} onValueChange={(value) => setTaskFilter(value as TaskFilter)}>
+                <SelectTrigger size="sm" aria-label="Task" className="max-sm:w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tasks ({taskCount("all")})</SelectItem>
+                  {tasksPresent.map((task) => (
+                    <SelectItem key={task} value={task}>
+                      {taskLabels[task]} ({taskCount(task)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {priceKinds.length > 1 && (
+              <Select value={price} onValueChange={(value) => setPrice(value as PriceFilter)}>
+                <SelectTrigger size="sm" aria-label="Price" className="max-sm:w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["all", ...priceKinds] as PriceFilter[]).map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {priceFilterLabels[value]} ({priceCount(value)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {address && (
+              <div className="sm:ml-auto max-sm:w-full">
+                <GatewayAddress address={address} />
               </div>
-            </div>
+            )}
           </section>
-          {showLocalCostNote && (
-            <p className="text-muted-foreground text-meta">{preferredTerms.localPricing}</p>
-          )}
-          {groupedAliases.length === 0 ? (
+          {groups.length === 0 ? (
             <EmptyState
               icon={Search}
-              title={
-                modelRows.length
-                  ? "No recommended names match these filters"
-                  : "No models match these filters"
-              }
-              description={
-                modelRows.length
-                  ? "Show all models to use an exact model directly."
-                  : "Clear the search or turn on another price filter."
-              }
+              title="No models match"
+              description="Try another name, or clear the filters."
               action={
-                modelRows.length ? (
-                  <Button variant="outline" onClick={() => setTableOpen(true)}>
-                    Show all models
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setQuery("");
-                      setCapability("all");
-                      setShowNoProviderCharge(true);
-                      setShowPaid(true);
-                      setShowUnknownCost(true);
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-                )
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setQuery("");
+                    setPrice("all");
+                    setTaskFilter("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
               }
             />
           ) : (
-            <div
-              aria-label="Available model names"
-              className="bg-card overflow-hidden rounded-panel border"
-            >
-              <Table aria-label="Available model names" className="max-sm:block">
-                <TableHeader className="max-sm:hidden">
-                  <TableRow>
-                    <TableHead>Task and model name</TableHead>
-                    <TableHead>Model</TableHead>
-                    <TableHead>Model facts</TableHead>
-                    {aliasHasCost && <TableHead numeric>Cost</TableHead>}
-                    {aliasHasStatus && <TableHead>Status</TableHead>}
-                    <TableHead><span className="sr-only">Actions</span></TableHead>
-                  </TableRow>
-                </TableHeader>
-                {groupedAliases.map((group) => (
-                  <CapabilityRow
-                    key={group.capability}
-                    rows={group.rows}
-                    onDetail={selectDetail}
-                    searching={Boolean(query.trim())}
-                    showCost={aliasHasCost}
-                    showStatus={aliasHasStatus}
-                  />
-                ))}
-              </Table>
+            <div aria-label="Model names by task" role="region" className="bg-card rounded-panel overflow-hidden border">
+              <div
+                aria-hidden="true"
+                className="text-muted-foreground text-label flex h-9 items-center gap-3 border-b px-4 max-sm:hidden"
+              >
+                <span className="flex-1">Model name</span>
+                <span className="flex gap-4">
+                  <span className="w-56 text-right">Price</span>
+                  <span className="w-32">Status</span>
+                </span>
+                <span className="w-8" />
+              </div>
+              {groups.map((group) => (
+                <TaskSection
+                  key={group.task}
+                  task={group.task}
+                  rows={group.rows}
+                  onDetail={selectDetail}
+                />
+              ))}
             </div>
           )}
-          {(modelRows.length > 0 || (groupedAliases.length > 0 && otherModels.length > 0)) && <section className="space-y-3">
-            <button
-              type="button"
-              className="hover:bg-muted/70 focus-visible:ring-ring flex w-full items-center justify-between rounded-panel border px-4 h-8 max-sm:min-h-11 text-left transition outline-none focus-visible:ring-2"
-              onClick={() => setTableOpen((value) => !value)}
-              aria-expanded={tableOpen}
-            >
-              <span>
-                <span className="font-medium">All models</span>
-              </span>
-              <ChevronDown
-                aria-hidden="true"
-                className={cn("size-4 transition", tableOpen && "rotate-180")}
-              />
-            </button>
-            {tableOpen && (modelRows.length === 0 ? (
-              <EmptyState icon={Search} title="No models match these filters."
-                description="Clear the filters to see more models."
-                action={<Button variant="outline" onClick={() => { setQuery(""); setCapability("all"); setShowNoProviderCharge(true); setShowPaid(true); setShowUnknownCost(true); }}>Clear filters</Button>} />
-            ) : (
-              <div className="overflow-x-auto rounded-panel border">
-                <Table aria-label="All models" className="max-sm:block">
-                  <TableHeader className="max-sm:hidden">
-                    <TableRow>
-                      <TableHead>Task and model name</TableHead>
-                      <TableHead>Task</TableHead>
-                      <TableHead>Engine or provider</TableHead>
-                      {modelHasCost && <TableHead numeric>Cost</TableHead>}
-                      {modelHasStatus && <TableHead>Status</TableHead>}
-                      {modelRows.length > 0 && <TableHead><span className="sr-only">Actions</span></TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="max-sm:block">
-                    {modelRows.map((row) => (
-                      <TableRow
-                        key={row.id}
-                        className={cn(
-                          "cursor-pointer h-(--row-2)",
-                          phoneRowClass,
-                        )}
-                        onClick={() => selectDetail(row)}
-                      >
-                        <TableCell className={cn("py-1! max-sm:contents", phoneCellClass)}>
-                          <div className={phoneTaskClass}>
-                            <span className="text-body truncate font-medium" title={rowTaskName(row)}>{rowTaskName(row)}</span>
-                          </div>
-                          <CopyModelName row={row} />
-                        </TableCell>
-                        <TableCell className="py-1! max-sm:hidden">
-                          {titleFor(row) && <><span>{titleFor(row)}</span>{" · "}</>}
-                          <span>{primaryCapabilityLabel(row)}</span>
-                          <ModelFacts row={row} className="mt-1" />
-                        </TableCell>
-                        <TableCell className="py-1! max-sm:hidden">{summaryEngineLabel(row)}</TableCell>
-                        {modelHasCost && <TableCell numeric title={costLabel(row)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(row)}</TableCell>}
-                        {modelHasStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
-                          {hasSummaryStatus(row) && <Availability row={row} showReason={false} />}
-                        </TableCell>}
-                        <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              selectDetail(row);
-                            }}
-                          >
-                            Details
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ))}
-          </section>}
-        </>
+          <p className="text-muted-foreground text-meta">
+            <span role="status" aria-live="polite" aria-atomic="true">
+              {visible.length === 0
+                ? `No models match. 0 of ${allRows.length} model names.`
+                : filtered
+                  ? `${visible.length} of ${allRows.length} model names.`
+                  : `${allRows.length} model names.`}
+            </span>
+            {" "}
+            <Link prefetch={false} href="/connect/" className="underline underline-offset-4">
+              How to connect an app
+            </Link>
+          </p>
+        </div>
       )}
-      {detailNote && <div role="status"><p>This model is no longer in the catalog.</p><Button variant="ghost" onClick={() => setDetailNote(null)}>Dismiss</Button></div>}
+      {detailNote && (
+        <div role="status" className="text-meta flex items-center gap-2">
+          <p>This model is no longer listed. Choose another model, or review setup if the list is empty.</p>
+          <Button variant="ghost" size="sm" onClick={() => setDetailNote(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
       <DetailSheet
         row={detail}
         onOpenChange={(open) => !open && setDetailId(null)}
         viewerAdmin={viewer.admin}
+        knownNames={knownNames}
       />
     </div>
   );

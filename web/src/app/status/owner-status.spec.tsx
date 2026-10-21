@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { UptimeBar } from "@/components/product/uptime-bar";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -8,7 +10,14 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError, api, type ServiceRegistry, type StatusPayload } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  queryKeys,
+  type CurrentHealthService,
+  type ServiceRegistry,
+  type StatusPayload,
+} from "@/lib/api";
 import { StatusClient } from "./status-client";
 
 vi.mock("next/navigation", () => ({
@@ -30,7 +39,7 @@ vi.mock("@/lib/provider-status", () => ({
 const homeCapabilities = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
 }));
-vi.mock("@/app/home/home-api", () => ({
+vi.mock("@/app/_home/home-api", () => ({
   homeApi: {
     home: async () => ({
       authenticated: true,
@@ -61,6 +70,7 @@ vi.mock("next/link", () => ({
 }));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   providerState.state = "hidden";
   providerState.providers = [];
@@ -206,16 +216,19 @@ it("lists disabled engines as turned off, never as ready", async () => {
 });
 
 it("uses the registry display name and excludes providers from the engine table", async () => {
-  mount(undefined, registry);
+  mount(undefined, {
+    ...registry,
+    services: { ...registry.services, realtime: { ...registry.services.realtime, display_name: "realtime_voice" } },
+  });
   expect(
-    await screen.findByRole("button", { name: "Realtime voice" }),
+    await screen.findByRole("button", { name: "Realtime Voice" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Speech To Speech" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Remote provider" })).toBeNull();
   expect(screen.queryByText("Capabilities unavailable")).toBeNull();
   // Realtime voice has no health record: it says Unknown, never Ready.
   const realtime = screen
-    .getByRole("button", { name: "Realtime voice" })
+    .getByRole("button", { name: "Realtime Voice" })
     .closest("tr")!;
   expect(within(realtime).getByText("Unknown")).toBeVisible();
   expect(within(realtime).queryByText("Ready")).toBeNull();
@@ -372,7 +385,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     screen.getAllByRole("heading", { name: "Chat is unavailable right now" }),
   ).toHaveLength(1);
   expect(
-    screen.getAllByText("Local chat is not accepting connections.", {
+    screen.getAllByText("Local chat is not running.", {
       exact: true,
     }),
   ).toHaveLength(1);
@@ -388,7 +401,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     within(header).queryByText("Connection refused", { exact: true }),
   ).not.toBeInTheDocument();
   expect(
-    within(header).queryByText("Local chat is not accepting connections", {
+    within(header).queryByText("Local chat is not running", {
       exact: true,
     }),
   ).not.toBeInTheDocument();
@@ -397,12 +410,10 @@ it("summarizes connection failures without putting raw transport text in the ans
   ).toHaveAttribute("href", "/engines/?service=chat");
   await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
   await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
-  expect(
-    within(screen.getByRole("dialog", { name: "Local chat" })).getByText(
-      "Connection refused",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  const body = screen.getByRole("dialog", { name: "Local chat" }).querySelector("dl")!;
+  expect(body).not.toHaveTextContent("Connection refused");
+  expect(within(body).getByText("Not running", { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
 });
 
 it("groups engines with the same problem into one action row", async () => {
@@ -455,16 +466,17 @@ it("groups engines with the same problem into one action row", async () => {
     .closest("section")!;
   expect(within(attention).getAllByRole("article")).toHaveLength(1);
   expect(
-    within(attention).getAllByText(/(is|are) not accepting connections/),
+    within(attention).getAllByText(/(is|are) not running/),
   ).toHaveLength(1);
   expect(
     within(attention).getByRole("heading", {
-      name: "2 engines are not accepting connections",
+      name: "2 engines are not running",
     }),
   ).toBeVisible();
   expect(
     within(attention).getByRole("link", { name: "Inspect engines" }),
   ).toHaveAttribute("href", "/engines/");
+  expect(within(attention).getByText("Check the engine address, or start the engine.")).toBeVisible();
 });
 
 it.each(["loading", "error"])(
@@ -539,6 +551,12 @@ it("announces the answer atomically as health changes", async () => {
       { exact: true },
     ),
   ).toBeVisible();
+});
+it("offers a local action when no remote providers are configured", async () => {
+  providerState.state = "ready";
+  mount();
+  expect(await screen.findByText("No remote providers are configured.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Review connections" })).toHaveAttribute("href", "/engines");
 });
 it("moves from partial to healthy once provider status resolves", async () => {
   providerState.state = "error";
@@ -644,6 +662,7 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
 });
 
 it("waits for the status check before drawing engine rows, never a passing Unknown", async () => {
+  vi.useFakeTimers();
   vi.spyOn(api.services, "registry").mockResolvedValue(chatRegistry);
   let answer: (value: StatusPayload) => void = () => undefined;
   vi.spyOn(api, "status").mockReturnValue(
@@ -660,38 +679,43 @@ it("waits for the status check before drawing engine rows, never a passing Unkno
     </QueryClientProvider>,
   );
   // The registry answered first: the rows still wait for their health.
-  await waitFor(() => expect(api.services.registry).toHaveBeenCalled());
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(api.services.registry).toHaveBeenCalled();
+  expect(client.getQueryData(queryKeys.serviceRegistry)).toEqual(chatRegistry);
   expect(screen.queryByRole("table", { name: "Engine status" })).toBeNull();
-  expect(screen.getByLabelText("Checking engines")).toHaveAttribute("aria-busy", "true");
+  // A named region needs a role: axe refuses aria-label on a bare div.
+  expect(screen.getByRole("status", { name: "Checking engines" })).toHaveAttribute("aria-busy", "true");
   expect(document.body.textContent).not.toMatch(/\bUnknown\b/);
-  answer({
-    current_health: {
-      state: "ok",
-      tone: "ok",
-      label: "Ready",
-      detail: "Ready",
-      observation_available: true,
-      services: [
-        {
-          service_id: "chat",
-          name: "Local chat",
-          engine_label: "Local chat",
-          capability_title: "Chat",
-          capability_labels: ["Chat"],
-          icon_key: "chat",
-          configured: true,
-          enabled: true,
-          role: "primary",
-          routable: true,
-          observation: "up",
-          tone: "ok",
-          last_error: null,
-        },
-      ],
-    },
-  } as StatusPayload);
-  const engine = await screen.findByRole("button", { name: "Local chat" });
+  await act(async () => {
+    answer({
+      current_health: {
+        state: "ok",
+        tone: "ok",
+        label: "Ready",
+        detail: "Ready",
+        observation_available: true,
+        services: [
+          {
+            service_id: "chat",
+            name: "Local chat",
+            engine_label: "Local chat",
+            capability_title: "Chat",
+            capability_labels: ["Chat"],
+            icon_key: "chat",
+            configured: true,
+            enabled: true,
+            role: "primary",
+            routable: true,
+            observation: "up",
+            tone: "ok",
+            last_error: null,
+          },
+        ],
+      },
+    } as StatusPayload);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  const engine = screen.getByRole("button", { name: "Local chat" });
   expect(within(engine.closest("tr")!).getByText("Ready")).toBeVisible();
 });
 
@@ -710,6 +734,7 @@ it.each(["pending", "error"])("does not turn %s activity into no failures", asyn
   providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: false, keyState: "set", spendText: "" }];
   mount();
   await screen.findByRole("heading", { name: "Data provider is down" });
+  expect(screen.getByText("Open Providers to check its address and key, then try the connection again.")).toBeVisible();
   expect(document.body.textContent).not.toMatch(/None in the latest/);
   expect(screen.getAllByText(state === "pending" ? "Checking recent requests…" : /Recent requests couldn’t load/).length).toBeGreaterThan(0);
   if (state === "error") {
@@ -727,6 +752,7 @@ it("uses the loaded request count and distinguishes a missing key from an outage
   expect(screen.getByText(/1 of the latest 2 requests/)).toBeVisible();
   expect(screen.queryByText("Data provider is down")).toBeNull();
   expect(screen.getByRole("link", { name: "Add provider key" })).toBeVisible();
+  expect(screen.getByText("Add this provider’s key in Providers, then check its connection.")).toBeVisible();
 });
 
 it("opens provider spend and cap details and restores focus", async () => {
@@ -742,13 +768,12 @@ it("opens provider spend and cap details and restores focus", async () => {
   expect(trigger).toHaveFocus();
 });
 
-it("does not invent a spending-limit reset time", async () => {
+it("shows a spending-limit refusal without inventing spend or a reset time", async () => {
   activityState.data = [{ created_at: Date.now() / 1000, receipt: { status: "rejected", app_profile: "p", warnings: ["Paid request refused: spending cap reached; daily spending limit exceeded; monthly budget exceeded."] } }];
-  vi.spyOn(api.profiles, "list").mockResolvedValue([{ id: "p", name: "Household", profile: { remote: { budget_usd_per_month: 10 } } }] as unknown as Awaited<ReturnType<typeof api.profiles.list>>);
   mount();
-  expect(await screen.findByText("Reset time not provided")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Edit access plan" })).toBeVisible();
-  expect(document.body.textContent).not.toMatch(/roll off|Monthly: on/);
+  expect(await screen.findByText("Spending limit reached")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open providers" })).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/roll off|Monthly: on|Reset time/);
 });
 
 it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private exception", 503)])("keeps registry errors scoped and retryable: %s", async (error) => {
@@ -761,4 +786,362 @@ it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private excep
   expect(within(card).getByRole("button", { name: "Retry" })).toBeVisible();
   expect(screen.queryByText("private exception")).toBeNull();
   expect(screen.queryByText("No engines yet")).toBeNull();
+});
+
+function engineSnapshot(
+  health: Partial<CurrentHealthService> = {},
+  observedAt: number | null = Date.now() / 1000 - 120,
+): StatusPayload {
+  return {
+    generated_at: Date.now() / 1000,
+    current_health: {
+      state: "ok",
+      tone: "ok",
+      label: "Ready",
+      detail: "Ready",
+      observation_available: true,
+      services: [{
+        service_id: "chat",
+        name: "Local chat",
+        engine_label: "Local chat",
+        capability_title: "Chat",
+        capability_labels: ["Chat"],
+        icon_key: "chat",
+        configured: true,
+        enabled: true,
+        role: "primary",
+        routable: true,
+        observation: "up",
+        tone: "ok",
+        in_use: true,
+        last_error: null,
+        ...health,
+      }],
+    },
+    backends: [{
+      service_id: "chat",
+      observed_at_s: observedAt,
+      history: { status_series: [[Date.now() / 1000 - 60, 0]] },
+    }],
+  } as unknown as StatusPayload;
+}
+
+async function visibleChatRow() {
+  await waitFor(() => {
+    expect(
+      screen.queryByRole("button", { name: "Local chat" }) ??
+      screen.queryByRole("button", { name: /Show all/ }),
+    ).not.toBeNull();
+  });
+  const fold = screen.queryByRole("button", { name: /Show all/ });
+  if (fold) await userEvent.click(fold);
+  return (await screen.findByRole("button", { name: "Local chat" })).closest("tr")!;
+}
+
+it.each(["down", "stopped"])(
+  "shows a neutral idle row for a stopped standby engine (%s), even with an old refusal",
+  async (observation) => {
+    mount(engineSnapshot({
+      observation, tone: "neutral", in_use: false, last_error: "Connection refused",
+    }));
+    const row = await visibleChatRow();
+    const idle = within(row).getByText("Idle, starts when needed");
+    expect(idle).toBeVisible();
+    expect(row).not.toHaveTextContent(/Ready|Down|Not running|h up/);
+    expect(row.querySelector('[class*="danger"], [class*="warning"], [class*="destructive"]')).toBeNull();
+    expect(within(row).queryByRole("img")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
+    await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText("Chat · Idle, starts when needed", { exact: true })).toBeVisible();
+  },
+);
+
+it("counts idle engines separately from ready engines in the folded summary", async () => {
+  const status = engineSnapshot({ observation: "down", tone: "neutral", in_use: false });
+  status.current_health!.signals = [{
+    source: "disk", tone: "warn", reasons: ["Disk needs attention."],
+  }];
+  mount(status);
+  expect(await screen.findByRole("button", {
+    name: "Engines: 1 idle, 1 turned off. Show all",
+  })).toBeVisible();
+});
+
+it.each([
+  ["chat", "Chat", "degraded"],
+  ["video", "Video", "degraded"],
+  ["chat", "Chat", "down"],
+  ["video", "Video", "down"],
+])("describes a sole %s (%s) engine that is %s without sampled failures", async (capability, label, observation) => {
+  const serviceRegistry = {
+    ...chatRegistry,
+    services: { chat: { ...registry.services.chat, capabilities: [capability] } },
+  };
+  mount(engineSnapshot({
+    observation,
+    tone: observation === "down" ? "bad" : "warn",
+    capability_title: label,
+    capability_labels: [label],
+  }), serviceRegistry);
+  const title = await screen.findByRole("heading", {
+    name: new RegExp(`^${label} (requests may be slow or fail|is unavailable) right now$`),
+  });
+  if (observation === "degraded") {
+    expect(title).not.toHaveTextContent(/unavailable/i);
+    expect(title).toHaveTextContent(`${label} requests may be slow or fail right now`);
+  } else {
+    expect(title).toHaveTextContent(`${label} is unavailable right now`);
+  }
+});
+
+it.each([
+  ["ConnectTimeout: timed out", "Did not answer in time"],
+  ["Connection timed out", "Did not answer in time"],
+  ["connect ETIMEDOUT 127.0.0.1:8000", "Did not answer in time"],
+  ["Connection refused", "Not running"],
+  ["ConnectionRefusedError", "Not running"],
+  ["connect ECONNREFUSED 127.0.0.1:8000", "Not running"],
+])("uses plain connection-failure copy for %s", async (last_error, word) => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error }));
+  await screen.findByRole("heading", { name: "Needs attention" });
+  const row = await visibleChatRow();
+  expect(within(row).getByText(word, { exact: true })).toBeVisible();
+  const currentState = within(row).getAllByRole("cell").at(-1)!;
+  expect(within(currentState).queryByText("Down", { exact: true })).toBeNull();
+  expect(within(row).queryByText(last_error, { exact: true })).toBeNull();
+  await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+  const sheet = screen.getByRole("dialog", { name: "Local chat" });
+  expect(within(sheet).getByText(`Chat · ${word}`)).toBeVisible();
+  const body = sheet.querySelector("dl")!;
+  expect(body).not.toHaveTextContent(last_error);
+  expect(body).not.toHaveTextContent("127.0.0.1:8000");
+  expect(within(body).getByText(word, { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
+});
+
+it("does not call a disabled engine idle", async () => {
+  const disabledRegistry = {
+    ...chatRegistry,
+    services: { ...chatRegistry.services, chat: { ...chatRegistry.services.chat, enabled: false } },
+  };
+  mount(engineSnapshot({ observation: "down", tone: "neutral", in_use: false }), disabledRegistry);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Off", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("does not let an old refusal override a currently healthy engine", async () => {
+  mount(engineSnapshot({ last_error: "Connection refused" }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Not running")).toBeNull();
+  await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+  expect(within(screen.getByRole("dialog", { name: "Local chat" })).queryByText("Next step")).toBeNull();
+});
+
+it("does not turn unavailable observations into idle or connection-failure claims", async () => {
+  const status = engineSnapshot({ observation: "down", tone: "neutral", in_use: false, last_error: "Connection refused" });
+  status.current_health!.observation_available = false;
+  mount(status);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(row).queryByText(/Idle, starts when needed|Not running/)).toBeNull();
+});
+
+it("shows recorded engine and provider check times in the always-visible state cell", async () => {
+  const now = 1_800_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+  homeCapabilities.rows = freshChat();
+  providerState.state = "ready";
+  providerState.providers = [{
+    id: "remote", name: "Data provider", enabled: true, reachable: true,
+    keyState: "set", spendText: "", checkedAt: now - 180,
+  }];
+  mount(engineSnapshot({}, now - 120));
+  const engine = await visibleChatRow();
+  const provider = screen.getByRole("button", { name: "Data provider details" }).closest("tr")!;
+  for (const row of [engine, provider]) {
+    const checked = within(row).getByText(/Last checked/);
+    expect(checked).toHaveTextContent(/^Last checked .+ago$/);
+    expect(checked).not.toHaveTextContent(/not recorded|just now/);
+    expect(checked.closest("td")).not.toHaveClass("hidden");
+  }
+  expect(within(engine).getByText(/Last checked/)).not.toHaveTextContent(
+    within(provider).getByText(/Last checked/).textContent!,
+  );
+});
+
+it.each([null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  "does not invent a check time from the payload generation time when the recorded time is %s",
+  async (observedAt) => {
+    mount(engineSnapshot({}, observedAt));
+    const row = await visibleChatRow();
+    expect(within(row).getByText("Last checked: not recorded")).toBeVisible();
+  },
+);
+
+it("removes stale idle copy and check times after a failed refresh", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "neutral", in_use: false }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Idle, starts when needed")).toBeVisible();
+  vi.mocked(api.status).mockRejectedValue(new Error("offline"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  expect(within(refreshed).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("does not hide an unhealthy unused engine unless the gateway marks it neutral", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", in_use: false, last_error: "Connection refused" }));
+  const title = await screen.findByRole("heading", { name: "Chat is unavailable right now" });
+  const card = title.closest("article")!;
+  expect(within(card).getByText("Check the engine address, or start the engine.")).toBeVisible();
+  expect(within(card).getByRole("link", { name: "Inspect Local chat" })).toHaveAttribute("href", "/engines/?service=chat");
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Not running", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("gives a stale unchecked engine an honest next step instead of diagnosing an outage", async () => {
+  mount(engineSnapshot({ observation: "unknown", tone: "neutral" }, Date.now() / 1000 - 86400));
+  const title = await screen.findByRole("heading", { name: /Local chat has not answered a check in/ });
+  const card = title.closest("article")!;
+  expect(within(card).getByText("We cannot confirm what this engine can do until a new check succeeds.")).toBeVisible();
+  expect(within(card).getByText("Check that the engine is running and its health address answers, then refresh status.")).toBeVisible();
+  expect(within(card).getByRole("link", { name: "Inspect Local chat" })).toHaveAttribute("href", "/engines/?service=chat");
+  expect(within(card).queryByText(/unavailable right now|is not running/)).toBeNull();
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Unknown", { exact: true })).toBeVisible();
+});
+
+it.each([
+  new TypeError("private transport detail"),
+  new ApiError("failed", "private server detail", 503),
+])("retries only failed health and restores current observations after refresh: %s", async (error) => {
+  mount(engineSnapshot());
+  await screen.findByText("Everything works");
+  vi.mocked(api.status).mockRejectedValue(error);
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const card = (await screen.findByRole("heading", { name: "Engine health couldn’t load" })).closest("article")!;
+  expect(within(card).getByText(error instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  expect(screen.queryByText(/private transport detail|private server detail/)).toBeNull();
+  expect(screen.queryByText("Everything works")).toBeNull();
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  const statusCalls = vi.mocked(api.status).mock.calls.length;
+  const registryCalls = vi.mocked(api.services.registry).mock.calls.length;
+  vi.mocked(api.status).mockResolvedValue(engineSnapshot());
+  await userEvent.click(within(card).getByRole("button", { name: "Retry" }));
+  await screen.findByText("Everything works");
+  expect(api.status).toHaveBeenCalledTimes(statusCalls + 1);
+  expect(api.services.registry).toHaveBeenCalledTimes(registryCalls);
+  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+  expect(within(await visibleChatRow()).getByText("Ready", { exact: true })).toBeVisible();
+});
+
+it("honesty: an intentionally off engine is Off despite a failed last observation", async () => {
+  const disabledRegistry = {
+    ...chatRegistry,
+    services: { chat: { ...chatRegistry.services.chat, enabled: false } },
+  };
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error: "Connection refused" }), disabledRegistry);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Off", { exact: true })).toBeVisible();
+  expect(row).not.toHaveTextContent(/Down|Not running|Ready|Degraded/);
+  expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
+});
+
+it("honesty: a failed engine reports Down and its unavailable capability", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error: null }));
+  expect(await screen.findByRole("heading", { name: "Chat is unavailable right now" })).toBeVisible();
+  const row = await visibleChatRow();
+  const currentState = within(row).getAllByRole("cell").at(-1)!;
+  expect(within(currentState).getByText("Down", { exact: true })).toBeVisible();
+  expect(row).not.toHaveTextContent(/Ready|Off|Degraded/);
+});
+
+it("honesty: a failed refresh removes stale ready state and recovers after retry", async () => {
+  const status = engineSnapshot();
+  mount(status);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
+  vi.mocked(api.status).mockRejectedValue(new Error("offline"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const heading = await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  expect(within(refreshed).queryByText("Ready", { exact: true })).toBeNull();
+  vi.mocked(api.status).mockResolvedValue(status);
+  await userEvent.click(within(heading.closest("article")!).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(within(screen.getByRole("button", { name: "Local chat" }).closest("tr")!).getByText("Ready", { exact: true })).toBeVisible());
+  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+});
+
+it("honesty: a slow engine stays degraded without claiming its capability is unavailable", async () => {
+  mount(engineSnapshot({ observation: "degraded", tone: "warn", last_error: null }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Degraded", { exact: true })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Chat degraded");
+  expect(screen.queryByRole("heading", { name: /Chat is unavailable right now/ })).toBeNull();
+});
+
+it("labels every history segment with its time range and worst state, with a matching down pattern", () => {
+  const end = new Date(2026, 9, 14, 1, 30).getTime() / 1000;
+  const start = end - 24 * 3600;
+  render(<UptimeBar label="History" end={end} series={[
+    [start + 1800, 1],
+    [start + 3600 + 1800, 0.5],
+    [start + 7200 + 900, 1],
+    [start + 7200 + 1800, 0],
+    [end, 1],
+  ]} />);
+  const history = screen.getByRole("group", { name: /History: 2 of 4 checked hours up/ });
+  const segments = within(history).getAllByRole("img");
+  expect(segments).toHaveLength(24);
+  const time = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  });
+  segments.forEach((segment, index) => {
+    const state = index === 0 || index === 23 ? "up" : index === 1 ? "degraded" : index === 2 ? "down" : "no check";
+    const range = `${time(start + index * 3600)} to ${time(start + (index + 1) * 3600)}: ${state}`;
+    expect(segment).toHaveAccessibleName(range);
+    expect(segment).toHaveAttribute("title", range);
+  });
+  for (const word of ["Up", "Degraded", "Down", "No check"]) {
+    expect(screen.getByText(word, { exact: true })).toBeVisible();
+  }
+  const down = segments[2] as HTMLElement;
+  expect(down.style.backgroundImage).toContain("repeating-linear-gradient");
+  expect(screen.getByText("Down", { exact: true }).querySelector("span")?.style.backgroundImage).toBe(down.style.backgroundImage);
+  expect((segments[1] as HTMLElement).style.backgroundImage).toBe("");
+  expect((segments[0] as HTMLElement).style.backgroundImage).toBe("");
+});
+
+it("keeps unobserved history explicit rather than reporting it up", () => {
+  const end = 1_800_000_000;
+  render(<UptimeBar label="History" end={end} series={[[NaN, 0], [end, NaN], [end - 86401, 0]]} />);
+  const history = screen.getByRole("group", { name: "History: no checks recorded in the last 24 hours" });
+  expect(within(history).getAllByRole("img", { name: /: no check$/ })).toHaveLength(24);
+  expect(screen.getByText("No check", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Up", { exact: true })).toBeNull();
+  expect(screen.queryByText("Down", { exact: true })).toBeNull();
+});
+
+it("updates disabled history labels and legend without retaining down cues", () => {
+  const end = 1_800_000_000;
+  const { rerender } = render(<UptimeBar label="History" end={end} series={[[end, 0]]} />);
+  expect(screen.getByRole("img", { name: /: down$/ })).toBeInTheDocument();
+  rerender(<UptimeBar label="History" end={end} series={[[end, 0]]} enabled={false} />);
+  const history = screen.getByRole("group", { name: "History: turned off" });
+  const segments = within(history).getAllByRole("img", { name: /: turned off$/ });
+  expect(segments).toHaveLength(24);
+  segments.forEach((segment) => expect((segment as HTMLElement).style.backgroundImage).toBe(""));
+  expect(screen.getByText("Turned off", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Down", { exact: true })).toBeNull();
+  expect(screen.queryByText("No check", { exact: true })).toBeNull();
 });

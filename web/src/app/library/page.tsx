@@ -1,12 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -45,18 +51,22 @@ import {
 import { toast } from "@/lib/toast";
 
 import { cn } from "@/lib/cn";
-import { formatAbsoluteUTC } from "@/lib/format";
-import { RelativeTime } from "@/components/product/relative-time";
+import { formatTimestamp } from "@/lib/format";
+import { MakingTile } from "@/components/product/making-tile";
+import { DelayedSpinner } from "@/components/product/status-ui";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
-import { PersonMark } from "@/components/product/person-mark";
+import {
+  PersonMark,
+  type PersonAvatarState,
+} from "@/components/product/person-mark";
+import { useAvatarDirectory } from "@/lib/use-avatars";
 import {
   KeyValueList,
   type KeyValueItem,
 } from "@/components/product/key-value";
 import {
   AudioFace,
-  audioKind,
   DayChip,
   mediaGridGap,
   tilePlayButton,
@@ -69,6 +79,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { expiryNote } from "@/lib/library-expiry";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -100,15 +111,16 @@ import {
   tryKeepState,
 } from "@/lib/prompt-memory";
 import {
-  MAKING_COPY,
   dayMarks,
   inProgressMedia,
   modelDisplayName,
   tileDate,
   captionTitle,
+  thumbnailSize,
   type CapabilityNameRow,
-  type InProgressItem,
 } from "./library-format";
+
+const libraryGridLayout = cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap);
 
 type NameModel = (model: string, workflow?: string | null) => string;
 
@@ -123,6 +135,8 @@ interface MediaAsset {
   model: string;
   created_at: number | string | null;
   download_url?: string | null;
+  /** A small WebP preview (about 480 px). Tiles show it; the viewer uses the original. */
+  thumbnail_url?: string | null;
   workflow_download_url?: string | null;
   media_type?: string;
   width?: number | null;
@@ -131,6 +145,7 @@ interface MediaAsset {
   workflow?: string | Record<string, unknown> | null;
   seed?: string | number | null;
   duration_s?: number | null;
+  size_bytes?: number | null;
   poster_asset_id?: string | null;
   owner_name?: string | null;
   /** `person_id` is the maker, when the gateway knows who made it. */
@@ -150,6 +165,16 @@ interface MediaResponse {
   next_cursor?: string | null;
   models?: string[];
   sources?: MediaSource[];
+  media_folder?: MediaFolderView | null;
+}
+
+// The folder's confirmation state. Only the owner receives where the folder is and what it holds.
+interface MediaFolderView {
+  state: "confirmed" | "unconfirmed" | "mismatch";
+  path?: string;
+  library_items?: number;
+  items_here?: number;
+  uncheckable_items?: number;
 }
 
 interface MediaSource {
@@ -200,6 +225,15 @@ function untitledName(asset: MediaAsset): string {
 function assetTitle(asset: MediaAsset) {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
   return prompt || untitledName(asset);
+}
+
+function assetOpenLabel(asset: MediaAsset): string {
+  const date = toDateValue(asset.created_at)?.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }) ?? "Date unavailable";
+  return `Open ${assetTitle(asset)}, ${kindLabel(asset.kind)}, ${date}`;
 }
 
 /** A heading-length title: the prompt's first clause, or its first words. */
@@ -267,7 +301,7 @@ function hasActiveFilters(filters: {
   );
 }
 
-type LibraryStage = "library" | "prepare" | "download" | "share" | "delete";
+type LibraryStage = "library" | "prepare" | "download" | "share" | "delete" | "folder";
 class LibraryFailure extends Error {
   constructor(
     readonly stage: LibraryStage,
@@ -276,16 +310,25 @@ class LibraryFailure extends Error {
     super(reason === "unknown"
       ? "We couldn't tell where this stopped. Try again."
       : reason === "unreadable"
-        ? "The gateway returned an unreadable response. Try again."
+        ? "We couldn't read the response. Try again."
         : stage === "library"
-          ? "The gateway couldn't load your library. Try again."
+          ? "We couldn't load your library. Try again."
           : stage === "prepare"
-            ? "The gateway couldn't prepare this file. Try again."
+            ? "We couldn't prepare this file. Try again."
             : stage === "download"
               ? "The file couldn't be downloaded. Try again."
               : stage === "delete"
-                ? "The gateway couldn't delete this creation. Try again."
-                : "This browser couldn't share the file. Use Download.");
+                ? "We couldn't delete this creation. Try again."
+                : stage === "folder"
+                  ? "We couldn't confirm the media folder. Nothing was removed. Try again."
+                  : "This browser couldn't share the file. Use Download.");
+  }
+}
+// The gateway's own sentence for a media folder failure, shown as it is.
+class MediaFolderFailure extends LibraryFailure {
+  constructor(message: string) {
+    super("folder", "gateway");
+    this.message = message;
   }
 }
 function failureCopy(error: unknown) {
@@ -303,7 +346,7 @@ function validAsset(value: unknown): boolean {
     (value.prompt == null || typeof value.prompt === "string") &&
     (value.model == null || typeof value.model === "string") &&
     (value.available == null || typeof value.available === "boolean") &&
-    ["download_url", "workflow_download_url", "poster_asset_id", "request_id", "unavailable_reason", "owner_name"]
+    ["download_url", "thumbnail_url", "workflow_download_url", "poster_asset_id", "request_id", "unavailable_reason", "owner_name"]
       .every((key) => value[key] == null || typeof value[key] === "string") &&
     (value.created_at == null || typeof value.created_at === "string" || typeof value.created_at === "number") &&
     (value.media_type == null || typeof value.media_type === "string") &&
@@ -311,6 +354,14 @@ function validAsset(value: unknown): boolean {
       typeof value.source.kind === "string" && typeof value.source.label === "string" &&
       ["id", "app_id", "person_id"].every((key) => value.source && record(value.source) &&
         (value.source[key] == null || typeof value.source[key] === "string"))));
+}
+function validMediaFolder(value: unknown): boolean {
+  return record(value) &&
+    (value.state === "confirmed" || value.state === "unconfirmed" || value.state === "mismatch") &&
+    (value.path == null || typeof value.path === "string") &&
+    (value.library_items == null || typeof value.library_items === "number") &&
+    (value.items_here == null || typeof value.items_here === "number") &&
+    (value.uncheckable_items == null || typeof value.uncheckable_items === "number");
 }
 function validPayload(path: string, value: unknown): boolean {
   if (!record(value)) return false;
@@ -322,6 +373,7 @@ function validPayload(path: string, value: unknown): boolean {
   if (route === "/me/api/media")
     return Array.isArray(value.assets) && value.assets.every(validAsset) &&
       (value.next_cursor == null || typeof value.next_cursor === "string") &&
+      (value.media_folder == null || validMediaFolder(value.media_folder)) &&
       (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
       (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
         record(source) && typeof source.id === "string" && typeof source.label === "string")));
@@ -331,9 +383,13 @@ function validPayload(path: string, value: unknown): boolean {
       (value.remote == null || typeof value.remote === "boolean") &&
       (value.cost == null || (record(value.cost) &&
         (value.cost.usd == null || typeof value.cost.usd === "number" || typeof value.cost.usd === "string")));
+  if (route === "/me/api/media/confirm-folder") return value.confirmed === true;
   if (route.startsWith("/me/api/media/")) return validAsset(value.asset);
   return false;
 }
+
+const REMOVE_MISSING_PATH = "/me/api/media/remove-missing";
+const CONFIRM_FOLDER_PATH = "/me/api/media/confirm-folder";
 
 async function mediaRequest<T>(
   path: string,
@@ -346,7 +402,14 @@ async function mediaRequest<T>(
   } catch {
     throw new LibraryFailure(stage, "unknown");
   }
-  if (!response.ok) throw new LibraryFailure(stage, "gateway");
+  if (!response.ok) {
+    const failure: unknown = await response.json().catch(() => null);
+    const error = record(failure) && record(failure.error) ? failure.error : null;
+    if (error && typeof error.code === "string" && error.code.startsWith("media_folder_") &&
+        typeof error.message === "string")
+      throw new MediaFolderFailure(error.message);
+    throw new LibraryFailure(stage, "gateway");
+  }
   if (init.method === "DELETE" && response.status === 204) return undefined as T;
   let payload: unknown;
   try {
@@ -354,7 +417,7 @@ async function mediaRequest<T>(
   } catch {
     throw new LibraryFailure(stage, "unreadable");
   }
-  if (init.method === "DELETE" ? !record(payload) : !validPayload(path, payload))
+  if (init.method === "DELETE" || path === REMOVE_MISSING_PATH ? !record(payload) : !validPayload(path, payload))
     throw new LibraryFailure(stage, "unreadable");
   // Missing model names remain unknown; string consumers receive an empty value.
   // Sizes and times come from free-form job metadata: a value that is not a
@@ -410,6 +473,12 @@ function confirmedGone(reason?: string | null): boolean {
   return /missing or expired/i.test(reason?.replace(/[_-]+/g, " ") ?? "");
 }
 
+/** What a confirmed-gone file's note says; older files were deleted and are not coming back. */
+function goneNote(asset: MediaAsset): string {
+  const made = toDateValue(asset.created_at);
+  return (made && expiryNote(made.getTime() / 1000)) || "This file is no longer stored.";
+}
+
 /**
  * Plain words for a tile that shows no media; the raw reason stays in Details.
  * A file the gateway reports unavailable is "unavailable"; a preview that only
@@ -434,9 +503,9 @@ function UnavailablePreview({
 }) {
   const Icon = kindIcon(kind);
   return (
-    <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-2 p-3 text-center">
+    <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-0.5 p-2 text-center sm:gap-2 sm:p-3">
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
-        <Icon aria-hidden="true" className="mx-auto size-5" />
+        <Icon aria-hidden="true" className="mx-auto size-4 sm:size-5" />
       </div>
       <p className="text-badge font-normal">{copy}</p>
       {onRetry ? (
@@ -520,12 +589,12 @@ async function shareCreation(asset: MediaAsset, everyone: boolean) {
 }
 
 function absolute(ts: MediaAsset["created_at"]) {
-  return ts ? formatAbsoluteUTC(ts) : undefined;
+  return formatTimestamp(ts).title;
 }
 
-function pauseOtherAudio(current: HTMLAudioElement) {
-  current.ownerDocument.querySelectorAll("audio").forEach((audio) => {
-    if (audio !== current) audio.pause();
+function pauseOtherMedia(current?: HTMLMediaElement) {
+  (current?.ownerDocument ?? document).querySelectorAll<HTMLMediaElement>("audio, video").forEach((media) => {
+    if (media !== current) media.pause();
   });
 }
 
@@ -534,20 +603,36 @@ function pauseOtherAudio(current: HTMLAudioElement) {
  * its own cover and title. One persistent control groups play, type and
  * length, leaving room for the day chip without adding another overlay.
  */
+/** The file a signed URL points at. A refetch re-signs the query, not the file. */
+function mediaResource(url: string) {
+  try {
+    const parsed = new URL(url, "http://resource.invalid");
+    return parsed.protocol === "data:" ? url : parsed.origin + parsed.pathname;
+  } catch {
+    return url;
+  }
+}
+
 function AudioTile({
   assetId,
   src,
   title,
   duration,
+  sizeBytes,
   visible,
+  everyone,
 }: {
   assetId: string;
   src: string;
   title: string;
   duration?: number | null;
+  sizeBytes?: number | null;
   visible: boolean;
+  everyone: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const renewedSrc = useRef<string | null>(null);
+  const retryPending = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [measuredDuration, setMeasuredDuration] = useState<number | null>(
@@ -582,9 +667,8 @@ function AudioTile({
     <>
       <AudioFace
         peaksKey={assetId}
-        coverSeed={assetId}
-        title={captionTitle(title, title, 56)}
         src={src}
+        sizeBytes={sizeBytes}
         visible={visible}
         status={errorText || buffering ? <span role="status">{errorText || "Loading audio…"}</span> : null}
       />
@@ -601,7 +685,7 @@ function AudioTile({
           setMeasuredDuration(event.currentTarget.duration);
         }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setError(null);
           setIsPlaying(true);
         }}
@@ -630,19 +714,32 @@ function AudioTile({
             setIsPlaying(false);
             return;
           }
-          if (audio.getAttribute("src") !== src) {
-            audio.setAttribute("src", src);
-          }
-          if (error === "media") {
-            audio.load();
-          }
+          if (retryPending.current) return;
+          retryPending.current = true;
           try {
+            if (error === "media") {
+              setBuffering(true);
+              const renewed = await mediaRequest<{ download_url: string }>(
+                `/me/api/media/${encodeURIComponent(assetId)}/download?scope=${everyone ? "everyone" : "me"}`,
+              );
+              if (!renewed.download_url) throw new Error("Missing audio");
+              if (!audio.isConnected) return;
+              renewedSrc.current = renewed.download_url;
+            }
+            const playbackSrc = renewedSrc.current ?? src;
+            if (audio.getAttribute("src") !== playbackSrc) {
+              audio.setAttribute("src", playbackSrc);
+            }
+            if (error === "media") audio.load();
             await audio.play();
             setError(null);
             setIsPlaying(true);
           } catch {
             setIsPlaying(false);
-            setError(audio.error ? "media" : "playback");
+            setError(error === "media" || audio.error ? "media" : "playback");
+          } finally {
+            retryPending.current = false;
+            setBuffering(false);
           }
         }}
       >
@@ -693,7 +790,7 @@ function LargeAudioPlayer({
         onPlaying={() => setBuffering(false)}
         onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setBlocked(false);
           setPlaying(true);
         }}
@@ -833,7 +930,7 @@ function LargeVideoPlayer({
         onPlaying={() => setBuffering(false)}
         onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setBlocked(false);
           setPlaying(true);
         }}
@@ -924,6 +1021,7 @@ function Preview({
   const queryClient = useQueryClient();
   const [mediaFailed, setMediaFailed] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
+  const [thumbFailed, setThumbFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [retrySrc, setRetrySrc] = useState<string | null>(null);
   const [recovered, setRecovered] = useState(false);
@@ -935,14 +1033,17 @@ function Preview({
   const [tileBlocked, setTileBlocked] = useState(false);
   const [tileBuffering, setTileBuffering] = useState(false);
   const [tileDuration, setTileDuration] = useState(asset.duration_s);
+  const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
+  const posterEnabled = asset.kind === "video" && !!asset.poster_asset_id && visible && !thumbUrl;
   const {
     data: poster,
-    isPending: posterPending,
+    isFetching: posterFetching,
     isError: posterLoadFailed,
     refetch: refetchPoster,
   } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
-    enabled: asset.kind === "video" && !!asset.poster_asset_id,
+    // Off-screen tiles wait: one poster link per video would flood a large Library.
+    enabled: posterEnabled,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
         `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
@@ -950,11 +1051,16 @@ function Preview({
     retry: false,
   });
 
-  const posterUrl = poster?.download_url;
+  // The server's small preview stands in as the video poster too: no
+  // per-tile poster link, and no video bytes until the person presses play.
+  const previewSize = thumbUrl
+    ? thumbnailSize(asset.width, asset.height)
+    : { width: asset.width ?? 1024, height: asset.height ?? 768 };
+  const posterUrl = thumbUrl ?? poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
   const waitingForPoster =
-    asset.kind === "video" && !!asset.poster_asset_id && posterPending;
+    posterEnabled && posterFetching && !poster?.download_url;
   const posterUnavailable =
     asset.kind !== "video" ||
     !asset.poster_asset_id ||
@@ -1019,35 +1125,54 @@ function Preview({
         }}
       />
     );
-  if (asset.kind === "image" && currentSrc)
+  if (asset.kind === "image" && currentSrc) {
+    // Tiles load the small preview; the viewer and any retry load the original.
+    const imageSrc = !large && thumbUrl ? thumbUrl : currentSrc;
     return (
       <NextImage
-        key={`image-${asset.asset_id}-${retryKey}-${currentSrc}`}
+        key={`image-${asset.asset_id}-${retryKey}-${imageSrc}`}
         unoptimized
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
-        src={currentSrc}
+        loading="lazy"
+        decoding="async"
+        width={large ? (asset.width ?? 1024) : previewSize.width}
+        height={large ? (asset.height ?? 768) : previewSize.height}
+        src={imageSrc}
         alt={assetTitle(asset)}
-        onError={() => setMediaFailed(true)}
+        onError={() => (imageSrc === thumbUrl ? setThumbFailed(true) : setMediaFailed(true))}
         className={cn(
           "h-full w-full",
           large ? "object-contain" : "object-cover",
         )}
       />
     );
+  }
   if (
     asset.kind === "video" &&
     currentSrc &&
     (!asset.poster_asset_id || !waitingForPoster)
   )
     return large ? (
-      <LargeVideoPlayer
-        key={`video-${asset.asset_id}-${retryKey}`}
-        src={currentSrc}
-        poster={effectivePosterUrl}
-        title={assetTitle(asset)}
-        onFailed={() => setMediaFailed(true)}
-      />
+      <>
+        {thumbUrl ? (
+          <NextImage
+            unoptimized
+            loading="eager"
+            src={thumbUrl}
+            alt=""
+            width={1}
+            height={1}
+            hidden
+            onError={() => setThumbFailed(true)}
+          />
+        ) : null}
+        <LargeVideoPlayer
+          key={`video-${asset.asset_id}-${retryKey}`}
+          src={currentSrc}
+          poster={effectivePosterUrl}
+          title={assetTitle(asset)}
+          onFailed={() => setMediaFailed(true)}
+        />
+      </>
     ) : (
       <>
         <video
@@ -1055,7 +1180,10 @@ function Preview({
           key={`video-${asset.asset_id}-${retryKey}`}
           src={tileStarted || (visible && !effectivePosterUrl) ? `${currentSrc}#t=0.1` : undefined}
           poster={effectivePosterUrl}
-          preload="metadata"
+          // With the server preview as poster the tile loads no video bytes. Without
+          // one, the tile reads metadata so the browser can decode a frame (and
+          // report an error, which opens recovery).
+          preload={thumbUrl ? "none" : "metadata"}
           muted
           playsInline
           onWaiting={() => setTileBuffering(true)}
@@ -1070,7 +1198,7 @@ function Preview({
             }
           }}
           onPlay={(event) => {
-            pauseOtherAudio(event.currentTarget);
+            pauseOtherMedia(event.currentTarget);
             setTilePlaying(true);
             setTileStarted(true);
             setTileBlocked(false);
@@ -1089,11 +1217,13 @@ function Preview({
         {effectivePosterUrl && !tileStarted ? (
           <NextImage
             unoptimized
-            width={asset.width ?? 1024}
-            height={asset.height ?? 768}
+            loading="lazy"
+            decoding="async"
+            width={previewSize.width}
+            height={previewSize.height}
             src={effectivePosterUrl}
             alt={assetTitle(asset)}
-            onError={() => setPosterFailed(true)}
+            onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : null}
@@ -1154,11 +1284,13 @@ function Preview({
     return (
       <NextImage
         unoptimized
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
+        loading="lazy"
+        decoding="async"
+        width={previewSize.width}
+        height={previewSize.height}
         src={effectivePosterUrl}
         alt={assetTitle(asset)}
-        onError={() => setPosterFailed(true)}
+        onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
         className="h-full w-full object-cover"
       />
     );
@@ -1196,6 +1328,18 @@ function Preview({
 
 type PersonLookup = (asset: MediaAsset) => string | null;
 
+/** A maker's person id and avatar by display name, so every mark draws from the same id. */
+type MakerMarkFor = (name: string) => {
+  personId?: string | null;
+  avatar?: PersonAvatarState | null;
+};
+const MakerMarksContext = createContext<MakerMarkFor>(() => ({}));
+
+function MakerMark(props: Omit<Parameters<typeof PersonMark>[0], "personId" | "avatar">) {
+  const mark = useContext(MakerMarksContext)(props.name);
+  return <PersonMark {...props} {...mark} />;
+}
+
 function usePeople(enabled: boolean, sources: MediaSource[]) {
   const {
     data: users,
@@ -1218,18 +1362,32 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
         .filter((person) => person.name && !person.name.includes("@")),
     [users],
   );
-  const lookup: PersonLookup = (asset) => {
+  // Preserve the first match, as find() did, including an absent app id.
+  const ownersByApp = useMemo(() => {
+    const owners = new Map<string | undefined, string | null | undefined>();
+    for (const source of sources) {
+      if (!owners.has(source.app_id))
+        owners.set(source.app_id, source.owner_user_id);
+    }
+    return owners;
+  }, [sources]);
+  const namesById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of people) {
+      if (!names.has(person.id)) names.set(person.id, person.name);
+    }
+    return names;
+  }, [people]);
+  const lookup: PersonLookup = useCallback((asset) => {
     if (asset.owner_name) return asset.owner_name;
     const appId =
       asset.source?.app_id ??
       (asset.source?.id?.startsWith("app:")
         ? asset.source.id.slice(4)
         : undefined);
-    const owner = sources.find(
-      (source) => source.app_id === appId,
-    )?.owner_user_id;
-    return people.find((person) => person.id === owner)?.name ?? null;
-  };
+    const owner = ownersByApp.get(appId);
+    return owner == null ? null : namesById.get(owner) ?? null;
+  }, [ownersByApp, namesById]);
   return { people, lookup, query: { isError, isFetching, refetch } };
 }
 
@@ -1246,37 +1404,61 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Work the gateway accepted and is still making: calm, not clickable. */
-function InProgressTile({ item }: { item: InProgressItem }) {
-  const Icon = kindIcon(item.kind);
-  return (
-    <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
-      <Icon aria-hidden="true" className="size-5" />
-      <p className="text-foreground text-meta font-medium max-sm:sr-only">
-        {MAKING_COPY[item.kind]}
-      </p>
-      {item.startedAt != null ? (
-        <p className="text-badge font-normal max-sm:sr-only">
-          Started <RelativeTime ts={item.startedAt} fallback="" />
-        </p>
-      ) : null}
-    </div>
-  );
+/**
+ * Supplement native Tab/Enter/Space with spatial navigation on tile open
+ * buttons only. Playback controls retain their own keyboard behavior.
+ * Keep native button semantics: this is not an ARIA composite grid.
+ */
+function navigateTiles(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return;
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-asset-open"))
+    return;
+  const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  const tiles = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-asset-open]"));
+  const index = tiles.indexOf(target);
+  if (index < 0) return;
+  event.preventDefault();
+  let next = target;
+  if (event.key === "Home") next = tiles[0];
+  else if (event.key === "End") next = tiles[tiles.length - 1];
+  else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const step = (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
+    next = tiles[index + step] ?? target;
+  } else {
+    // Use rendered rows, including any in-progress tiles and responsive gaps.
+    const rect = target.getBoundingClientRect();
+    const down = event.key === "ArrowDown";
+    const candidates = tiles.map((tile) => ({ tile, rect: tile.getBoundingClientRect() }))
+      .filter((item) => down ? item.rect.top > rect.top + 1 : item.rect.top < rect.top - 1);
+    candidates.sort((a, b) =>
+      Math.abs(a.rect.top - rect.top) - Math.abs(b.rect.top - rect.top) ||
+      Math.abs(a.rect.left + a.rect.width / 2 - rect.left - rect.width / 2) -
+        Math.abs(b.rect.left + b.rect.width / 2 - rect.left - rect.width / 2));
+    next = candidates[0]?.tile ?? target;
+  }
+  next.focus();
 }
 
-function AssetTile({
+const AssetTile = memo(function AssetTile({
   asset,
   onOpen,
   everyone,
   person,
   selected,
   day,
+  today,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
   person: string | null;
   selected: boolean;
+  /** Local day boundary; unchanged during unrelated page updates. */
+  today: number;
   /** The day label, on the first tile of each day only. */
   day?: string | null;
 }) {
@@ -1284,6 +1466,13 @@ function AssetTile({
   const [makerTooltip, setMakerTooltip] = useState(false);
   const playableAudio =
     asset.kind === "audio" && asset.download_url && asset.available !== false;
+  const hoverTitle = playableAudio
+    ? null
+    : captionTitle(asset.prompt, untitledName(asset), 56);
+  // The first tile of a day already wears the day chip.
+  const hoverDate = day
+    ? null
+    : tileDate(toDateValue(asset.created_at), new Date(today));
   return (
     <article
       className="group relative min-w-0"
@@ -1304,8 +1493,8 @@ function AssetTile({
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
-        className="rounded-media absolute inset-0 z-10"
-        aria-label={`Open ${assetTitle(asset)}`}
+        className="rounded-media absolute inset-0 z-10 min-h-6 min-w-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        aria-label={assetOpenLabel(asset)}
         aria-describedby={
           everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
         }
@@ -1319,11 +1508,13 @@ function AssetTile({
       >
         {playableAudio ? (
           <AudioTile
-            key={asset.download_url}
+            key={mediaResource(asset.download_url!)}
             assetId={asset.asset_id}
+            everyone={everyone}
             src={asset.download_url!}
             title={assetTitle(asset)}
             duration={asset.duration_s}
+            sizeBytes={asset.size_bytes}
             visible={visible}
           />
         ) : (
@@ -1344,7 +1535,7 @@ function AssetTile({
           </span>
         ) : null}
         {everyone && person ? (
-          <PersonMark
+          <MakerMark
             name={person}
             size="2xs"
             label={person}
@@ -1363,33 +1554,31 @@ function AssetTile({
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
             a wide screen, hover or keyboard focus shows a short title (whole
-            words, two lines), the maker and the day. The button's name
-            carries the full prompt for screen readers. */}
-        <div
-          aria-hidden="true"
-          className={cn(
-            "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
-            asset.kind === "image" ? "bottom-0" : "bottom-14",
-          )}
-        >
-          {!playableAudio ? (
-            <p className="text-badge line-clamp-2">
-              {captionTitle(asset.prompt, untitledName(asset), 56)}
-            </p>
-          ) : null}
-          <p className="text-foreground/80 text-badge mt-0.5 font-normal">
-            {[
-              everyone ? person : null,
-              tileDate(toDateValue(asset.created_at), new Date()),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-        </div>
+            words, two lines) and the day. The maker is the mark and its
+            tooltip, and the day is not repeated where its chip shows. The
+            button's name carries the full prompt for screen readers. */}
+        {hoverTitle || hoverDate ? (
+          <div
+            aria-hidden="true"
+            className={cn(
+              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) motion-reduce:transition-none group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+              asset.kind === "image" ? "bottom-0" : "bottom-14",
+            )}
+          >
+            {hoverTitle ? (
+              <p className="text-badge line-clamp-2">{hoverTitle}</p>
+            ) : null}
+            {hoverDate ? (
+              <p className="text-foreground/80 text-badge mt-0.5 font-normal">
+                {hoverDate}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Filters                                                             */
@@ -1485,12 +1674,12 @@ function MoreFilters({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <p className="text-label">Date</p>
+          <p className="text-label">Date created</p>
           <Select
             value={date}
             onValueChange={(value) => setDate(value as DateFilter)}
           >
-            <SelectTrigger aria-label="Date" className="w-full">
+            <SelectTrigger aria-label="Date created" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1505,7 +1694,7 @@ function MoreFilters({
           <div className="space-y-1.5">
             <p className="text-label">App</p>
             <Select value={source} onValueChange={setSource}>
-              <SelectTrigger aria-label="Source" className="w-full">
+              <SelectTrigger aria-label="App" className="w-full">
                 <SelectValue placeholder="All apps" />
               </SelectTrigger>
               <SelectContent>
@@ -1576,7 +1765,7 @@ function QueryFeedback({ label, query }: {
   if (!query.isError) return null;
   return (
     <p role="status" className="text-meta">
-      The gateway couldn’t load {label}.{" "}
+      We couldn’t load {label}.{" "}
       <Button variant="link" disabled={query.isFetching} onClick={() => void query.refetch()}>
         {query.isFetching ? "Loading…" : `Retry ${label}`}
       </Button>
@@ -1618,6 +1807,7 @@ function CreationViewer({
   /** Called with the creation shown last when the viewer closes. */
   onReturnFocus: (assetId: string) => void;
 }) {
+  useEffect(() => { pauseOtherMedia(); }, [asset.asset_id]);
   const { data: renewed, isFetching: renewing, isError: renewalFailed, refetch: renew } = useQuery({
     queryKey: ["library", "download", asset.asset_id, everyone],
     queryFn: () => mediaRequest<{ download_url: string }>(
@@ -1648,6 +1838,7 @@ function CreationViewer({
       ),
     retry: false,
   });
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
@@ -1700,16 +1891,24 @@ function CreationViewer({
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50" />
+        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none fixed inset-0 z-50" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          aria-modal="true"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            titleRef.current?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             onReturnFocus(asset.asset_id);
           }}
           onKeyDown={(event) => {
             const target = event.target;
-            if (target instanceof HTMLMediaElement) return;
+            // Portalled menus and media controls own their arrow keys.
+            if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
+              !(target instanceof Element) || !event.currentTarget.contains(target) ||
+              target instanceof HTMLMediaElement) return;
             if (
               target instanceof Element &&
               target.closest(
@@ -1717,10 +1916,16 @@ function CreationViewer({
               )
             )
               return;
-            if (event.key === "ArrowLeft" && previous) onSelect(previous);
-            if (event.key === "ArrowRight" && next) onSelect(next);
+            if (event.key === "ArrowLeft" && previous) {
+              event.preventDefault();
+              onSelect(previous);
+            }
+            if (event.key === "ArrowRight" && next) {
+              event.preventDefault();
+              onSelect(next);
+            }
           }}
-          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
         >
           <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
             <div
@@ -1744,12 +1949,12 @@ function CreationViewer({
                         as a picture's are (D1.5b: the prompt showed twice). */}
                     <p className="text-muted-foreground text-badge relative flex w-full items-center gap-1.5">
                       <AudioLines aria-hidden="true" className="size-3.5" />
-                      {audioKind(asset.model).label}
+                      Audio
                     </p>
                   </>
                 ) : null}
                 {renewing ? <p role="status">Opening your file…</p> : renewalFailed ? (
-                  <p role="status">The gateway couldn’t prepare this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
+                  <p role="status">We couldn’t prepare this file. <button type="button" className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
                 ) : renewed ? <Preview
                   key={`${asset.asset_id}-${renewed.download_url}`}
                   asset={{ ...asset, download_url: renewed.download_url, available: true, unavailable_reason: null }}
@@ -1798,7 +2003,7 @@ function CreationViewer({
                 </p>
               ) : null}
               <div className="flex items-start justify-between gap-3">
-                <DialogPrimitive.Title className="text-verdict min-w-0 text-balance break-words">
+                <DialogPrimitive.Title ref={titleRef} tabIndex={-1} className="text-verdict min-w-0 text-balance break-words">
                   {title}
                 </DialogPrimitive.Title>
                 <div className="-mt-1 -mr-1.5 flex shrink-0 items-center gap-1">
@@ -1853,7 +2058,7 @@ function CreationViewer({
               <p className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1">
                 {person ? (
                   <>
-                    <PersonMark name={person} size="sm" />
+                    <MakerMark name={person} size="sm" />
                     <span className="font-medium">{person}</span>
                   </>
                 ) : (
@@ -1861,14 +2066,14 @@ function CreationViewer({
                 )}
                 {asset.created_at ? (
                   <span className="text-muted-foreground">
-                    <RelativeTime ts={asset.created_at} fallback="" />
+                    <time {...formatTimestamp(asset.created_at)} />
                   </span>
                 ) : null}
               </p>
               {asset.available === false && !fileAvailable ? (
                 <p className="bg-muted rounded-control text-meta p-3">
                   {confirmedGone(asset.unavailable_reason)
-                    ? "The gateway no longer stores this file."
+                    ? goneNote(asset)
                     : "This file is unavailable."}
                   {remains ? ` ${remains}` : ""}
                 </p>
@@ -1922,7 +2127,7 @@ function CreationViewer({
                 {asset.request_id ? (
                   <Button asChild variant="outline" size="sm">
                     <a
-                      href={`/r/${encodeURIComponent(asset.request_id)}`}
+                      href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}
                       aria-label={`Open receipt ${asset.request_id}`}
                     >
                       <ReceiptText aria-hidden="true" />
@@ -1931,7 +2136,7 @@ function CreationViewer({
                   </Button>
                 ) : null}
               </div>
-              {receiptFailed ? <p role="status">The gateway couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
+              {receiptFailed ? <p role="status">We couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
               {maker && !prompt ? <QueryFeedback label="prompt settings" query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
               <KeyValueList
                 className="figures"
@@ -1940,30 +2145,27 @@ function CreationViewer({
                   [
                     "Created",
                     created
-                      ? created.toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
+                      ? <time {...formatTimestamp(created)} />
                       : "",
                   ],
                   [
-                    "Size",
+                    "Dimensions",
                     asset.width && asset.height
-                      ? `${asset.width} × ${asset.height}`
+                      ? `${asset.width} × ${asset.height} px`
                       : "",
                   ],
                   [
-                    "Length",
+                    "Duration",
                     asset.duration_s != null &&
                     Number.isFinite(asset.duration_s)
-                      ? formatDuration(asset.duration_s)
+                      ? `${asset.duration_s} seconds`
                       : "",
                   ],
                   [
-                    "Made in",
+                    "Generation time",
                     asset.generation_ms == null
                       ? ""
-                      : `${(asset.generation_ms / 1000).toFixed(1)} s`,
+                      : `${(asset.generation_ms / 1000).toFixed(1)} seconds`,
                   ],
                   ["Charge", charge],
                 ])}
@@ -1997,7 +2199,7 @@ function CreationViewer({
                       asset.request_id ? (
                         <a
                           className="text-link text-meta font-mono break-all underline-offset-4 hover:underline"
-                          href={`/r/${encodeURIComponent(asset.request_id)}`}
+                          href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}
                           aria-label={`View receipt ${asset.request_id}`}
                         >
                           {asset.request_id}
@@ -2081,7 +2283,8 @@ function focusTile(
 ) {
   const tiles = Array.from(
     document.querySelectorAll<HTMLElement>("[data-asset-open]"),
-  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? ""));
+  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? "") &&
+    !tile.closest("details:not([open]), [hidden]"));
   (
     tiles.find((tile) => tile.dataset.assetOpen === assetId) ??
     tiles[0] ??
@@ -2120,6 +2323,10 @@ export default function LibraryPage() {
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
+  const [folderConfirmArmed, setFolderConfirmArmed] = useState(false);
+  const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
@@ -2161,13 +2368,13 @@ export default function LibraryPage() {
     setOwner("default");
     setSource("all");
   }
-  function openAsset(asset: MediaAsset) {
+  const openAsset = useCallback((asset: MediaAsset) => {
     setClosedDeepLinkId(null);
     setSelected(asset);
     const params = new URLSearchParams(window.location.search);
     params.set("asset", asset.asset_id);
     window.history.replaceState(null, "", `?${params.toString()}`);
-  }
+  }, []);
   function closeAsset() {
     setClosedDeepLinkId(selected?.asset_id ?? deepLinkedAssetId);
     setSelected(null);
@@ -2318,6 +2525,15 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
+  // The folder's state comes with the first page of the Library, which every read starts with.
+  const folder = mediaPages[0]?.media_folder ?? null;
+  // An id that cannot be matched to a file is left out of the count, so a Library with only such ids is
+  // unverifiable. Under half the Library here is a partial folder: confirming it takes a second, explicit click.
+  const folderItems = folder?.library_items ?? 0;
+  const folderHere = folder?.items_here ?? 0;
+  const folderUnverifiable = folderItems === 0 && (folder?.uncheckable_items ?? 0) > 0;
+  const folderMostMissing = !folderUnverifiable && folderHere * 2 < folderItems;
+  const folderNeedsSecondClick = folderUnverifiable || folderMostMissing;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -2337,19 +2553,53 @@ export default function LibraryPage() {
     if (runningMedia.length < runningCount.current) void refetch();
     runningCount.current = runningMedia.length;
   }, [refetch, runningMedia.length]);
-  const goneConfirmed = goneAssets.every((asset) =>
-    confirmedGone(asset.unavailable_reason),
+  const goneConfirmed = useMemo(
+    () => goneAssets.every((asset) => confirmedGone(asset.unavailable_reason)),
+    [goneAssets],
   );
   const [goneOpen, setGoneOpen] = useState(false);
-  const visiblePeople = instanceView
-    ? Array.from(
-        new Set(
-          [...storedAssets, ...(goneOpen ? goneAssets : [])]
-            .map(personFor)
-            .filter((person): person is string => Boolean(person)),
-        ),
-      )
-    : [];
+  const [loadMoreFocus, setLoadMoreFocus] = useState<string | null>(null);
+  function loadMore() {
+    if (isFetchingNextPage || loadMoreRequest) return;
+    setLoadMoreRequest({ path: mediaPath, ids: new Set(assets.map((asset) => asset.asset_id)), pages: mediaPages.length });
+    setDeleteAnnouncement("");
+    void fetchNextPage();
+  }
+  // A finished "Load more" announces what it added and moves focus to the first new tile.
+  // When the first new tile is a removed creation, the removed section opens first so the
+  // tile is visible. All of this is adjusted during render; only the focus move is an effect.
+  const loadMoreStale = loadMoreRequest && (loadMoreRequest.path !== mediaPath || isFetchNextPageError);
+  if (loadMoreStale) setLoadMoreRequest(null);
+  const loadedMore = useMemo(
+    () => loadMoreRequest && !loadMoreStale && !isFetchingNextPage && mediaPages.length > loadMoreRequest.pages
+      ? assets.filter((asset) => !loadMoreRequest.ids.has(asset.asset_id))
+      : null,
+    [assets, loadMoreRequest, loadMoreStale, mediaPages.length, isFetchingNextPage],
+  );
+  if (loadedMore) {
+    if (loadedMore[0]?.available === false && !goneOpen) {
+      setGoneOpen(true);
+    } else {
+      setLoadMoreRequest(null);
+      setDeleteAnnouncement(`${loadedMore.length} more creations loaded`);
+      setLoadMoreFocus(loadedMore[0]?.asset_id ?? null);
+    }
+  }
+  useEffect(() => {
+    if (loadMoreFocus) focusTile(loadMoreFocus, removedAssetIds.current, headingRef.current);
+  }, [loadMoreFocus]);
+  const visiblePeople = useMemo(
+    () => instanceView
+      ? Array.from(
+          new Set(
+            [...storedAssets, ...(goneOpen ? goneAssets : [])]
+              .map(personFor)
+              .filter((person): person is string => Boolean(person)),
+          ),
+        )
+      : [],
+    [instanceView, storedAssets, goneOpen, goneAssets, personFor],
+  );
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2392,6 +2642,8 @@ export default function LibraryPage() {
     )?.owner_user_id;
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
+  // Remove missing items clears the viewer's own entries, whoever is shown.
+  const ownGoneCount = goneAssets.filter(madeByViewer).length;
   function returnFocus(assetId: string) {
     // After a delete, the confirmation still holds focus; the page returns
     // focus once it closes (below).
@@ -2410,7 +2662,7 @@ export default function LibraryPage() {
   }, [confirming]);
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
-      void fetchNextPage();
+      loadMore();
       return;
     }
     void refetch();
@@ -2434,8 +2686,57 @@ export default function LibraryPage() {
     },
     onSuccess: (_result, asset) => {
       removedAssetIds.current.add(asset.asset_id);
-      toast.success("Deleted from your library.");
+      setDeleteAnnouncement("Deleted from your library.");
       closeAsset();
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (error) => toast.error(failureCopy(error)),
+  });
+  const removeMissingMutation = useMutation({
+    mutationFn: async () => {
+      const session = await mediaRequest<{ csrf_token: string }>(
+        "/me/api/session",
+      );
+      return mediaRequest<{ removed_assets: number }>(
+        REMOVE_MISSING_PATH,
+        {
+          method: "POST",
+          headers: {
+            "x-azizam-user-action": "1",
+            "x-azizam-csrf": session.csrf_token,
+          },
+        },
+        "delete",
+      );
+    },
+    onSuccess: ({ removed_assets: removed }) => {
+      setDeleteAnnouncement(
+        `Removed ${removed} missing ${removed === 1 ? "item" : "items"} from your Library.`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (error) => {
+      if (error instanceof MediaFolderFailure) {
+        setConfirmingRemoval(false);
+        // The folder's state is on the Library read, so the notice follows the server.
+        void queryClient.invalidateQueries({ queryKey: ["library"] });
+      }
+      toast.error(failureCopy(error));
+    },
+  });
+  const confirmFolderMutation = useMutation({
+    mutationFn: async () => {
+      const session = await mediaRequest<{ csrf_token: string }>("/me/api/session");
+      return mediaRequest<{ confirmed: boolean }>(CONFIRM_FOLDER_PATH, {
+        method: "POST",
+        headers: {
+          "x-azizam-user-action": "1",
+          "x-azizam-csrf": session.csrf_token,
+        },
+      }, "folder");
+    },
+    onSuccess: () => {
+      setDeleteAnnouncement("Media folder confirmed. Choose Remove missing items again when you are ready.");
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => toast.error(failureCopy(error)),
@@ -2480,7 +2781,7 @@ export default function LibraryPage() {
                     // The household at a glance: up to three people's marks.
                     <span className="flex -space-x-1">
                       {people.slice(0, 3).map((person) => (
-                        <PersonMark
+                        <MakerMark
                           key={person.id}
                           name={person.name}
                           size="xs"
@@ -2489,7 +2790,7 @@ export default function LibraryPage() {
                       ))}
                     </span>
                   ) : (
-                    <PersonMark
+                    <MakerMark
                       name={
                         option.value === "mine"
                           ? (viewerPerson ?? "You")
@@ -2507,16 +2808,64 @@ export default function LibraryPage() {
       ) : null}
     </>
   );
-  const days = dayMarks(
-    storedAssets.map((asset) => toDateValue(asset.created_at)),
-    new Date(),
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = useMemo(
+    () => dayMarks(
+      storedAssets.map((asset) => toDateValue(asset.created_at)),
+      new Date(today),
+    ),
+    [storedAssets, today],
+  );
+  const selectedId = selected?.asset_id;
+  const storedTiles = useMemo(
+    () => storedAssets.map((asset, index) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        day={days[index]}
+        today={today}
+      />
+    )),
+    [storedAssets, openAsset, instanceView, personFor, selectedId, days, today],
+  );
+  const goneTiles = useMemo(
+    () => goneAssets.map((asset) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        today={today}
+      />
+    )),
+    [goneAssets, openAsset, instanceView, personFor, selectedId, today],
   );
   const selectedPerson = selected
     ? instanceView
       ? personFor(selected)
       : viewerPerson
     : null;
+  const avatarDirectory = useAvatarDirectory(canChooseOwner);
+  const makerMarkFor = useCallback<MakerMarkFor>(
+    (name) => {
+      if (name === viewerPerson)
+        return { personId: viewer.id, avatar: viewer.avatar };
+      const person = people.find((entry) => entry.name === name);
+      return person
+        ? { personId: person.id, avatar: avatarDirectory?.[person.id] }
+        : {};
+    },
+    [viewerPerson, viewer.id, viewer.avatar, people, avatarDirectory],
+  );
   return (
+    <MakerMarksContext.Provider value={makerMarkFor}>
     <div>
       {/* The title and count, then one row of controls with search first
           (D1.3: search floated alone at the right, and on a phone four rows
@@ -2545,7 +2894,7 @@ export default function LibraryPage() {
                 .getElementById("gone-files")
                 ?.scrollIntoView({ block: "start" });
             }}
-            className="text-link text-meta ml-3 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+            className="text-link text-meta ml-3 min-h-6 min-w-6 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
           >
             {goneAssets.length === 1
               ? goneConfirmed
@@ -2557,6 +2906,9 @@ export default function LibraryPage() {
           </button>
         ) : null}
       </header>
+      <p role="status" aria-live="polite" aria-atomic="true" className="text-meta">
+        {deleteAnnouncement}
+      </p>
       {/* The toolbar and the grid it filters are one block, 24 apart. */}
       <div>
         <section
@@ -2619,12 +2971,12 @@ export default function LibraryPage() {
             <div
               role="group"
               aria-label="Creation makers"
-              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full"
+              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-1 max-sm:overflow-visible max-sm:whitespace-normal"
             >
               {visiblePeople.map((person) => (
-                <span key={person} className="inline-flex items-center gap-1.5">
-                  <PersonMark name={person} size="2xs" label={person} />
-                  {person}
+                <span key={person} className="inline-flex min-w-0 items-center gap-1.5">
+                  <MakerMark name={person} size="2xs" label={person} />
+                  <span className="min-w-0 break-words">{person}</span>
                 </span>
               ))}
             </div>
@@ -2662,7 +3014,7 @@ export default function LibraryPage() {
           <div className="mb-4">
             <ErrorState
               heading="That creation is unavailable"
-              message="The gateway couldn’t open this creation. Try again or return to your library."
+              message="We couldn’t open this creation. Try again or return to your library."
               onRetry={() => void refetchDeepLinkedAsset()}
               retrying={deepLinkedAssetFetching}
             />
@@ -2676,13 +3028,14 @@ export default function LibraryPage() {
             role="status"
             aria-label="Loading library"
             aria-busy="true"
-            className="space-y-3"
+            className="relative"
           >
-            {/* The grid's own shape: three to six columns (D1.5: two big
-              phone squares jumped to three). */}
-            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
+            <span className="absolute right-2 top-2 z-10"><DelayedSpinner /></span>
+            <div aria-hidden="true" className={libraryGridLayout}>
               {Array.from({ length: 12 }).map((_, index) => (
-                <Skeleton key={index} className="rounded-media aspect-square" />
+                <div key={index} className="relative min-w-0">
+                  <Skeleton className="rounded-media aspect-square motion-reduce:animate-none" />
+                </div>
               ))}
             </div>
           </div>
@@ -2704,17 +3057,17 @@ export default function LibraryPage() {
             title={activeFilters ? "No matching creations" : "No creations yet"}
             description={
               activeFilters
-                ? "Clear filters to see more."
-                : "Images, video and audio made through the gateway appear here."
+                ? "No creations match your search or filters. Clear the filters to see more."
+                : "Images, videos and audio you create appear here."
             }
             action={
               activeFilters ? (
-                <Button variant="outline" onClick={clearFilters}>
+                <Button size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
               ) : (
-                <Button asChild>
-                  <a href="/ui/try/?capability=image">Make an image</a>
+                <Button asChild size="sm">
+                  <Link prefetch={false} href="/try/?capability=image">Make an image</Link>
                 </Button>
               )
             }
@@ -2726,21 +3079,16 @@ export default function LibraryPage() {
           <div aria-busy={updating}>
             {/* One continuous grid, newest first (D1.6: date groups left
               part-filled rows); the day rides on its first tile. */}
-            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
+            <div
+              role="group"
+              aria-label="Creations"
+              onKeyDown={navigateTiles}
+              className={libraryGridLayout}
+            >
               {inProgress.map((item) => (
-                <InProgressTile key={item.id} item={item} />
+                <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />
               ))}
-              {storedAssets.map((asset, index) => (
-                <AssetTile
-                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                  day={days[index]}
-                />
-              ))}
+              {storedTiles}
             </div>
           </div>
         ) : null}
@@ -2765,13 +3113,24 @@ export default function LibraryPage() {
               {/* One explanation for owners and members alike. */}
               <span className="text-muted-foreground">Receipts remain.</span>
             </p>
-            <Button
-              variant="link"
-              className="h-auto px-0"
-              onClick={() => void refetch()}
-            >
-              Refresh library
-            </Button>
+            <div className="flex flex-wrap items-center gap-x-4">
+              {ownGoneCount > 0 ? (
+                <Button
+                  variant="link"
+                  className="h-auto min-h-6 min-w-6 px-0"
+                  onClick={() => setConfirmingRemoval(true)}
+                >
+                  Remove missing items
+                </Button>
+              ) : null}
+              <Button
+                variant="link"
+                className="h-auto min-h-6 min-w-6 px-0"
+                onClick={() => void refetch()}
+              >
+                Refresh library
+              </Button>
+            </div>
           </div>
           <details
             className="group mt-2"
@@ -2781,19 +3140,67 @@ export default function LibraryPage() {
             <summary className="text-link text-meta flex min-h-8 w-fit cursor-pointer items-center font-medium max-sm:min-h-11">
               Show them
             </summary>
-            <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-              {goneAssets.map((asset) => (
-                <AssetTile
-                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                />
-              ))}
+            <div
+              role="group"
+              aria-label="Unavailable creations"
+              onKeyDown={navigateTiles}
+              className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
+            >
+              {goneTiles}
             </div>
           </details>
+        </section>
+      ) : null}
+      {folder && folder.state !== "confirmed" ? (
+        <section
+          aria-label="Media folder"
+          className="border-border rounded-panel text-meta mt-4 space-y-2 border p-3"
+        >
+          {canChooseOwner ? (
+            <>
+              <p>
+                Azizam needs you to confirm which folder holds the media, once. Missing items can&apos;t be removed until you do.
+                {folder.state === "mismatch"
+                  ? " This folder isn't the one Azizam recorded."
+                  : ""}
+              </p>
+              <p>
+                <code>{folder.path}</code>
+              </p>
+              {folderUnverifiable ? (
+                <p>None of the Library&apos;s items can be checked against a file, so Azizam can&apos;t tell whether this is the media folder. Confirming it is your call.</p>
+              ) : (
+                <p>{`${folderHere} of ${folderItems} Library items have their files here.`}</p>
+              )}
+              {folderMostMissing ? (
+                <p>{`Only ${folderHere} of ${folderItems} items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.`}</p>
+              ) : null}
+              {folderItems > 0 && !folderHere ? (
+                <p>None of the Library&apos;s items have their files in this folder, so Azizam can&apos;t confirm it. Check that the media disk is mounted, then try again.</p>
+              ) : null}
+              {folderNeedsSecondClick && folderConfirmArmed ? (
+                <Button
+                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
+                  onClick={() => confirmFolderMutation.mutate()}
+                >
+                  {folderUnverifiable
+                    ? "Confirm, even though nothing can be checked"
+                    : "Confirm, even though most items are missing"}
+                </Button>
+              ) : (
+                <Button
+                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
+                  onClick={() => (folderNeedsSecondClick
+                    ? setFolderConfirmArmed(true)
+                    : confirmFolderMutation.mutate())}
+                >
+                  This is the right media folder
+                </Button>
+              )}
+            </>
+          ) : (
+            <p>Azizam&apos;s media folder needs the owner to confirm it once. Until then, missing items can&apos;t be removed.</p>
+          )}
         </section>
       ) : null}
       {updating ? (
@@ -2808,8 +3215,8 @@ export default function LibraryPage() {
         >
           <span>
             {isFetchNextPageError
-              ? "The gateway couldn’t load more library items. Try again."
-              : "The gateway couldn’t refresh your library. Try again."}
+              ? "We couldn’t load more library items. Try again."
+              : "We couldn’t refresh your library. Try again."}
           </span>
           <Button
             variant="outline"
@@ -2819,7 +3226,7 @@ export default function LibraryPage() {
             {isFetchingNextPage
               ? "Loading more…"
               : isFetchNextPageError
-                ? "Load more / Retry"
+                ? "Retry loading more"
                 : "Retry"}
           </Button>
         </div>
@@ -2829,7 +3236,7 @@ export default function LibraryPage() {
           <Button
             variant="outline"
             disabled={isFetchingNextPage}
-            onClick={() => void fetchNextPage()}
+            onClick={loadMore}
           >
             {isFetchingNextPage ? "Loading more…" : "Load more"}
           </Button>
@@ -2875,11 +3282,33 @@ export default function LibraryPage() {
             );
           }}
           onDelete={
-            madeByViewer(selected) ? (asset) => setConfirming(asset) : null
+            madeByViewer(selected) ? (asset) => {
+              setDeleteAnnouncement("");
+              setConfirming(asset);
+            } : null
           }
           onReturnFocus={returnFocus}
         />
       ) : null}
+      <ConfirmDialog
+        open={confirmingRemoval}
+        onOpenChange={setConfirmingRemoval}
+        title={
+          hasNextPage
+            ? "Remove missing items?"
+            : `Remove ${ownGoneCount} missing ${ownGoneCount === 1 ? "item" : "items"}?`
+        }
+        description={
+          hasNextPage
+            ? "Removes your items whose files are gone, with their prompts, from your Library. Receipts and every stored file stay."
+            : "Removes them and their prompts from your Library. Receipts and every stored file stay."
+        }
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          setDeleteAnnouncement("");
+          await removeMissingMutation.mutateAsync();
+        }}
+      />
       <ConfirmDialog
         open={Boolean(confirming)}
         onOpenChange={(open) => !open && setConfirming(null)}
@@ -2898,5 +3327,6 @@ export default function LibraryPage() {
         }}
       />
     </div>
+    </MakerMarksContext.Provider>
   );
 }

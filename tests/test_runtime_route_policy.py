@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import asyncio
 import copy
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -21,12 +24,8 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
-from gateway.policy import (  # noqa: E402
-    AppProfile,
-    ModelAccessPolicy,
-    NativePassthroughPolicy,
-    TargetPolicy,
-)
+from gateway.access_plans import AccessPlan  # noqa: E402
+from tests.support.access import access, plan_for, auth_identity  # noqa: E402
 
 
 RAW_KEY = "opk_runtime_policy_test"
@@ -34,18 +33,21 @@ AUTH_HEADERS = {"Authorization": f"Bearer {RAW_KEY}"}
 
 
 @contextmanager
-def authenticated_profile(profile: AppProfile, downstream: dict | None = None):
+def authenticated_profile(profile: AccessPlan, downstream: dict | None = None):
+    """Requests with RAW_KEY run as an App whose person and app hold ``profile``."""
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = proxy.AuthIdentity(
+    identity = auth_identity(
         name="runtime-policy",
         key_hash=key_hash,
         downstream=downstream or {},
-        profile=profile,
+        access=access(profile),
+        app_id="app_runtime_policy",
+        accountable_person_id="usr_runtime_policy",
     )
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
 
-    with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+    with patch.object(
         proxy, "runtime_identity_for_app_credential_hash", side_effect=lookup
     ):
         yield identity
@@ -54,6 +56,15 @@ def authenticated_profile(profile: AppProfile, downstream: dict | None = None):
 def ok_response() -> Response:
     return Response(
         content='{"ok": true}',
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+def routed_response(route: str) -> Response:
+    """A distinct body per delegate, so the response shows which one answered."""
+    return Response(
+        content=json.dumps({"route": route}),
         status_code=200,
         media_type="application/json",
     )
@@ -215,7 +226,7 @@ class _NativePassthroughResponse:
     headers = {
         "content-type": "application/json",
         "content-length": "17",
-        "x-tabby-native": "1",
+        "x-native-marker": "1",
     }
     content = b'{"native": true}'
 
@@ -337,15 +348,14 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         )
 
     def test_protocol_frontend_loopback_avoids_openai_policy_requirement(self) -> None:
-        anthropic_only = AppProfile(
-            id="anthropic-only",
-            protocols=frozenset({"anthropic.messages"}),
-        )
-        identity = proxy.AuthIdentity(
+        # Plans do not restrict by protocol (design v4 §2.1); a plan without chat
+        # denies the direct route, and the loopback marker is still recognized.
+        anthropic_only = plan_for("no-chat", caps=('embed',))
+        identity = auth_identity(
             name="anthropic-only",
             key_hash=proxy.hash_api_key(RAW_KEY),
             downstream={},
-            profile=anthropic_only,
+            access=access(anthropic_only),
         )
         auth_context = proxy.AuthContext(identity=identity)
         body = json.dumps({"model": "test-model"}).encode("utf-8")
@@ -369,10 +379,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertTrue(proxy._is_internal_protocol_forward(RequestLike()))
 
     def test_anthropic_only_opk_allows_models_and_count_tokens(self) -> None:
-        anthropic_only = AppProfile(
-            id="anthropic-only",
-            protocols=frozenset({"anthropic.messages"}),
-        )
+        anthropic_only = plan_for("anthropic-only", caps=('chat',))
         payload = {
             "model": "claude-local",
             "messages": [{"role": "user", "content": "hello"}],
@@ -400,11 +407,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(count_response.status_code, 200, count_response.text)
         self.assertGreater(count_response.json()["input_tokens"], 0)
 
-    def test_openai_only_opk_denies_anthropic_count_tokens(self) -> None:
-        openai_only = AppProfile(
-            id="openai-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+    def test_plan_without_chat_denies_anthropic_count_tokens(self) -> None:
+        openai_only = plan_for("embed-only", caps=('embed',))
 
         with authenticated_profile(openai_only):
             response = self.client.post(
@@ -420,10 +424,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["error"]["type"], "permission_error")
 
     def test_chat_only_opk_denies_media_and_models_routes(self) -> None:
-        chat_only = AppProfile(
-            id="chat-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+        chat_only = plan_for("chat-only", caps=('chat',))
         blocked = AssertionError("runtime backend should not be called")
 
         with authenticated_profile(chat_only), patch.object(
@@ -431,7 +432,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "proxy_stt_request", AsyncMock(side_effect=blocked)
         ), patch.object(
-            proxy, "proxy_comfy_video_create", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_create", AsyncMock(side_effect=blocked)
         ), patch.object(
             proxy, "proxy_audio_generate", AsyncMock(side_effect=blocked)
         ), patch.object(
@@ -443,7 +444,6 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 ("post", "/v1/audio/translations", None),
                 ("post", "/v1/videos", {"prompt": "waves"}),
                 ("post", "/v1/audio/generate", {"prompt": "piano"}),
-                ("get", "/v1/models", None),
             ]
             for method, path, payload in cases:
                 with self.subTest(path=path):
@@ -455,7 +455,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                     self.assertEqual(response.status_code, 403, response.text)
                     self.assertEqual(
                         response.json()["error"]["code"],
-                        "policy_denied",
+                        "not_in_access_plan",
                     )
 
     def test_chat_only_opk_denies_video_list_and_delete(self) -> None:
@@ -466,16 +466,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         next to the video routes). They must still be denied in-handler,
         the same as every other video route -- a valid chat-only credential
         must not be able to enumerate or delete videos."""
-        chat_only = AppProfile(
-            id="chat-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+        chat_only = plan_for("chat-only", caps=('chat',))
         blocked = AssertionError("runtime backend should not be called")
 
         with authenticated_profile(chat_only), patch.object(
-            proxy, "proxy_comfy_video_list", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_list", AsyncMock(side_effect=blocked)
         ), patch.object(
-            proxy, "proxy_comfy_video_delete", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_delete", AsyncMock(side_effect=blocked)
         ):
             cases = [
                 ("get", "/v1/videos"),
@@ -487,34 +484,50 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                     self.assertEqual(response.status_code, 403, response.text)
                     self.assertEqual(
                         response.json()["error"]["code"],
-                        "policy_denied",
+                        "not_in_access_plan",
                     )
 
-    def test_media_profile_allows_video_list_and_delete(self) -> None:
-        media_profile = AppProfile(
-            id="media",
-            protocols=frozenset({"openai.video"}),
-        )
+    def _assert_only_awaited(self, target: str, delegates: dict[str, AsyncMock]) -> AsyncMock:
+        """The allowed route awaited exactly its own delegate, once, and no other."""
+        for name, delegate in delegates.items():
+            if name == target:
+                delegate.assert_awaited_once()
+            else:
+                delegate.assert_not_awaited()
+        return delegates[target]
 
-        with authenticated_profile(media_profile), patch.object(
-            proxy, "proxy_comfy_video_list", AsyncMock(return_value=ok_response())
+    def test_media_profile_allows_video_list_and_delete(self) -> None:
+        media_profile = plan_for("media", caps=('video',))
+        delegates = {
+            "proxy_graph_video_list": AsyncMock(return_value=routed_response("list")),
+            "proxy_graph_video_delete": AsyncMock(return_value=routed_response("delete")),
+        }
+
+        with authenticated_profile(media_profile) as identity, patch.object(
+            proxy, "proxy_graph_video_list", delegates["proxy_graph_video_list"]
         ), patch.object(
-            proxy, "proxy_comfy_video_delete", AsyncMock(return_value=ok_response())
+            proxy, "proxy_graph_video_delete", delegates["proxy_graph_video_delete"]
         ):
             cases = [
-                ("get", "/v1/videos"),
-                ("delete", "/v1/videos/video_does-not-exist"),
+                ("get", "/v1/videos", "proxy_graph_video_list", "list"),
+                ("delete", "/v1/videos/video_does-not-exist", "proxy_graph_video_delete", "delete"),
             ]
-            for method, path in cases:
+            for method, path, target, route in cases:
                 with self.subTest(path=path):
+                    for delegate in delegates.values():
+                        delegate.reset_mock()
                     response = getattr(self.client, method)(path, headers=AUTH_HEADERS)
                     self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), {"route": route})
+                    args = self._assert_only_awaited(target, delegates).await_args.args
+                    self.assertIs(args[1].identity, identity)
+                    if route == "list":
+                        self.assertEqual((args[0].method, args[0].url.path), ("GET", path))
+                    else:
+                        self.assertEqual(args[0], "video_does-not-exist")
 
     def test_chat_only_opk_denies_media_job_content_before_lookup(self) -> None:
-        chat_only = AppProfile(
-            id="chat-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+        chat_only = plan_for("chat-only", caps=('chat',))
         blocked = AssertionError("media job content lookup should not be called")
 
         with authenticated_profile(chat_only), patch.object(
@@ -528,13 +541,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
 
     def test_image_profile_allows_media_job_content(self) -> None:
-        image_profile = AppProfile(
-            id="image",
-            protocols=frozenset({"openai.images"}),
-        )
+        image_profile = plan_for("image", caps=('image',))
         job = {
             "job_id": "job_runtime_policy",
             "intent": "image.generate",
@@ -561,10 +571,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json(), payload)
 
     def test_audio_profile_allows_audio_media_job_content(self) -> None:
-        audio_profile = AppProfile(
-            id="audio",
-            protocols=frozenset({"openai.audio"}),
-        )
+        audio_profile = plan_for("audio", caps=('speech', 'transcribe', 'music', 'sfx', 'audio'))
         job = {
             "job_id": "job_audio_policy",
             "intent": "music.generate",
@@ -592,10 +599,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(body["data"][0]["asset_id"], "aud_" + "a" * 64)
 
     def test_image_profile_denies_audio_media_job_content_after_lookup(self) -> None:
-        image_profile = AppProfile(
-            id="image",
-            protocols=frozenset({"openai.images"}),
-        )
+        image_profile = plan_for("image", caps=('image',))
         job = {
             "job_id": "job_audio_policy",
             "intent": "music.generate",
@@ -615,44 +619,57 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
 
     def test_media_profile_allows_audio_and_video_routes(self) -> None:
-        media_profile = AppProfile(
-            id="media",
-            protocols=frozenset({"openai.audio", "openai.video"}),
-        )
+        media_profile = plan_for("media", caps=('speech', 'transcribe', 'music', 'sfx', 'audio', 'video'))
 
-        with authenticated_profile(media_profile), patch.object(
-            proxy, "proxy_tts_request", AsyncMock(return_value=ok_response())
+        delegates = {
+            name: AsyncMock(return_value=routed_response(name))
+            for name in ("proxy_tts_request", "proxy_stt_request",
+                         "proxy_graph_video_create", "proxy_audio_generate")
+        }
+
+        with authenticated_profile(media_profile) as identity, patch.object(
+            proxy, "proxy_tts_request", delegates["proxy_tts_request"]
         ), patch.object(
-            proxy, "proxy_stt_request", AsyncMock(return_value=ok_response())
+            proxy, "proxy_stt_request", delegates["proxy_stt_request"]
         ), patch.object(
-            proxy, "proxy_comfy_video_create", AsyncMock(return_value=ok_response())
+            proxy, "proxy_graph_video_create", delegates["proxy_graph_video_create"]
         ), patch.object(
-            proxy, "proxy_audio_generate", AsyncMock(return_value=ok_response())
+            proxy, "proxy_audio_generate", delegates["proxy_audio_generate"]
         ):
+            # (path, payload, delegate, route-specific keyword arguments)
             cases = [
-                ("post", "/v1/audio/speech", {"input": "hello", "voice": "alloy"}),
-                ("post", "/v1/audio/transcriptions", None),
-                ("post", "/v1/audio/translations", None),
-                ("post", "/v1/videos", {"prompt": "waves"}),
-                ("post", "/v1/audio/generate", {"prompt": "piano"}),
+                ("/v1/audio/speech", {"input": "hello", "voice": "alloy"}, "proxy_tts_request", {"receipt"}),
+                ("/v1/audio/transcriptions", None, "proxy_stt_request", {"operation": "transcriptions"}),
+                ("/v1/audio/translations", None, "proxy_stt_request", {"operation": "translations"}),
+                ("/v1/videos", {"prompt": "waves"}, "proxy_graph_video_create", {}),
+                ("/v1/audio/generate", {"prompt": "piano"}, "proxy_audio_generate", {"receipt"}),
             ]
-            for method, path, payload in cases:
+            for path, payload, target, keywords in cases:
                 with self.subTest(path=path):
-                    request = getattr(self.client, method)
+                    for delegate in delegates.values():
+                        delegate.reset_mock()
                     if payload is None:
-                        response = request(path, headers=AUTH_HEADERS)
+                        response = self.client.post(path, headers=AUTH_HEADERS)
                     else:
-                        response = request(path, headers=AUTH_HEADERS, json=payload)
+                        response = self.client.post(path, headers=AUTH_HEADERS, json=payload)
                     self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), {"route": target})
+                    call = self._assert_only_awaited(target, delegates).await_args
+                    request, auth_context = call.args[:2]
+                    self.assertEqual((request.method, request.url.path), ("POST", path))
+                    self.assertIs(auth_context.identity, identity)
+                    if isinstance(keywords, dict):
+                        for name, value in keywords.items():
+                            self.assertEqual(call.kwargs.get(name), value, name)
+                    else:  # The route's own receipt travels with the request.
+                        for name in keywords:
+                            self.assertIsNotNone(call.kwargs.get(name), name)
 
     def test_service_availability_override_blocks_tts_and_stt_routes(self) -> None:
-        media_profile = AppProfile(
-            id="media",
-            protocols=frozenset({"openai.audio"}),
-        )
+        media_profile = plan_for("media", caps=('speech', 'transcribe', 'music', 'sfx', 'audio'))
         overrides = {
             "service_availability": {
                 "tts": {
@@ -709,10 +726,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_full_openai_profile_allows_models_route(self) -> None:
-        full_profile = AppProfile(
-            id="full-openai",
-            protocols=frozenset({"openai"}),
-        )
+        full_profile = plan_for("full-openai")
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default"])
 
@@ -721,7 +735,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -730,11 +744,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_models_route_filters_profile_model_allowlist(self) -> None:
-        model_locked = AppProfile(
-            id="model-locked",
-            protocols=frozenset({"openai"}),
-            models=frozenset({"default"}),
-        )
+        model_locked = plan_for("model-locked", models=['default'])
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
 
@@ -743,26 +753,21 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
         self.assertEqual(response.status_code, 200, response.text)
         ids = [item["id"] for item in response.json()["data"]]
-        self.assertEqual(ids, ["default"])
-        self.assertEqual(
-            response.json()["azizam_profile_model_allowlist"],
-            ["default"],
-        )
+        # `vision` is another name for `default`, so a plan that lists `default`
+        # can use it, and the listing says so (a request for it is allowed too).
+        self.assertEqual(ids, ["default", "vision"])
 
-    def test_current_loaded_profile_filters_models_and_denies_other_models(self) -> None:
+    def test_plan_that_cannot_load_models_lists_them_but_denies_starting_one(self) -> None:
+        """Discovery lists granted items with their state; starting one needs May load (design v4 §2.13)."""
         default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
         loaded_path = str(default_role.get("model") or "/models/default.gguf")
-        current_loaded = AppProfile(
-            id="current-loaded",
-            protocols=frozenset({"openai"}),
-            model_access=ModelAccessPolicy(mode="current_loaded"),
-        )
+        current_loaded = plan_for("current-loaded", load=False)
         self.assertNotEqual(
             loaded_path, OTHER_MODEL_PATH, "fixture role must use a different model"
         )
@@ -779,26 +784,23 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
         self.assertEqual(response.status_code, 200, response.text)
         ids = {item["id"] for item in response.json()["data"]}
         self.assertIn("default", ids)
-        self.assertNotIn(OTHER_ROLE, ids)
-        self.assertEqual(response.json()["azizam_target_visibility"], "available")
-        self.assertEqual(response.json()["azizam_target_activation"], "existing_only")
-        self.assertEqual(response.json()["azizam_model_access"], "current_loaded")
+        self.assertIn(OTHER_ROLE, ids)
 
         with authenticated_profile(current_loaded), patch.object(
             proxy, "ROLES", _roles_with_other_model()
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ):
             denied = self.client.post(
                 "/v1/chat/completions",
@@ -810,22 +812,15 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(denied.status_code, 403, denied.text)
-        self.assertEqual(denied.json()["error"]["code"], "policy_denied")
-        self.assertIn("currently loaded", denied.json()["error"]["message"])
+        self.assertEqual(denied.json()["error"]["code"], "cannot_start_model")
+        self.assertIn("isn't running, and your access plan can't start it", denied.json()["error"]["message"])
 
     def test_current_loaded_profile_denies_when_no_loaded_model_reported(self) -> None:
-        current_loaded = AppProfile(
-            id="current-loaded",
-            protocols=frozenset({"openai"}),
-            target_policy=TargetPolicy(
-                visibility="available",
-                activation="existing_only",
-            ),
-        )
+        current_loaded = plan_for("current-loaded", load=False)
 
         with authenticated_profile(current_loaded), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy, "currently_loaded_kobold_model", lambda: None):
+        ), patch.object(proxy, "currently_loaded_model", lambda _backend: None):
             response = self.client.post(
                 "/v1/embeddings",
                 headers=AUTH_HEADERS,
@@ -833,18 +828,11 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "cannot_start_model")
         self.assertIn("no loaded LLM", response.json()["error"]["message"])
 
     def test_current_model_returns_503_for_existing_only_profile_when_unloaded(self) -> None:
-        current_loaded = AppProfile(
-            id="current-loaded",
-            protocols=frozenset({"openai"}),
-            target_policy=TargetPolicy(
-                visibility="available",
-                activation="existing_only",
-            ),
-        )
+        current_loaded = plan_for("current-loaded", load=False)
 
         async def forbidden_send(*_args, **_kwargs):
             raise AssertionError("model='current' must not forward when unloaded")
@@ -873,14 +861,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
     def test_private_requested_model_field_cannot_spoof_existing_only_policy(self) -> None:
         default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
         loaded_path = str(default_role.get("model") or "/models/default.gguf")
-        current_loaded = AppProfile(
-            id="current-loaded",
-            protocols=frozenset({"openai"}),
-            target_policy=TargetPolicy(
-                visibility="available",
-                activation="existing_only",
-            ),
-        )
+        current_loaded = plan_for("current-loaded", load=False)
 
         self.assertNotEqual(
             loaded_path, OTHER_MODEL_PATH, "fixture role must use a different model"
@@ -896,7 +877,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
             proxy, "send_llm_execution_request", forbidden_send
         ):
@@ -911,18 +892,11 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "cannot_start_model")
         self.assertIn("currently loaded", response.json()["error"]["message"])
 
     def test_existing_only_target_policy_uses_workflow_availability(self) -> None:
-        existing_only = AppProfile(
-            id="workflow-existing-only",
-            protocols=frozenset({"openai.images"}),
-            target_policy=TargetPolicy(
-                visibility="available",
-                activation="existing_only",
-            ),
-        )
+        existing_only = plan_for("workflow-existing-only", caps=('image',), load=False)
 
         with authenticated_profile(existing_only) as identity, patch.object(
             proxy, "COMFY_ENABLED", True
@@ -956,10 +930,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertIn("no available workflow", denied.reasons[0])
 
     def test_chat_only_profile_allows_post_responses(self) -> None:
-        chat_only = AppProfile(
-            id="chat-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+        chat_only = plan_for("chat-only", caps=('chat',))
 
         with authenticated_profile(chat_only), patch.object(
             proxy,
@@ -976,10 +947,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["object"], "response")
 
     def test_media_only_profile_denies_post_responses(self) -> None:
-        media_only = AppProfile(
-            id="media-only",
-            protocols=frozenset({"openai.audio", "openai.video"}),
-        )
+        media_only = plan_for("media-only", caps=('speech', 'transcribe', 'music', 'sfx', 'audio', 'video'))
         blocked = AssertionError("responses backend should not be called")
 
         with authenticated_profile(media_only), patch.object(
@@ -994,14 +962,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
 
     def test_vision_chat_can_use_loaded_kobold_mmproj_without_static_vision_capability(self) -> None:
-        chat_profile = AppProfile(
-            id="vision-kobold",
-            protocols=frozenset({"openai.chat"}),
-            backends=frozenset({"kobold"}),
-        )
+        chat_profile = plan_for("vision-kobold", caps=('chat',))
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardResponse()
 
@@ -1037,7 +1001,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "kobold_has_mmproj", return_value=True
+            proxy, "loaded_aux_present", return_value=True
         ), patch.object(
             proxy, "ensure_target", AsyncMock(return_value=True)
         ) as ensure_target, patch.object(
@@ -1072,7 +1036,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ensure_target.assert_not_called()
 
     def test_backend_native_v1_model_passthrough_is_not_public(self) -> None:
-        unrestricted = AppProfile(id="runtime", protocols=frozenset({"openai"}))
+        unrestricted = plan_for("runtime")
 
         with authenticated_profile(unrestricted), patch.object(
             proxy.httpx, "AsyncClient", _CaptureForwardClient
@@ -1083,35 +1047,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(_CaptureForwardClient.urls, [])
 
     def test_ollama_model_mutation_routes_require_auth(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             response = self.client.post("/api/pull", json={"name": "llama3"})
 
         self.assertEqual(response.status_code, 401, response.text)
 
-    def test_ollama_model_mutation_routes_are_ollama_profile_gated(self) -> None:
-        openai_only = AppProfile(id="openai-only", protocols=frozenset({"openai"}))
-        blocked = AssertionError("runtime backend should not be called")
-
-        with authenticated_profile(openai_only), patch.object(
-            proxy.httpx, "AsyncClient", side_effect=blocked
-        ), patch.object(
-            proxy, "get_active_backend", AsyncMock(side_effect=blocked)
-        ), patch.object(
-            proxy, "ensure_target", AsyncMock(side_effect=blocked)
-        ):
-            response = self.client.post(
-                "/ollama/api/pull",
-                headers=AUTH_HEADERS,
-                json={"name": "llama3"},
-            )
-
-        self.assertEqual(response.status_code, 403, response.text)
-        body = response.json()
-        self.assertEqual(set(body), {"error"})
-        self.assertIn("protocol", body["error"])
-
     def test_ollama_model_mutation_routes_return_unsupported_without_backend(self) -> None:
-        ollama_profile = AppProfile(id="ollama", protocols=frozenset({"ollama"}))
+        ollama_profile = plan_for("ollama")
         blocked = AssertionError("runtime backend should not be called")
         routes = [
             ("post", "/api/create", "/api/create", {"model": "local"}),
@@ -1148,39 +1090,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 self.assertIn(canonical_path, body["error"])
                 self.assertIn("does not mutate local model files", body["error"])
 
-    def test_ollama_discovery_routes_require_auth_by_default(self) -> None:
+    def test_ollama_discovery_routes_require_auth(self) -> None:
         for path in ("/api/tags", "/ollama/api/tags", "/api/version", "/ollama/api/version"):
-            with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-                proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False
-            ):
-                response = self.client.get(path)
-            self.assertEqual(response.status_code, 401, f"{path} should require auth by default")
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 401, f"{path} should require auth")
 
-    def test_ollama_discovery_routes_public_when_compat_mode_enabled(self) -> None:
-        for path in ("/api/tags", "/ollama/api/tags", "/api/version", "/ollama/api/version"):
-            with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-                proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", True
-            ), patch.object(
-                proxy, "_ollama_model_catalog_summaries", AsyncMock(return_value=[])
-            ):
-                response = self.client.get(path)
-            self.assertNotEqual(
-                response.status_code, 401, f"{path} should be public with compat mode enabled"
-            )
-            self.assertEqual(response.status_code, 200, response.text)
-
-    def test_ollama_mutation_routes_still_require_auth_when_compat_mode_enabled(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", True
-        ):
-            response = self.client.post("/api/pull", json={"name": "llama3"})
-        self.assertEqual(response.status_code, 401, response.text)
-
-    def test_provider_native_tabby_requires_native_passthrough_policy(self) -> None:
-        profile = AppProfile(
-            id="native-disabled",
-            protocols=frozenset({"provider-native"}),
-        )
+    def test_provider_native_kobold_requires_native_passthrough_policy(self) -> None:
+        profile = plan_for("native-disabled", caps=())
         blocked = AssertionError("native backend should not be called")
 
         with authenticated_profile(profile), patch.object(
@@ -1189,38 +1105,42 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.get(
-                "/gateway/v1/providers/tabby/v1/models",
+                "/gateway/v1/providers/kobold/v1/models",
                 headers=AUTH_HEADERS,
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
-        self.assertIn("native passthrough disabled", response.json()["error"]["message"])
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
+        self.assertIn("Direct engine access to kobold isn't in your access plan", response.json()["error"]["message"])
 
-    def test_provider_native_tabby_forwards_with_downstream_auth_only(self) -> None:
-        profile = AppProfile(
-            id="tabby-native",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"tabby"}),
-                allowed_operations=frozenset({"v1/models"}),
-            ),
-        )
+    def test_provider_native_kobold_forwards_with_downstream_auth_only(self) -> None:
+        profile = plan_for("kobold-native", caps=(), engines=['kobold'], operations=['v1/models'])
         downstream = {
-            "tabby": {
-                "api_key": "tabby-api-key",
-                "admin_key": "tabby-admin-key",
+            "kobold": {
+                "api_key": "kobold-api-key",
+                "admin_key": "kobold-admin-key",
             }
         }
 
-        with authenticated_profile(profile, downstream=downstream), patch.object(
+        # The engine's own credential for the call's class is the only key sent (contract section 6): the
+        # record's auth_inject rules and the caller's per-identity downstream secrets are not.
+        inject = [
+            {"paths": ["/v1/models"], "header": "x-admin-key",
+             "secret": "admin_key", "secret_env": "FIXTURE_INJECT_KEY"},
+            {"header": "x-api-key", "secret": "api_key", "secret_env": "FIXTURE_INJECT_KEY"},
+        ]
+        lane_credential = {"credentials": {"inference": {
+            "secret_env": "FIXTURE_LANE_KEY", "header": "x-lane-key", "origin": proxy.KOBOLD_HOST,
+        }}}
+        with authenticated_profile(profile, downstream=downstream), patch.dict(
+            proxy._PROVIDER_NATIVE_TARGETS["kobold"]["record"], {"auth_inject": inject, "connection": lane_credential},
+        ), patch.dict(os.environ, {"FIXTURE_LANE_KEY": "lane-secret", "FIXTURE_INJECT_KEY": "inject-secret"}), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.get(
-                "/gateway/v1/providers/tabby/v1/models?limit=1&api_key=caller-query&API_KEY=second-query",
+                "/gateway/v1/providers/kobold/v1/models?limit=1&api_key=caller-query&API_KEY=second-query",
                 headers={
                     **AUTH_HEADERS,
                     "X-Api-Key": "caller-secret",
@@ -1235,7 +1155,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json(), {"native": True})
         self.assertEqual(
             _CaptureNativePassthroughClient.calls[0]["url"],
-            f"{proxy.TABBY_HOST}/v1/models?limit=1",
+            f"{proxy.KOBOLD_HOST}/v1/models?limit=1",
         )
         forwarded_headers = {
             key.lower(): value
@@ -1244,14 +1164,41 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             ].items()
         }
         self.assertNotIn("authorization", forwarded_headers)
+        self.assertEqual(forwarded_headers["x-lane-key"], "lane-secret")
+        self.assertNotIn("x-admin-key", forwarded_headers)
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
-        self.assertEqual(forwarded_headers["x-admin-key"], "tabby-admin-key")
+        self.assertNotIn("kobold-api-key", forwarded_headers.values())
+        self.assertNotIn("kobold-admin-key", forwarded_headers.values())
+        self.assertNotIn("inject-secret", forwarded_headers.values())
         for name in ("x-request-id", "cookie", "x-csrf-token", "x-azizam-internal-forward"):
             self.assertNotIn(name, forwarded_headers)
-        self.assertEqual(response.headers["x-tabby-native"], "1")
+        self.assertEqual(response.headers["x-native-marker"], "1")
+
+    def test_provider_native_sends_the_headers_an_owner_listed_for_an_added_engine(self) -> None:
+        """Add engine's Request headers reach the engine on its direct route too (add-engine-spec.md §8)."""
+        profile = plan_for("engine-native", caps=(), engines=["garage-gpu"], operations=["v1/models"])
+        backend = {"native_passthrough": True, "host": "127.0.0.1", "port": 9, "protocol": "openai-compatible",
+                   "headers": [{"name": "X-Tenant", "value": "family", "public": True}]}
+        with patch.dict(proxy.config["backends"], {"garage-gpu": backend}):
+            target = proxy._build_provider_native_targets()["garage-gpu"]
+        self.assertEqual(proxy._native_engine_headers(target), {"X-Tenant": "family"})
+        with authenticated_profile(profile), patch.dict(proxy.config["backends"], {"garage-gpu": backend}), patch.object(
+            proxy, "_PROVIDER_NATIVE_TARGETS", {"garage-gpu": target},
+        ), patch.object(proxy.httpx, "AsyncClient", _CaptureNativePassthroughClient), patch.object(
+            proxy.receipt_store, "record", return_value="req_test",
+        ):
+            response = self.client.get(
+                "/gateway/v1/providers/garage-gpu/v1/models",
+                headers={**AUTH_HEADERS, "x-tenant": "sent-by-the-app"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        call = _CaptureNativePassthroughClient.calls[0]
+        self.assertEqual(call["url"], "http://127.0.0.1:9/v1/models")
+        forwarded = {key.lower(): value for key, value in call["headers"].items()}
+        self.assertEqual(forwarded["x-tenant"], "family")
 
     def test_provider_native_targets_include_configured_local_backends(self) -> None:
-        self.assertIn("tabby", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("kobold", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("tts", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("stt", proxy._PROVIDER_NATIVE_TARGETS)
@@ -1260,15 +1207,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotIn("azizam", proxy._PROVIDER_NATIVE_TARGETS)
 
     def test_provider_native_list_projects_profile_policy(self) -> None:
-        profile = AppProfile(
-            id="native-list",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"comfyui"}),
-                allowed_operations=frozenset({"POST /prompt"}),
-            ),
-        )
+        profile = plan_for("native-list", caps=(), engines=['comfyui'], operations=['POST /prompt'])
 
         with authenticated_profile(profile):
             response = self.client.get(
@@ -1281,7 +1220,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(body["object"], "list")
         by_id = {row["id"]: row for row in body["data"]}
         self.assertIn("comfyui", by_id)
-        self.assertNotIn("tabby", by_id)
+        self.assertNotIn("kobold", by_id)
         self.assertNotIn("allowed", by_id["comfyui"])
         self.assertEqual(
             by_id["comfyui"]["policy"]["native_passthrough"],
@@ -1289,7 +1228,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 "enabled": True,
                 "denied": False,
                 "allowed_backends": ["comfyui"],
-                "allowed_operations": ["POST /prompt"],
+                "allowed_operations_by_plan": {"native-list": ["POST /prompt"]},
                 "audit": True,
             },
         )
@@ -1307,18 +1246,11 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         )
 
     def test_provider_native_detail_hides_disallowed_provider(self) -> None:
-        profile = AppProfile(
-            id="native-list",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"comfyui"}),
-            ),
-        )
+        profile = plan_for("native-list", caps=(), engines=['comfyui'], operations=['*'])
 
         with authenticated_profile(profile):
             response = self.client.get(
-                "/gateway/v1/providers/tabby",
+                "/gateway/v1/providers/kobold",
                 headers=AUTH_HEADERS,
             )
 
@@ -1326,14 +1258,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "provider_not_found")
 
     def test_provider_native_detail_does_not_forward_to_backend(self) -> None:
-        profile = AppProfile(
-            id="native-detail",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(enabled=True),
-        )
+        profile = plan_for("native-detail", caps=(), engines='all', operations=['*'])
         blocked = AssertionError("metadata route should not call native backend")
 
-        downstream = {"tabby": {"api_key_env": "TABBY_API_KEY", "admin_key": "secret"}}
+        downstream = {"kobold": {"api_key_env": "KOBOLD_API_KEY", "admin_key": "secret"}}
 
         with authenticated_profile(profile, downstream=downstream), patch.object(
             proxy.httpx,
@@ -1341,25 +1269,25 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ):
             response = self.client.get(
-                "/gateway/v1/providers/tabby",
+                "/gateway/v1/providers/kobold",
                 headers=AUTH_HEADERS,
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual(body["id"], "tabby")
+        self.assertEqual(body["id"], "kobold")
         self.assertEqual(
             body["policy"]["native_passthrough"],
             {
                 "enabled": True,
                 "denied": False,
-                "allowed_backends": ["tabby"],
-                "allowed_operations": ["*"],
+                "allowed_backends": ["kobold"],
+                "allowed_operations_by_plan": {"native-detail": ["*"]},
                 "audit": True,
             },
         )
         self.assertEqual(body["auth"]["required"], "gateway_api_key")
-        self.assertEqual(body["auth"]["downstream_service"], "tabby")
+        self.assertEqual(body["auth"]["downstream_service"], "kobold")
         self.assertEqual(
             body["auth"]["downstream_auth_classes"],
             ["admin_key", "api_key"],
@@ -1368,10 +1296,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertTrue(body["live"]["enabled"])
 
     def test_openai_voice_aliases_enforce_audio_profile_policy(self) -> None:
-        chat_only = AppProfile(
-            id="chat-only",
-            protocols=frozenset({"openai.chat"}),
-        )
+        chat_only = plan_for("chat-only", caps=('chat',))
 
         with authenticated_profile(chat_only):
             for path in ("/openai/v1/voices", "/openai/v1/audio/voices"):
@@ -1380,28 +1305,31 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
                     self.assertEqual(response.status_code, 403, response.text)
                     self.assertEqual(
-                        response.json()["error"]["code"], "policy_denied"
+                        response.json()["error"]["code"], "not_in_access_plan"
                     )
 
     def test_provider_native_comfyui_forwards_generic_backend_path(self) -> None:
-        profile = AppProfile(
-            id="comfyui-native",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"comfyui"}),
-                allowed_operations=frozenset({"POST /prompt"}),
-            ),
-        )
+        profile = plan_for("comfyui-native", caps=(), engines=['comfyui'], operations=['POST /prompt'])
+        # Per-identity downstream headers are not the engine's credential: the route does not send them.
         downstream = {
             "comfyui": {
                 "headers": {
-                    "X-Comfy-Key": "comfy-secret",
+                    "X-Comfy-Key": "identity-secret",
                 }
             }
         }
 
-        with authenticated_profile(profile, downstream=downstream), patch.object(
+        # A caller who is not the owner may POST through the provider route only what the record declares,
+        # and the engine gets its own inference credential, bound to its origin.
+        declared = {
+            "native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]},
+            "connection": {"credentials": {"inference": {
+                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.COMFY_HOST,
+            }}},
+        }
+        with authenticated_profile(profile, downstream=downstream), patch.dict(
+            proxy._PROVIDER_NATIVE_TARGETS["comfyui"]["record"], declared,
+        ), patch.dict(os.environ, {"FIXTURE_COMFY_KEY": "comfy-secret"}), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,
@@ -1431,27 +1359,22 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotIn("x-request-id", forwarded_headers)
 
     def test_provider_native_preserves_streaming_response_shape(self) -> None:
-        profile = AppProfile(
-            id="tabby-native-stream",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"tabby"}),
-                allowed_operations=frozenset({"POST /v1/chat/completions"}),
-            ),
-        )
+        profile = plan_for("kobold-native-stream", caps=(), engines=['kobold'], operations=['POST /v1/chat/completions'])
         _CaptureNativePassthroughClient.response = _NativeStreamingResponse([
             b'{"message":"hel"}\n',
             b'{"message":"lo","done":true}\n',
         ])
 
-        with authenticated_profile(profile), patch.object(
+        declared = {"native": {"allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}}
+        with authenticated_profile(profile), patch.dict(
+            proxy._PROVIDER_NATIVE_TARGETS["kobold"]["record"], declared,
+        ), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.post(
-                "/gateway/v1/providers/tabby/v1/chat/completions",
+                "/gateway/v1/providers/kobold/v1/chat/completions",
                 headers=AUTH_HEADERS,
                 json={"stream": True, "messages": []},
             )
@@ -1464,16 +1387,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         )
         self.assertNotIn("transfer-encoding", response.headers)
 
-    def test_provider_native_tabby_operation_allowlist_denies_before_backend(self) -> None:
-        profile = AppProfile(
-            id="tabby-native",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(
-                enabled=True,
-                allowed_backends=frozenset({"tabby"}),
-                allowed_operations=frozenset({"v1/models"}),
-            ),
-        )
+    def test_provider_native_kobold_operation_allowlist_denies_before_backend(self) -> None:
+        profile = plan_for("kobold-native", caps=(), engines=['kobold'], operations=['v1/models'])
         blocked = AssertionError("native backend should not be called")
 
         with authenticated_profile(profile), patch.object(
@@ -1482,21 +1397,17 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.post(
-                "/gateway/v1/providers/tabby/v1/model/load",
+                "/gateway/v1/providers/kobold/v1/model/load",
                 headers=AUTH_HEADERS,
                 json={"model": "unsafe"},
             )
 
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
-        self.assertIn("not in allow-list", response.json()["error"]["message"])
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
+        self.assertIn("isn't in your access plan", response.json()["error"]["message"])
 
     def test_provider_native_unknown_provider_returns_clear_404(self) -> None:
-        profile = AppProfile(
-            id="native",
-            protocols=frozenset({"provider-native"}),
-            native_passthrough=NativePassthroughPolicy(enabled=True),
-        )
+        profile = plan_for("native", caps=(), engines='all', operations=['*'])
 
         with authenticated_profile(profile):
             response = self.client.get(
@@ -1508,10 +1419,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "provider_not_found")
 
     def test_non_chat_profile_denies_stored_response_routes(self) -> None:
-        media_only = AppProfile(
-            id="media-only",
-            protocols=frozenset({"openai.audio", "openai.video"}),
-        )
+        media_only = plan_for("media-only", caps=('speech', 'transcribe', 'music', 'sfx', 'audio', 'video'))
         blocked = AssertionError("responses store should not be called")
 
         with authenticated_profile(media_only), patch.object(
@@ -1536,8 +1444,66 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                     self.assertEqual(response.status_code, 403, response.text)
                     self.assertEqual(
                         response.json()["error"]["code"],
-                        "policy_denied",
+                        "not_in_access_plan",
                     )
+
+
+class _AuthenticatingLoopbackClient:
+    """The loopback HTTP client, replaced: authenticate what it would send to 127.0.0.1."""
+
+    seen: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def post(self, url, *, headers, content):
+        path = "/v1/embeddings" if url.endswith("/v1/embeddings") else "/v1/chat/completions"
+        inner = Request({
+            "type": "http", "method": "POST", "path": path, "query_string": b"", "client": ("127.0.0.1", 40000),
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        })
+        self.__class__.seen.append(proxy.authenticate_request(inner, path))
+        return _ForwardResponse()
+
+    async def aclose(self):
+        return None
+
+
+class ProtocolLoopbackIdentityTests(unittest.IsolatedAsyncioTestCase):
+    """A protocol frontend's loopback runs as its caller, never as the 127.0.0.1 App."""
+
+    async def test_protocol_loopback_runs_as_the_caller(self) -> None:
+        import ipaddress
+
+        from gateway import accounts, admin_store
+        from tests.support.access import store_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            admin = Path(tmp) / "admin.db"
+            admin_store.init_db(admin)
+            accounts.initialize(admin)
+            owner = admin_store.upsert_oidc_user("https://idp.test", "ann", email="ann@example.test", path=admin)
+            plan = store_plan("Everything", path=admin)
+            accounts.change_person(owner["id"], "test", path=admin, plan_id=plan["id"])
+            local = admin_store.create_app("This computer", kind="service", owner_user_id=owner["id"],
+                                           access_plan=plan["id"], path=admin)
+            kitchen = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner["id"],
+                                             access_plan=plan["id"], path=admin)
+            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin)
+            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin)
+            _AuthenticatingLoopbackClient.seen = []
+            with patch.object(proxy.ADMIN_STORE, "path", admin), \
+                    patch.object(proxy.httpx, "AsyncClient", _AuthenticatingLoopbackClient):
+                caller = proxy.AuthContext(identity=proxy.runtime_identity_for_trusted_address(
+                    ipaddress.ip_address("192.0.2.7"), path=admin))
+                outer = Request({"type": "http", "method": "POST", "path": "/v1/messages", "headers": [],
+                                 "query_string": b"", "client": ("192.0.2.7", 51000)})
+                await proxy._forward_chat_completions(outer, caller, {"model": "m", "messages": []}, stream=False)
+                await proxy._forward_embeddings(outer, caller, {"model": "m", "input": "x"})
+        self.assertEqual(len(_AuthenticatingLoopbackClient.seen), 2)
+        for auth in _AuthenticatingLoopbackClient.seen:
+            self.assertIsInstance(auth, proxy.AuthContext)
+            self.assertEqual(auth.identity.app_id, kitchen["id"])
 
 
 if __name__ == "__main__":

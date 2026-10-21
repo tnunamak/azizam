@@ -21,6 +21,7 @@ ComfyUI call arrive through :class:`IdentityDeps`, so it is tested with fakes.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import io
 import itertools
@@ -652,7 +653,8 @@ async def resolve_people(
                 label=label,
                 spec=spec,
                 person=Person(label=label, faces=tuple(f for f, _ in found), infant=spec.infant),
-                heads=[head_reference_png(req.photos[i], f.bbox) for f, i in keep] if with_heads else [],
+                heads=(await asyncio.to_thread(lambda: [head_reference_png(req.photos[i], f.bbox) for f, i in keep]))
+                if with_heads else [],
                 face_bbox=primary.bbox,
                 age=primary.age,
                 gender=primary.gender,

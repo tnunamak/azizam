@@ -5,13 +5,16 @@ import { Button } from "@/components/ui/button";
 export default function NotFound() {
   return (
     <>
-      <PageHeader title="Page not found" answer="This page may have moved." />
+      <PageHeader
+        title="Page not found"
+        answer="Go Home to find what you need."
+      />
       <EmptyState
         title="Find your way home"
-        description="Use the navigation to explore your gateway."
+        description="We couldn't find a page at this address. It may have moved or been removed. Check the address for a typo, or go Home to find what you need."
         action={
           <Button asChild>
-            <Link href="/">Go home</Link>
+            <Link prefetch={false} href="/">Home</Link>
           </Button>
         }
       />

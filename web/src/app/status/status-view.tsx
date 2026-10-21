@@ -1,5 +1,6 @@
 "use client";
 
+import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCcw } from "lucide-react";
@@ -18,6 +19,7 @@ import {
 import { CapNotice } from "@/components/product/cap-notice";
 import { PageHeader } from "@/components/product/page-header";
 import { ApiError } from "@/lib/api";
+import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { productApi, type MemberStatusCapability } from "@/lib/product-api";
 import {
   activeCapRefusal,
@@ -35,7 +37,11 @@ import {
 } from "@/lib/use-capability-views";
 import { askOwner, useOwnerName } from "@/lib/use-owner-name";
 import { appPlumbingCapabilities, memberTerms } from "@/lib/terms";
-import { StatusClient } from "./status-client";
+
+// The owner's operational view is a large module that members never render.
+const StatusClient = lazy(() =>
+  import("./status-client").then((module) => ({ default: module.StatusClient })),
+);
 
 function usableNames(capability: MemberStatusCapability): string[] {
   return Array.from(
@@ -69,7 +75,10 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
   });
   const retryStatus = () => void refetch();
   const model = useCapabilityViews(false);
-  const expired = error instanceof ApiError && error.status === 401;
+  const expired =
+    error instanceof ApiError &&
+    error.status === 401 &&
+    error.code !== REAUTH_REQUIRED_CODE;
   const refusal = activeCapRefusal(model.requests);
   // Home and Status read the same snapshot. If Home has no rows (an older
   // gateway), the Status rows go through the same model instead.
@@ -179,7 +188,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
             description="Your session has ended. Sign in to view the models available to your account."
             action={
               <Button asChild>
-                <Link href="/sign-in/?return_to=%2Fui%2Fstatus%2F">
+                <Link prefetch={false} href="/sign-in/?return_to=%2Fstatus%2F">
                   Sign in
                 </Link>
               </Button>
@@ -309,14 +318,12 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                     const meta = capabilityMeta(capability);
                     const Icon = meta.icon;
                     const state = receiptWord(receipt.status);
-                    const describedBy = `receipt-${receipt.request_id}`;
                     return (
                       <li key={receipt.request_id}>
-                        {/* The gateway sends an absolute /ui path; next/link would prefix /ui again. */}
+                        {/* The gateway sends the receipt link; a plain anchor loads Usage with it.
+            Its name is its visible text (WCAG 2.5.3), so no aria-label. */}
                         <a
                           href={receipt.href}
-                          aria-label="View request receipt"
-                          aria-describedby={describedBy}
                           className="group flex min-h-(--row-1) max-sm:min-h-(--row-phone-1) items-center gap-3 py-1.5"
                         >
                           <Icon
@@ -324,7 +331,6 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                             className="text-muted-foreground size-4 shrink-0"
                           />
                           <span
-                            id={describedBy}
                             className="flex min-w-0 flex-1 items-center gap-3"
                           >
                             <span className="min-w-0 flex-1 truncate text-meta font-medium group-hover:underline">
@@ -361,8 +367,8 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                 ) : (
                   <>
                     App still not working?{" "}
-                    <Link
-                      href="/home"
+                    <Link prefetch={false}
+                      href="/"
                       className="text-link font-medium underline-offset-4 hover:underline"
                     >
                       Check your connection
@@ -382,7 +388,9 @@ export function StatusView() {
   const viewer = useViewer();
   return viewer.admin ? (
     <div className="flex min-w-0 flex-col gap-(--space-section)">
-      <StatusClient />
+      <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+        <StatusClient />
+      </Suspense>
       <MemberStatus requestsOnly />
     </div>
   ) : (

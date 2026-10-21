@@ -1,7 +1,8 @@
 services:
   gateway:
     build: .
-    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning", "--no-proxy-headers"]
+    # Sweep request scratch under a lock that survives exec into the gateway (REQUEST_RETENTION.md 5.1).
+    command: ["python3", "-m", "gateway.private_tmp", "exec", "python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning", "--no-proxy-headers"]
     ports:
       - "127.0.0.1:${AZIZAM_PORT-5000}:5000"
     env_file:
@@ -18,6 +19,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - gateway-data:/app/data
+      - gateway-cache:/app/cache
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
@@ -53,6 +55,7 @@ services:
 
 volumes:
   gateway-data:
+  gateway-cache:
 
 networks:
   default:

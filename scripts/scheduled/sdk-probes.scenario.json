@@ -1,0 +1,62 @@
+{
+  "protocol": "openai-compatible",
+  "name": "sdk-probes",
+  "description": "What the Node SDK probes make the gateway ask its upstream: a model list, chat (plain and streamed), embeddings and health. Every exchange repeats in any order; none is required, because a probe may skip a call its SDK does not make.",
+  "provenance": {"source": "hand-written", "reference": "https://platform.openai.com/docs/api-reference/chat"},
+  "exchanges": [
+    {
+      "id": "health", "required": false, "repeat": true,
+      "match": {"method": "GET", "path": "/health"},
+      "response": {"status": 200, "json": {"status": "ok"}}
+    },
+    {
+      "id": "models", "required": false, "repeat": true,
+      "match": {"method": "GET", "path": "/v1/models"},
+      "response": {"status": 200, "json": {"object": "list", "data": [
+        {"id": "probe-chat", "object": "model", "owned_by": "probe"},
+        {"id": "probe-embed", "object": "model", "owned_by": "probe"}]}}
+    },
+    {
+      "id": "chat-stream", "required": false, "repeat": true,
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"stream": true}},
+      "response": {
+        "status": 200,
+        "body": [
+          {"event": {"id": "chatcmpl-probe-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "probe-chat", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-probe-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "probe-chat", "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-probe-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "probe-chat", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}},
+          {"event": {"id": "chatcmpl-probe-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "probe-chat", "choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8}}},
+          {"done": true}
+        ]
+      }
+    },
+    {
+      "id": "chat", "required": false, "repeat": true,
+      "match": {"method": "POST", "path": "/v1/chat/completions"},
+      "response": {
+        "status": 200,
+        "json": {
+          "id": "chatcmpl-probe", "object": "chat.completion", "created": 1767225600, "model": "probe-chat",
+          "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+          "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8}
+        }
+      }
+    },
+    {
+      "id": "embeddings-base64", "required": false, "repeat": true,
+      "match": {"method": "POST", "path": "/v1/embeddings", "json": {"encoding_format": "base64"}},
+      "response": {
+        "status": 200,
+        "json": {"object": "list", "model": "probe-embed", "data": [{"object": "embedding", "index": 0, "embedding": "AACAPgAAAL8="}], "usage": {"prompt_tokens": 1, "total_tokens": 1}}
+      }
+    },
+    {
+      "id": "embeddings", "required": false, "repeat": true,
+      "match": {"method": "POST", "path": "/v1/embeddings"},
+      "response": {
+        "status": 200,
+        "json": {"object": "list", "model": "probe-embed", "data": [{"object": "embedding", "index": 0, "embedding": [0.25, -0.5]}], "usage": {"prompt_tokens": 1, "total_tokens": 1}}
+      }
+    }
+  ]
+}

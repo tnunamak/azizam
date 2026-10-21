@@ -21,13 +21,13 @@ Keep your API key, which starts with `opk_`, private by keeping it out of public
 4. Continue to Home.
 
 The key is shown once. If you lose it, create a new key from
-`/ui/apps/`, or ask the owner to help you.
+`/apps/`, or ask the owner to help you.
 
 An invitation can be used once before it expires; if your link no longer works, request a new invitation from the owner.
 
 ## Connect an app from Home
 
-1. Open `/ui/home/`.
+1. Open `/`.
 2. Choose an app card.
 3. Create or select a key.
 4. Copy the base URL and key into your app.
@@ -57,7 +57,7 @@ absent or unavailable.
 
 ## Manage your app keys
 
-Open `/ui/apps/` to see your apps and keys.
+Open `/apps/` to see your apps and keys.
 
 You can:
 
@@ -82,7 +82,7 @@ by the owner, named by the model or alias, and allowed by your access plan.
 
 ## Use generated media
 
-Generated images, video, and audio can appear in `/ui/library/` when those
+Generated images, video, and audio can appear in `/library/` when those
 capabilities are configured and allowed for your account.
 
 Some result URLs are signed download links. A signed link can be opened without
@@ -91,7 +91,7 @@ see the file.
 
 ## View usage and receipts
 
-Open `/ui/usage/` to see your usage when measurement data exists. Some counts
+Open `/usage/` to see your usage when measurement data exists. Some counts
 can say `Not measured yet` when the gateway does not have a complete source
 for that value.
 
@@ -108,7 +108,7 @@ invitation.
 ### The app says the key is invalid
 
 Check that you copied the full `opk_...` key. If the key was revoked or lost,
-create a new key in `/ui/apps/` and update the app.
+create a new key in `/apps/` and update the app.
 
 ### The app cannot connect
 

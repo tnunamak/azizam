@@ -36,14 +36,7 @@ def isolated_admin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "store", proxy.ADMIN_STORE)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", SIGNING_KEY)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", CookieConfig(secure=False))
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
-    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", None)
-    monkeypatch.setattr(
-        proxy,
-        "LAN_BYPASS_CIDRS",
-        [ipaddress.ip_network("192.168.0.0/16")],
-    )
+    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("192.168.0.0/16")])
     monkeypatch.setattr(proxy, "TRUSTED_PROXIES", [])
     monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", False)
     monkeypatch.setattr(proxy, "_CF_IP_NETWORKS", None)
@@ -62,8 +55,7 @@ def isolated_admin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     ("203.0.113.10", True, 403),
 ])
 def test_setup_exact_container_host_allowance(isolated_admin, monkeypatch, peer, configured, status):
-    monkeypatch.setattr(proxy, "LAN_BYPASS_CIDRS", [])
-    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("172.30.251.1/32")] if configured else None)
+    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("172.30.251.1/32")] if configured else [])
     client = TestClient(proxy.app, base_url="http://localhost", client=(peer, 50000))
     response = client.post("/setup/local-owner", data={
         "email": "owner@example.test", "password": "Container-owner-test", "password_confirm": "Container-owner-test",
@@ -91,7 +83,26 @@ def test_compose_setup_allowance_matches_defined_gateway():
     gateway = compose["networks"]["default"]["ipam"]["config"][0]["gateway"]
     assert compose["services"]["gateway"]["environment"]["AZIZAM_SETUP_ALLOWED_CIDRS"] == gateway + "/32"
     assert compose["services"]["gateway"]["ports"][0].startswith("127.0.0.1:")
-    assert "--no-proxy-headers" in compose["services"]["gateway"]["command"]
+    command = " ".join(compose["services"]["gateway"]["command"])
+    assert "exec python3 -m uvicorn proxy:app" in command
+    assert "--no-proxy-headers" in command.split("exec python3 -m uvicorn proxy:app", 1)[1].split()
+
+
+def test_compose_prepares_the_private_temp_directory_before_the_app():
+    import yaml
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
+    command = compose["services"]["gateway"]["command"]
+    assert command[:5] == ["python3", "-m", "gateway.private_tmp", "exec", "python3"]
+    assert command[5:8] == ["-m", "uvicorn", "proxy:app"]
+
+
+def test_compose_keeps_data_and_creations_in_named_volumes():
+    import yaml
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
+    mounts = {m.split(":")[1]: m.split(":")[0] for m in compose["services"]["gateway"]["volumes"]}
+    assert mounts["/app/data"] == "gateway-data"
+    assert mounts["/app/cache"] == "gateway-cache"
+    assert {"gateway-data", "gateway-cache"} <= set(compose["volumes"])
 
 
 def _owner_session_cookie(path: Path) -> tuple[str, str, str]:
@@ -320,7 +331,7 @@ def test_setup_local_owner_first_claim_is_atomic_under_race(
     assert winner_response.headers["location"] == "/"
     losers = [response for _, _, response in results if response is not winner_response]
     assert len(losers) == 1
-    assert losers[0].headers["location"] == "/setup"
+    assert losers[0].headers["location"] == "/setup/"
     assert "set-cookie" not in losers[0].headers
 
     users = admin_store.list_users(path=isolated_admin)
@@ -382,7 +393,7 @@ def test_setup_local_owner_same_email_race_preserves_winner_verifier(
     assert winner_response.headers["location"] == "/"
     losers = [response for _, response in results if response is not winner_response]
     assert len(losers) == 1
-    assert losers[0].headers["location"] == "/setup"
+    assert losers[0].headers["location"] == "/setup/"
     assert "set-cookie" not in losers[0].headers
 
     users = admin_store.list_users(path=isolated_admin)

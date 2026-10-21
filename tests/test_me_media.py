@@ -15,10 +15,11 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
+from gateway import admin_store, mcp_oauth_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
+from tests.support.access import service_app
 
 
 PNG_1X1 = base64.b64decode(
@@ -52,15 +53,13 @@ class MeMediaRouterTests(unittest.TestCase):
             role="owner", subject_kind="user", subject_id=self.owner["id"], path=self.admin_db
         )
         self.app_a = admin_store.create_app(
-            "Alice", kind="personal", owner_user_id=self.alice["id"], path=self.admin_db
+            "Alice", kind="personal", owner_user_id=self.alice["id"], access_plan="person", path=self.admin_db
         )
         self.app_b = admin_store.create_app(
-            "Bob", kind="personal", owner_user_id=self.bob["id"], path=self.admin_db
+            "Bob", kind="personal", owner_user_id=self.bob["id"], access_plan="person", path=self.admin_db
         )
         self.service_account = admin_store.ensure_service_account("svc_daisy", path=self.admin_db)
-        self.service_app = admin_store.create_app(
-            "Daisy", kind="service", owner_service_account_id=self.service_account["id"], path=self.admin_db
-        )
+        self.service_app = service_app("Daisy", path=self.admin_db)
         self.cred_a = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app_a["id"],
@@ -218,6 +217,8 @@ class MeMediaRouterTests(unittest.TestCase):
         cost_class: str | None = None,
         status: str = "succeeded",
         owner_key_hash: str | None = None,
+        connection_id: str | None = None,
+        api_key_name: str | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -229,6 +230,8 @@ class MeMediaRouterTests(unittest.TestCase):
             resolved_model=resolved_model,
             status=status,
             owner_key_hash=owner_key_hash,
+            connection_id=connection_id,
+            api_key_name=api_key_name,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
@@ -293,6 +296,22 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual((everyone["scope"], everyone["requests"]), ("everyone", 2))
         people = {row["id"]: row["label"] for row in everyone["people"]}
         self.assertEqual(people["self"], "You")
+
+    def test_usage_receipts_show_retention_detail_only_to_maker(self) -> None:
+        entry = {"kind": "conversation", "decision": "kept", "reason": "kept",
+                 "kept_until_ms": 1792300000000, "parts": ["accepted"], "limited_by": "member_choice"}
+        receipt_store.record({"request_id": "req_private_usage", "status": "succeeded",
+                              "intent": "chat.completions", "app_id": self.app_a["id"],
+                              "maker_person_id": self.alice["id"], "retention": [entry]},
+                             path=self.receipts_db)
+        mine = self.client.get("/me/api/usage/summary")
+        assert mine.status_code == 200
+        assert mine.json()["receipts"][0]["retention"] == [entry]
+        self.current_user = self.owner
+        everyone = self.client.get("/me/api/usage/summary?person=all")
+        assert everyone.status_code == 200
+        assert everyone.json()["receipts"][0]["retention"] == [
+            {"kind": "conversation", "decision": "kept"}]
 
     def test_media_defaults_to_your_own_work_for_every_role(self) -> None:
         self._write_asset("img_" + "1" * 64, ["sha256:bob"])
@@ -419,15 +438,17 @@ class MeMediaRouterTests(unittest.TestCase):
             assets=[{"asset_id": asset_id} for asset_id in assets],
         ), path=self.jobs_db)
         expected = self.client.get("/me/api/media")
+        # The list reads the apps in one query and never asks per job or per asset.
         with patch.object(admin_store, "get_app", wraps=admin_store.get_app) as lookup:
             actual = self.client.get("/me/api/media")
             self.assertEqual(actual.status_code, 200, actual.text)
             self.assertEqual(actual.content, expected.content)
-            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
-        with patch.object(admin_store, "get_app", return_value={**self.app_a, "name": "Renamed"}) as lookup:
+            lookup.assert_not_called()
+        # Nothing is kept between requests: a renamed app shows at once.
+        renamed = [{**self.app_a, "name": "Renamed"}]
+        with patch.object(admin_store, "list_apps", return_value=renamed):
             refreshed = self.client.get("/me/api/media")
             self.assertTrue(all(item["source"]["label"] == "Renamed" for item in refreshed.json()["assets"]))
-            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
         self.current_user = self.bob
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
 
@@ -483,7 +504,7 @@ class MeMediaRouterTests(unittest.TestCase):
 
     def test_owner_sees_own_prompt_in_instance_library_only(self) -> None:
         owner_app = admin_store.create_app(
-            "Owner personal", kind="personal", owner_user_id=self.owner["id"], path=self.admin_db,
+            "Owner personal", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
         )
         asset_id = "img_" + "e" * 64
         self._write_asset(asset_id, ["sha256:alice"], prompt="maker words")
@@ -527,29 +548,24 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(source_by_asset[shared_asset]["label"], "Alice")
         self.assertNotEqual(source_by_asset[shared_asset]["app_id"], self.app_b["id"])
         self.assertEqual([source["id"] for source in own.json()["sources"]], [f"app:{self.app_a['id']}"])
-        self.assertEqual(self.client.get("/me/api/media?source=local-network").status_code, 403)
+        for removed in ("/me/api/media?source=local-network", "/me/api/usage/summary?source=local-network"):
+            self.assertEqual(self.client.get(removed).status_code, 400, removed)
         self.assertEqual(self.client.get(f"/me/api/media?source=app:{self.app_b['id']}").status_code, 403)
-        self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").status_code, 403)
         self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").status_code, 403)
 
         self.current_user = self.owner
         all_media = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(all_media.status_code, 200, all_media.text)
         source_ids = {source["id"] for source in all_media.json()["sources"]}
-        self.assertIn("local-network", source_ids)
+        self.assertNotIn("local-network", source_ids)
         self.assertIn(f"app:{self.service_app['id']}", source_ids)
         service = self.client.get(f"/me/api/media?scope=everyone&source=app:{self.service_app['id']}")
         self.assertEqual([item["asset_id"] for item in service.json()["assets"]], [service_asset])
-        local = self.client.get("/me/api/media?scope=everyone&source=local-network")
-        self.assertEqual([item["asset_id"] for item in local.json()["assets"]], [local_asset])
-        person_local = self.client.get("/me/api/media?person=local-network")
-        self.assertEqual([item["asset_id"] for item in person_local.json()["assets"]], [local_asset])
+        self.assertEqual(self.client.get("/me/api/media?scope=everyone&source=local-network").status_code, 400)
         service_usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}")
         self.assertEqual(service_usage.status_code, 200, service_usage.text)
         self.assertEqual(service_usage.json()["media_count"], 1)
-        local_usage = self.client.get("/me/api/usage/summary?person=all&source=local-network")
-        self.assertEqual(local_usage.status_code, 200, local_usage.text)
-        self.assertEqual(local_usage.json()["media_count"], 1)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=all&source=local-network").status_code, 400)
 
     def test_delete_tombstone_does_not_hide_shared_asset_from_other_user(self) -> None:
         asset_id = "img_" + "e" * 64
@@ -825,7 +841,6 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/usage/summary?person=self").json()["failed_requests"], 0)
         self.assertEqual(self.client.get(f"/me/api/usage/summary?person={self.alice['id']}").json()["failed_requests"], 2)
         self.assertEqual(self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_b['id']}").json()["failed_requests"], 2)
-        self.assertEqual(self.client.get("/me/api/usage/summary?person=all&source=local-network").json()["failed_requests"], 1)
 
     def test_usage_failed_requests_is_null_when_outcomes_are_not_computable(self) -> None:
         self._receipt(self.app_a["id"], "req_known_failure", status="failed")
@@ -878,11 +893,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(instance_usage.status_code, 200, instance_usage.text)
         self.assertEqual(instance_usage.json()["requests"], 4)
         self.assertEqual(instance_usage.json()["remote_spend"], 4.0)
-        self.assertIn("local-network", {source["id"] for source in instance_usage.json()["sources"]})
+        self.assertNotIn("local-network", {source["id"] for source in instance_usage.json()["sources"]})
+        self.assertNotIn("local-network", {person["id"] for person in instance_usage.json()["people"]})
         self.assertIn(f"app:{self.service_app['id']}", {source["id"] for source in instance_usage.json()["sources"]})
-        self.assertEqual(
-            self.client.get("/me/api/usage/summary?person=all&source=local-network").json()["requests"], 1
-        )
         self.assertEqual(
             self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}").json()["requests"], 1
         )
@@ -890,6 +903,80 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(everyone.status_code, 200, everyone.text)
         self.assertEqual(everyone.json()["requests"], 4)
         self.assertEqual(everyone.json()["remote_spend"], 4.0)
+
+    def _connect(self, person: dict, client_name: str = "ChatGPT", *, revoke: bool = False):
+        """One MCP sign-in connection of ``person``, and the session App it runs as."""
+        store = mcp_oauth_store.Store(lambda: self.admin_db)
+        client = store.put_client(
+            client_id=f"client_{client_name}_{person['id']}", kind="registered", name=client_name,
+            redirect_uris=["https://client.example/cb"], grant_types=["authorization_code"],
+            auth_method="none", secret_hash=None, metadata={})
+        grant = store.create_grant(person_id=person["id"], client=client, redirect_uri="https://client.example/cb",
+                                   resource="https://gw.test/mcp", scope="mcp", session=None)
+        if revoke:
+            store.revoke_grant(grant.id, "person_revoked")
+        session = admin_store.ensure_session_app_for_user(person["id"], name="Azizam", path=self.admin_db)
+        return grant, session
+
+    def test_a_connection_is_its_own_usage_source_apart_from_the_persons_browser(self) -> None:
+        grant, session = self._connect(self.alice)
+        self._receipt(session["id"], "req_browser", api_key_name="Azizam")
+        for index in range(3):
+            self._receipt(session["id"], f"req_chatgpt_{index}", api_key_name="ChatGPT (MCP)", connection_id=grant.id)
+        usage = self.client.get("/me/api/usage/summary").json()
+        by_id = {source["id"]: source for source in usage["sources"]}
+        connection = by_id[f"connection:{grant.id}"]
+        self.assertEqual((connection["label"], connection["kind"], connection["owner_user_id"], connection["requests"]),
+                         ("ChatGPT", "connection", self.alice["id"], 3))
+        self.assertEqual(by_id[f"app:{session['id']}"]["requests"], 1)
+        self.assertEqual(usage["requests"], 4)
+        labels = {row["request_id"]: row["source_label"] for row in usage["receipts"]}
+        self.assertEqual(labels["req_chatgpt_0"], "ChatGPT")
+        self.assertEqual(labels["req_browser"], "Azizam")
+        # Filtering by the connection shows only its requests; by the App, only the browser's.
+        only_connection = self.client.get(f"/me/api/usage/summary?source=connection:{grant.id}").json()
+        self.assertEqual(only_connection["requests"], 3)
+        self.assertEqual({row["source"]["kind"] for row in only_connection["receipts"]}, {"connection"})
+        only_app = self.client.get(f"/me/api/usage/summary?source=app:{session['id']}").json()
+        self.assertEqual([row["request_id"] for row in only_app["receipts"]], ["req_browser"])
+
+    def test_connections_belong_to_the_person_who_connected_them(self) -> None:
+        alice_grant, alice_session = self._connect(self.alice)
+        bob_grant, bob_session = self._connect(self.bob, "Claude")
+        self._receipt(alice_session["id"], "req_alice", api_key_name="ChatGPT (MCP)", connection_id=alice_grant.id)
+        self._receipt(bob_session["id"], "req_bob", api_key_name="Claude (MCP)", connection_id=bob_grant.id)
+        mine = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual([s["id"] for s in mine["sources"] if s["kind"] == "connection"],
+                         [f"connection:{alice_grant.id}"])
+        self.assertEqual(self.client.get(f"/me/api/usage/summary?source=connection:{bob_grant.id}").status_code, 403)
+        self.current_user = self.owner
+        everyone = self.client.get("/me/api/usage/summary?person=all").json()
+        self.assertEqual({s["id"]: s["owner_user_id"] for s in everyone["sources"] if s["kind"] == "connection"},
+                         {f"connection:{alice_grant.id}": self.alice["id"], f"connection:{bob_grant.id}": self.bob["id"]})
+        bobs = self.client.get(f"/me/api/usage/summary?person=all&source=connection:{bob_grant.id}").json()
+        self.assertEqual([row["request_id"] for row in bobs["receipts"]], ["req_bob"])
+        # An owner looking at one person does not see another person's connection requests there.
+        alices = self.client.get(f"/me/api/usage/summary?person={self.alice['id']}&source=connection:{bob_grant.id}")
+        self.assertEqual(alices.status_code, 403)
+
+    def test_a_disconnected_connection_stays_listed_only_while_it_has_requests(self) -> None:
+        ended, session = self._connect(self.alice, "Old client", revoke=True)
+        used, _session = self._connect(self.alice, "Used client", revoke=True)
+        self._receipt(session["id"], "req_used", api_key_name="Used client (MCP)", connection_id=used.id)
+        sources = {s["id"]: s for s in self.client.get("/me/api/usage/summary").json()["sources"]}
+        self.assertNotIn(f"connection:{ended.id}", sources)
+        self.assertTrue(sources[f"connection:{used.id}"]["disabled"])
+        self.assertEqual(sources[f"connection:{used.id}"]["requests"], 1)
+
+    def test_keyless_local_network_is_no_longer_a_source_or_person(self) -> None:
+        self._receipt(None, "req_unattributed")
+        self.current_user = self.owner
+        for path in ("/me/api/usage/summary?person=all", "/me/api/media?scope=everyone"):
+            body = self.client.get(path).json()
+            self.assertNotIn("local-network", {source["id"] for source in body["sources"]}, path)
+            self.assertNotIn("Local network · no key", json.dumps(body["sources"]), path)
+        self.assertNotIn("local-network", {p["id"] for p in self.client.get("/me/api/usage/summary").json()["people"]})
+        self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").status_code, 400)
 
     def test_proxy_download_url_fetches_signed_content(self) -> None:
         import proxy
@@ -913,7 +1000,7 @@ class MeMediaRouterTests(unittest.TestCase):
             proxy._image_url_signing_secret = None
             cfg = OIDCConfig(
                 enabled=True,
-                scopes=("openid", "email"), allowed_email_domains=(), admin_emails=(),
+                scopes=("openid", "email"), admin_emails=(),
                 issuer="issuer",
                 client_id="client",
                 client_secret="secret",
@@ -1058,9 +1145,15 @@ class MeMediaRouterTests(unittest.TestCase):
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
-        for index in range(1001):
-            admin_store.record_audit("media.asset.delete", actor_id=self.bob["id"], actor_kind="user",
-                                     target_id=f"other-{index}", path=self.admin_db)
+        # One transaction for the churn: a commit per row made this test take
+        # minutes on a busy disk without changing the rows it writes.
+        with admin_store._conn(self.admin_db) as conn:
+            for index in range(1001):
+                admin_store._record_audit_in_transaction(
+                    conn, "media.asset.delete", actor_kind="user", actor_id=self.bob["id"],
+                    actor_label=None, target_kind=None, target_id=f"other-{index}",
+                    metadata=None, now=admin_store._now())
+            conn.commit()
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.current_user = self.bob
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
@@ -1167,12 +1260,12 @@ class MeMediaRouterTests(unittest.TestCase):
             preview = receipt_store.retention_preview(30, path=self.receipts_db)
             deleted = receipt_store.save_retention(30, preview,
                 lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
-                    {"retention_days": 30}, path=self.admin_db), path=self.receipts_db)
+                    {"retention_days": 30}, path=self.admin_db), path=self.receipts_db, fact_store_path=self.jobs_db)
             self.assertEqual(deleted, 1)
             for days in (90, 365, None):
                 receipt_store.save_retention(days, receipt_store.retention_preview(days, path=self.receipts_db),
                     lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
-                        {"retention_days": days}, path=self.admin_db), path=self.receipts_db)
+                        {"retention_days": days}, path=self.admin_db), path=self.receipts_db, fact_store_path=self.jobs_db)
                 usage = self.client.get("/me/api/usage/summary").json()
                 self.assertEqual(usage["coverage_start"], "2026-10-01T12:00:00+00:00")
                 self.assertIn("partial", usage["coverage_note"].lower())
@@ -1325,7 +1418,7 @@ class MeMediaRouterTests(unittest.TestCase):
 
     def test_usage_sources_carry_request_counts_and_disabled_state(self) -> None:
         old = admin_store.create_app(
-            "Alice", kind="personal", owner_user_id=self.alice["id"], path=self.admin_db
+            "Alice", kind="personal", owner_user_id=self.alice["id"], access_plan="person", path=self.admin_db
         )
         admin_store.disable_app(old["id"], path=self.admin_db)
         self._receipt(self.app_a["id"], "req_src_1")
@@ -1423,7 +1516,9 @@ class _GatedMakeRuntime:
 
         self.calls.append(json.loads(json.dumps(payload)))
         self.started.set()
-        await asyncio.to_thread(self.release.wait, 10)
+        if not await asyncio.to_thread(self.release.wait, 10):
+            # Completing here would race the lifecycle assertions of a held job.
+            raise AssertionError("the test never released this held make job")
         if payload["job_id"] in self.canceled:
             raise me_make.MakeCanceled()
         if self.fail_with is not None:

@@ -1,6 +1,6 @@
 """Pure capability model for policy-aware discovery and routing.
 
-A :class:`Capability` is a structured fact: "this gateway, with this profile,
+A :class:`Capability` is a structured fact: "this gateway, under these access plans,
 can serve requests of this shape against this backend (with these caveats)".
 The model deliberately mirrors the minimum eligibility fields described in
 ``docs/CORE_CONTRACTS.md`` §Capability so that the same record can drive
@@ -26,7 +26,7 @@ Audiences match :mod:`gateway.discovery`:
   any provenance fields populated on the record.
 
 Policy integration is by value: callers pass a :class:`PolicyDecision` (or
-an :class:`AppProfile` plus :class:`PolicyRequest` they evaluated elsewhere)
+an :class:`EffectiveAccess` plus :class:`PolicyRequest` they evaluated elsewhere)
 into :func:`capability_with_policy_view`. Capabilities themselves never call
 the evaluator — that would re-couple discovery to live request context.
 """
@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
 from gateway.discovery import WorkflowRecord
-from gateway.policy import ALLOWED, AppProfile, PolicyDecision, PolicyRequest
+from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 
@@ -118,6 +118,8 @@ class Capability:
     caveats: tuple[str, ...] = ()
     policy_sources: tuple[str, ...] = ()
     policy_reasons: tuple[str, ...] = ()
+    # The rule that decided the policy view (allow or deny); owner-only, never summarized.
+    policy_rule: DecidingRule | None = None
     # Published numeric/string limits as (name, value) pairs (kept a tuple so the record stays
     # hashable). Video capabilities carry ``max_total_seconds`` and ``segment_seconds`` here.
     limits: tuple[tuple[str, Any], ...] = ()
@@ -212,6 +214,7 @@ class Capability:
             policy_available=decision.decision == ALLOWED,
             policy_sources=tuple(decision.sources),
             policy_reasons=tuple(decision.reasons),
+            policy_rule=decision.rule,
         )
 
     def with_caveats(self, *extra: str) -> "Capability":
@@ -543,21 +546,21 @@ def capability_from_workflow_record(
 
 def capability_with_policy_view(
     capability: Capability,
-    profile: AppProfile,
+    access: EffectiveAccess,
     request: PolicyRequest | None = None,
     identity: Any = None,
 ) -> Capability:
-    """Return ``capability`` annotated with a policy view for ``profile``.
+    """Return ``capability`` annotated with a policy view for ``access``.
 
     Builds a minimal :class:`PolicyRequest` from the capability identity
     (``backend``, ``model``, ``workflow``) when one isn't provided, evaluates
-    the profile against it via :func:`gateway.policy.evaluate`, and stamps
+    the access plans against it via :func:`gateway.policy.evaluate`, and stamps
     the result onto the capability via :meth:`Capability.with_policy_decision`.
 
     This is the integration point with the policy module. Capabilities do
     not import or run the evaluator themselves at construction time —
     discovery passes them through this helper when an audience-scoped view
-    is requested for a specific profile.
+    is requested for a specific identity.
     """
     from gateway.policy import evaluate
 
@@ -571,7 +574,7 @@ def capability_with_policy_view(
         capability_resource_tier=capability.resource_tier,
         capability_tags=frozenset(capability.tags),
     )
-    decision = evaluate(profile, effective_request)
+    decision = evaluate(access, effective_request)
     # Show what the runtime enforces: owner category rules for ``identity``.
     from gateway import category_enforcement
     decision = category_enforcement.apply(identity, effective_request, decision)

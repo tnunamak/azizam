@@ -2,18 +2,20 @@
 
 The user portal is intentionally narrow. It lets a signed-in OIDC user create
 user-owned Apps, see non-secret API-key records, create keys for Apps they own,
-inspect owned-key access, and delete their own keys or Apps. It never grants
-Profiles or changes App ownership; those remain admin-plane actions.
+inspect owned-key access, and delete their own keys or Apps. A person's own
+App is always "Same as my access plan"; choosing plans and changing App
+ownership remain admin-plane actions.
 """
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
-from gateway import admin_store
+from gateway import admin_store, avatars, session_guard
 from gateway import receipt_store
+from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
 from gateway.runtime_auth import hash_api_key
@@ -25,6 +27,10 @@ __all__ = [
     "delete_user_app",
     "get_user_app_credential",
     "mint_user_app_key",
+    "rename_person_app",
+    "rename_person_key",
+    "rename_user_app",
+    "rename_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
 ]
@@ -72,65 +78,46 @@ def _credential_not_found() -> UserPortalError:
     )
 
 
-def _profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any] | None:
-    if not profile_id:
-        return None
-    record = admin_store.get_profile(profile_id, path=path)
+def _plan_summary(
+    app: Mapping[str, Any], *, path: Path, listing: tuple[str | None, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """The plan an App runs under, as the portal shows it: its name and summary, no rules.
+
+    ``listing`` holds the person's plan id and every plan, read once for a listing
+    of one person's Apps.
+    """
+    from gateway.access_plans import PlanError, plan_from_document, plan_summary
+
+    assignment = app.get("access_plan")
+    same_as_person = assignment == admin_store.PERSON_ASSIGNMENT
+    if not same_as_person:
+        plan_id = assignment
+    elif listing is not None:
+        plan_id = listing[0]
+    else:
+        plan_id = admin_store.person_plan_id(str(app.get("owner_user_id") or ""), path=path)
+    if not plan_id:
+        record = None
+    elif listing is not None:
+        record = listing[1].get(str(plan_id))
+    else:
+        record = admin_store.get_access_plan(str(plan_id), path=path)
     if record is None:
-        return {
-            "id": profile_id,
-            "name": "Missing Profile",
-            "missing": True,
-        }
-    profile = record.get("profile") if isinstance(record, Mapping) else None
-    policy_id = None
-    protocols: list[str] = []
-    allow: dict[str, Any] = {}
-    status_visibility = "basic"
-    if isinstance(profile, Mapping):
-        policy_id = profile.get("id")
-        protocols = list(profile.get("protocols") or [])
-        raw_allow = profile.get("allow")
-        allow = dict(raw_allow) if isinstance(raw_allow, Mapping) else {}
-        raw_visibility = profile.get("status_visibility")
-        if isinstance(raw_visibility, Mapping):
-            status_visibility = str(raw_visibility.get("level") or "basic")
-    return {
-        "id": record.get("id") or profile_id,
-        "name": record.get("name") or policy_id or profile_id,
-        "policy_id": policy_id,
-        "protocols": protocols,
-        "allow": allow,
-        "status_visibility": status_visibility,
-        "missing": False,
-    }
+        return None
+    try:
+        summary = plan_summary(plan_from_document(record["plan"], plan_id=str(record["id"])))
+    except PlanError:
+        summary = None
+    return {"id": record["id"], "name": record["name"], "summary": summary, "same_as_person": same_as_person}
 
 
-def _default_profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any]:
-    if profile_id:
-        profile = _profile_summary(profile_id, path=path)
-        if profile is not None:
-            profile["inherited"] = True
-            return profile
-    return {
-        "id": "default-local",
-        "name": "Default local",
-        "policy_id": "default-local",
-        "protocols": [],
-        "allow": {},
-        "status_visibility": "basic",
-        "missing": False,
-        "inherited": True,
-    }
-
-
-def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
+def _credentials_for_app(
+    app_id: str, *, path: Path, active: Mapping[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """``active`` holds every listed app's credentials, read in one query."""
     credentials = []
-    for record in admin_store.list_active_credentials(
-        subject_kind="app",
-        app_id=app_id,
-        path=path,
-    ):
+    for record in (admin_store.list_active_credentials(subject_kind="app", app_id=app_id, path=path)
+                   if active is None else active.get(app_id, ())):
         item = _sanitize_credential(record)
         item["active"] = True
         credentials.append(item)
@@ -156,31 +143,6 @@ def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, 
     return app
 
 
-def _effective_profile_id(
-    app: Mapping[str, Any], *, default_profile_id: str | None = None
-) -> str | None:
-    profile_id = app.get("default_profile_id") or default_profile_id
-    return str(profile_id) if profile_id else None
-
-
-def _app_profile_for_self_service(
-    app: Mapping[str, Any],
-    *,
-    default_profile_id: str | None = None,
-    path: Path,
-) -> str | None:
-    profile_id = _effective_profile_id(app, default_profile_id=default_profile_id)
-    if not profile_id:
-        return None
-    if admin_store.get_profile(str(profile_id), path=path) is None:
-        raise UserPortalError(
-            "profile_missing",
-            "This App's inherited permissions are unavailable; ask the operator to repair access",
-            status_code=403,
-        )
-    return str(profile_id)
-
-
 def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
     user = admin_store.get_user(session.subject, path=path)
     if user is None:
@@ -193,14 +155,7 @@ def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
 
 
 def _live_role_for_user(user_id: str, *, path: Path) -> str:
-    roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user",
-            subject_id=user_id,
-            path=path,
-        )
-    }
+    roles = admin_store.effective_admin_roles("user", user_id, path=path)
     for role in ("owner", "superadmin", "admin"):
         if role in roles:
             return role
@@ -210,36 +165,20 @@ def _live_role_for_user(user_id: str, *, path: Path) -> str:
 def _app_payload(
     app: Mapping[str, Any],
     *,
-    default_profile_id: str | None,
     path: Path,
+    credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
+    plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    profile_id = app.get("default_profile_id")
-    effective_profile_id = _effective_profile_id(
-        app,
-        default_profile_id=default_profile_id,
-    )
-    credentials = _credentials_for_app(str(app["id"]), path=path)
-    profile = (
-        _profile_summary(str(profile_id), path=path)
-        if profile_id
-        else _default_profile_summary(default_profile_id, path=path)
-    )
+    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
+    plan = _plan_summary(app, path=path, listing=plan_listing)
     return {
         "id": app.get("id"),
         "kind": app.get("kind"),
         "name": app.get("name"),
         "disabled_at": app.get("disabled_at"),
-        "default_profile_id": profile_id,
-        "profile_id": profile_id,
-        "effective_profile_id": effective_profile_id or "default-local",
-        "profile": profile,
-        "can_mint_keys": (
-            not app.get("disabled_at")
-            and not (profile or {}).get("missing")
-        ),
+        "access_plan": plan,
+        "can_mint_keys": not app.get("disabled_at"),
         "can_delete": not bool(app.get("disabled_at")),
-        "inherits_profile": not bool(profile_id),
-        "profile_required": False,
         "credentials": credentials,
         "active_credentials": len(credentials),
         "created_at": app.get("created_at"),
@@ -250,7 +189,6 @@ def build_user_portal_snapshot(
     session: AdminSession | None,
     *,
     auto_create_personal_app: bool = False,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the account data safe to embed in ``/me``.
@@ -277,23 +215,40 @@ def build_user_portal_snapshot(
             path=path,
         )
 
-    apps: list[dict[str, Any]] = []
-    for app in admin_store.list_apps_for_user(user["id"], path=path):
-        if app.get("disabled_at") or admin_store.is_session_app(str(app["id"]), path=path):
-            continue
-        apps.append(_app_payload(
-            app,
-            default_profile_id=default_profile_id,
-            path=path,
-        ))
+    # Session apps, keys and plans for every listed app are read in one query each,
+    # so the number of statements does not grow with the number of apps.
+    owned = admin_store.list_apps_for_user(user["id"], path=path)
+    sessions = admin_store.session_app_ids([str(app["id"]) for app in owned], path=path)
+    listed = [app for app in owned if not app.get("disabled_at") and str(app["id"]) not in sessions]
+    credentials_by_app = admin_store.list_active_credentials_for_apps([str(app["id"]) for app in listed], path=path)
+    plan_listing = (
+        admin_store.person_plan_id(str(user["id"]), path=path),
+        {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
+    ) if listed else None
+    apps: list[dict[str, Any]] = [
+        _app_payload(app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing)
+        for app in listed
+    ]
 
+    person_id = str(user["id"])
     return {
         "authenticated": True,
         "user": {
             "id": user.get("id"),
+            # The stable id the generated avatar is drawn from (a rename keeps the colour), and the
+            # choice. The picture URL is a gateway path, never the identity provider's address.
+            "person_id": person_id,
+            "avatar": avatars.public_view(person_id, avatars.get(person_id, path=path), viewer_id=person_id),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
             "role": _live_role_for_user(str(user["id"]), path=path),
+            # A new App starts on this plan ("Same as you"), so the New app
+            # dialog can say what it will be allowed to use before it exists.
+            "access_plan": _plan_summary(
+                {"access_plan": admin_store.PERSON_ASSIGNMENT, "owner_user_id": str(user["id"])},
+                path=path,
+                listing=plan_listing,
+            ),
         },
         "apps": apps,
     }
@@ -347,16 +302,12 @@ def build_user_activity_snapshot(
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
     owned = _owned_app_ids(str(user["id"]), path=path)
-    owner_roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user", subject_id=str(user["id"]), path=path
-        )
-    }
+    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
     owner = bool(owner_roles & {"owner", "superadmin"})
     receipts = receipt_store.recent(
         limit=safe_limit,
         audience="client",
+        viewer_person_id=str(user["id"]),
         app_ids=None if owner else owned,
         path=receipts_path,
     )
@@ -379,6 +330,9 @@ def get_user_receipt(
 ) -> dict[str, Any]:
     """Return one client-safe receipt visible to the signed-in user.
 
+    It carries the person, App and time the Activity list shows
+    (``receipt_context``).
+
     Owners can open the same instance-scoped receipts shown on Home and each
     access is audited. Members stay limited to their own Apps; receipts for
     other Apps or no App are reported as not found so existence is not disclosed.
@@ -399,21 +353,26 @@ def get_user_receipt(
         raise not_found
     receipt_app_id = owner_check.get("app_id")
     owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
-    owner_roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user", subject_id=str(user["id"]), path=path
-        )
-    }
+    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
     owner = bool(owner_roles & {"owner", "superadmin"})
     if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found
 
-    detail = receipt_store.get(
-        request_id, audience="client", path=receipts_path
+    found = receipt_store.get_with_created_at(
+        request_id, audience="client", viewer_person_id=str(user["id"]),
+        path=receipts_path,
     )
-    if detail is None:
+    if found is None:
         raise not_found
+    detail, created_at = found
+    app = admin_store.get_app(receipt_app_id, path=path) if receipt_app_id else None
+    app = app or {}
+    person = admin_store.get_user(str(app["owner_user_id"]), path=path) if app.get("owner_user_id") else None
+    context = receipt_context(
+        detail, created_at, app=app,
+        person_labels={person["id"]: person_label(person)} if person else {},
+    )
+    detail = {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
     if owner:
         admin_store.record_audit(
             "receipt.detail.instance",
@@ -433,34 +392,36 @@ def mint_user_app_key(
     app_id: str,
     *,
     label: str | None = None,
-    default_profile_id: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Create an API key for an App already owned by ``session.subject``.
 
-    ``session_id`` binds the key to that sign-in, which revokes it on sign-out.
+    The insert checks in its own transaction that the sign-in is still live (``gateway/session_guard.py``),
+    so a sign-out that lands between the check on the cookie and the insert leaves no key behind, for a
+    permanent key as for a Try key. ``session_id`` binds the key to that sign-in (its family, so a
+    renewal keeps it), which revokes it on sign-out.
     """
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
-    _app_profile_for_self_service(
-        app,
-        default_profile_id=default_profile_id,
-        path=path,
-    )
     api_key = generate_app_api_key()
-    record = admin_store.create_credential_hash(
-        subject_kind="app",
-        subject_id=str(app["id"]),
-        hash=hash_api_key(api_key),
-        prefix=_key_prefix(api_key),
-        display_name=label or "Self-service key",
-        created_by=str(user["id"]),
-        expires_at=expires_at,
-        session_id=session_id,
-        path=path,
-    )
+
+    try:
+        record = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=str(app["id"]),
+            hash=hash_api_key(api_key),
+            prefix=_key_prefix(api_key),
+            display_name=label or "Self-service key",
+            created_by=str(user["id"]),
+            expires_at=expires_at,
+            session_id=session_id,
+            session=session_guard.BrowserSession.of(session, str(user["id"])),
+            path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
     admin_store.record_audit(
         "credential.self_create",
         actor_kind="user",
@@ -481,11 +442,13 @@ def ensure_try_session_key(
     session: AdminSession,
     *,
     reuse_id: str | None = None,
-    default_profile_id: str | None = None,
+    before_mint: Callable[[], None] | None = None,
     now: int | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the Try page's key for this sign-in, minting one only if needed.
+
+    ``before_mint`` runs just before a new key is made, never for a reused one; it can refuse by raising.
 
     The key expires with the sign-in session and is revoked when it signs
     out. The secret is shown once, so the browser keeps it and passes its id
@@ -495,7 +458,7 @@ def ensure_try_session_key(
     """
     ts = int(time.time()) if now is None else int(now)
     expires_at = int(session.expires_at)
-    if not session.session_id or expires_at <= ts:
+    if not session.family_id or expires_at <= ts:
         raise UserPortalError("login_required", "Sign in again to use Try.", status_code=401)
     user = _user_from_session(session, path=path)
     apps = [
@@ -506,30 +469,28 @@ def ensure_try_session_key(
     if apps:
         app = _app_belongs_to_user(str(apps[0]["id"]), str(user["id"]), path=path)
     else:
-        created = create_user_app(
-            session, name=admin_store.TRY_APP_NAME,
-            default_profile_id=default_profile_id, path=path,
-        )["app"]
+        created = create_user_app(session, name=admin_store.TRY_APP_NAME, path=path)["app"]
         app = admin_store.get_app(str(created["id"]), path=path) or created
     app_name = str(app.get("name") or admin_store.TRY_APP_NAME)
     session_keys = [
         record for record in admin_store.list_active_credentials(
             subject_kind="app", app_id=str(app["id"]), now=ts, path=path,
         )
-        if record.get("session_id") == session.session_id
+        if record.get("session_id") == session.family_id
     ]
     reused = next((record for record in session_keys if record["id"] == reuse_id), None)
     if reused is not None:
         out = _sanitize_credential(reused)
         out.update(active=True, reused=True, app_name=app_name)
         return out
+    if before_mint is not None:
+        before_mint()
     admin_store.revoke_older_session_credentials(
-        str(app["id"]), session.session_id, keep=1, now=ts, path=path,
+        str(app["id"]), session.family_id, keep=1, now=ts, path=path,
     )
     minted = mint_user_app_key(
-        session, str(app["id"]), label=admin_store.TRY_KEY_LABEL,
-        default_profile_id=default_profile_id, expires_at=expires_at,
-        session_id=session.session_id, path=path,
+        session, str(app["id"]), label=admin_store.TRY_KEY_LABEL, expires_at=expires_at,
+        session_id=session.family_id, path=path,
     )
     minted.update(reused=False, app_name=app_name)
     return minted
@@ -539,10 +500,9 @@ def create_user_app(
     session: AdminSession,
     *,
     name: str,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Create a new user-owned App that inherits the user's default policy."""
+    """Create a new user-owned App: "Same as my access plan" (design §2.9)."""
     user = _user_from_session(session, path=path)
     cleaned_name = " ".join(str(name or "").split())
     if not cleaned_name:
@@ -561,7 +521,7 @@ def create_user_app(
         cleaned_name,
         kind="personal",
         owner_user_id=str(user["id"]),
-        default_profile_id=default_profile_id,
+        access_plan=admin_store.PERSON_ASSIGNMENT,
         path=path,
     )
     admin_store.record_audit(
@@ -573,7 +533,7 @@ def create_user_app(
         metadata={"email": user.get("email"), "name": cleaned_name},
         path=path,
     )
-    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+    return {"app": _app_payload(app, path=path)}
 
 
 def delete_user_app(
@@ -613,10 +573,153 @@ def delete_user_app(
     }
 
 
+def _name_error(exc: admin_store.NameRejected) -> UserPortalError:
+    return UserPortalError(exc.code, str(exc), status_code=exc.status_code)
+
+
+def _rename_app(
+    user: Mapping[str, Any], app: Mapping[str, Any], name: str, *,
+    browser_session: session_guard.BrowserSession | None, via: str | None, path: Path,
+) -> dict[str, Any]:
+    try:
+        cleaned = admin_store.clean_name(name, code="app_name", noun="app")
+        renamed = admin_store.update_app(
+            str(app["id"]), name=cleaned, owner_user_id=str(user["id"]), session=browser_session,
+            audit={"action": "app.self_rename", "actor_kind": "user", "actor_id": str(user["id"]),
+                   "metadata": {"via": via} if via else {}},
+            path=path)
+    except admin_store.NameRejected as exc:
+        raise _name_error(exc) from None
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if renamed is None:
+        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
+    return {"app": _app_payload(renamed, path=path)}
+
+
+def _rename_key(
+    user: Mapping[str, Any], before: Mapping[str, Any], display_name: str, *,
+    browser_session: session_guard.BrowserSession | None, via: str | None, path: Path,
+) -> dict[str, Any]:
+    try:
+        label = admin_store.clean_name(display_name, code="key_label", noun="key")
+        renamed = admin_store.rename_app_credential(
+            str(before["id"]), label, owner_user_id=str(user["id"]), session=browser_session,
+            audit={"action": "credential.self_rename", "actor_kind": "user", "actor_id": str(user["id"]),
+                   "metadata": {"via": via} if via else {}},
+            path=path)
+    except admin_store.NameRejected as exc:
+        raise _name_error(exc) from None
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if renamed is None:
+        raise _credential_not_found()
+    _, after = renamed
+    out = _sanitize_credential(after)
+    out["active"] = True
+    return out
+
+
+def rename_user_app(
+    session: AdminSession,
+    app_id: str,
+    name: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Give an App owned by ``session.subject`` a new name.
+
+    The name is not a credential, so no step-up; the write checks in its own transaction that the sign-in is
+    still live. Receipts already written keep the name they were made with.
+    """
+    user = _user_from_session(session, path=path)
+    app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    return _rename_app(user, app, name, browser_session=session_guard.BrowserSession.of(session, str(user["id"])),
+                       via=None, path=path)
+
+
+def rename_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    display_name: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Give an active key of an App owned by ``session.subject`` a new label.
+
+    Only the label changes: no new key and no new destination, so no step-up.
+    """
+    user = _user_from_session(session, path=path)
+    before = get_user_app_credential(session, credential_id, path=path)
+    return _rename_key(user, before, display_name,
+                       browser_session=session_guard.BrowserSession.of(session, str(user["id"])), via=None, path=path)
+
+
+def _person(person_id: str, *, path: Path) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=path)
+    if user is None:
+        raise UserPortalError(
+            "session_user_not_found", "Signed-in user was not found in the admin store", status_code=401)
+    return user
+
+
+def _find_app(user_id: str, ref: str, *, path: Path) -> dict[str, Any]:
+    """The person's own App an MCP client names: by its id, or by its name when exactly one has it."""
+    ref = str(ref or "").strip()
+    apps = admin_store.list_apps_for_user(user_id, path=path)
+    sessions = admin_store.session_app_ids([str(app["id"]) for app in apps], path=path)
+    owned = [app for app in apps if not app.get("disabled_at") and str(app["id"]) not in sessions]
+    matches = [app for app in owned if app["id"] == ref] or [
+        app for app in owned if ref and admin_store.name_key(app["name"]) == admin_store.name_key(ref)]
+    if not matches:
+        raise UserPortalError("app_not_found", f"No app of yours is named \u201c{ref}\u201d.", status_code=404)
+    if len(matches) > 1:
+        raise UserPortalError(
+            "app_ambiguous", f"More than one app is named \u201c{ref}\u201d. Use an app id instead: "
+            + ", ".join(str(app["id"]) for app in matches) + ".", status_code=409)
+    return matches[0]
+
+
+def _find_key(app: Mapping[str, Any], ref: str, *, path: Path) -> dict[str, Any]:
+    """An active key of ``app`` an MCP client names: by id, or by its name when exactly one has it."""
+    ref = str(ref or "").strip()
+    keys = admin_store.list_active_credentials(subject_kind="app", app_id=str(app["id"]), path=path)
+    matches = [key for key in keys if key["id"] == ref] or [
+        key for key in keys if ref and admin_store.name_key(key.get("display_name")) == admin_store.name_key(ref)]
+    if not matches:
+        raise UserPortalError(
+            "credential_not_found", f"No key of \u201c{app['name']}\u201d is named \u201c{ref}\u201d.", status_code=404)
+    if len(matches) > 1:
+        raise UserPortalError(
+            "key_ambiguous", f"More than one key of \u201c{app['name']}\u201d is named \u201c{ref}\u201d. "
+            "Use a key id instead: " + ", ".join(str(key["id"]) for key in matches) + ".", status_code=409)
+    return matches[0]
+
+
+def rename_person_app(
+    person_id: str, app_ref: str, name: str, *, via: str, path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """A signed-in client renames one of ``person_id``'s own Apps. No browser sign-in asks, so ``via`` names the client path.
+
+    The person's own rules apply, as for ``rename_user_app``: only their own Apps, never someone else's.
+    """
+    user = _person(person_id, path=path)
+    app = _find_app(str(user["id"]), app_ref, path=path)
+    return _rename_app(user, app, name, browser_session=None, via=via, path=path)
+
+
+def rename_person_key(
+    person_id: str, app_ref: str, key_ref: str, name: str, *, via: str, path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """A signed-in client renames an active key of one of ``person_id``'s own Apps."""
+    user = _person(person_id, path=path)
+    app = _find_app(str(user["id"]), app_ref, path=path)
+    return _rename_key(user, _find_key(app, key_ref, path=path), name, browser_session=None, via=via, path=path)
+
+
 def request_user_access(
     session: AdminSession,
     *,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Create or return the signed-in user's self-service Personal App."""
@@ -625,7 +728,6 @@ def request_user_access(
     app = admin_store.ensure_personal_app_for_user(
         str(user["id"]),
         name=f"{label} personal access",
-        default_profile_id=default_profile_id,
         path=path,
     )
     admin_store.record_audit(
@@ -634,15 +736,10 @@ def request_user_access(
         actor_id=str(user["id"]),
         target_kind="app",
         target_id=app["id"],
-        metadata={
-            "email": user.get("email"),
-            "effective_profile_id": (
-                app.get("default_profile_id") or default_profile_id or "default-local"
-            ),
-        },
+        metadata={"email": user.get("email"), "access_plan": app.get("access_plan")},
         path=path,
     )
-    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+    return {"app": _app_payload(app, path=path)}
 
 
 def get_user_app_credential(

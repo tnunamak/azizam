@@ -47,30 +47,6 @@ const resources = [
     saved: "Server normalized name",
   },
   {
-    name: "provider",
-    section: "Sign-in",
-    save: "Save sign-in",
-    field: "Client ID",
-    path: "/admin/api/oidc-config",
-    key: "oidc",
-    original: "original-client",
-    refreshed: "refreshed-client",
-    draft: "draft-client",
-    saved: "normalized-client",
-  },
-  {
-    name: "sign-in choice",
-    section: "Sign-in",
-    save: "Save sign-in choice",
-    field: "Available sign-in methods",
-    path: "/admin/api/operator/sign-in",
-    key: "sign-in",
-    original: "Built-in accounts only",
-    refreshed: "Built-in accounts and OIDC",
-    draft: "OIDC only",
-    saved: "Built-in accounts and OIDC",
-  },
-  {
     name: "media admission",
     section: "Media admission",
     save: "Save media admission",
@@ -88,28 +64,6 @@ function payload(resource: Resource, value: string, revision: string) {
   if (resource.name === "instance")
     return {
       instance: { name: value, base_url: "", theme_default: "system" },
-      revision,
-    };
-  if (resource.name === "provider")
-    return {
-      oidc_config: {
-        enabled: true,
-        issuer: "https://id.example.test",
-        redirect_uri: "https://gateway.example.test/auth/callback",
-        client_id: value,
-      },
-      revision,
-    };
-  if (resource.name === "sign-in choice")
-    return {
-      mode:
-        value === "Built-in accounts only"
-          ? "built-in"
-          : value === "OIDC only"
-            ? "oidc"
-            : "both",
-      built_in: value !== "OIDC only",
-      oidc: true,
       revision,
     };
   return {
@@ -167,22 +121,14 @@ async function open(resource: Resource) {
 }
 async function change(resource: Resource, value: string) {
   const field = screen.getByLabelText(resource.field);
-  if (resource.name === "sign-in choice") {
-    await userEvent.click(field);
-    await userEvent.click(screen.getByRole("option", { name: value }));
-  } else {
-    await userEvent.clear(field);
-    await userEvent.type(field, value);
-  }
+  await userEvent.clear(field);
+  await userEvent.type(field, value);
 }
 function assertValue(resource: Resource, value: string) {
   const field = screen.getByLabelText(resource.field);
-  if (resource.name === "sign-in choice")
-    expect(field).toHaveTextContent(value);
-  else
-    expect(field).toHaveValue(
-      resource.name === "media admission" ? Number(value) : value,
-    );
+  expect(field).toHaveValue(
+    resource.name === "media admission" ? Number(value) : value,
+  );
 }
 function puts() {
   return adminFetch.mock.calls.filter(([, init]) => init?.method === "PUT");
@@ -273,11 +219,7 @@ describe.each(resources)("$name revision wiring", (resource) => {
       expect.objectContaining(
         resource.name === "instance"
           ? { name: resource.saved }
-          : resource.name === "provider"
-            ? { client_id: resource.saved }
-            : resource.name === "sign-in choice"
-              ? { mode: "both" }
-              : { max_queue_depth: Number(resource.saved) },
+          : { max_queue_depth: Number(resource.saved) },
       ),
     );
   });
@@ -296,69 +238,4 @@ describe.each(resources)("$name revision wiring", (resource) => {
     await screen.findByText("Only the owner can change this.");
     assertValue(resource, resource.draft);
   });
-});
-
-it("saving a sign-in mode keeps an edited provider revision valid for its own save", async () => {
-  const provider = resources[1];
-  fixture(provider);
-  const read = adminFetch.getMockImplementation()!;
-  adminFetch.mockImplementation(async (path, init) => {
-    if (init?.method === "PUT" && path === resources[2].path)
-      return { mode: "both", built_in: true, oidc: true, revision: "8" };
-    if (init?.method === "PUT" && path === provider.path)
-      return payload(provider, provider.draft, "8");
-    return read(path, init);
-  });
-  mount();
-  await open(provider);
-  await change(provider, provider.draft);
-  await change(resources[2], resources[2].refreshed);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save sign-in choice" }),
-  );
-  await waitFor(() => expect(puts()).toHaveLength(1));
-  assertValue(provider, provider.draft);
-  await userEvent.click(screen.getByRole("button", { name: "Save sign-in" }));
-  await waitFor(() => expect(puts()).toHaveLength(2));
-  expect(
-    puts().map(([path, init]) => [path, init.headers["If-Match"]]),
-  ).toEqual([
-    [resources[2].path, "7"],
-    [provider.path, "7"],
-  ]);
-  expect(
-    screen.queryByText("Settings changed elsewhere; reload to see the latest"),
-  ).not.toBeInTheDocument();
-});
-
-it("saves and clears the public provider display name", async () => {
-  const resource = resources.find((item) => item.name === "provider")!;
-  fixture(resource);
-  const read = adminFetch.getMockImplementation()!;
-  adminFetch.mockImplementation(async (path, init) => {
-    if (path === resource.path && init?.method === "PUT")
-      return {
-        ...payload(resource, "client", "8"),
-        oidc_config: {
-          ...payload(resource, "client", "8").oidc_config,
-          ...init.body,
-        },
-      };
-    return read(path, init);
-  });
-  mount();
-  await open(resource);
-  const field = screen.getByLabelText("Provider display name");
-  expect(field).toHaveAttribute("maxlength", "80");
-  await userEvent.type(field, "Household accounts");
-  await userEvent.click(screen.getByRole("button", { name: resource.save }));
-  await waitFor(() => expect(puts()).toHaveLength(1));
-  expect(puts()[0][1].body.display_name).toBe("Household accounts");
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: resource.save })).toBeEnabled(),
-  );
-  await userEvent.clear(field);
-  await userEvent.click(screen.getByRole("button", { name: resource.save }));
-  await waitFor(() => expect(puts()).toHaveLength(2));
-  expect(puts()[1][1].body.display_name).toBe("");
 });

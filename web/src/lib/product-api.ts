@@ -15,7 +15,7 @@ export type * from "./product-api-types";
 export type HomeSnapshot = AccountSnapshot & HomeProjection;
 
 async function memberGet<T>(path: string, scrub = true): Promise<T> {
-  const response = await networkFetch(path, { credentials: "same-origin" });
+  const response = await networkFetch(path, { credentials: "same-origin" }, true);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(

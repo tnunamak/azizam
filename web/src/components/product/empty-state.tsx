@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Inbox, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -28,9 +28,14 @@ export function EmptyState({
   icon: Icon = Inbox,
   inCard = false,
 }: EmptyStateProps) {
+  const titleId = useId();
+  const descriptionId = useId();
   return (
     <div
       data-slot="empty-state"
+      role="region"
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       className={cn(
         "flex min-h-40 min-w-0 flex-col items-start justify-center gap-3 p-6 max-sm:p-4",
         !inCard && "rounded-panel border border-dashed",
@@ -41,9 +46,9 @@ export function EmptyState({
         className="text-muted-foreground size-5 shrink-0"
       />
       <div className="min-w-0 space-y-1">
-        <p className="text-body font-medium">{title}</p>
+        <p id={titleId} className="text-body font-medium">{title}</p>
         {description ? (
-          <p className="text-muted-foreground text-meta">{description}</p>
+          <p id={descriptionId} className="text-muted-foreground text-meta">{description}</p>
         ) : null}
       </div>
       {action ? <div className="pt-1">{action}</div> : null}

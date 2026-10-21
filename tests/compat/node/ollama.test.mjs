@@ -25,21 +25,27 @@ function field(value, name) {
 function requireApiKey(t) {
   if (!apiKey) {
     t.skip("AZIZAM_API_KEY not set; authenticated SDK probe disabled");
+    return false;
   }
+  return true;
 }
 
 function requireLiveLLM(t) {
-  requireApiKey(t);
+  if (!requireApiKey(t)) return false;
   if (!liveLLM) {
     t.skip("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled");
+    return false;
   }
+  return true;
 }
 
 function requireLiveEmbeddings(t) {
-  requireApiKey(t);
+  if (!requireApiKey(t)) return false;
   if (!liveEmbeddings) {
     t.skip("AZIZAM_SMOKE_LIVE_EMBEDDINGS not set; live embeddings probe disabled");
+    return false;
   }
+  return true;
 }
 
 if (!baseURL) {
@@ -59,31 +65,31 @@ if (!baseURL) {
   });
 
   test("list returns model array", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const listing = await client.list();
     assert.ok(Array.isArray(field(listing, "models")));
   });
 
   test("ps returns running-model array", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const listing = await client.ps();
     assert.ok(Array.isArray(field(listing, "models")));
   });
 
   test("show returns model metadata", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const shown = await client.show({ model });
     assert.ok(field(shown, "details"));
   });
 
   test("version returns an Ollama-shaped version object", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const result = await client.version();
     assert.equal(typeof field(result, "version"), "string");
   });
 
   test("embed returns vector arrays", async (t) => {
-    requireLiveEmbeddings(t);
+    if (!requireLiveEmbeddings(t)) return;
     const result = await client.embed({
       model: embeddingModel,
       input: "compatibility probe",
@@ -95,7 +101,7 @@ if (!baseURL) {
   });
 
   test("legacy embeddings returns a vector", async (t) => {
-    requireLiveEmbeddings(t);
+    if (!requireLiveEmbeddings(t)) return;
     const result = await client.embeddings({
       model: embeddingModel,
       prompt: "compatibility probe",
@@ -106,7 +112,7 @@ if (!baseURL) {
   });
 
   test("chat returns message content", async (t) => {
-    requireLiveLLM(t);
+    if (!requireLiveLLM(t)) return;
     const result = await client.chat({
       model,
       stream: false,
@@ -118,7 +124,7 @@ if (!baseURL) {
   });
 
   test("generate returns text", async (t) => {
-    requireLiveLLM(t);
+    if (!requireLiveLLM(t)) return;
     const result = await client.generate({
       model,
       stream: false,
@@ -129,7 +135,7 @@ if (!baseURL) {
   });
 
   test("pull returns unsupported-operation error", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     await assert.rejects(
       client.pull({ model: "llama3", stream: false }),
       (error) => error?.status_code === 501 && String(error).toLowerCase().includes("unsupported"),

@@ -524,10 +524,35 @@ class TestRegistry:
         assert "x" not in result
 
     def test_pipeline_uses_module_registry_by_default(self) -> None:
-        # The module-level REGISTRY has voxtral-voices registered
-        result = run_request_pipeline(["voxtral-voices"], {"voice": "cheerful_female"})
-        assert result["voice"] == "shimmer"
+        # The module-level REGISTRY has the reviewed packs registered
+        result = run_request_pipeline(["llamacpp-cache-prompt"], {"prompt": "hi"})
+        assert result["cache_prompt"] is True
 
     def test_unknown_build_primitive_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown transform kind"):
             _build_primitive({"kind": "nonexistent-kind"})
+
+
+@pytest.mark.parametrize(
+    "pipeline,phase",
+    [
+        (run_request_pipeline, "request"),
+        (run_response_pipeline, "response"),
+    ],
+)
+def test_explicit_registry_pipeline_composes_noncommuting_primitives(pipeline, phase):
+    registry = TransformRegistry()
+    registry.register(
+        "supply-x",
+        {"kind": "default-params", "phase": phase, "set": {"x": 3}},
+    )
+    registry.register(
+        "publish-x",
+        {"kind": "param-map", "phase": phase, "from": "x", "to": "result"},
+    )
+
+    forward = pipeline(["supply-x", "publish-x"], {"keep": "sentinel"}, registry=registry)
+    reverse = pipeline(["publish-x", "supply-x"], {"keep": "sentinel"}, registry=registry)
+
+    assert forward == {"keep": "sentinel", "result": 3}
+    assert reverse == {"keep": "sentinel", "x": 3}

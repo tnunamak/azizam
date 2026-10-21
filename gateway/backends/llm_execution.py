@@ -8,6 +8,7 @@ Keep it narrow so the substrate boundary does not become a second router.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 from dataclasses import dataclass
 import asyncio
@@ -186,7 +187,9 @@ def _litellm_service_candidates(
 def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
     env_name = str(config.get("api_key_env") or config.get("api_key_ref") or "").strip()
     if env_name:
-        return get_env(env_name, "", environ=env)
+        value = get_env(env_name, "", environ=env)
+        log_scrub.remember(value, f"env:{env_name}")
+        return value
     return ""
 
 
@@ -270,15 +273,12 @@ def litellm_headers(
     *,
     api_key: str = "",
     gateway_metadata: Mapping[str, str] | None = None,
-    delegated_api_key: str = "",
 ) -> dict[str, str]:
     headers: dict[str, str] = {
         "content-type": _header(source_headers, "content-type") or "application/json",
         "accept": _header(source_headers, "accept") or "application/json",
     }
-    if delegated_api_key:
-        headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {delegated_api_key}"
-    elif api_key:
+    if api_key:
         headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {api_key}"
 
     for name, value in (gateway_metadata or {}).items():
@@ -692,22 +692,67 @@ class _OpenAiSseDoneDetector:
     """Recognize a complete OpenAI SSE ``data: [DONE]`` event without rewriting bytes."""
 
     def __init__(self) -> None:
+        # Only a delimiter prefix crosses consume calls (at most three bytes).
         self._unfinished_event = b""
+        self._terminal = False
+        self._reset_event()
+
+    def _reset_event(self) -> None:
+        self._possible = True
+        self._data_seen = False
+        self._line = b""
+        self._comment = False
+
+    def _finish_line(self) -> None:
+        if self._line:
+            if self._data_seen or self._line not in (b"data:[DONE]", b"data: [DONE]"):
+                self._possible = False
+            else:
+                self._data_seen = True
+        self._line = b""
+        self._comment = False
+
+    def _consume_content(self, content: bytes) -> None:
+        if not self._possible:
+            return
+        for value in content:
+            if value in (10, 13):
+                self._finish_line()
+            elif self._comment:
+                continue
+            elif not self._line and value == 58:  # SSE comment
+                self._comment = True
+            else:
+                self._line += bytes((value,))
+                if not any(candidate.startswith(self._line)
+                           for candidate in (b"data:[DONE]", b"data: [DONE]")):
+                    self._possible = False
+            if not self._possible:
+                self._line = b""
+                return
 
     def consume(self, chunk: bytes) -> tuple[bytes, bool]:
-        """Return bytes safe to forward and whether this chunk ends the stream."""
+        """Scan each input once, forwarding original bytes through the first DONE."""
+        if self._terminal:
+            return b"", False
         combined = self._unfinished_event + chunk
         previous_length = len(self._unfinished_event)
         event_start = 0
 
         while match := _SSE_EVENT_END.search(combined, event_start):
-            if _is_openai_sse_done_event(combined[event_start:match.start()]):
-                event_end = match.end()
+            self._consume_content(combined[event_start:match.start()])
+            self._finish_line()
+            if self._possible and self._data_seen:
+                self._terminal = True
                 self._unfinished_event = b""
-                return chunk[:max(0, event_end - previous_length)], True
+                return chunk[:max(0, match.end() - previous_length)], True
+            self._reset_event()
             event_start = match.end()
 
-        self._unfinished_event = combined[event_start:]
+        # Withhold only enough bytes to recognize a delimiter split at any byte.
+        safe_end = max(event_start, len(combined) - 3)
+        self._consume_content(combined[event_start:safe_end])
+        self._unfinished_event = combined[safe_end:]
         return chunk, False
 
 

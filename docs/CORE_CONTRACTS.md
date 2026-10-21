@@ -18,14 +18,14 @@ The operator-facing model should stay small. The dashboard and docs should
 mostly speak this language:
 
 ```text
-User -> owns App -> has Profile -> has Keys -> produces Activity
+User -> owns App -> has Access plan -> has Keys -> produces Activity
 ```
 
 | Product noun | Meaning |
 |--------------|---------|
 | `User`       | A human principal, typically authenticated via OIDC. |
 | `App`        | An access boundary for a tool, device, agent, or family member. |
-| `Profile`    | A reusable permission bundle attached to an App. |
+| `Access plan`    | A reusable permission bundle attached to an App. |
 | `Key`        | A rotatable bearer secret for an App or admin automation. |
 | `Activity`   | Usage, audit events, receipts, jobs, and errors rendered as facts. |
 
@@ -47,10 +47,10 @@ but they do not all need to be first-class dashboard nouns.
 | Noun           | Meaning                                                                 |
 |----------------|-------------------------------------------------------------------------|
 | `App`          | A registered consumer of the gateway (e.g. LibreChat, Continue, an agent). |
-| `Profile`      | The policy bundle attached to an App.                                   |
+| `Access plan`      | The policy bundle attached to an App.                                   |
 | `Credential`   | The App API key (and any per-key downstream-credential overrides).      |
 | `Capability`   | A runtime fact about what a Provider/model can do right now.            |
-| `Provider`     | A configured backend instance (TabbyAPI, llama.cpp, ComfyUI, TTS, ...). |
+| `Provider`     | A configured backend instance (llama.cpp, ComfyUI, TTS, ...). |
 | `Workflow`     | A typed manifest mapping portable inputs to a backend binding.          |
 | `Job`          | A durable, asynchronous execution record for media work.                |
 | `Receipt`      | A body-free record of one request: identity, decision, accepted/rejected/ignored inputs. |
@@ -58,13 +58,13 @@ but they do not all need to be first-class dashboard nouns.
 
 Rule for adding a new product-facing noun: it must have an independent
 lifecycle and the target user must deliberately create, grant, rotate, inspect,
-or delete it. Otherwise keep it as fields or events under App/Profile/Activity.
+or delete it. Otherwise keep it as fields or events under App/access-plan/Activity.
 This keeps the system Rich-Hickey-simple: separate facts that change
 independently, without inventing abstractions that merely rename code paths.
 
 The product invariant — load-bearing across every contract below:
 
-> A request without a resolved **App** + **Profile** + policy decision is
+> A request without a resolved **App** + **Access plan** + policy decision is
 > never executed. Every executed request produces exactly one **Receipt**.
 
 The word "client" is preserved only inside compatibility contexts: SDK names
@@ -75,21 +75,14 @@ client/server wording. In product docs the consumer entity is an **App**.
 
 The contracts below are now partially in the live request path. The core pure
 Python building blocks currently exist on `main`, and `proxy.py` wires the
-auth/profile bridge, gateway discovery router, image manifest extensions,
+auth/access plan bridge, gateway discovery router, image manifest extensions,
 durable receipts, media-job store initialization, and non-streaming
 Anthropic/Ollama protocol frontends:
 
-- `gateway/policy.py` — `AppProfile`, `PolicyRequest`, `PolicyDecision`,
-  `evaluate(...)`. Consulted by the live gateway/image/protocol handlers
-  through the runtime-auth bridge; pure module remains independently testable.
-- `gateway/profiles.py` — pure loader from profile dicts into `AppProfile`,
-  without reading files or resolving secrets. It remains useful for imports,
-  tests, and DB-stored Profile validation.
-- `gateway/runtime_auth.py` — pure bridge from stored App credentials to
-  `RuntimeIdentity` (name, key hash, downstream config, loaded `AppProfile`).
-  Supplies `evaluate_and_apply` and a
-  `discovery_audience_for_profile` helper that maps
-  `status_visibility.level` → audience tier.
+- Runtime authorization resolves the App and applies access-plan policy.
+  UNVERIFIED: the v4 internal type and helper names. The old `AppProfile`,
+  `gateway/profiles.py` and `discovery_audience_for_profile` references are
+  historical and must not be used as current integration guidance.
 - `gateway/manifests.py` — workflow manifest load/validate plus
   `apply_backend_binding` and receipt-ready `bind_backend_request`. Image
   generation/edit handlers use this binding layer for supported workflow
@@ -117,16 +110,18 @@ Anthropic/Ollama protocol frontends:
   `video.generate` jobs from this surface and returns completed image/audio/video
   asset payloads at `/gateway/v1/media/jobs/{job_id}/content`.
 - `gateway/admin_store.py` — durable SQLite control-plane store for Users,
-  ServiceAccounts, Apps, Profiles, Credentials, AdminRoles, and AuditEvents.
+  ServiceAccounts, Apps, Access plans, Credentials, AdminRoles, and AuditEvents.
 - `gateway/admin_api.py` / `gateway/admin_runtime.py` — `/admin/api/*`
   router and runtime adapter for creating Apps, minting one-time App keys,
-  revoking Credentials, listing audit events, and simulating profile policy.
+  revoking Credentials, listing audit events, and simulating access plan policy.
 - `gateway/admin_oidc.py` — pure OIDC/session helpers for the browser admin
   login path; `proxy.py` provides the network adapter and signed-cookie wiring.
-- `gateway/admin_render.py` — legacy server-rendered admin dashboard at
-  `/admin`, backed by the same admin API/store nouns. It requires an admin key
-  in a request header. Browser entry redirects to `/ui/home/`; the personal
-  page at `/me` also redirects there. Status is visible to members and owners.
+- The browser app is the static web export served at `/` (Home, Library, Try,
+  Apps, People, Status and the other pages). It calls the `/admin/api/*` and
+  `/me/api/*` routes. The old server-rendered admin dashboard and personal
+  portal (`gateway/admin_render.py`, `gateway/user_render.py`) no longer exist;
+  `/admin`, `/me` and `/ui` serve no browser page. Status is visible to members
+  and owners at `/status/`.
 
 Backend adapter extraction, a richer live capability inventory, resource
 claims, generic gateway assets, and broader media-job adapters described below
@@ -139,7 +134,7 @@ Every request should cross these boundaries:
 ```text
 protocol request
   -> canonical intent
-  -> app/profile policy
+  -> App/access-plan policy
   -> capability match
   -> resource claim
   -> backend binding
@@ -162,7 +157,7 @@ who is allowed to cause or observe which action?
 Every privileged request should resolve:
 
 - caller identity
-- app profile
+- app access plan
 - requested protocol and intent
 - requested model, workflow, backend, or native operation
 - allowed credentials
@@ -171,27 +166,20 @@ Every privileged request should resolve:
 - allowed resource/lifecycle actions
 
 Keep the authority graph minimal until behavior forces a new fact. While only
-global owner/admin users attach Profiles, there is no separate grant object in
+global owner/admin users attach Access plans, there is no separate grant object in
 the core model. If non-admin App owners are allowed to choose or switch
-Profiles, then the missing fact becomes concrete:
+Access plans, then the missing fact becomes concrete:
 
 ```text
-User may attach this Profile to this App
+User may attach this Access plan to this App
 ```
 
-Until then, "who may attach a Profile?" is just an admin permission check, not
+Until then, "who may attach an access plan?" is just an admin permission check, not
 a new product noun.
 
-The output is a policy decision:
-
-```yaml
-decision: allowed
-sources:
-  - profile:image-agent
-  - policy:local-only
-reasons:
-  - profile permits image edit workflows
-```
+The output is a policy decision. It should name the access plan and explain
+why the request is allowed or denied. UNVERIFIED: the v4 receipt fields for
+that explanation.
 
 This decision belongs in the route receipt. Without it, receipts become logs
 instead of an auditable authority boundary.
@@ -260,7 +248,7 @@ server, and video queue all expose the same kind of capability.
 
 A workflow manifest has two layers:
 
-1. A portable contract that clients and profiles can reason about.
+1. A portable contract that clients and access plans can reason about.
 2. Backend-specific bindings that turn validated inputs into engine requests.
 
 Example:
@@ -320,6 +308,11 @@ Manifest identity must include enough provenance for receipts and debugging:
 - drift status when bound to a mutable workflow file
 
 ## Adapter Manifest
+
+> Superseded. New integrations use the engine record in
+> [ENGINE_CONTRACT.md](design/ENGINE_CONTRACT.md): a connection, at least one
+> offering, and optional process, observation, residency and resource fields.
+> This section is historical.
 
 An adapter manifest describes one backend family or service instance.
 
@@ -387,7 +380,7 @@ policy:
 ```
 
 The same model name can map to different capabilities under different app
-profiles. Capability discovery must be policy-aware.
+access plans. Capability discovery must be policy-aware.
 
 Minimum eligibility fields for routing:
 
@@ -397,7 +390,7 @@ Minimum eligibility fields for routing:
 - exposure class (`default`, `opt_in`, `admin`, `disabled`)
 - trust tier (`stable`, `experimental`, `private`, `admin`)
 - resource tier (`interactive`, `batch`, `expensive`)
-- tags for Profile/template selection
+- tags for Access plan/template selection
 - streaming support
 - lifecycle state
 - health availability
@@ -405,25 +398,25 @@ Minimum eligibility fields for routing:
 - resource estimate
 - caveats that affect correctness
 
-These fields keep profile management from becoming a per-model chore. The
+These fields keep access plan management from becoming a per-model chore. The
 default rule is:
 
 ```text
-new capability metadata + existing Profile selectors -> availability decision
+new capability metadata + existing Access plan selectors -> availability decision
 ```
 
-Operators should edit every App/Profile only when the new capability introduces
+Operators should edit every App/access-plan only when the new capability introduces
 a new category of risk. Otherwise the capability's own metadata controls
-whether matching Profiles can see it.
+whether matching Access plans can see it.
 
-## Policy Profile
+## Access-plan policy
 
-A Profile is a named policy bundle tied to an App. In the durable admin store,
-Apps point at stored Profiles and App keys inherit that Profile at runtime.
-Missing Profile bindings fall back to `DEFAULT_PROFILE` (local-only, basic
-visibility) so simple Apps keep working unchanged.
+An access plan is a named policy bundle tied to an App. In the durable admin store,
+Apps point at stored Access plans and App keys inherit that Access plan at runtime.
+Configure the App's access plan in the dashboard. The old `DEFAULT_PROFILE`
+fallback is not current setup guidance; its v4 equivalent is UNVERIFIED.
 
-Example:
+Historical policy sketch, not a verified v4 plan schema:
 
 ```yaml
 id: continue-local
@@ -436,7 +429,7 @@ status_visibility:
   level: basic
 ```
 
-The mature Profile shape should prefer selectors over giant allow-lists:
+The mature Access plan shape should prefer selectors over giant allow-lists:
 
 ```yaml
 id: family-chat
@@ -451,19 +444,19 @@ native_passthrough:
   enabled: false
 ```
 
-Current implementations may still support direct `protocols`, `workflows`,
-`models`, and `backends` allow-lists. Those remain useful for narrow Apps and
+UNVERIFIED for v4: the exact schema and semantics of the historical
+`protocols`, `workflows`, `models`, and `backends` allow-lists above. Those remain useful for narrow Apps and
 break-glass overrides, but they should not be the normal way to keep a family
 member, agent, or UI app updated as new models and workflows are installed.
 Operational limits such as `max_parallel` belong to the admission/controller
-contract, not the identity/Profile selector itself.
+contract, not the identity/access-plan selector itself.
 
 Protocol strings are concrete (e.g. `openai.chat`, `openai.images`,
 `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,
 `ollama.generate`). Allow-list semantics are conservative: an omitted list
 means "no opinion" for that dimension; an empty list means "deny all".
 
-Profiles are where the gateway maps:
+Access plans are where the gateway maps:
 
 - which protocols an App can use
 - which workflows, models, and Providers it may target
@@ -478,7 +471,7 @@ Profiles are where the gateway maps:
 Backend-native power knobs (denoise, controlnet strength, model-specific
 controls) belong under namespaced request extensions
 (`extensions.com.azizam.workflow.*`), not as global OpenAI fields. Native
-passthrough remains opt-in, scoped per profile, and is not a blanket ComfyUI
+passthrough remains opt-in, scoped per access plan, and is not a blanket ComfyUI
 DSL.
 
 OpenAI-native media fields remain top-level even when the local backend needs
@@ -530,7 +523,7 @@ lifecycle requests should not be opaque to the gateway.
 Resource policy is also where operator modes and maintenance states belong.
 Examples: `llm-only` mode can reserve VRAM for a large reasoning model and
 disable image/video queues; `maintenance` can drain a Provider before restart;
-per-App/Profile budgets can cap queue wait, concurrency, GPU seconds, or
+per-App/access-plan budgets can cap queue wait, concurrency, GPU seconds, or
 fallback use. These constraints must be visible to policy, receipts, and
 capability discovery instead of being hidden in backend-specific scripts.
 
@@ -556,7 +549,7 @@ Minimum fields:
 - request ID
 - protocol and path
 - canonical intent
-- app/profile identity
+- App/access-plan identity
 - requested model or workflow
 - resolved model or workflow
 - backend
@@ -626,10 +619,14 @@ Responses conversation rows are scoped by person and immutable App ID, or by
 credential hash when there is no App. Display names grant no access. Older
 rows without trustworthy scope are hidden. No-person requests default to
 `store:false`; explicit `store:true` works only with a stable authenticated App
-or credential scope. Keyless LAN requests have no private conversation scope.
+or credential scope. There is no anonymous LAN exemption. A request without
+a key must match an owner-configured App trusted address or return
+`401 key_required`. It then uses that App's access plan. A sent key always
+wins; a placeholder such as `loopback` returns `401 key_invalid`.
+`X-Forwarded-For` counts only from `auth.trusted_proxies`.
 
-Normal asynchronous jobs retain restart durability. For service or keyless
-requests with no person, the prompt is required to resume inference, so the
+Normal asynchronous jobs retain restart durability. For service requests or
+App trusted-address requests with no person, the prompt is required to resume inference, so the
 execution spool keeps it until completion, failure or cancellation, with an
 orphan pruner as a fallback. This temporary operational copy is not personal
 prompt memory. Redacting it would make the job unable to resume. Explicit
@@ -738,9 +735,12 @@ native_passthrough:
 Rules:
 
 - disabled by default
-- scoped by app profile
+- scoped by app access plan
 - visible in route receipts
 - never used as a substitute for tested compatibility behavior
+- engine-native access under `/native/{engine_id}/...` is governed by the engine
+  record's `native.allow` rules instead; generation is plan-scoped and control
+  needs owner authority. See [ENGINE_CONTRACT.md section 6](design/ENGINE_CONTRACT.md#6-native-pass-through-f4).
 
 ## First Implementation Target
 

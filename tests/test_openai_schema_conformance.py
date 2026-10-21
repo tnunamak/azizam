@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 import _fake_comfy_video as rr_fake  # noqa: E402
 import test_video_remix_replace as rr  # noqa: E402
 from test_video_remix_replace import RemixReplaceBase  # noqa: E402,F401
@@ -97,7 +98,7 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
     def setUp(self) -> None:
         _patch_route_stores(self)
         self.client = TestClient(proxy.app)
-        self.auth = patch.object(proxy, "AUTH_ENABLED", False)
+        self.auth = authenticated()
         self.policy = patch.object(proxy, "_enforce_runtime_route_policy", return_value=None)
         self.auth.start()
         self.policy.start()

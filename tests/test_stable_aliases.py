@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway import stable_aliases as sa  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
@@ -347,7 +348,7 @@ class RouteTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         self.patches = [
             *_media_store_patches(self),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
         ]
@@ -511,7 +512,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         }
         self.patches = [
             *_media_store_patches(self),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", cfg),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSClient),
@@ -541,7 +542,12 @@ class SpeechEngineRoutingTests(unittest.TestCase):
 
     def test_native_voice_and_unknown_voice(self):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
-        self.assertEqual(self._speak("tts-fast", "no-such-voice")["body"]["voice"], "F1")
+        resp = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "tts-fast", "voice": "no-such-voice", "input": "hello", "response_format": "wav"},
+        )
+        # An unknown voice is refused, not replaced by the engine default.
+        self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (400, "voice_not_available"))
 
     def test_tts_alias_goes_to_supertonic_with_mapped_voices(self):
         sent = self._speak("tts", "nova")

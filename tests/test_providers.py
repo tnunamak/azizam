@@ -8,8 +8,10 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import types
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store  # noqa: E402
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.policy import PolicyRequest, evaluate  # noqa: E402
 from gateway.providers import (  # noqa: E402
     BudgetExceeded,
@@ -80,9 +82,16 @@ def anthropic_provider(**overrides: object) -> ProviderRef:
     return ProviderRef(**data)  # type: ignore[arg-type]
 
 
-def profile(**overrides: object):
-    remote = RemoteProviderPolicy(providers=frozenset({"typesafe"}), **overrides)
-    return DEFAULT_PROFILE.with_overrides(id="paid-plan", remote=remote)
+def profile(*providers: str, app_id: str = "app_paid"):
+    """An App whose plans list ``providers`` (default: typesafe) as Paid providers."""
+    return identity(plan_for("paid-plan", paid=list(providers or ("typesafe",))), app_id=app_id)
+
+
+def capped(daily: str, **overrides: object) -> ProviderRef:
+    """The typesafe provider with a daily spend cap in its own config."""
+    config = {"spend_caps_usd": {"daily": daily}}
+    config.update(overrides.pop("config", {}))  # type: ignore[arg-type]
+    return provider(config=config, **overrides)
 
 
 def _fake_litellm(*, model_info: dict, cost: str):
@@ -187,28 +196,46 @@ class TestSpendReservations(unittest.TestCase):
         self.assertEqual(provider_concurrency_limit({"concurrency_limit": 5}), 5)
 
     def test_concurrent_requests_cannot_reserve_the_same_remaining_budget(self) -> None:
+        ensure_ledger(path=self.ledger)
+        start = threading.Barrier(3, timeout=5)
+
         def reserve():
+            start.wait()
             try:
-                reserve_provider_spend(profile(budget_usd_per_day=Decimal("0.01")), provider(),
-                    Cost(Decimal("0.006"), "price-table", "typesafe"), path=self.ledger)
+                reserve_provider_spend(
+                    profile(),
+                    capped("0.01", config={"concurrency_limit": 10}),
+                    Cost(Decimal("0.006"), "price-table", "typesafe"),
+                    path=self.ledger,
+                    now=1000,
+                    admin_db_path=self.admin_db,
+                )
                 return "allowed"
             except BudgetExceeded:
                 return "denied"
+
         with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: reserve(), range(2)))
+            futures = [pool.submit(reserve) for _ in range(2)]
+            try:
+                start.wait()
+                results = [future.result(timeout=10) for future in futures]
+            finally:
+                start.abort()
         self.assertEqual(sorted(results), ["allowed", "denied"])
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, estimated_usd, created_at FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "reserved")
+        self.assertEqual(Decimal(rows[0][1]), Decimal("0.006"))
+        self.assertEqual(rows[0][2], 1000)
 
     def test_provider_default_concurrency_limit_releases_on_terminal_states(self) -> None:
-        first_profile = DEFAULT_PROFILE.with_overrides(
-            id="first-plan",
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
-                budget_usd_per_day=Decimal("10"),
-            ),
-        )
-        second_profile = first_profile.with_overrides(id="second-plan")
-        third_profile = first_profile.with_overrides(id="third-plan")
-        fourth_profile = first_profile.with_overrides(id="fourth-plan")
+        first_profile = profile("openrouter", app_id="app_first")
+        second_profile = profile("openrouter", app_id="app_second")
+        third_profile = profile("openrouter", app_id="app_third")
+        fourth_profile = profile("openrouter", app_id="app_fourth")
         ref = provider(id="openrouter")
         first = reserve_provider_spend(
             first_profile,
@@ -250,14 +277,8 @@ class TestSpendReservations(unittest.TestCase):
         release_provider_spend(third, path=self.ledger)
 
     def test_four_actual_cost_requests_can_overshoot_once_then_fifth_is_denied(self) -> None:
-        p = DEFAULT_PROFILE.with_overrides(
-            id="paid-plan",
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
-                budget_usd_per_day=Decimal("0.20"),
-            ),
-        )
-        ref = provider(id="openrouter", config={"concurrency_limit": 4})
+        p = profile("openrouter")
+        ref = provider(id="openrouter", config={"concurrency_limit": 4, "spend_caps_usd": {"daily": "0.20"}})
         actual = Cost(Decimal("0.060015"), "litellm", "openrouter")
         for _ in range(4):
             reservation = reserve_provider_spend(
@@ -284,25 +305,24 @@ class TestSpendReservations(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        key = mock.patch.dict(os.environ, {"TYPESAFE_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
         self.ledger = Path(self.tmp.name) / "ledger.db"
         self.admin_db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(self.admin_db)
-        os.environ["TYPESAFE_TEST_KEY"] = "test-key"
-
-    def tearDown(self) -> None:
-        os.environ.pop("TYPESAFE_TEST_KEY", None)
-        self.tmp.cleanup()
 
     def test_default_profile_denies_paid_provider_before_ledger_write(self) -> None:
         with self.assertRaises(Exception) as cm:
             reserve_provider_spend(
-                DEFAULT_PROFILE,
+                identity(plan_for("local-only")),
                 provider(),
                 Cost(Decimal("0.001"), "price-table", "typesafe"),
                 path=self.ledger,
             )
 
-        self.assertIn("remote provider", str(cm.exception))
+        self.assertIn("The paid provider typesafe isn't in your access plan", str(cm.exception))
         self.assertFalse(self.ledger.exists())
 
     def test_missing_key_fails_closed(self) -> None:
@@ -328,18 +348,18 @@ class TestSpendReservations(unittest.TestCase):
         self.assertIn("disabled", str(cm.exception))
         self.assertFalse(self.ledger.exists())
 
-    def test_unknown_cost_rejected_when_profile_has_cap(self) -> None:
+    def test_unknown_cost_rejected_when_provider_has_cap(self) -> None:
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile(budget_usd_per_day=Decimal("1")),
-                provider(),
+                profile(),
+                capped("1"),
                 Cost(None, "unknown", "typesafe"),
                 path=self.ledger,
             )
 
     def test_daily_cap_includes_reserved_and_settled_costs_atomically(self) -> None:
-        p = profile(budget_usd_per_day=Decimal("0.01"))
-        ref = provider()
+        p = profile()
+        ref = capped("0.01")
         first = reserve_provider_spend(
             p,
             ref,
@@ -364,8 +384,8 @@ class TestSpendReservations(unittest.TestCase):
             )
 
     def test_reached_cap_rejects_zero_estimate_request(self) -> None:
-        p = profile(budget_usd_per_day=Decimal("0.02"))
-        ref = provider()
+        p = profile()
+        ref = capped("0.02")
         reservation = reserve_provider_spend(
             p,
             ref,
@@ -421,7 +441,7 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(id="other-paid-plan"),
+                profile(app_id="app_other"),
                 ref,
                 Cost(Decimal("0.006"), "price-table", "typesafe"),
                 path=self.ledger,
@@ -449,7 +469,7 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(id="other-paid-plan"),
+                profile(app_id="app_other"),
                 ref,
                 Cost(Decimal("0.006"), "price-table", "typesafe"),
                 path=self.ledger,
@@ -474,10 +494,7 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(
-                    id="other-paid-plan",
-                    remote=RemoteProviderPolicy(providers=frozenset({"openrouter"})),
-                ),
+                profile("openrouter", app_id="app_other"),
                 provider(
                     id="openrouter",
                     api_key_env="TYPESAFE_TEST_KEY",
@@ -493,13 +510,13 @@ class TestSpendReservations(unittest.TestCase):
         admin_store.put_operator_setting(
             "provider_admin",
             {
-                "providers": {"typesafe": {"allowed_plans": []}},
+                "providers": {"typesafe": {"caps": {"daily_usd": 0}}},
                 "global_caps": {},
             },
             path=self.ledger.parent / "admin.db",
         )
 
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
                 profile(),
                 provider(),
@@ -507,40 +524,9 @@ class TestSpendReservations(unittest.TestCase):
                 path=self.ledger,
             )
 
-        self.assertIn("not allowed for access plan", str(cm.exception))
-
-    def test_profile_daily_budget_aggregates_all_providers(self) -> None:
-        reserve_provider_spend(
-            profile(budget_usd_per_day=Decimal("0.01")),
-            provider(id="typesafe"),
-            Cost(Decimal("0.006"), "price-table", "typesafe"),
-            path=self.ledger,
-            now=1000,
-        )
-
-        with self.assertRaises(BudgetExceeded):
-            reserve_provider_spend(
-                profile(
-                    budget_usd_per_day=Decimal("0.01"),
-                ).with_overrides(
-                    remote=RemoteProviderPolicy(
-                        providers=frozenset({"typesafe", "openrouter"}),
-                        budget_usd_per_day=Decimal("0.01"),
-                    )
-                ),
-                provider(
-                    id="openrouter",
-                    api_key_env="TYPESAFE_TEST_KEY",
-                    protocols=("openai-compatible",),
-                ),
-                Cost(Decimal("0.006"), "price-table", "openrouter"),
-                path=self.ledger,
-                now=1001,
-            )
-
     def test_settled_zero_actual_cost_counts_as_zero_not_estimate(self) -> None:
-        p = profile(budget_usd_per_day=Decimal("0.01"))
-        ref = provider()
+        p = profile()
+        ref = capped("0.01")
         reservation = reserve_provider_spend(
             p,
             ref,
@@ -561,46 +547,6 @@ class TestSpendReservations(unittest.TestCase):
             Cost(Decimal("0.009"), "price-table", "typesafe"),
             path=self.ledger,
             now=1002,
-        )
-
-    def test_admin_allowed_plans_empty_list_denies_all(self) -> None:
-        admin_store.put_operator_setting(
-            "provider_admin",
-            {
-                "providers": {"typesafe": {"allowed_plans": []}},
-                "global_caps": {},
-            },
-            path=self.admin_db,
-        )
-
-        with self.assertRaises(Exception) as cm:
-            reserve_provider_spend(
-                profile(),
-                provider(),
-                Cost(Decimal("0.001"), "price-table", "typesafe"),
-                path=self.ledger,
-                admin_db_path=self.admin_db,
-            )
-
-        self.assertIn("not allowed for access plan", str(cm.exception))
-        self.assertFalse(self.ledger.exists())
-
-    def test_admin_allowed_plans_allows_named_profile(self) -> None:
-        admin_store.put_operator_setting(
-            "provider_admin",
-            {
-                "providers": {"typesafe": {"allowed_plans": ["paid-plan"]}},
-                "global_caps": {},
-            },
-            path=self.admin_db,
-        )
-
-        reserve_provider_spend(
-            profile(),
-            provider(),
-            Cost(Decimal("0.001"), "price-table", "typesafe"),
-            path=self.ledger,
-            admin_db_path=self.admin_db,
         )
 
     def test_unknown_cost_rejected_when_admin_cap_exists(self) -> None:
@@ -644,7 +590,7 @@ class TestSpendReservations(unittest.TestCase):
                 path=self.ledger,
             )
 
-    def test_completion_prompt_batch_output_cost_must_hit_per_request_cap(self) -> None:
+    def test_completion_prompt_batch_output_cost_counts_every_output(self) -> None:
         ref = provider(
             price={
                 "input_usd_per_million_tokens": "0",
@@ -654,13 +600,6 @@ class TestSpendReservations(unittest.TestCase):
         estimate = estimate_chat_cost(ref, {"prompt": ["x"] * 20, "max_tokens": 100})
 
         self.assertEqual(estimate.usd, Decimal("0.020000000"))
-        with self.assertRaises(BudgetExceeded):
-            reserve_provider_spend(
-                profile(max_usd_per_request=Decimal("0.002")),
-                ref,
-                estimate,
-                path=self.ledger,
-            )
 
     def test_completion_token_id_prompt_list_counts_as_one_prompt(self) -> None:
         ref = provider(
@@ -687,7 +626,7 @@ class TestSpendReservations(unittest.TestCase):
 
         self.assertEqual(estimate.usd, Decimal("0.002000000"))
 
-    def test_completion_best_of_output_cost_must_hit_per_request_cap(self) -> None:
+    def test_completion_best_of_output_cost_counts_every_output(self) -> None:
         ref = provider(
             price={
                 "input_usd_per_million_tokens": "0",
@@ -700,13 +639,6 @@ class TestSpendReservations(unittest.TestCase):
         )
 
         self.assertEqual(estimate.usd, Decimal("0.020000000"))
-        with self.assertRaises(BudgetExceeded):
-            reserve_provider_spend(
-                profile(max_usd_per_request=Decimal("0.002")),
-                ref,
-                estimate,
-                path=self.ledger,
-            )
 
     def test_conflicting_output_limits_reserve_conservative_maximum(self) -> None:
         ref = provider(
@@ -726,46 +658,6 @@ class TestSpendReservations(unittest.TestCase):
         )
 
         self.assertEqual(estimate.usd, Decimal("0.100000000"))
-        with self.assertRaises(BudgetExceeded):
-            reserve_provider_spend(
-                profile(max_usd_per_request=Decimal("0.0001")),
-                ref,
-                estimate,
-                path=self.ledger,
-            )
-
-    def test_mixed_case_provider_id_uses_saved_admin_deny_all_plans(self) -> None:
-        admin_store.put_operator_setting(
-            "provider_admin",
-            {
-                "providers": {
-                    "openrouter": {
-                        "allowed_plans": [],
-                        "caps": {"daily_usd": 100},
-                    }
-                },
-                "global_caps": {},
-            },
-            path=self.admin_db,
-        )
-        mixed_case_provider = provider(
-            id="OpenRouter",
-            api_key_env="TYPESAFE_TEST_KEY",
-            protocols=("openai-compatible",),
-        )
-
-        with self.assertRaises(Exception) as cm:
-            reserve_provider_spend(
-                profile().with_overrides(
-                    remote=RemoteProviderPolicy(providers=frozenset({"OpenRouter"}))
-                ),
-                mixed_case_provider,
-                Cost(Decimal("0.01"), "price-table", "OpenRouter"),
-                path=self.ledger,
-                admin_db_path=self.admin_db,
-            )
-
-        self.assertIn("not allowed for access plan", str(cm.exception))
 
     def test_mixed_case_provider_id_uses_saved_admin_zero_cap_when_plan_allowed(self) -> None:
         admin_store.put_operator_setting(
@@ -773,7 +665,6 @@ class TestSpendReservations(unittest.TestCase):
             {
                 "providers": {
                     "openrouter": {
-                        "allowed_plans": ["paid-plan"],
                         "caps": {"daily_usd": 0},
                     }
                 },
@@ -789,9 +680,7 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(
-                    remote=RemoteProviderPolicy(providers=frozenset({"OpenRouter"}))
-                ),
+                profile("OpenRouter"),
                 mixed_case_provider,
                 Cost(Decimal("0.01"), "price-table", "OpenRouter"),
                 path=self.ledger,
@@ -806,9 +695,7 @@ class TestSpendReservations(unittest.TestCase):
         )
 
         reserve_provider_spend(
-            profile().with_overrides(
-                remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
-            ),
+            profile("openrouter"),
             mixed_case_provider,
             Cost(Decimal("0.001"), "price-table", "OpenRouter"),
             path=self.ledger,
@@ -816,10 +703,8 @@ class TestSpendReservations(unittest.TestCase):
 
     def test_policy_request_remote_provider_is_canonicalized(self) -> None:
         decision = evaluate(
-            profile().with_overrides(
-                remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
-            ),
-            PolicyRequest(remote_provider="OpenRouter"),
+            profile("openrouter").access,
+            PolicyRequest(intent="chat.completions", remote_provider="OpenRouter"),
         )
 
         self.assertTrue(decision.allowed)
@@ -830,17 +715,15 @@ class TestSpendReservations(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, status, estimated_usd, cost_source, created_at)
+                VALUES (?, 'reserved', ?, ?, ?)
                 """,
-                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+                ("OpenRouter", "0.006", "price-table", 1000),
             )
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(
-                    remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
-                ),
+                profile("openrouter"),
                 provider(
                     id="openrouter",
                     config={"spend_caps_usd": {"daily": "0.01"}},
@@ -864,17 +747,15 @@ class TestSpendReservations(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, status, estimated_usd, cost_source, created_at)
+                VALUES (?, 'reserved', ?, ?, ?)
                 """,
-                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+                ("OpenRouter", "0.006", "price-table", 1000),
             )
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile().with_overrides(
-                    remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
-                ),
+                profile("openrouter"),
                 provider(
                     id="openrouter",
                 ),
@@ -897,8 +778,8 @@ class TestSpendReservations(unittest.TestCase):
             )
 
     def test_released_reservation_no_longer_counts(self) -> None:
-        p = profile(budget_usd_per_day=Decimal("0.01"))
-        ref = provider()
+        p = profile()
+        ref = capped("0.01")
         reservation = reserve_provider_spend(
             p,
             ref,
@@ -1386,12 +1267,11 @@ class TestCosts(unittest.TestCase):
 class TestTypeSafeHttpHook(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        key = mock.patch.dict(os.environ, {"TYPESAFE_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
         self.ledger = Path(self.tmp.name) / "ledger.db"
-        os.environ["TYPESAFE_TEST_KEY"] = "test-key"
-
-    def tearDown(self) -> None:
-        os.environ.pop("TYPESAFE_TEST_KEY", None)
-        self.tmp.cleanup()
 
     def test_vendor_auth_error_maps_to_provider_auth_failed(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -1482,7 +1362,7 @@ class TestTypeSafeHttpHook(unittest.TestCase):
                         client=client,
                         paid_fallback=True,
                     )
-                self.assertIn("paid fallback disabled", str(cm.exception))
+                self.assertIn("when the engine is unavailable isn't in your access plan", str(cm.exception))
 
         asyncio.run(run())
         self.assertFalse(called)

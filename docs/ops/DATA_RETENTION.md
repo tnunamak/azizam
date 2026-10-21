@@ -24,7 +24,7 @@ actions. This change adds no bulk cleanup command or hidden disk-pressure expiry
 | Metrics database (`metrics_store.init_db`, `verify_integrity`) | Previously unlinked the database on a failed move and always removed WAL/SHM | Startup after corruption or a failure marker | (a) | Fixed. Preserve database and journals; recheck a previous failure marker before quarantine. Keep the normal startup header/schema check inexpensive. |
 | Jobs and events (`media_jobs`) | Jobs and their append-only events older than 14 days, including queued/running jobs | Every gateway startup | (a) | Removed the pruning API and startup call. Keep all states and events. Job writes update by job ID; a request ID held by another job fails the write instead of deleting that job, and a stale copy cannot restore a released ID. The deletion also ended request-ID replay; `REPLAY_WINDOW_S` keeps that 14-day replay limit. A finished job older than that gives its request ID to the new job, so a repeated seeded or idempotent request runs again. Active jobs always replay. The released ID is cleared, not copied: a seeded ID is a prompt derivative that erasure must be able to remove. Jobs keep the creating request's receipt ID in `parent_request_id`; Library and Usage fall back to it when the job's own request ID is cleared or derived. |
 | Video records (`video_job_records`, proxy hydration and GC) | Ownership, extension lineage and job metadata after 14 days | Startup and runtime GC | (a) | Removed both age-based deletion paths and the age-filtered load option. Explicit DELETE still removes its tombstone after five minutes. |
-| Receipt schema upgrade (`receipt_store._exec_schema`) | All receipts without the newer owning-App column | First opening of an older schema | (a) | Replace table recreation with additive columns. Preserve original rows and JSON; NULL ownership excludes them from member feeds. |
+| Receipt schema upgrade (`receipt_store._exec_schema`) | All receipts without the newer owning-App column | First opening of an older schema | (a) | Preserve original rows and JSON with additive columns. A missing App ID alone does not make a receipt invisible. Library and Usage may still admit it through a trusted owner-key or principal match. Rows without any trusted ownership match stay hidden from scoped users. |
 | Receipts / Usage / request cost history (`receipt_store.maintain`) | Rows before the owner's selected cutoff | Startup and hourly, only after an explicit finite setting | (a) | Keep existing forever default and preview-checked owner setting. History floor and cost coverage rules remain; no new expiry. |
 | Library assets and ownership sidecars (`proxy` media storage) | Image, video and audio bytes, metadata and prompts after a default 24 hours | Background cache eviction | (a) | Removed eviction, its settings and expiry UI. These files can be the only copy of generated output. Signed-link expiry still limits a link, not the stored asset. Existing authorized Library DELETE remains. |
 | Saved prompts inferred to be orphaned (`prompt_memory.prune`) | Video placeholders after 14 days; prompts missing from a supplied asset inventory | Prompt maintenance | (a) | Removed both inferred deletions. A partial inventory, absent disk or old video does not authorize erasure. Explicit privacy deadlines still apply. |
@@ -42,7 +42,8 @@ actions. This change adds no bulk cleanup command or hidden disk-pressure expiry
 | Derived identity claims and access caches (`admin_store`, `accounts`) | Cached claims or superseded claim-derived grants | Claim refresh, schema conversion, explicit profile change/removal | (b) | Keep refresh/invalidation. Schema conversion freezes effective grants before removing ambiguous cached claims; it does not delete users or audit records. |
 | Video progress, workflow execution maps and DELETE tombstones (proxy GC) | Transient progress maps and records already explicitly deleted | Progress TTL or terminal grace period; five minutes after explicit DELETE | (b) | Keep. These caches do not determine durable job retention. |
 | Execution payload spools (proxy media jobs) | Temporary request payloads | Job terminal; explicit privacy erasure | (b) | Keep finished-job cleanup; preserve absent-job spools because their history may be quarantined. Removed age-based deletion of queued/running payloads, including in-memory payloads. Active private work can still finish during an explicit erasure using memory-only payloads. |
-| Speech/transcription processing files (`stt_chunking`, proxy audio routes) | Input spools, normalized WAV copies, segment files and workspaces | Processing completion/failure or controlled cleanup | (b) | Keep temporary-copy cleanup. These are execution workspaces, not Library output. |
+| Speech/transcription processing files (`stt_chunking`, proxy audio routes) | Input spools, normalized WAV copies, segment files and workspaces | Processing completion/failure or controlled cleanup | (b) | Keep temporary-copy cleanup. These are execution workspaces, not Library output. They live in the gateway's private temporary directory (`gateway/private_tmp.py`, `AZIZAM_PRIVATE_TMPDIR`), which `start.sh` empties at every start. |
+| Multipart upload spill over 1 MiB, ffmpeg/ffprobe scratch files, LiteLLM and engine temporary files | Request bodies and media while a request runs | Request end (`gateway/request_forms.py` closes spilled parts); start-up sweep | (b) | Same private temporary directory. A deleted file can stay in free disk blocks. |
 | Asset write scratch files and failed voice staging (`proxy.store_asset_bytes`, `custom_voices._commit`) | Incomplete or already-published temporary files | Write failure or successful atomic publication | (b) | Keep. Published media/voice records are separate. |
 | Prompt metadata migration scratch (`prompt_metadata_migration`) | Recognizable old helper files, stripped scratch copies and abandoned staging files older than one hour | Privacy migration/cleanup pass | (b) | Keep scratch cleanup. Published media bytes remain after metadata stripping; the existing privacy migration removes embedded prompt copies to prevent cross-member disclosure. |
 | Privacy purge coordination (`prompt_memory_erasure_intents`, proxy `prompt_purge_queue`) | Completed retry intents | Successful erasure/metadata stripping | (b) | Keep. Durable cutoffs remain to prevent late writes from restoring erased prompts. |
@@ -53,6 +54,65 @@ actions. This change adds no bulk cleanup command or hidden disk-pressure expiry
 | Database maintenance markers (`sqlite_startup`, `metrics_store`) | Completed quarantine marker or rechecked integrity marker | Successful recovery/check | (b) | Keep marker cleanup only. A partial quarantine leaves a marker that blocks the next startup; it never falls back to deleting database or journal files. |
 
 Inventory totals: **16 class (a), 14 class (b), 2 class (c)**. Totals count audited paths; most class (a) rows no longer delete anything.
+
+Library deletion is scoped to the signed-in person's own assets, including for
+an owner. The response's `deleted` field records the person's deletion.
+`physical_removed` separately reports whether the deleter removed files.
+The gateway's asset deleter (`me_media.conservative_asset_deleter`) preserves
+bytes and sidecars shared by multiple owner-key hashes or maker people. The API
+also deletes that person's saved prompt for the asset.
+The API records an audit entry that hides the item from that person's Library.
+The everyone view does not apply those per-person hiding entries.
+This endpoint does not itself delete job or receipt rows.
+
+Until 2026-10-11 11:59:31 CDT the gateway deleted every generated file 24 hours
+after its last write (the cache eviction loop in `proxy.py`). A file made before
+2026-10-10 11:59:31 CDT (24 hours earlier) is the newest one that loop could have
+deleted. Library items made before then often have a record and no file. The Library says so, with the
+cutoff in the viewer's time zone and "can't be recovered". Remove missing items
+(`POST /me/api/media/remove-missing`, after a confirmation in the Library)
+clears the signed-in person's own entries whose file is gone:
+
+- It refuses, and changes nothing, unless the media folder is a readable
+  directory. A folder that is missing, not a directory or unreadable looks the
+  same as every file being gone. A readable folder with no media file (empty,
+  or only sidecars or scratch files) looks the same as an unmounted volume, so
+  the removal refuses it whenever it would drop an entry. When nothing is
+  missing the removal succeeds and removes nothing, whatever the folder's state.
+- A nonempty folder alone is not proof of the right disk: a write onto a bare
+  mount point can leave one new file while every older file is on an absent disk.
+  The root marker `.azizam-media` holds a random volume ID and creation time;
+  `media_volume_identity` beside the Library index records the expected ID.
+  Missing, malformed or mismatched markers refuse removal without deleting
+  entries. The core rechecks the identity inside the deletion transaction.
+- The first Library read on a fresh install (nothing recorded, no entry in
+  either store, and no media file in the folder) records the marker. Sidecars,
+  scratch files and the signing secret do not count as media. Any other folder
+  state needs the owner. Ordinary media writes never create the marker, and a
+  recorded identity is never regenerated, even after every entry is removed.
+  The marker is created with `O_EXCL`, so a filesystem without hard links (FAT,
+  exFAT, some SMB mounts) works.
+- Existing installs and intentional moves need the owner, once. The Library
+  read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`. Until
+  the folder is confirmed, the owner sees a notice with the folder path, the
+  count "N of M Library items have their files here" and **This is the right
+  media folder** (`POST /me/api/media/confirm-folder`). Members see only that
+  the owner confirms the folder once. Confirmation refuses a folder that holds
+  none of a non-empty Library (409 `media_folder_no_matches`), writes a new
+  marker, records its ID and is audited as `media.folder.confirm`. It removes
+  nothing. Back up the marker with the media and the identity with the
+  database. Never confirm merely to dismiss the notice when the expected disk
+  is absent.
+- A file is gone only when nothing in the folder holds its digest under any
+  suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
+  reads the folder, not the Library listing.
+- A finished job entry is deleted only when every asset its record names is
+  gone. Otherwise each gone asset is hidden as that job made it
+  (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+- Prompts, hides and job deletions commit together in the media-jobs database or
+  not at all. It never deletes a stored file or a receipt.
+- Removing a person's account deletes their hide rows with their prompts, in one
+  transaction.
 
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the

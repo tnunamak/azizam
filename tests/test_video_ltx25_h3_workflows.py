@@ -13,10 +13,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
 
@@ -93,6 +96,7 @@ class _JsonRequest:
         return self._body
 
 
+@pytest.mark.usefixtures("isolated_receipts")
 class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
     async def _create(self, body: dict) -> tuple[int, dict, dict | None]:
         submitted: list[dict] = []
@@ -118,8 +122,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy.httpx, "AsyncClient", FakeClient), patch.object(
             proxy, "_service_availability_response", return_value=None
         ):
-            response = await proxy.proxy_comfy_video_create(
-                _JsonRequest(body), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            response = await proxy.proxy_graph_video_create(
+                _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
         payload = json.loads(response.body)
         return response.status_code, payload, (submitted[0] if submitted else None)

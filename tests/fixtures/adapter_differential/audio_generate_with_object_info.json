@@ -1,0 +1,561 @@
+{
+  "assets": [
+    {
+      "json": {
+        "asset_id": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9.meta.json",
+      "size": 148,
+      "suffix": ".json"
+    },
+    {
+      "name": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9.wav",
+      "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+      "size": 3244,
+      "suffix": ".wav"
+    }
+  ],
+  "caller": [
+    {
+      "label": "generate audio; the prompt carries a derived UI workflow",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":\"a door creaks\",\"model\":\"tangoflux\",\"duration\":4}"
+        },
+        "headers": {
+          "content-length": "59",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/audio/generate",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "binary",
+          "len": 3244,
+          "magic": "52494646a40c0000",
+          "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9"
+        },
+        "headers": {
+          "content-length": "3244",
+          "content-type": "audio/wav",
+          "x-audio-model": "tangoflux",
+          "x-audio-type": "music",
+          "x-request-id": "<req:1>"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "node slot definitions come from GET /object_info/{class} on a blocking client; the prompt embeds the derived workflow",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "client": "sync",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/object_info/TangoFluxLoader",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "client": "sync",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/object_info/TangoFluxSampler",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "client": "sync",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/object_info/TangoFluxVAEDecodeAndPlay",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"TangoFluxLoader\",\"inputs\":{\"enable_teacache\":false,\"rel_l1_thresh\":0.25}},\"2\":{\"class_type\":\"TangoFluxSampler\",\"inputs\":{\"model\":[\"1\",0],\"prompt\":\"a door creaks\",\"steps\":50,\"guidance_scale\":4,\"duration\":4.0,\"seed\":192058881,\"batch_size\":1,\"offload_model_to_cpu\":false}},\"3\":{\"class_type\":\"TangoFluxVAEDecodeAndPlay\",\"inputs\":{\"vae\":[\"1\",1],\"tile_size\":32,\"latents\":[\"2\",0],\"filename_prefix\":\"tangoflux\",\"format\":\"wav\",\"save_output\":true}}},\"extra_data\":{\"extra_pnginfo\":{\"workflow\":{\"id\":\"<uuid:1>\",\"revision\":0,\"last_node_id\":3,\"last_link_id\":3,\"nodes\":[{\"id\":1,\"type\":\"TangoFluxLoader\",\"pos\":[40,40],\"size\":[315,82],\"flags\":{},\"order\":0,\"mode\":0,\"inputs\":[{\"name\":\"enable_teacache\",\"localized_name\":\"enable_teacache\",\"type\":\"BOOLEAN\",\"widget\":{\"name\":\"enable_teacache\"},\"link\":null},{\"name\":\"rel_l1_thresh\",\"localized_name\":\"rel_l1_thresh\",\"type\":\"FLOAT\",\"widget\":{\"name\":\"rel_l1_thresh\"},\"link\":null}],\"outputs\":[{\"name\":\"OUT0\",\"localized_name\":\"OUT0\",\"type\":\"*\",\"links\":[1],\"slot_index\":0},{\"name\":\"OUT1\",\"localized_name\":\"OUT1\",\"type\":\"*\",\"links\":[2],\"slot_index\":1}],\"properties\":{\"Node name for S&R\":\"TangoFluxLoader\"},\"widgets_values\":[false,0.25]},{\"id\":2,\"type\":\"TangoFluxSampler\",\"pos\":[435,40],\"size\":[315,238],\"flags\":{},\"order\":1,\"mode\":0,\"inputs\":[{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":1},{\"name\":\"prompt\",\"localized_name\":\"prompt\",\"type\":\"STRING\",\"widget\":{\"name\":\"prompt\"},\"link\":null},{\"name\":\"steps\",\"localized_name\":\"steps\",\"type\":\"INT\",\"widget\":{\"name\":\"steps\"},\"link\":null},{\"name\":\"guidance_scale\",\"localized_name\":\"guidance_scale\",\"type\":\"INT\",\"widget\":{\"name\":\"guidance_scale\"},\"link\":null},{\"name\":\"duration\",\"localized_name\":\"duration\",\"type\":\"INT\",\"widget\":{\"name\":\"duration\"},\"link\":null},{\"name\":\"seed\",\"localized_name\":\"seed\",\"type\":\"INT\",\"widget\":{\"name\":\"seed\"},\"link\":null},{\"name\":\"batch_size\",\"localized_name\":\"batch_size\",\"type\":\"INT\",\"widget\":{\"name\":\"batch_size\"},\"link\":null},{\"name\":\"offload_model_to_cpu\",\"localized_name\":\"offload_model_to_cpu\",\"type\":\"BOOLEAN\",\"widget\":{\"name\":\"offload_model_to_cpu\"},\"link\":null}],\"outputs\":[{\"name\":\"OUT0\",\"localized_name\":\"OUT0\",\"type\":\"*\",\"links\":[3],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"TangoFluxSampler\"},\"widgets_values\":[\"a door creaks\",50,4,4.0,192058881,1,false]},{\"id\":3,\"type\":\"TangoFluxVAEDecodeAndPlay\",\"pos\":[830,40],\"size\":[315,186],\"flags\":{},\"order\":2,\"mode\":0,\"inputs\":[{\"name\":\"vae\",\"localized_name\":\"vae\",\"type\":\"*\",\"link\":2},{\"name\":\"latents\",\"localized_name\":\"latents\",\"type\":\"*\",\"link\":3},{\"name\":\"tile_size\",\"localized_name\":\"tile_size\",\"type\":\"INT\",\"widget\":{\"name\":\"tile_size\"},\"link\":null},{\"name\":\"filename_prefix\",\"localized_name\":\"filename_prefix\",\"type\":\"STRING\",\"widget\":{\"name\":\"filename_prefix\"},\"link\":null},{\"name\":\"format\",\"localized_name\":\"format\",\"type\":\"STRING\",\"widget\":{\"name\":\"format\"},\"link\":null},{\"name\":\"save_output\",\"localized_name\":\"save_output\",\"type\":\"BOOLEAN\",\"widget\":{\"name\":\"save_output\"},\"link\":null}],\"outputs\":[],\"properties\":{\"Node name for S&R\":\"TangoFluxVAEDecodeAndPlay\"},\"widgets_values\":[32,\"tangoflux\",\"wav\",true]}],\"links\":[[1,1,0,2,0,\"*\"],[2,1,1,3,0,\"*\"],[3,2,0,3,1,\"*\"]],\"groups\":[],\"config\":{},\"extra\":{},\"version\":0.4}}},\"client_id\":\"<hex32:1>\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<3259 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/view",
+      "query": [
+        [
+          "filename",
+          "tone_00001_.wav"
+        ],
+        [
+          "type",
+          "output"
+        ]
+      ],
+      "step": 0,
+      "to": "comfy.fk.test"
+    }
+  ],
+  "gateway_sleeps": [
+    {
+      "after_engine_requests": 4,
+      "delay": 2.0,
+      "step": 0
+    }
+  ],
+  "media_jobs": {
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "audio.generate",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [
+            {
+              "asset_id": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+              "filename": "audio.wav",
+              "kind": "audio",
+              "media_type": "audio/wav",
+              "size_bytes": 3678
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<req:1>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "metadata": {
+            "mode": "sync_media_route"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": null,
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": null,
+          "request_id": "<req:1>",
+          "retryable": null,
+          "started_at": null,
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "audio.generate.tangoflux"
+        },
+        "parent_request_id": null,
+        "progress": 100,
+        "request_id": "<req:1>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": "audio.generate.tangoflux"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 4
+      }
+    ],
+    "retention_fact_destinations": [
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "comfyui",
+        "metadata_json": {
+          "address": "127.0.0.1:7890",
+          "kind": "engine",
+          "name": "ComfyUI (Image + Video Generation)",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_revisions": [
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "host swap, hibernation, and crash capture settings",
+          "confidence": "documented",
+          "control": "review swap, hibernation, and crash-dump settings on the host",
+          "default": "conditional",
+          "evidence_url": "https://man7.org/linux/man-pages/man2/mlock.2.html",
+          "holds": "request bodies while a request runs",
+          "how_long": "during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine",
+          "id": "gateway-temporary-copies",
+          "reach": "the machine owner and anyone with access to its files or memory image",
+          "where": "process memory and temporary workspaces"
+        },
+        "first_seen": "<time>",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a permitted crash dump handled by systemd-coredump",
+          "confidence": "documented",
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
+        },
+        "first_seen": "<time>",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "store_prompts_in_spend_logs or its environment override is enabled",
+          "confidence": "documented",
+          "control": "inspect effective UI, environment and file settings; disable content storage and delete old rows separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/ui_logs",
+          "holds": "request and response content if spend-content storage is enabled",
+          "how_long": "unknown; cleanup requires a separately configured retention period",
+          "id": "litellm-spend-content",
+          "reach": "LiteLLM administrators and anyone with access to its spend database",
+          "where": "LiteLLM spend rows"
+        },
+        "first_seen": "<time>",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
+          "confidence": "documented",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
+        },
+        "first_seen": "<time>",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "audio.generate",
+        "job_id": "<job:1>",
+        "parent_request_id": null,
+        "path": "/v1/audio/generate",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "terminal_reason": "http_200"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/generate",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "route_authorized",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "runtime_route_policy",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "tangoflux",
+          "requested_workflow": null,
+          "resolved_model": "tangoflux",
+          "resolved_workflow": "audio.generate.tangoflux",
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+            "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+          ],
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "audio_generate_with_object_info",
+  "schema": 1
+}

@@ -22,7 +22,7 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn("</html>", html)
         self.assertIn("Claim this gateway", html)
         # The primary action links to /login with /setup as the return target.
-        self.assertIn('href="/login?return_to=/setup"', html)
+        self.assertIn('href="/login?return_to=%2Fsetup%2F"', html)
         self.assertIn("Sign in to claim owner", html)
         # The "first allowed OIDC login becomes owner" promise is on the page.
         self.assertIn("first allowed OIDC login", html)
@@ -59,7 +59,7 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn('name="password"', html)
         self.assertIn('name="password_confirm"', html)
         # No primary OIDC sign-in CTA when OIDC is disabled.
-        self.assertNotIn('href="/login?return_to=/setup"', html)
+        self.assertNotIn('href="/login?return_to=%2Fsetup%2F"', html)
         self.assertNotIn("Sign in to claim owner", html)
         # The CLI recipe is still reachable, but only inside the recovery
         # disclosure — no more "run one host-side command" framing.
@@ -117,8 +117,8 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn("This gateway has an owner", html)
         # No decorative "Setup complete" eyebrow above the heading.
         self.assertNotIn("Setup complete", html)
-        self.assertIn('href="/"', html)
-        self.assertIn('href="/admin"', html)
+        self.assertIn('href="/">Open Azizam</a>', html)
+        self.assertNotIn('href="/admin"', html)
         # The claim CTA isn't shown anymore.
         self.assertNotIn("Sign in to claim owner", html)
         # A small recovery hatch remains so OIDC failures are not dead ends.
@@ -188,8 +188,9 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn("owner@example.com", html)
         self.assertIn("Sign out", html)
         self.assertIn('href="/logout"', html)
-        # Admin nav surfaces /admin link in shared chrome.
-        self.assertIn('href="/admin"', html)
+        # The shared chrome links to the web app's Status page, not a dashboard.
+        self.assertNotIn('href="/admin"', html)
+        self.assertIn('href="/status/"', html)
         # Operator tools on the signed-in setup console.
         self.assertIn("Mint a key from the console", html)
         self.assertIn('action="/setup/first-app"', html)

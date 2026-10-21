@@ -36,7 +36,7 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         raise ProviderConfigurationError(
             status.HTTP_400_BAD_REQUEST,
             "unknown_provider_preset",
-            f"provider preset {preset_id!r} was not found",
+            "that provider preset was not found; choose one from the list",
         )
     provider_id = service_registry.canonical_provider_id(str(body.get("provider_id") or preset.id))
     base_url = str(body.get("base_url") or preset.base_url).strip().rstrip("/")

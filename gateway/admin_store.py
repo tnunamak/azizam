@@ -2,8 +2,8 @@
 
 This module separates *durable facts* (who exists, what they have, what was
 done) from *policy decisions* (what they're allowed to do right now). The
-policy evaluator lives in :mod:`gateway.policy`; this store just persists the
-profile JSON that the evaluator later loads.
+policy evaluator lives in :mod:`gateway.policy`; this store persists the
+access-plan documents (:mod:`gateway.access_plans`) and who holds them.
 
 It also separates the *data plane* (apps making API calls, data-plane
 credentials attached to an app) from the *control plane* (humans and service
@@ -20,7 +20,7 @@ Storage invariants
   and pass us the hash + key prefix. We store the hash; the prefix is only
   used to render a non-secret display value (``svc_live_abcd…``).
 * Stable generated IDs use prefixes per entity kind (``usr_``, ``svc_``,
-  ``app_``, ``prof_``, ``cred_``, ``aud_``).
+  ``app_``, ``plan_``, ``cred_``, ``aud_``).
 * OIDC users are unique by ``(issuer, subject)`` — re-logins update profile
   data but preserve the row ID, so anything pointing at the user (apps,
   credentials, role assignments) stays stable.
@@ -31,6 +31,8 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
+from gateway import request_connections, secret_store, session_guard
+from gateway import retention as retention_contract
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -39,6 +41,7 @@ import os
 import secrets
 import sqlite3
 import time
+import unicodedata
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -46,7 +49,30 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 16
+# Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
+_PRE_ACCESS_PLANS_VERSION = 6
+_ACCESS_PLANS_VERSION = 7
+# Schema 8 records the host each existing service credential was configured for
+# (gateway.credential_origin_migration).
+_CREDENTIAL_ORIGIN_VERSION = 8
+# Schema 9 moves the sign-in allow-lists into sign-in rules and marks the
+# administrator grants the identity provider gave
+# (gateway.signin_rules_migration).
+_SIGNIN_RULES_VERSION = 9
+_ENGINE_RECORD_V2_VERSION = 10
+# Schema 11 moves every inline secret of a stored record into the encrypted store (gateway.secret_externalize_migration).
+_SECRET_REFS_VERSION = 11
+# Schema 12 records the address each lifecycle driver key was configured for (gateway.driver_key_origin_migration).
+_DRIVER_KEY_ORIGIN_VERSION = 12
+# Schema 13 binds the credentials stored with each URL field to its effective origin (gateway.url_binding_migration).
+_URL_BINDING_VERSION = 13
+# Schema 14 moves operator setting ``prompt_memory`` to ``retention`` (gateway.retention_migration). An older gateway
+# refuses a database at this version, so it cannot read the household policy as if it were unset.
+_RETENTION_KEY_VERSION = 14
+# Schema 15 adds mode-specific long-audio defaults to matching transcription records
+# (gateway.stt_chunking_upgrade; the rules are registry/stt_chunking_upgrades.yml).
+_STT_CHUNKING_VERSION = 15
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -56,17 +82,6 @@ OIDC_MOVED_CLIENT_SECRET_ID = "oidc-client-secret"
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
 IDENTITY_CLAIM_KINDS = ("oidc_group", "oidc_role")
-RUNTIME_PROFILE_MAPPING_SOURCE_SPECS = (
-    {"id": "oidc_group", "label": "OIDC group", "description": "Match a configured OIDC group.", "value_mode": "required", "priority": 20},
-    {"id": "oidc_role", "label": "OIDC role", "description": "Match a configured OIDC role.", "value_mode": "required", "priority": 30},
-    {"id": "email", "label": "Email", "description": "Match one normalized email address.", "value_mode": "required", "priority": 10},
-    {"id": "domain", "label": "Domain", "description": "Match one normalized email domain.", "value_mode": "required", "priority": 40},
-    {"id": "gateway_role", "label": "Gateway role", "description": "Match one gateway admin role.", "value_mode": "required", "priority": 50},
-    {"id": "all_users", "label": "All signed-in users", "description": "Match every signed-in user.", "value_mode": "fixed", "fixed_value": "*", "priority": 100},
-)
-RUNTIME_PROFILE_MAPPING_SOURCE_KINDS = tuple(spec["id"] for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS)
-_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID = {spec["id"]: spec for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS}
-
 # Credentials attached to an app are data-plane (a runtime client uses them
 # to call /v1/chat/completions etc.). Credentials attached to a user or
 # service account are control-plane (used to call admin APIs).
@@ -115,21 +130,29 @@ CREATE TABLE IF NOT EXISTS service_accounts (
   disabled_at INTEGER
 );
 
+-- An access plan document (gateway.access_plans). People, apps and
+-- invitations refer to it by its opaque id; the name is only a label.
+CREATE TABLE IF NOT EXISTS access_plans (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  plan_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Every App has an accountable person (owner_user_id) and one assignment:
+-- an access plan id, or 'person' ("Same as its person"). NULL is only the
+-- state after a failed assignment write, and denies every request.
 CREATE TABLE IF NOT EXISTS apps (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
-  owner_user_id TEXT,
-  owner_service_account_id TEXT,
-  default_profile_id TEXT,
+  owner_user_id TEXT NOT NULL,
+  access_plan TEXT,
   created_at INTEGER NOT NULL,
   disabled_at INTEGER,
-  FOREIGN KEY(owner_user_id) REFERENCES users(id),
-  FOREIGN KEY(owner_service_account_id) REFERENCES service_accounts(id),
-  FOREIGN KEY(default_profile_id) REFERENCES profiles(id)
+  FOREIGN KEY(owner_user_id) REFERENCES users(id)
 );
-CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
-CREATE INDEX IF NOT EXISTS apps_owner_service ON apps(owner_service_account_id);
 
 -- The App that attributes a person's own signed-in work (the "Azizam" App).
 -- It holds no credentials: browser sessions act through it without a key.
@@ -140,20 +163,11 @@ CREATE TABLE IF NOT EXISTS session_apps (
   FOREIGN KEY(app_id) REFERENCES apps(id)
 );
 
-CREATE TABLE IF NOT EXISTS profiles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT,
-  profile_json TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS credentials (
   id TEXT PRIMARY KEY,
   subject_kind TEXT NOT NULL,
   subject_id TEXT NOT NULL,
   app_id TEXT,
-  profile_id TEXT,
   hash TEXT NOT NULL UNIQUE,
   prefix TEXT NOT NULL,
   display_name TEXT,
@@ -165,8 +179,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   last_used_at INTEGER,
   -- A key bound to a browser sign-in session; revoked when it signs out.
   session_id TEXT,
-  FOREIGN KEY(app_id) REFERENCES apps(id),
-  FOREIGN KEY(profile_id) REFERENCES profiles(id)
+  FOREIGN KEY(app_id) REFERENCES apps(id)
 );
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject_kind, subject_id);
 CREATE INDEX IF NOT EXISTS credentials_app ON credentials(app_id);
@@ -196,25 +209,13 @@ CREATE TABLE IF NOT EXISTS admin_role_assignments (
   granted_by TEXT,
   provenance TEXT NOT NULL DEFAULT 'manual',
   revoked_at INTEGER,
+  -- For identity-provider grants: when a sign-in last confirmed the claim.
+  last_confirmed_at INTEGER,
   UNIQUE(role, subject_kind, subject_id, scope_app_id),
   FOREIGN KEY(scope_app_id) REFERENCES apps(id)
 );
 CREATE INDEX IF NOT EXISTS admin_role_subject
   ON admin_role_assignments(subject_kind, subject_id);
-
-CREATE TABLE IF NOT EXISTS runtime_profile_mappings (
-  id TEXT PRIMARY KEY,
-  source_kind TEXT NOT NULL,
-  source_value TEXT NOT NULL,
-  profile_id TEXT NOT NULL,
-  priority INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  created_by TEXT,
-  disabled_at INTEGER,
-  UNIQUE(source_kind, source_value, profile_id)
-);
-CREATE INDEX IF NOT EXISTS runtime_profile_mappings_lookup
-  ON runtime_profile_mappings(source_kind, source_value, disabled_at);
 
 CREATE TABLE IF NOT EXISTS local_password_credentials (
   user_id TEXT PRIMARY KEY,
@@ -238,6 +239,16 @@ CREATE INDEX IF NOT EXISTS operator_settings_updated_at
 CREATE TABLE IF NOT EXISTS operator_settings_generations (
   setting_key TEXT PRIMARY KEY,
   operator_settings_generation INTEGER NOT NULL
+);
+
+-- An explicit empty list is an owner decision. Keep it across catalog upgrades.
+CREATE TABLE IF NOT EXISTS retention_fact_overrides (
+  target_type TEXT NOT NULL CHECK(target_type IN ('engine', 'provider', 'system')),
+  target_id TEXT NOT NULL,
+  facts_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  PRIMARY KEY(target_type, target_id)
 );
 
 CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
@@ -264,7 +275,122 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS audit_created_at ON audit_events(created_at);
 CREATE INDEX IF NOT EXISTS audit_target ON audit_events(target_kind, target_id);
 
+-- Sign-in rules (gateway.signin_rules). A person's plan is rule-given while
+-- this row names it; a plan set by hand or carried by an invitation has no row.
+CREATE TABLE IF NOT EXISTS signin_rule_plans (
+  user_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  set_at INTEGER NOT NULL
+);
+-- A provider identity the owner linked to an existing person, so the same
+-- person signs in with a password and with the provider.
+CREATE TABLE IF NOT EXISTS oidc_identity_links (
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  linked_at INTEGER NOT NULL,
+  linked_by TEXT,
+  PRIMARY KEY(issuer, subject)
+);
+-- Group, role and email values a test sign-in saw for an identity that is not
+-- a person yet. Real sign-ins are in user_identity_claims.
+CREATE TABLE IF NOT EXISTS signin_seen_values (
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  seen_at INTEGER NOT NULL,
+  PRIMARY KEY(kind, value)
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+"""
+
+# Built-in identities, single-use links and sign-in state (gateway.accounts).
+ACCOUNT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_access (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT REFERENCES access_plans(id),
+ disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
+);
+-- A person whose latest sign-in was refused. Their personal keys stop working
+-- until a sign-in succeeds, which deletes the row (reversible by design).
+CREATE TABLE IF NOT EXISTS account_signin_refusals (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), refused_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_sessions (
+ session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_session_revocations (
+ session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
+);
+-- The ids a sign-in has held since its first renewal (decision D35). ``retired_at`` is when an id was
+-- replaced by its successor; the row for the id in use has none. A retired id shown after the grace
+-- window means a copy of the cookie exists, so the whole family is revoked, unless no later id was ever
+-- used (decision D35b): then the response carrying the successor was lost and the sign-in is reissued.
+-- ``used_at`` is the first request that carried the id; ``superseded`` marks an unused id that a reissue
+-- replaced. Rows are added in order, so a later rowid is a later id.
+CREATE TABLE IF NOT EXISTS account_session_lineage (
+ session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, retired_at INTEGER, expires_at INTEGER NOT NULL,
+ used_at INTEGER, superseded INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS account_session_lineage_family ON account_session_lineage(family_id);
+CREATE TABLE IF NOT EXISTS account_links (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+ plan_id TEXT REFERENCES access_plans(id), user_id TEXT REFERENCES users(id), email TEXT,
+ created_by TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+ used_at INTEGER, revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS account_oidc_verification (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), email_verified INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_login_limits (
+ bucket TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL
+);
+-- A person's avatar: one word from a fixed list, plus the https picture URL the sign-in
+-- provider shared (gateway.avatars). A table of its own so no people list returns the URL.
+CREATE TABLE IF NOT EXISTS user_avatars (
+ user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ choice TEXT NOT NULL DEFAULT 'auto'
+  CHECK (choice IN ('auto','picture','v1','v2','v3','v4','v5','v6','v7','v8')),
+ picture_url TEXT CHECK (picture_url IS NULL OR (length(picture_url) <= 2048 AND picture_url LIKE 'https://%')),
+ picture_set_at INTEGER,
+ updated_at INTEGER NOT NULL
+);
+"""
+
+# Run after any migration to schema 7: these name columns only schema 7 has.
+_ACCESS_PLAN_DDL = """
+CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
+-- Trusted addresses: a keyless request from this address or range runs as
+-- this App (gateway.trusted_addresses). Empty on a fresh install.
+CREATE TABLE IF NOT EXISTS app_trusted_addresses (
+  id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL,
+  address TEXT NOT NULL,
+  note TEXT,
+  created_at INTEGER NOT NULL,
+  created_by TEXT,
+  UNIQUE(app_id, address),
+  FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
+CREATE TRIGGER IF NOT EXISTS apps_access_plan_exists_insert
+BEFORE INSERT ON apps
+WHEN NEW.access_plan IS NOT NULL AND NEW.access_plan <> 'person'
+  AND NOT EXISTS (SELECT 1 FROM access_plans WHERE id = NEW.access_plan)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan not found');
+END;
+CREATE TRIGGER IF NOT EXISTS apps_access_plan_exists_update
+BEFORE UPDATE OF access_plan ON apps
+WHEN NEW.access_plan IS NOT NULL AND NEW.access_plan <> 'person'
+  AND NOT EXISTS (SELECT 1 FROM access_plans WHERE id = NEW.access_plan)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan not found');
+END;
+CREATE TRIGGER IF NOT EXISTS access_plans_delete_unassigned
+BEFORE DELETE ON access_plans
+WHEN EXISTS (SELECT 1 FROM apps WHERE access_plan = OLD.id)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan is assigned');
+END;
 """
 
 
@@ -281,7 +407,15 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
+    # Refuse a newer database before any DDL can touch it.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'").fetchone():
+        stored = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        if stored is not None and int(stored[0]) > SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"admin_store schema version mismatch: db={stored[0]} code={SCHEMA_VERSION}"
+            )
     conn.executescript(_SCHEMA)
+    conn.executescript(ACCOUNT_SCHEMA)
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
@@ -296,13 +430,14 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         raise sqlite3.DatabaseError(
             f"admin_store schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
-    elif int(row[0]) < SCHEMA_VERSION:
+    elif int(row[0]) < _ACCESS_PLANS_VERSION:
         # SQLite does not add columns through CREATE TABLE IF NOT EXISTS.
         # Keep the event-time actor label available to upgraded installations.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_events)")}
         if "actor_label" not in columns:
             conn.execute("ALTER TABLE audit_events ADD COLUMN actor_label TEXT")
-        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        # Schema 7 rebuilds tables, so it runs in its own transaction below.
+        conn.execute("UPDATE schema_version SET version = ?", (_PRE_ACCESS_PLANS_VERSION,))
     # Grants made before provenance tracking stay manual. This migration is
     # intentionally idempotent even for databases with an inconsistent version.
     columns = {row[1] for row in conn.execute("PRAGMA table_info(admin_role_assignments)")}
@@ -310,6 +445,14 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE admin_role_assignments "
             "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'"
+        )
+    if "last_confirmed_at" not in columns:
+        # Additive. Grants the identity provider gave before this column
+        # existed get one session length to be confirmed by a sign-in.
+        conn.execute("ALTER TABLE admin_role_assignments ADD COLUMN last_confirmed_at INTEGER")
+        conn.execute(
+            "UPDATE admin_role_assignments SET last_confirmed_at = ? "
+            "WHERE provenance = 'oidc' AND revoked_at IS NULL", (_now(),),
         )
     if purge_folded_claims:
         conn.execute("DELETE FROM user_identity_claims")
@@ -321,12 +464,24 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
         _revoke_unbound_try_keys(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
+    lineage = {row[1] for row in conn.execute("PRAGMA table_info(account_session_lineage)")}
+    if "used_at" not in lineage:
+        # Ids recorded before first use was kept count as used: a stale cookie among them revokes the sign-in, as before.
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN used_at INTEGER")
+        conn.execute("UPDATE account_session_lineage SET used_at=COALESCE(retired_at, ?)", (_now(),))
+    if "superseded" not in lineage:
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN superseded INTEGER NOT NULL DEFAULT 0")
     # Keys made on a session App before the trigger existed stop working.
     conn.execute(
         "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
         "AND COALESCE(app_id, subject_id) IN (SELECT app_id FROM session_apps)",
         (_now(),),
     )
+    # Before anything reads the household default below: the setting it reads moves here.
+    if row is not None and int(row[0]) < _RETENTION_KEY_VERSION:
+        from gateway import retention_migration
+
+        retention_migration.migrate(conn)
     _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
@@ -339,8 +494,119 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway.reasoning_transform_migration import migrate_registry
 
         migrate_registry(conn)
+    if row is not None and int(row[0]) < 6:
+        from gateway import stt_chunk_transform_migration
+
+        stt_chunk_transform_migration.migrate_registry(conn)
+    if row is not None and int(row[0]) < _CREDENTIAL_ORIGIN_VERSION:
+        from gateway import credential_origin_migration
+
+        credential_origin_migration.migrate_registry(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            # Older databases reach SCHEMA_VERSION when they move to access plans below.
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    if row is not None and int(row[0]) < _SIGNIN_RULES_VERSION:
+        from gateway import signin_rules_migration
+
+        signin_rules_migration.migrate(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    if row is not None and int(row[0]) < _ENGINE_RECORD_V2_VERSION:
+        from gateway import engine_record_v2_migration
+
+        engine_record_v2_migration.migrate_registry(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    # Both branches allocated schema 11 independently. A named receipt makes each
+    # migration run once even on a database already stamped 11 by either branch.
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migration_steps (name TEXT PRIMARY KEY)")
+    for name in ("secret-references-v11", "hop-timeout-v11"):
+        if row is not None and int(row[0]) >= _SECRET_REFS_VERSION and conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
+            continue
+        if name == "secret-references-v11":
+            from gateway import secret_externalize_migration
+
+            secret_externalize_migration.migrate(conn)
+        else:
+            from gateway import hop_timeout_migration
+
+            hop_timeout_migration.migrate_registry(conn)
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
+    if row is not None and int(row[0]) < _DRIVER_KEY_ORIGIN_VERSION:
+        from gateway import driver_key_origin_migration
+
+        driver_key_origin_migration.migrate_registry(conn)
+    if row is not None and int(row[0]) < _URL_BINDING_VERSION:
+        from gateway import url_binding_migration
+
+        url_binding_migration.migrate_registry(conn)
+    if row is not None and int(row[0]) < _STT_CHUNKING_VERSION:
+        from gateway import stt_chunking_upgrade
+
+        stt_chunking_upgrade.migrate_registry(conn)
+    if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     _backfill_credential_creators(conn)
+    current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    if int(current[0]) == _PRE_ACCESS_PLANS_VERSION:
+        _migrate_to_access_plans(conn)
+        # Rebuilt tables lost their indexes and triggers; the schema restores them.
+        conn.executescript(_SCHEMA)
+        conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
+    conn.executescript(_ACCESS_PLAN_DDL)
+
+
+def access_plans_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.bak.pre-access-plans")
+
+
+def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
+    """Schema 6 -> 7: profiles become access plans (design v4).
+
+    A copy of the database is written beside it first. On any error nothing
+    changes and the gateway refuses to start with the reason.
+    """
+    from gateway import access_plan_migration
+
+    db_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    backup = access_plans_backup_path(db_file)
+    if not backup.exists():
+        target = sqlite3.connect(str(backup))
+        try:
+            conn.backup(target)
+        finally:
+            target.close()
+        backup.chmod(0o600)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        report = access_plan_migration.migrate(conn)
+        problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if problems:
+            raise access_plan_migration.MigrationError(f"rows refer to missing rows: {problems[:5]}")
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        conn.commit()
+    except access_plan_migration.MigrationError as exc:
+        conn.rollback()
+        raise sqlite3.DatabaseError(
+            f"admin.db cannot move to access plans: {exc}. Nothing was changed; "
+            f"a copy is at {backup}."
+        ) from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+    # Detailed reports contain user-controlled names and account identifiers.
+    # Keep only aggregate operational facts in process logs.
+    counts = {name: len(items) for name, items in report.as_dict().items()}
+    print(
+        "[admin_store] Access plans migration (schema 7) completed: "
+        + ", ".join(f"{name}={count}" for name, count in counts.items()),
+        flush=True,
+    )
+    print("[admin_store] pre-migration database backup is available beside the database", flush=True)
 
 
 def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
@@ -391,16 +657,26 @@ def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
 
 
 def _prompt_memory_default(conn: sqlite3.Connection) -> bool:
+    """The household default for a person who has no saved choice: the owner's, else the bundled one."""
+    default = bool(retention_contract.household_defaults()["default_remember"])
     row = conn.execute(
-        "SELECT value_json FROM operator_settings WHERE key='prompt_memory'"
+        "SELECT value_json FROM operator_settings WHERE key=?", (retention_contract.SETTING_KEY,)
     ).fetchone()
     if row is None:
-        return True
+        return default
     try:
         value = json.loads(row[0])
     except (TypeError, json.JSONDecodeError):
-        return True
-    return bool(value.get("default_remember", True)) if isinstance(value, Mapping) else True
+        return default
+    if not isinstance(value, Mapping):
+        return default
+    return bool(retention_contract.household(value)["default_remember"])
+
+
+def _insert_account_access(conn: sqlite3.Connection, user_id: str) -> None:
+    """A new person starts with no access plan; the owner chooses one."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+        conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES (?)", (user_id,))
 
 
 def _insert_prompt_memory_preference(
@@ -409,8 +685,8 @@ def _insert_prompt_memory_preference(
     value = _prompt_memory_default(conn)
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
-        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, 'never', ?, NULL)",
-        (user_id, 1 if value else 0, now),
+        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL)",
+        (user_id, 1 if value else 0, retention_contract.member_defaults()["retention"], now),
     )
 
 
@@ -421,8 +697,8 @@ def _freeze_missing_prompt_memory_preferences(
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
         "(user_id, remember, retention, updated_at, updated_by) "
-        "SELECT id, ?, 'never', ?, NULL FROM users",
-        (1 if remember else 0, ts),
+        "SELECT id, ?, ?, ?, NULL FROM users",
+        (1 if remember else 0, retention_contract.member_defaults()["retention"], ts),
     )
 
 
@@ -475,6 +751,12 @@ def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {table}")
 
 
+# Paths ``_conn`` already secured. Every connection used to repeat the
+# mkdir/chmod/open syscalls, some on the event loop. Callers that must
+# re-tighten modes (startup, recovery) call ``secure_state_path`` directly.
+_SECURED_STATE_PATHS: set[Path] = set()
+
+
 def secure_state_path(path: Path) -> None:
     """Create private SQLite state and tighten existing database sidecars.
 
@@ -495,6 +777,7 @@ def secure_state_path(path: Path) -> None:
             state_file.chmod(0o600)
         except FileNotFoundError:
             pass
+    _SECURED_STATE_PATHS.add(path)
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -508,9 +791,46 @@ def init_db(path: Path = DB_PATH) -> None:
         try:
             _apply_pragmas(conn)
             _exec_schema(conn)
+            _migrate_extension_package_digests(conn)
             _move_oidc_client_secret_to_store(conn, path)
         finally:
             conn.close()
+
+
+def _migrate_extension_package_digests(conn: sqlite3.Connection) -> None:
+    """Replace the record copies a stored package index holds with their digests, once.
+
+    The index is returned to callers, and a copy can carry a command or environment secret.
+    The rewrite runs in one immediate transaction and only when the stored index still holds
+    a copy, so a later start finds nothing to do.
+    """
+    from gateway import extension_packages
+
+    key = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
+    if conn.in_transaction:
+        conn.commit()
+    # Overwrite the copy's freed bytes, then fold the WAL into the file, so the raw record is not left behind.
+    conn.execute("PRAGMA secure_delete=ON")
+    conn.execute("BEGIN IMMEDIATE")
+    rewritten = False
+    try:
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
+        if row is not None:
+            try:
+                value = json.loads(row[0])
+            except (TypeError, json.JSONDecodeError):
+                value = None
+            if extension_packages.needs_installed_records_migration(value):
+                migrated = extension_packages.normalize_extension_package_index(value)
+                payload = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
+                _upsert_setting_in_transaction(conn, key, payload, _now(), None)
+                rewritten = True
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if rewritten:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:
@@ -570,14 +890,62 @@ def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> N
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    secure_state_path(path)
-    conn = connect(path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    try:
-        _apply_pragmas(conn)
+    if path not in _SECURED_STATE_PATHS:
+        secure_state_path(path)
+    def open_connection() -> sqlite3.Connection:
+        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        conn.row_factory = sqlite3.Row
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("admin", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
+
+
+class Transaction:
+    """One SQLite write transaction that several store steps share.
+
+    A step that takes ``tx.conn`` writes inside it; nothing is visible to other
+    connections until the block ends cleanly. What cannot be undone by a
+    rollback (an in-memory cache, another database) is registered with
+    ``after_commit`` and runs only once the commit has happened.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self._after_commit: list[Callable[[], None]] = []
+
+    def after_commit(self, action: Callable[[], None]) -> None:
+        self._after_commit.append(action)
+
+
+@contextmanager
+def transaction(path: Path = DB_PATH):
+    """Commit every write made through the yielded ``Transaction``, or none of them."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        secret_store.transaction_begun(conn)
+        tx = Transaction(conn)
+        try:
+            yield tx
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            secret_store.transaction_ended(conn, False)
+            raise
+        secret_store.transaction_ended(conn, True)
+    failures: list[BaseException] = []
+    for action in tx._after_commit:
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - the commit stands; every action still runs
+            failures.append(exc)
+    if failures:
+        raise failures[0]
 
 
 @contextmanager
@@ -588,6 +956,16 @@ def runtime_auth_connection(path: Path = DB_PATH):
     remain in autocommit, so later reads see committed changes; there is no
     request-spanning transaction or cached authorization state.
     """
+    with _conn(path) as conn:
+        yield conn
+
+
+@contextmanager
+def shared_connection(path: Path = DB_PATH):
+    """The request's admin connection, for a read another module's tables need.
+
+    Inside a request this is the connection the other admin reads use, so it
+    costs no extra open. Do not write through it, or keep it past the request."""
     with _conn(path) as conn:
         yield conn
 
@@ -637,7 +1015,9 @@ def upsert_oidc_user(
 
     Updates ``email``/``display_name``/``last_login_at`` while preserving the
     generated ``id`` so downstream references (apps, credentials, role
-    assignments) stay intact.
+    assignments) stay intact. An identity the owner linked to an existing
+    person signs in as that person, and changes only their last sign-in time:
+    the provider does not get to rename or re-email an account it did not create.
     """
     if not issuer or not subject:
         raise ValueError("issuer and subject are required")
@@ -647,7 +1027,17 @@ def upsert_oidc_user(
             "SELECT id FROM users WHERE issuer = ? AND subject = ?",
             (issuer, subject),
         ).fetchone()
+        linked = None
         if row is None:
+            linked = conn.execute(
+                "SELECT user_id FROM oidc_identity_links WHERE issuer = ? AND subject = ?",
+                (issuer, subject),
+            ).fetchone()
+        if linked is not None:
+            user_id = linked["user_id"]
+            conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (ts, user_id))
+            _insert_account_access(conn, user_id)
+        elif row is None:
             user_id = _gen_id("usr")
             conn.execute(
                 "INSERT INTO users(id, issuer, subject, email, display_name, "
@@ -655,6 +1045,7 @@ def upsert_oidc_user(
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
             _insert_prompt_memory_preference(conn, user_id, ts)
+            _insert_account_access(conn, user_id)
         else:
             user_id = row["id"]
             conn.execute(
@@ -663,6 +1054,8 @@ def upsert_oidc_user(
                 "WHERE id = ?",
                 (email, display_name, ts, user_id),
             )
+            # A person always has an access row; signing in repairs a missing one.
+            _insert_account_access(conn, user_id)
         conn.commit()
         out = conn.execute(
             "SELECT * FROM users WHERE id = ?", (user_id,)
@@ -676,6 +1069,37 @@ def get_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
             "SELECT * FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     return _row_to_dict(row)
+
+
+def find_oidc_user(issuer: str, subject: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """The person with this ``(issuer, subject)``, or None. Never creates one.
+
+    An identity the owner linked to a person finds that person.
+    """
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE issuer = ? AND subject = ?", (issuer, subject)
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT u.* FROM oidc_identity_links l JOIN users u ON u.id = l.user_id "
+                "WHERE l.issuer = ? AND l.subject = ?", (issuer, subject),
+            ).fetchone()
+    return _row_to_dict(row)
+
+
+def get_users(user_ids: Iterable[str], *, path: Path = DB_PATH) -> dict[str, dict[str, Any]]:
+    """``{id: user}`` for the users that exist, in one query per 500 ids."""
+    ids = sorted({str(value) for value in user_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for row in conn.execute(
+                f"SELECT * FROM users WHERE id IN ({','.join('?' for _ in chunk)})", chunk
+            ).fetchall():
+                out[row["id"]] = _row_to_dict(row)  # type: ignore[assignment]
+    return out
 
 
 def list_users(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -712,6 +1136,24 @@ def find_user_by_email(
     return _row_to_dict(row)
 
 
+def find_password_user_by_email(email: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """The person with this email who has a local password, whatever their issuer.
+
+    The owner may have been made by the identity provider and later set a
+    password so they can always get in; a password row exists only for people
+    who can use it.
+    """
+    needle = (email or "").strip().lower()
+    if not needle:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT u.* FROM users u JOIN local_password_credentials p ON p.user_id = u.id "
+            "WHERE LOWER(u.email) = ? ORDER BY u.created_at ASC LIMIT 1", (needle,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 # ---------------------------------------------------------------------------
 # local password credentials (web-first first-run owner / break-glass admin)
 # ---------------------------------------------------------------------------
@@ -721,10 +1163,14 @@ def set_local_password_verifier(
     user_id: str,
     verifier: str,
     *,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Store (or replace) the password verifier attached to a local user.
+
+    ``session`` is the browser sign-in that asked for it, checked in this write's transaction
+    (``gateway/session_guard.py``); none for a write no browser sign-in started.
 
     Raw passwords are never persisted — the caller computes the verifier
     string with :func:`gateway.local_owner.hash_password` and hands us the
@@ -736,6 +1182,7 @@ def set_local_password_verifier(
         raise ValueError("verifier is required")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
         existing = conn.execute(
             "SELECT user_id, created_at FROM local_password_credentials "
             "WHERE user_id = ?",
@@ -787,9 +1234,7 @@ def claim_first_local_owner(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT 1 FROM admin_role_assignments "
-            "WHERE revoked_at IS NULL AND role IN ('owner', 'admin', 'superadmin') "
-            "LIMIT 1"
+            "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
         ).fetchone()
         if existing is not None:
             conn.rollback()
@@ -807,6 +1252,7 @@ def claim_first_local_owner(
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
             _insert_prompt_memory_preference(conn, user_id, ts)
+            _insert_account_access(conn, user_id)
         else:
             user_id = row["id"]
             conn.execute(
@@ -815,6 +1261,8 @@ def claim_first_local_owner(
                 "WHERE id = ?",
                 (email, display_name, ts, user_id),
             )
+            # A person always has an access row; signing in repairs a missing one.
+            _insert_account_access(conn, user_id)
 
         conn.execute(
             "INSERT INTO local_password_credentials"
@@ -1026,196 +1474,257 @@ def get_service_account(
 
 
 # ---------------------------------------------------------------------------
-# profiles
+# access plans
 # ---------------------------------------------------------------------------
 
+PERSON_ASSIGNMENT = "person"
 
-def create_profile(
-    name: str,
-    profile_doc: Mapping[str, Any],
-    *,
-    description: str | None = None,
-    now: int | None = None,
-    path: Path = DB_PATH,
+
+def _plan_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    data = {k: row[k] for k in row.keys()}
+    data["plan"] = json.loads(data.pop("plan_json"))
+    return data
+
+
+def _validated_plan_json(plan_id: str, doc: Mapping[str, Any]) -> tuple[str, str]:
+    from gateway.access_plans import plan_from_document, plan_to_document
+
+    plan = plan_from_document({**dict(doc), "id": plan_id})
+    return plan.name, json.dumps(plan_to_document(plan), ensure_ascii=False, sort_keys=True)
+
+
+def create_access_plan(
+    doc: Mapping[str, Any], *, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any]:
-    """Store a profile JSON document.
-
-    The doc shape matches what :func:`gateway.profiles.load_profile` accepts,
-    so the dashboard can hand it straight to the policy evaluator. We don't
-    parse it here — keeping the durable fact (the JSON) separate from the
-    policy interpretation lets the evaluator evolve without migrations.
-    """
-    if not name:
-        raise ValueError("profile name is required")
+    """Store a new plan document. The server assigns the id (design §3.1)."""
+    plan_id = _gen_id("plan")
+    name, payload = _validated_plan_json(plan_id, {k: v for k, v in doc.items() if k != "id"})
     ts = _now() if now is None else int(now)
-    prof_id = _gen_id("prof")
-    payload = json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True)
     try:
         with _conn(path) as conn:
             conn.execute(
-                "INSERT INTO profiles(id, name, description, profile_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (prof_id, name, description, payload, ts),
+                "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (plan_id, name, payload, ts, ts),
             )
             conn.commit()
-            row = conn.execute(
-                "SELECT * FROM profiles WHERE id = ?", (prof_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
     except sqlite3.IntegrityError as exc:
-        raise ValueError(f"profile name {name!r} is already in use") from exc
-    return _profile_row_to_dict(row)
+        raise ValueError(f"access plan name {name!r} is already in use") from exc
+    return _plan_row_to_dict(row)
 
 
-def get_profile(
-    profile_id: str, *, path: Path = DB_PATH,
-    connection: sqlite3.Connection | None = None,
+def get_access_plan(
+    plan_id: str, *, path: Path = DB_PATH, connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
     with _conn(path) if connection is None else nullcontext(connection) as conn:
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
-    return _profile_row_to_dict(row) if row else None
+        row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
+    return _plan_row_to_dict(row) if row else None
 
 
-def update_profile(
-    profile_id: str,
-    *,
-    name: str | None = None,
-    description: str | None = None,
-    profile_doc: Mapping[str, Any] | None = None,
-    path: Path = DB_PATH,
+def list_access_plans(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
+    return [_plan_row_to_dict(row) for row in rows]
+
+
+def list_access_plans_in(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """:func:`list_access_plans` as one open transaction sees it."""
+    rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
+    return [_plan_row_to_dict(row) for row in rows]
+
+
+def update_access_plan(
+    plan_id: str, doc: Mapping[str, Any], *, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    assignments: list[str] = []
-    params: list[Any] = []
-    if name is not None:
-        if not name:
-            raise ValueError("profile name is required")
-        assignments.append("name = ?")
-        params.append(name)
-    if description is not None:
-        assignments.append("description = ?")
-        params.append(description)
-    if profile_doc is not None:
-        assignments.append("profile_json = ?")
-        params.append(json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True))
-    if not assignments:
-        return get_profile(profile_id, path=path)
-
-    params.append(profile_id)
+    """Replace a plan's document. The id never changes (design §2.12)."""
+    name, payload = _validated_plan_json(plan_id, {k: v for k, v in doc.items() if k != "id"})
+    ts = _now() if now is None else int(now)
     try:
         with _conn(path) as conn:
             cur = conn.execute(
-                f"UPDATE profiles SET {', '.join(assignments)} WHERE id = ?",
-                params,
+                "UPDATE access_plans SET name = ?, plan_json = ?, updated_at = ? WHERE id = ?",
+                (name, payload, ts, plan_id),
             )
             if cur.rowcount == 0:
                 return None
             conn.commit()
-            row = conn.execute(
-                "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
     except sqlite3.IntegrityError as exc:
-        raise ValueError(f"profile name is already in use") from exc
-    return _profile_row_to_dict(row) if row else None
+        raise ValueError(f"access plan name {name!r} is already in use") from exc
+    return _plan_row_to_dict(row)
 
 
-def list_profiles(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
-    with _conn(path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM profiles ORDER BY created_at ASC"
-        ).fetchall()
-    return [_profile_row_to_dict(r) for r in rows]
+def access_plan_users(conn: sqlite3.Connection, plan_id: str) -> dict[str, list[str] | int]:
+    """Who holds a plan: people, apps (by name) and open invitations."""
+    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
+        "SELECT name, disabled_at FROM apps WHERE access_plan = ? ORDER BY name", (plan_id,),
+    )]
+    people: list[str] = []
+    invites = 0
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+        people = [str(r[0] or r[1]) for r in conn.execute(
+            "SELECT u.display_name, u.email FROM account_access a JOIN users u ON u.id = a.user_id "
+            "WHERE a.plan_id = ? AND a.removed_at IS NULL ORDER BY u.created_at", (plan_id,),
+        )]
+        invites = conn.execute(
+            "SELECT COUNT(*) FROM account_links WHERE plan_id = ? AND kind = 'invite' AND used_at IS NULL "
+            "AND revoked_at IS NULL AND expires_at > ?", (plan_id, _now()),
+        ).fetchone()[0]
+    return {"people": people, "apps": apps, "invites": invites}
 
 
-def delete_profile(
-    profile_id: str, *, path: Path = DB_PATH
-) -> dict[str, Any] | None:
-    """Delete a profile row. Returns the deleted record or None if not found.
-
-    Raises ValueError, naming every user, while an app (enabled or not), a
-    key that is not revoked, an active mapping, a person or a pending invite
-    uses the plan. Revoked keys cannot authenticate and cannot be deleted, so
-    they would block the plan forever; their plan is cleared instead and the
-    record's ``cleared_revoked_credential_ids`` lists them for the audit.
-    """
+def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Delete a plan nobody holds. Raises ValueError naming its holders."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
         if row is None:
             conn.rollback()
             return None
-        users = _profile_users(conn, profile_id)
-        if users:
+        users = access_plan_users(conn, plan_id)
+        parts = []
+        if users["people"]:
+            parts.append(f"{len(users['people'])} {'person' if len(users['people']) == 1 else 'people'} "
+                         f"({', '.join(users['people'][:5])})")
+        if users["apps"]:
+            parts.append(f"{len(users['apps'])} app{'' if len(users['apps']) == 1 else 's'} "
+                         f"({', '.join(users['apps'][:5])})")
+        if users["invites"]:
+            parts.append(f"{users['invites']} open invitation{'' if users['invites'] == 1 else 's'}")
+        rules_row = conn.execute("SELECT value_json FROM operator_settings WHERE key = 'signin_rules'").fetchone()
+        given: list = []
+        if rules_row is not None:
+            try:
+                given = [r for r in json.loads(rules_row[0]).get("rules", []) if r.get("plan") == plan_id]
+            except (TypeError, ValueError, AttributeError):
+                given = []
+            if given:
+                parts.append(f"{len(given)} sign-in rule{'' if len(given) == 1 else 's'}")
+        if parts:
             conn.rollback()
-            raise ValueError(
-                f"Access plan {row['name']!r} is still used by "
-                + "; ".join(users)
-                + ". Move them to another plan, revoke the keys or the invitations, "
-                "or disable the mappings, then delete the plan."
-            )
-        cleared = [r[0] for r in conn.execute(
-            "SELECT id FROM credentials WHERE profile_id = ? AND revoked_at IS NOT NULL "
-            "ORDER BY id", (profile_id,),
-        )]
-        conn.execute(
-            "UPDATE credentials SET profile_id = NULL "
-            "WHERE profile_id = ? AND revoked_at IS NOT NULL", (profile_id,),
-        )
-        conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+            move = "Move them to another plan first." if len(parts) > (1 if given else 0) else "Choose another plan in the rule first."
+            raise ValueError(f"{row['name']} is used by {' and '.join(parts)}. {move}")
+        # Closed invitations and removed people keep no claim on the plan.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+            conn.execute("UPDATE account_links SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+            conn.execute("UPDATE account_access SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+        conn.execute("DELETE FROM signin_rule_plans WHERE plan_id = ?", (plan_id,))
+        conn.execute("DELETE FROM access_plans WHERE id = ?", (plan_id,))
         conn.commit()
-    return {**_profile_row_to_dict(row), "cleared_revoked_credential_ids": cleared}
+    return _plan_row_to_dict(row)
 
 
-def _profile_users(conn: sqlite3.Connection, profile_id: str) -> list[str]:
-    """Describe what still depends on a plan, one phrase per kind of user."""
-    def phrase(noun: str, plural: str, names: list[str]) -> str | None:
-        if not names:
+def instance_owner_id(*, path: Path = DB_PATH) -> str | None:
+    """The first person granted the owner role: the default accountable person."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT r.subject_id FROM admin_role_assignments r JOIN users u ON u.id = r.subject_id "
+            "WHERE r.role = 'owner' AND r.subject_kind = 'user' AND r.revoked_at IS NULL "
+            "ORDER BY r.granted_at, r.id LIMIT 1",
+        ).fetchone()
+    return str(row[0]) if row else None
+
+
+def person_plan_id(user_id: str, *, path: Path = DB_PATH) -> str | None:
+    """A person's access plan id, or None (no plan, or removed)."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT plan_id FROM account_access WHERE user_id = ? AND removed_at IS NULL", (user_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def person_plan_ids(user_ids: Iterable[str], *, path: Path = DB_PATH) -> dict[str, str | None]:
+    """``{user_id: plan_id}`` for people with an access row, in one query per 500 ids."""
+    ids = sorted({str(value) for value in user_ids if value})
+    out: dict[str, str | None] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for row in conn.execute(
+                f"SELECT user_id, plan_id FROM account_access WHERE removed_at IS NULL"
+                f" AND user_id IN ({','.join('?' for _ in chunk)})", chunk,
+            ).fetchall():
+                out[row[0]] = row[1]
+    return out
+
+
+STARTER_PLAN_NAME = "Local only"
+
+
+def seed_first_owner_plan(user_id: str, *, path: Path = DB_PATH) -> str | None:
+    """Give the first owner of a fresh instance one working plan.
+
+    Without it the owner would be refused on their own gateway until they had
+    built a plan (there is no built-in default; design §2.8). The plan allows
+    every local model and workflow, no paid providers, no direct engine
+    access. It is an ordinary plan the owner can edit or delete; it is not a
+    fallback for anyone else. Does nothing if any plan exists or the person
+    already holds one. Returns the new plan id.
+    """
+    from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, plan_to_document
+
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM access_plans LIMIT 1").fetchone() is not None:
+            conn.rollback()
             return None
-        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
-        return f"{len(names)} {noun if len(names) == 1 else plural} ({shown})"
-
-    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
-        "SELECT name, disabled_at FROM apps WHERE default_profile_id = ? ORDER BY name",
-        (profile_id,),
-    )]
-    keys = [
-        f"{r[0] or r[1]} on {r[2] or 'an unknown app'}" for r in conn.execute(
-            "SELECT c.display_name, c.prefix, a.name FROM credentials c "
-            "LEFT JOIN apps a ON a.id = COALESCE(c.app_id, c.subject_id) "
-            "WHERE c.profile_id = ? AND c.revoked_at IS NULL ORDER BY c.created_at",
-            (profile_id,),
+        _insert_account_access(conn, user_id)
+        if conn.execute("SELECT plan_id FROM account_access WHERE user_id = ?", (user_id,)).fetchone()[0] is not None:
+            conn.rollback()
+            return None
+        plan_id = _gen_id("plan")
+        document = plan_to_document(AccessPlan(
+            id=plan_id, name=STARTER_PLAN_NAME,
+            can_use={capability: CapabilityGrant(all_items=True) for capability in CAPABILITIES},
+            can_load_models=True,
+        ))
+        ts = _now()
+        conn.execute(
+            "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (plan_id, STARTER_PLAN_NAME, json.dumps(document, ensure_ascii=False, sort_keys=True), ts, ts),
         )
-    ]
-    mappings = [f"{r[0]}={r[1]}" for r in conn.execute(
-        "SELECT source_kind, source_value FROM runtime_profile_mappings "
-        "WHERE profile_id = ? AND disabled_at IS NULL ORDER BY priority, created_at",
-        (profile_id,),
-    )]
-    from gateway.accounts import profile_people_and_invites
-    people, invites = profile_people_and_invites(conn, profile_id)
-    found = [
-        phrase("app", "apps", apps),
-        phrase("key", "keys", keys),
-        phrase("active mapping", "active mappings", mappings),
-        phrase("person", "people", people),
-        f"{invites} pending invitation{'' if invites == 1 else 's'}" if invites else None,
-    ]
-    return [item for item in found if item]
+        conn.execute("UPDATE account_access SET plan_id = ? WHERE user_id = ?", (plan_id, user_id))
+        conn.commit()
+    return plan_id
 
 
-def _profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    data = {k: row[k] for k in row.keys()}
-    raw = data.pop("profile_json", None)
-    if raw:
-        try:
-            data["profile"] = json.loads(raw)
-        except json.JSONDecodeError:
-            data["profile"] = None
-    else:
-        data["profile"] = None
-    return data
+INVITE_ACCESS_PLAN_SETTING_KEY = "invite_access_plan"
+
+
+def invite_access_plan(*, path: Path = DB_PATH) -> str | None:
+    """The plan preselected for new invitations; None means "Ask each time".
+
+    A stored plan that was deleted reads as "Ask each time".
+    """
+    setting = get_operator_setting(INVITE_ACCESS_PLAN_SETTING_KEY, path=path)
+    plan_id = (setting or {}).get("value", {}).get("plan_id") if isinstance((setting or {}).get("value"), Mapping) else None
+    if plan_id and get_access_plan(str(plan_id), path=path) is not None:
+        return str(plan_id)
+    return None
+
+
+def _check_app_assignment(conn: sqlite3.Connection, access_plan: str | None) -> None:
+    if access_plan is None:
+        raise ValueError("an app needs an access plan: a plan id or 'person'")
+    if access_plan != PERSON_ASSIGNMENT and conn.execute(
+        "SELECT 1 FROM access_plans WHERE id = ?", (access_plan,)
+    ).fetchone() is None:
+        raise ValueError("access plan not found")
+
+
+def set_app_access_plan(app_id: str, access_plan: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Assign an app a plan id or 'person'. No operation clears an assignment."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_app_assignment(conn, access_plan)
+        cur = conn.execute("UPDATE apps SET access_plan = ? WHERE id = ?", (access_plan, app_id))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return None
+        conn.commit()
+        row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+    return _row_to_dict(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1227,37 +1736,31 @@ def create_app(
     name: str,
     *,
     kind: str,
-    owner_user_id: str | None = None,
-    owner_service_account_id: str | None = None,
-    default_profile_id: str | None = None,
+    owner_user_id: str,
+    access_plan: str,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
+    """Create an App with its accountable person and its assignment.
+
+    ``access_plan`` is a plan id or ``"person"`` ("Same as its person"). The
+    row and its assignment commit together, so an App never exists without
+    one (design §2.4).
+    """
     if kind not in APP_KINDS:
         raise ValueError(f"app kind must be one of {APP_KINDS}, got {kind!r}")
-    if kind == "personal" and not owner_user_id:
-        raise ValueError("personal apps require owner_user_id")
-    if kind == "service" and not owner_service_account_id:
-        raise ValueError("service apps require owner_service_account_id")
-    if owner_user_id and owner_service_account_id:
-        raise ValueError("an app cannot be owned by both a user and a service account")
+    if not owner_user_id:
+        raise ValueError("an app needs an accountable person (owner_user_id)")
 
     ts = _now() if now is None else int(now)
     app_id = _gen_id("app")
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_app_assignment(conn, access_plan)
         conn.execute(
-            "INSERT INTO apps(id, kind, name, owner_user_id, "
-            "owner_service_account_id, default_profile_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                app_id,
-                kind,
-                name,
-                owner_user_id,
-                owner_service_account_id,
-                default_profile_id,
-                ts,
-            ),
+            "INSERT INTO apps(id, kind, name, owner_user_id, access_plan, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (app_id, kind, name, owner_user_id, access_plan, ts),
         )
         conn.commit()
         row = conn.execute(
@@ -1270,15 +1773,14 @@ def ensure_personal_app_for_user(
     user_id: str,
     *,
     name: str | None = None,
-    default_profile_id: str | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Return the user's personal app, creating one if missing.
 
     A user has at most one *personal* app — it's the home for their own
-    data-plane keys ("the key in your editor"). Service apps are separate
-    and created explicitly.
+    data-plane keys ("the key in your editor"). A new one is "Same as its
+    person". Service apps are separate and created explicitly.
     """
     if not user_id:
         raise ValueError("user_id is required")
@@ -1289,22 +1791,13 @@ def ensure_personal_app_for_user(
             "ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
-        if row is not None and default_profile_id and not row["default_profile_id"]:
-            conn.execute(
-                "UPDATE apps SET default_profile_id = ? WHERE id = ?",
-                (default_profile_id, row["id"]),
-            )
-            conn.commit()
-            row = conn.execute(
-                "SELECT * FROM apps WHERE id = ?", (row["id"],)
-            ).fetchone()
     if row is not None:
         return _row_to_dict(row)  # type: ignore[return-value]
     return create_app(
         name or f"personal-{user_id}",
         kind="personal",
         owner_user_id=user_id,
-        default_profile_id=default_profile_id,
+        access_plan=PERSON_ASSIGNMENT,
         now=now,
         path=path,
     )
@@ -1335,8 +1828,8 @@ def ensure_session_app_for_user(
         if row is None:
             app_id = _gen_id("app")
             conn.execute(
-                "INSERT INTO apps(id, kind, name, owner_user_id, created_at) "
-                "VALUES (?, 'personal', ?, ?, ?)",
+                "INSERT INTO apps(id, kind, name, owner_user_id, access_plan, created_at) "
+                "VALUES (?, 'personal', ?, ?, 'person', ?)",
                 (app_id, name, user_id, _now() if now is None else int(now)),
             )
             conn.execute(
@@ -1344,6 +1837,11 @@ def ensure_session_app_for_user(
                 (user_id, app_id),
             )
             row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        elif row["access_plan"] is None:
+            # A failed assignment write leaves an App that denies; the next
+            # sign-in repairs it (design §2.4).
+            conn.execute("UPDATE apps SET access_plan = 'person' WHERE id = ?", (row["id"],))
+            row = conn.execute("SELECT * FROM apps WHERE id = ?", (row["id"],)).fetchone()
         conn.commit()
     return _row_to_dict(row)  # type: ignore[return-value]
 
@@ -1368,6 +1866,18 @@ def is_session_app(
         ).fetchone() is not None
 
 
+def session_app_ids(app_ids: Iterable[str], *, path: Path = DB_PATH) -> set[str]:
+    """The given app ids that are keyless session apps, in one query per 500 ids."""
+    ids = sorted({str(value) for value in app_ids if value})
+    found: set[str] = set()
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            found.update(row[0] for row in conn.execute(
+                f"SELECT app_id FROM session_apps WHERE app_id IN ({','.join('?' for _ in chunk)})", chunk))
+    return found
+
+
 def get_app(
     app_id: str, *, path: Path = DB_PATH,
     connection: sqlite3.Connection | None = None,
@@ -1379,14 +1889,100 @@ def get_app(
     return _row_to_dict(row)
 
 
+NAME_MAX_LENGTH = 80
+# Characters that change how text reads without showing: bidirectional overrides and marks.
+_HIDDEN_DIRECTION_CHARACTERS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+class NameRejected(ValueError):
+    """A new App name or key label the gateway will not take.
+
+    ``code`` says why (``app_name_too_long``, ``key_label_taken``, ...) and ``status_code`` is the HTTP answer.
+    ``str(error)`` is plain words for the person who typed the name.
+    """
+
+    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+def name_key(text: object) -> str:
+    """What makes two names the same name: Unicode compatibility form, then case folded.
+
+    SQLite's ``lower()`` folds ASCII only, so ``Caf\u00e9`` and ``CAF\u00c9`` would differ there. Every comparison of
+    names (uniqueness in a write, the Try reservation, an MCP client naming an app or key) goes through this.
+    """
+    return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", str(text or "")).casefold())
+
+
+def _register_name_key(conn: sqlite3.Connection) -> None:
+    conn.create_function("name_key", 1, name_key, deterministic=True)
+
+
+# Marks, spaces and format characters draw nothing by themselves (zero-width space, word joiner, byte-order mark).
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Zs", "Mn", "Me"})
+
+
+def clean_name(value: object, *, code: str, noun: str) -> str:
+    """The trimmed name, 1 to 80 characters with no control or hidden characters, or ``NameRejected``.
+
+    ``code`` is ``app_name`` or ``key_label``; ``noun`` is the singular word for the copy ("app", "key").
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    # A name of nothing but invisible characters is no name, but a visible character may carry them (an emoji sequence).
+    if not text or all(unicodedata.category(c) in _INVISIBLE_CATEGORIES for c in text):
+        raise NameRejected(f"{code}_required", f"Give the {noun} a name.")
+    if len(text) > NAME_MAX_LENGTH:
+        raise NameRejected(f"{code}_too_long", f"A {noun} name must be {NAME_MAX_LENGTH} characters or fewer.")
+    if any(unicodedata.category(c) in {"Cc", "Zl", "Zp"} or c in _HIDDEN_DIRECTION_CHARACTERS for c in text):
+        raise NameRejected(f"{code}_not_allowed", f"A {noun} name can't contain line breaks or other hidden characters.")
+    return text
+
+
+def _check_new_app_name(conn: sqlite3.Connection, app: sqlite3.Row, name: str) -> None:
+    """Refuse a name the Try page owns, or one another of the same person's active Apps already has."""
+    if name == app["name"]:
+        return
+    try_name = name_key(TRY_APP_NAME)
+    if name_key(name) == try_name or (app["kind"] == "personal" and name_key(app["name"]) == try_name):
+        raise NameRejected(
+            "app_name_reserved", f"The Try page uses the app named \u201c{TRY_APP_NAME}\u201d, so that name can't be given or changed.",
+            status_code=409)
+    if conn.execute(
+        "SELECT 1 FROM apps WHERE owner_user_id = ? AND id <> ? AND disabled_at IS NULL AND name_key(name) = ? "
+        "AND id NOT IN (SELECT app_id FROM session_apps)", (app["owner_user_id"], app["id"], name_key(name)),
+    ).fetchone():
+        raise NameRejected("app_name_taken", "Another app already has that name. Choose a different name.", status_code=409)
+
+
+def _audit_in_write(conn: sqlite3.Connection, audit: Mapping[str, Any], *, target_kind: str, target_id: str,
+                    metadata: Mapping[str, Any]) -> None:
+    """The audit fact of a write, inside the write's own transaction. ``audit`` names the action and the actor."""
+    _record_audit_in_transaction(
+        conn, str(audit["action"]), actor_kind=audit.get("actor_kind"), actor_id=audit.get("actor_id"),
+        actor_label=audit.get("actor_label"), target_kind=target_kind, target_id=target_id,
+        metadata={**dict(audit.get("metadata") or {}), **metadata}, now=_now())
+
+
 def update_app(
     app_id: str,
     *,
     name: str | None = None,
-    default_profile_id: str | None = None,
-    clear_default_profile: bool = False,
+    access_plan: str | None = None,
+    owner_user_id: str | None = None,
+    session: session_guard.BrowserSession | None = None,
+    audit: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
+    """Rename an App or change its assignment. An assignment is never cleared.
+
+    ``name`` is already cleaned (``clean_name``); a name another of the person's active Apps has, or the Try
+    page's, raises ``NameRejected``. ``owner_user_id`` makes the write apply only to that person's App (``None``
+    when it is not there). ``session`` is the browser sign-in that asked, checked in this transaction.
+    ``audit`` (``action``, ``actor_kind``, ``actor_id``, ``actor_label``, extra ``metadata``) is written in the same
+    transaction with the name the row had in it (``previous_name``), so a concurrent rename cannot make it wrong.
+    """
     assignments: list[str] = []
     params: list[Any] = []
     if name is not None:
@@ -1394,20 +1990,36 @@ def update_app(
             raise ValueError("app name is required")
         assignments.append("name = ?")
         params.append(name)
-    if clear_default_profile or default_profile_id is not None:
-        assignments.append("default_profile_id = ?")
-        params.append(None if clear_default_profile else default_profile_id)
+    if access_plan is not None:
+        assignments.append("access_plan = ?")
+        params.append(access_plan)
     if not assignments:
-        return get_app(app_id, path=path)
+        record = get_app(app_id, path=path)
+        if audit is not None and record is not None:
+            record_audit(str(audit["action"]), actor_kind=audit.get("actor_kind"), actor_id=audit.get("actor_id"),
+                         actor_label=audit.get("actor_label"), target_kind="app", target_id=app_id,
+                         metadata=audit.get("metadata"), path=path)
+        return record
 
     params.append(app_id)
     with _conn(path) as conn:
-        cur = conn.execute(
+        _register_name_key(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        current = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        if current is None or (owner_user_id is not None and current["owner_user_id"] != owner_user_id):
+            return None
+        if name is not None:
+            _check_new_app_name(conn, current, name)
+        if access_plan is not None:
+            _check_app_assignment(conn, access_plan)
+        conn.execute(
             f"UPDATE apps SET {', '.join(assignments)} WHERE id = ?",
             params,
         )
-        if cur.rowcount == 0:
-            return None
+        if audit is not None:
+            _audit_in_write(conn, audit, target_kind="app", target_id=app_id, metadata={
+                **({"name": name, "previous_name": current["name"]} if name is not None else {})})
         conn.commit()
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
@@ -1434,6 +2046,69 @@ def disable_app(
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
         ).fetchone()
+    return _row_to_dict(row)
+
+
+def list_trusted_addresses(
+    app_id: str | None = None, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    """Trusted address entries, oldest first; one App's, or every App's."""
+    where, params = ("WHERE app_id = ? ", (app_id,)) if app_id is not None else ("", ())
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM app_trusted_addresses {where}ORDER BY created_at ASC, id ASC", params,
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]  # type: ignore[misc]
+
+
+def add_trusted_address(
+    app_id: str, address: str, *, note: str | None = None, created_by: str | None = None,
+    max_entries: int, now: int | None = None, session: session_guard.BrowserSession | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Add one entry (``address`` is already normalized). A session App takes none:
+    a signed-in person acts through their session, never through an address.
+
+    A trusted address lets a device in with no key, so it is a credential: ``session`` is the browser sign-in
+    that asked, checked in this transaction (decision D41)."""
+    ts = _now() if now is None else int(now)
+    entry_id = _gen_id("tad")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        if conn.execute("SELECT 1 FROM apps WHERE id = ?", (app_id,)).fetchone() is None:
+            raise LookupError(f"app {app_id!r} not found")
+        if conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone():
+            raise ValueError("A person's own signed-in app cannot be reached by address.")
+        if conn.execute("SELECT 1 FROM app_trusted_addresses WHERE app_id = ? AND address = ?",
+                        (app_id, address)).fetchone():
+            raise ValueError(f"{address} is already trusted for this app.")
+        count = conn.execute("SELECT COUNT(*) FROM app_trusted_addresses WHERE app_id = ?", (app_id,)).fetchone()[0]
+        if count >= max_entries:
+            raise ValueError(f"An app can have at most {max_entries} trusted addresses.")
+        conn.execute(
+            "INSERT INTO app_trusted_addresses(id, app_id, address, note, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (entry_id, app_id, address, (note or "").strip() or None, ts, created_by),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (entry_id,)).fetchone()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def delete_trusted_address(
+    app_id: str, entry_id: str, *, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Remove one entry; the address stops being trusted at once. None if absent."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        conn.commit()
     return _row_to_dict(row)
 
 
@@ -1489,16 +2164,24 @@ def create_credential_hash(
     hash: str,
     prefix: str,
     app_id: str | None = None,
-    profile_id: str | None = None,
     display_name: str | None = None,
     scopes: Iterable[str] | None = None,
     created_by: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Persist a credential hash.
+
+    ``session`` is the browser sign-in that started this write, ``None`` when none did (the CLI, an
+    admin key, a test). Production callers pass it by name every time; the default exists for tests, and
+    ``tests/test_credential_writers_check_the_session.py`` fails when a production call omits it.
+    It is checked inside the write transaction, before the insert, so a sign-out that commits first
+    raises ``SessionEnded`` and one that commits after finds the new key to revoke
+    (``gateway/session_guard.py``). ``session_id`` is a different thing: the sign-in the key is
+    bound to, so that signing out revokes it.
 
     Subject invariants:
 
@@ -1532,40 +2215,51 @@ def create_credential_hash(
             )
 
     ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
+        record = _insert_credential_in(
+            conn, subject_kind=subject_kind, subject_id=subject_id, app_id=app_id, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=scopes, created_by=created_by, expires_at=expires_at,
+            session_id=session_id, ts=ts)
+        conn.commit()
+    return record
+
+
+def _insert_credential_in(
+    conn: sqlite3.Connection, *, subject_kind: str, subject_id: str, app_id: str | None, hash: str, prefix: str,
+    display_name: str | None, scopes: Iterable[str] | None, created_by: str | None, expires_at: int | None,
+    session_id: str | None, ts: int,
+) -> dict[str, Any]:
+    """Insert one credential row inside the caller's open transaction and return it. The caller commits."""
     cred_id = _gen_id("cred")
     scopes_json = (
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
-    with _conn(path) as conn:
-        if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
-            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
-        ).fetchone():
-            raise ValueError("this App is a person's signed-in App and cannot hold API keys")
-        conn.execute(
-            "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
-            "profile_id, hash, prefix, display_name, scopes_json, "
-            "created_at, created_by, expires_at, session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                cred_id,
-                subject_kind,
-                subject_id,
-                app_id,
-                profile_id,
-                hash,
-                prefix,
-                display_name,
-                scopes_json,
-                ts,
-                created_by,
-                expires_at,
-                session_id,
-            ),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM credentials WHERE id = ?", (cred_id,)
-        ).fetchone()
+    if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
+        "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+    ).fetchone():
+        raise ValueError("this App is a person's signed-in App and cannot hold API keys")
+    conn.execute(
+        "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
+        "hash, prefix, display_name, scopes_json, "
+        "created_at, created_by, expires_at, session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            cred_id,
+            subject_kind,
+            subject_id,
+            app_id,
+            hash,
+            prefix,
+            display_name,
+            scopes_json,
+            ts,
+            created_by,
+            expires_at,
+            session_id,
+        ),
+    )
+    row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
     return _credential_row_to_dict(row)
 
 
@@ -1573,15 +2267,71 @@ def revoke_credential(
     cred_id: str, *, now: int | None = None, path: Path = DB_PATH
 ) -> bool:
     """Mark a credential revoked. Idempotent; returns True if state changed."""
+    with _conn(path) as conn:
+        changed = revoke_credential_in(conn, cred_id, now=now)
+        conn.commit()
+        return changed
+
+
+def revoke_credential_in(conn: sqlite3.Connection, cred_id: str, *, now: int | None = None) -> bool:
+    """``revoke_credential`` inside a transaction the caller owns and commits."""
+    ts = _now() if now is None else int(now)
+    cur = conn.execute(
+        "UPDATE credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        (ts, cred_id),
+    )
+    return cur.rowcount > 0
+
+
+def rename_app_credential(
+    cred_id: str,
+    display_name: str,
+    *,
+    app_id: str | None = None,
+    owner_user_id: str | None = None,
+    now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
+    audit: Mapping[str, Any] | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Give an active App key a new label: ``(before, after)``, or ``None`` when there is no such key.
+    ``before`` is the row as this transaction read it. ``audit`` is written in the same transaction (see ``update_app``).
+
+    Only the label changes; the key, its hash and its App stay as they are, so this makes no credential and
+    needs no step-up. ``display_name`` is already cleaned (``clean_name``); a label another active key of the
+    same App has raises ``NameRejected``. ``app_id`` and ``owner_user_id`` narrow the match to one App and one
+    accountable person. ``session`` is the browser sign-in that asked, checked in this transaction.
+    """
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
-        cur = conn.execute(
-            "UPDATE credentials SET revoked_at = ? "
-            "WHERE id = ? AND revoked_at IS NULL",
-            (ts, cred_id),
-        )
+        _register_name_key(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > ?)", (cred_id, ts),
+        ).fetchone()
+        if row is None:
+            return None
+        key_app = str(row["app_id"] or row["subject_id"] or "")
+        app = conn.execute("SELECT owner_user_id FROM apps WHERE id = ?", (key_app,)).fetchone()
+        if app is None or (app_id is not None and key_app != app_id) or (
+                owner_user_id is not None and app["owner_user_id"] != owner_user_id):
+            return None
+        if display_name != row["display_name"] and conn.execute(
+            "SELECT 1 FROM credentials WHERE subject_kind = 'app' AND COALESCE(NULLIF(app_id, ''), subject_id) = ? "
+            "AND id <> ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) "
+            "AND name_key(display_name) = ?", (key_app, cred_id, ts, name_key(display_name)),
+        ).fetchone():
+            raise NameRejected(
+                "key_label_taken", "Another key on this app already has that name. Choose a different name.", status_code=409)
+        conn.execute("UPDATE credentials SET display_name = ? WHERE id = ?", (display_name, cred_id))
+        if audit is not None:
+            _audit_in_write(conn, audit, target_kind="credential", target_id=cred_id, metadata={
+                "app_id": key_app, "prefix": row["prefix"], "name": display_name, "previous_name": row["display_name"]})
         conn.commit()
-        return cur.rowcount > 0
+        after = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
+    return _credential_row_to_dict(row), _credential_row_to_dict(after)
 
 
 def revoke_older_session_credentials(
@@ -1609,6 +2359,11 @@ def revoke_older_session_credentials(
 # relative "used N ago", which doesn't need second-level precision, and this
 # keeps the write rate to at most one UPDATE per key per minute under load.
 TOUCH_LAST_USED_INTERVAL_SECONDS = 60
+# (database, credential) -> when this process last asked to record a use. An UPDATE that
+# matches no row still takes the database write lock, and every request paid for it, so
+# a key already recorded inside the interval does not reach the database at all.
+_LAST_TOUCH: dict[tuple[str, str], int] = {}
+_LAST_TOUCH_MAX = 4096
 
 
 def touch_credential_last_used(
@@ -1628,6 +2383,9 @@ def touch_credential_last_used(
     """
     ts = _now() if now is None else int(now)
     cutoff = ts - max(0, int(min_interval))
+    key = (str(path), cred_id)
+    if _LAST_TOUCH.get(key, 0) > cutoff:
+        return False
     with _conn(path) if connection is None else nullcontext(connection) as conn:
         cur = conn.execute(
             "UPDATE credentials SET last_used_at = ? "
@@ -1635,6 +2393,9 @@ def touch_credential_last_used(
             (ts, cred_id, cutoff),
         )
         conn.commit()
+        if len(_LAST_TOUCH) >= _LAST_TOUCH_MAX:
+            _LAST_TOUCH.clear()
+        _LAST_TOUCH[key] = ts
         return cur.rowcount > 0
 
 
@@ -1679,6 +2440,67 @@ def find_runtime_credential_by_hash(
     return credential
 
 
+# One statement is one snapshot (design §2.13 a): the credential or session
+# App, the App, its accountable person's account state and both plans.
+_RUNTIME_ACCESS_SELECT = """
+SELECT a.id AS app_id, a.name AS app_name, a.kind AS app_kind, a.owner_user_id,
+       a.disabled_at AS app_disabled_at, a.access_plan,
+       u.id AS person_row, u.issuer AS person_issuer,
+       acc.user_id AS access_row, acc.disabled_at AS person_disabled_at,
+       acc.removed_at AS person_removed_at, acc.plan_id AS person_plan_id,
+       EXISTS(SELECT 1 FROM account_signin_refusals r WHERE r.user_id = a.owner_user_id) AS person_signin_refused,
+       pp.plan_json AS person_plan_json,
+       ap.plan_json AS app_plan_json,
+       EXISTS(SELECT 1 FROM session_apps s WHERE s.app_id = a.id) AS on_session_app
+FROM apps a
+LEFT JOIN users u ON u.id = a.owner_user_id
+LEFT JOIN account_access acc ON acc.user_id = a.owner_user_id
+LEFT JOIN access_plans pp ON pp.id = acc.plan_id
+LEFT JOIN access_plans ap ON ap.id = CASE WHEN a.access_plan = 'person' THEN acc.plan_id ELSE a.access_plan END
+"""
+
+
+def runtime_access_row(
+    conn: sqlite3.Connection, *, key_hash: str | None = None, app_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve an App key (by hash) or a session App (by id) in one SELECT.
+
+    For a key the row also carries the credential columns (``cred_*``).
+    """
+    if key_hash is not None:
+        row = conn.execute(
+            "SELECT c.id AS cred_id, c.subject_kind AS cred_subject_kind, c.revoked_at AS cred_revoked_at, "
+            "c.expires_at AS cred_expires_at, c.created_by AS cred_created_by, "
+            "c.display_name AS cred_display_name, q.* FROM credentials c "
+            f"JOIN ({_RUNTIME_ACCESS_SELECT}) q ON q.app_id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
+            "WHERE c.hash = ?", (key_hash,),
+        ).fetchone()
+    elif app_id is not None:
+        row = conn.execute(f"SELECT * FROM ({_RUNTIME_ACCESS_SELECT}) WHERE app_id = ?", (app_id,)).fetchone()
+    else:
+        raise ValueError("key_hash or app_id is required")
+    if row is None:
+        return None
+    data = {k: row[k] for k in row.keys()}
+    data["on_session_app"] = bool(data["on_session_app"])
+    return data
+
+
+def runtime_access_rows(conn: sqlite3.Connection, app_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """``{app_id: row}`` as ``runtime_access_row`` reads it, for many Apps in one query per 500 ids."""
+    ids = sorted({str(value) for value in app_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        for row in conn.execute(
+            f"SELECT * FROM ({_RUNTIME_ACCESS_SELECT}) WHERE app_id IN ({','.join('?' for _ in chunk)})", chunk,
+        ).fetchall():
+            data = {k: row[k] for k in row.keys()}
+            data["on_session_app"] = bool(data["on_session_app"])
+            out[str(data["app_id"])] = data
+    return out
+
+
 def list_active_credentials(
     *,
     subject_kind: str | None = None,
@@ -1711,6 +2533,25 @@ def list_active_credentials(
             params,
         ).fetchall()
     return [_credential_row_to_dict(r) for r in rows]
+
+
+def list_active_credentials_for_apps(
+    app_ids: Iterable[str], *, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """``{app_id: active app credentials}``, as ``list_active_credentials`` returns them per app."""
+    ids = sorted({str(value) for value in app_ids if value})
+    ts = _now() if now is None else int(now)
+    out: dict[str, list[dict[str, Any]]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT * FROM credentials WHERE subject_kind = 'app' AND revoked_at IS NULL "
+                f"AND (expires_at IS NULL OR expires_at > ?) AND app_id IN ({','.join('?' for _ in chunk)}) "
+                "ORDER BY created_at ASC", [ts, *chunk]).fetchall()
+            for row in rows:
+                out.setdefault(row["app_id"], []).append(_credential_row_to_dict(row))
+    return out
 
 
 def list_credentials(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -1771,38 +2612,99 @@ def assign_admin_role(
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM admin_role_assignments "
-            "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
-            "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
-            (role, subject_kind, subject_id, scope_app_id),
-        ).fetchone()
-        if row is not None:
-            if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
-                return _row_to_dict(row)  # type: ignore[return-value]
-            conn.execute(
-                "UPDATE admin_role_assignments SET revoked_at = NULL, "
-                "granted_at = ?, granted_by = ?, provenance = ? WHERE id = ?",
-                (ts, granted_by, provenance, row["id"]),
-            )
-            assignment_id = row["id"]
-        else:
-            cur = conn.execute(
-                "INSERT INTO admin_role_assignments(role, subject_kind, "
-                "subject_id, scope_app_id, granted_at, granted_by, provenance) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance),
-            )
-            assignment_id = cur.lastrowid
-        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
-        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
-                          actor_kind=actor_kind, actor_id=granted_by)
+        out, changed = _assign_admin_role_in(
+            conn, role=role, subject_kind=subject_kind, subject_id=subject_id, scope_app_id=scope_app_id,
+            granted_by=granted_by, provenance=provenance, actor=actor, actor_kind=actor_kind, ts=ts)
+        if changed:
+            conn.commit()
+    return out
+
+
+def _assign_admin_role_in(
+    conn: sqlite3.Connection, *, role: str, subject_kind: str, subject_id: str, scope_app_id: str | None,
+    granted_by: str | None, provenance: str, actor: Any, actor_kind: str, ts: int,
+) -> tuple[dict[str, Any], bool]:
+    """Grant a role inside the caller's open write transaction. Returns the assignment and whether anything
+    changed; the caller commits. A refusal rolls the transaction back before it raises."""
+    row = conn.execute(
+        "SELECT * FROM admin_role_assignments "
+        "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
+        "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
+        (role, subject_kind, subject_id, scope_app_id),
+    ).fetchone()
+    confirmed = ts if provenance == "oidc" else None
+    if row is not None:
+        if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
+            return _row_to_dict(row), False  # type: ignore[return-value]
+        if (subject_kind == "service_account" and row["granted_by"]
+                and row["granted_by"] != granted_by):
+            # A key's authority belongs to whoever granted it. Re-granting
+            # under another name would let a later caller take the key over.
+            conn.rollback()
+            raise PermissionError("this service account was granted by someone else")
+        conn.execute(
+            "UPDATE admin_role_assignments SET revoked_at = NULL, "
+            "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
+            (ts, granted_by, provenance, confirmed, row["id"]),
+        )
+        assignment_id = row["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO admin_role_assignments(role, subject_kind, "
+            "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
+        )
+        assignment_id = cur.lastrowid
+    granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+    _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
+                      actor_kind=actor_kind, actor_id=granted_by)
+    return _row_to_dict(granted), True  # type: ignore[return-value]
+
+
+def create_admin_key_with_role(
+    *,
+    name: str,
+    description: str | None,
+    role: str,
+    granted_by: str | None,
+    actor: Any,
+    hash: str,
+    prefix: str,
+    display_name: str,
+    created_by: str | None,
+    session: session_guard.BrowserSession | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Make a service account, grant it ``role`` and give it a key, in one transaction.
+
+    The sign-in that asked (``session``, decision D41) is checked in this transaction first: when it has ended,
+    nothing is made, no account and no role to take back. ``sqlite3.IntegrityError`` when the name is taken.
+    Returns the service account, the assignment and the credential.
+    """
+    if not name:
+        raise ValueError("service account name is required")
+    if role not in {"owner", "admin"}:
+        raise ValueError("role must be one of: owner, admin")
+    ts = _now() if now is None else int(now)
+    svc_id = _gen_id("svc")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        conn.execute(
+            "INSERT INTO service_accounts(id, name, description, created_at) VALUES (?, ?, ?, ?)",
+            (svc_id, name, description, ts),
+        )
+        account = _row_to_dict(conn.execute("SELECT * FROM service_accounts WHERE id = ?", (svc_id,)).fetchone())
+        assignment, _ = _assign_admin_role_in(
+            conn, role=role, subject_kind="service_account", subject_id=svc_id, scope_app_id=None,
+            granted_by=granted_by, provenance="manual", actor=actor, actor_kind="system", ts=ts)
+        credential = _insert_credential_in(
+            conn, subject_kind="service_account", subject_id=svc_id, app_id=None, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=None, created_by=created_by, expires_at=None, session_id=None, ts=ts)
         conn.commit()
-        out = conn.execute(
-            "SELECT * FROM admin_role_assignments WHERE id = ?",
-            (assignment_id,),
-        ).fetchone()
-    return _row_to_dict(out)  # type: ignore[return-value]
+    return account, assignment, credential  # type: ignore[return-value]
 
 
 def reconcile_oidc_admin_roles(
@@ -1813,53 +2715,74 @@ def reconcile_oidc_admin_roles(
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
     """Replace claim-derived global grants while preserving every manual grant."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = reconcile_oidc_admin_roles_in(conn, subject_id, roles, now=now)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return result
+
+
+def reconcile_oidc_admin_roles_in(
+    conn: sqlite3.Connection,
+    subject_id: str,
+    roles: Iterable[str],
+    *,
+    now: int | None = None,
+) -> list[dict[str, Any]]:
+    """``reconcile_oidc_admin_roles`` inside a transaction the caller owns and commits."""
     desired = set(roles)
     if not subject_id or desired - {"owner", "admin", "superadmin"}:
         raise ValueError("valid user and control-plane roles are required")
     ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        rows = conn.execute(
-            "SELECT * FROM admin_role_assignments "
-            "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL",
-            (subject_id,),
-        ).fetchall()
-        for row in rows:
-            if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
-                conn.execute(
-                    "UPDATE admin_role_assignments SET revoked_at=? "
-                    "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
-                )
-                _audit_admin_role(conn, "admin_role.revoke", row, ts,
-                                  actor_kind="system", actor_id="oidc")
-        for role in sorted(desired):
-            matching = [row for row in rows if row["role"] == role]
-            if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
-                continue
-            existing = next((row for row in matching if row["provenance"] == "oidc"), None)
-            if existing is not None:
-                if existing["revoked_at"] is None:
-                    continue
-                conn.execute(
-                    "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=? "
-                    "WHERE id=?", (ts, existing["id"]),
-                )
-                assignment_id = existing["id"]
-            else:
-                cur = conn.execute(
-                    "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
-                    "scope_app_id,granted_at,granted_by,provenance) "
-                    "VALUES (?,'user',?,NULL,?,'oidc','oidc')", (role, subject_id, ts),
-                )
-                assignment_id = cur.lastrowid
-            granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
-            _audit_admin_role(conn, "admin_role.grant", granted, ts,
+    rows = conn.execute(
+        "SELECT * FROM admin_role_assignments "
+        "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL",
+        (subject_id,),
+    ).fetchall()
+    for row in rows:
+        if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
+            conn.execute(
+                "UPDATE admin_role_assignments SET revoked_at=? "
+                "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
+            )
+            _audit_admin_role(conn, "admin_role.revoke", row, ts,
                               actor_kind="system", actor_id="oidc")
-        conn.commit()
-        return [_row_to_dict(row) for row in conn.execute(
-            "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
-            "AND subject_id=? AND revoked_at IS NULL", (subject_id,)
-        )]  # type: ignore[misc]
+    for role in sorted(desired):
+        matching = [row for row in rows if row["role"] == role]
+        if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
+            continue
+        existing = next((row for row in matching if row["provenance"] == "oidc"), None)
+        if existing is not None:
+            if existing["revoked_at"] is None:
+                # The claim is still true: this sign-in confirms it.
+                conn.execute(
+                    "UPDATE admin_role_assignments SET last_confirmed_at=? WHERE id=?",
+                    (ts, existing["id"]),
+                )
+                continue
+            conn.execute(
+                "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=?, "
+                "last_confirmed_at=? WHERE id=?", (ts, ts, existing["id"]),
+            )
+            assignment_id = existing["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
+                "scope_app_id,granted_at,granted_by,provenance,last_confirmed_at) "
+                "VALUES (?,'user',?,NULL,?,'oidc','oidc',?)", (role, subject_id, ts, ts),
+            )
+            assignment_id = cur.lastrowid
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts,
+                          actor_kind="system", actor_id="oidc")
+    return [_row_to_dict(row) for row in conn.execute(
+        "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
+        "AND subject_id=? AND revoked_at IS NULL", (subject_id,)
+    )]  # type: ignore[misc]
 
 
 def revoke_admin_role(
@@ -1922,6 +2845,122 @@ def list_admin_roles(
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
+_MAX_GRANT_CHAIN = 8
+OPERATOR_GRANTOR = "cli"
+# An identity-provider grant lasts as long as the longest session the sign-in
+# that confirmed it could open. Callers with a configured session length pass it.
+OIDC_GRANT_MAX_AGE_SECONDS = 8 * 3600
+
+
+def _cap_role(role: str, held: set[str]) -> str | None:
+    """The role a grantor who holds ``held`` can still stand behind, if any."""
+    if role in held or "owner" in held:
+        return role
+    if held & {"admin", "superadmin"}:
+        return "admin"  # lowered to what the grantor still holds
+    return None
+
+
+def _held_by_grantor(
+    grantor: str, *, oidc_max_age: int, now: int, path: Path, depth: int,
+) -> set[str] | None:
+    """Roles a grantor holds now. None means no person is behind it (the operator)."""
+    if not grantor or grantor == OPERATOR_GRANTOR:
+        return None
+    if depth >= _MAX_GRANT_CHAIN:
+        return set()
+    kind, _, ident = grantor.partition(":")
+    if not (kind in {"user", "service_account"} and ident):
+        # An older grant recorded the bare id.
+        ident = grantor
+        if get_user(ident, path=path) is not None:
+            kind = "user"
+        elif get_service_account(ident, path=path) is not None:
+            kind = "service_account"
+        else:
+            return set()
+    return set(effective_admin_roles(
+        kind, ident, oidc_max_age=oidc_max_age, now=now, path=path, _depth=depth + 1))
+
+
+def effective_admin_roles(
+    subject_kind: str,
+    subject_id: str,
+    *,
+    minted_by: str | None = None,
+    oidc_max_age: int = OIDC_GRANT_MAX_AGE_SECONDS,
+    now: int | None = None,
+    path: Path = DB_PATH,
+    _depth: int = 0,
+) -> frozenset[str]:
+    """The control-plane roles this subject may use right now.
+
+    A person's roles are their active global grants (an App-scoped grant is not
+    a control-plane role, for a person or a key). A grant from the identity provider counts only while
+    a sign-in confirmed it within ``oidc_max_age`` seconds, so an administrator
+    who is dropped from the group and never signs in again loses it.
+
+    A service account (an admin key) holds its roles only as far as the person,
+    or key, that granted them still holds them. ``minted_by`` is the minter
+    recorded on the credential being used and caps it the same way. The
+    operator's ``cli`` is not capped, and neither is a grant that records no
+    grantor (a direct database write). A named grantor that cannot be found
+    grants nothing. So an admin key stops working when the administrator who
+    minted it loses the role, and an owner key made by someone who is now only
+    an administrator works at administrator reach.
+    """
+    ts = _now() if now is None else int(now)
+    rows = list_admin_roles(subject_kind=subject_kind, subject_id=subject_id, path=path)
+    if subject_kind != "service_account":
+        return frozenset(
+            str(row["role"]) for row in rows
+            if row.get("scope_app_id") is None and (
+                row.get("provenance") != "oidc"
+                or (row.get("last_confirmed_at") is not None
+                    and int(row["last_confirmed_at"]) > ts - oidc_max_age))
+        )
+    kept: set[str] = set()
+    for row in rows:
+        if row.get("scope_app_id") is not None:
+            continue  # a grant for one App is not a control-plane role
+        role = str(row["role"])
+        held = _held_by_grantor(str(row.get("granted_by") or ""), oidc_max_age=oidc_max_age,
+                                now=ts, path=path, depth=_depth)
+        capped = role if held is None else _cap_role(role, held)
+        if capped is not None and minted_by:
+            held = _held_by_grantor(minted_by, oidc_max_age=oidc_max_age, now=ts, path=path, depth=_depth)
+            capped = capped if held is None else _cap_role(capped, held)
+        if capped is not None:
+            kept.add(capped)
+    return frozenset(kept)
+
+
+def claim_first_owner(
+    user_id: str, *, granted_by: str, now: int | None = None, path: Path = DB_PATH,
+) -> bool:
+    """Make this person the owner if no owner grant has ever existed.
+
+    The check and the write share one transaction, so two first sign-ins
+    cannot both win. A revoked owner grant still counts: an email cannot
+    recover ownership that was taken away.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1").fetchone():
+            conn.rollback()
+            return False
+        cur = conn.execute(
+            "INSERT INTO admin_role_assignments(role, subject_kind, subject_id, scope_app_id, "
+            "granted_at, granted_by, provenance) VALUES ('owner', 'user', ?, NULL, ?, ?, 'manual')",
+            (user_id, ts, granted_by),
+        )
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (cur.lastrowid,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor_kind="system", actor_id=granted_by)
+        conn.commit()
+    return True
+
+
 def owner_display_name(*, path: Path = DB_PATH) -> str | None:
     """Display name of the earliest active gateway owner that has a clean one.
 
@@ -1946,199 +2985,6 @@ def owner_display_name(*, path: Path = DB_PATH) -> str | None:
             continue
         return name
     return None
-
-
-# ---------------------------------------------------------------------------
-# runtime profile mappings
-# ---------------------------------------------------------------------------
-
-
-def _normalize_runtime_mapping(
-    source_kind: str,
-    source_value: str | None,
-) -> tuple[str, str]:
-    kind = str(source_kind or "").strip().lower()
-    spec = _RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID.get(kind)
-    if spec is None:
-        raise ValueError(
-            "source_kind must be one of "
-            f"{RUNTIME_PROFILE_MAPPING_SOURCE_KINDS}"
-        )
-    if spec["value_mode"] == "fixed":
-        return kind, str(spec["fixed_value"])
-    value = (
-        _normalize_identity_value(kind, source_value)
-        if kind in IDENTITY_CLAIM_KINDS else _normalize_access_value(source_value)
-    )
-    if not value:
-        raise ValueError("source_value is required")
-    return kind, value
-
-
-def _default_runtime_mapping_priority(source_kind: str) -> int:
-    return int(_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID[source_kind]["priority"])
-
-
-def create_runtime_profile_mapping(
-    *,
-    source_kind: str,
-    source_value: str | None,
-    profile_id: str,
-    priority: int | None = None,
-    created_by: str | None = None,
-    now: int | None = None,
-    path: Path = DB_PATH,
-) -> dict[str, Any]:
-    kind, value = _normalize_runtime_mapping(source_kind, source_value)
-    if not profile_id:
-        raise ValueError("profile_id is required")
-    ts = _now() if now is None else int(now)
-    mapping_id = _gen_id("map")
-    prio = (
-        _default_runtime_mapping_priority(kind)
-        if priority is None
-        else int(priority)
-    )
-    with _conn(path) as conn:
-        existing = conn.execute(
-            "SELECT * FROM runtime_profile_mappings "
-            "WHERE source_kind = ? AND source_value = ? AND profile_id = ?",
-            (kind, value, profile_id),
-        ).fetchone()
-        if existing is not None:
-            conn.execute(
-                "UPDATE runtime_profile_mappings SET disabled_at = NULL, "
-                "priority = ?, created_at = ?, created_by = ? WHERE id = ?",
-                (prio, ts, created_by, existing["id"]),
-            )
-            mapping_id = existing["id"]
-        else:
-            conn.execute(
-                "INSERT INTO runtime_profile_mappings"
-                "(id, source_kind, source_value, profile_id, priority, "
-                "created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (mapping_id, kind, value, profile_id, prio, ts, created_by),
-            )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM runtime_profile_mappings WHERE id = ?",
-            (mapping_id,),
-        ).fetchone()
-    return _row_to_dict(row)  # type: ignore[return-value]
-
-
-def disable_runtime_profile_mapping(
-    mapping_id: str,
-    *,
-    now: int | None = None,
-    path: Path = DB_PATH,
-) -> bool:
-    ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        cur = conn.execute(
-            "UPDATE runtime_profile_mappings SET disabled_at = ? "
-            "WHERE id = ? AND disabled_at IS NULL",
-            (ts, mapping_id),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-
-
-def list_runtime_profile_mappings(
-    *,
-    include_disabled: bool = False,
-    path: Path = DB_PATH,
-) -> list[dict[str, Any]]:
-    where = "" if include_disabled else "WHERE disabled_at IS NULL"
-    with _conn(path) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM runtime_profile_mappings {where} "
-            "ORDER BY priority ASC, created_at ASC"
-        ).fetchall()
-    return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
-
-
-def replace_default_runtime_profile_mapping(
-    *, profile_id: str | None, actor: Any, path: Path = DB_PATH,
-) -> None:
-    """Atomically replace the universal grant, preserving specific identity mappings."""
-    ts = _now()
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        if profile_id not in {None, "default", "default-local"} and conn.execute(
-            "SELECT 1 FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone() is None:
-            raise ValueError("access plan not found")
-        conn.execute(
-            "UPDATE runtime_profile_mappings SET disabled_at = ? WHERE source_kind = 'all_users' AND disabled_at IS NULL",
-            (ts,),
-        )
-        if profile_id is not None:
-            conn.execute(
-                "INSERT INTO runtime_profile_mappings "
-                "(id, source_kind, source_value, profile_id, priority, created_at, created_by) "
-                "VALUES (?, 'all_users', '*', ?, 100, ?, ?) "
-                "ON CONFLICT(source_kind, source_value, profile_id) DO UPDATE SET "
-                "disabled_at = NULL, priority = 100, created_at = excluded.created_at, created_by = excluded.created_by",
-                (_gen_id("map"), profile_id, ts, actor.subject),
-            )
-        _record_audit_in_transaction(
-            conn, "operator.default_access_plan.update", actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id, actor_label=actor.actor_label,
-            target_kind="runtime_profile_mapping", target_id="all_users",
-            metadata={"profile_id": profile_id}, now=ts,
-        )
-        conn.commit()
-
-
-def resolve_runtime_profile_mapping_details(
-    *,
-    email: str,
-    gateway_role: str,
-    oidc_groups: Iterable[str] = (),
-    oidc_roles: Iterable[str] = (),
-    path: Path = DB_PATH,
-) -> dict[str, Any] | None:
-    email_value = _normalize_access_value(email)
-    _, _, domain = email_value.partition("@")
-    candidates: set[tuple[str, str]] = {("all_users", "*")}
-    if email_value:
-        candidates.add(("email", email_value))
-    if domain:
-        candidates.add(("domain", domain))
-    role_value = _normalize_access_value(gateway_role or "none")
-    if role_value:
-        candidates.add(("gateway_role", role_value))
-    for group in oidc_groups:
-        value = _normalize_identity_value("oidc_group", group)
-        if value:
-            candidates.add(("oidc_group", value))
-    for role in oidc_roles:
-        value = _normalize_identity_value("oidc_role", role)
-        if value:
-            candidates.add(("oidc_role", value))
-
-    for row in list_runtime_profile_mappings(path=path):
-        kind = str(row.get("source_kind") or "")
-        value = str(row.get("source_value") or "")
-        # Old short-name mappings remain exact root paths after migration.
-        if kind in IDENTITY_CLAIM_KINDS:
-            value = _normalize_identity_value(kind, value)
-        pair = (kind, value)
-        if pair in candidates:
-            return row
-    return None
-
-
-def resolve_runtime_profile_mapping(
-    *, email: str, gateway_role: str, oidc_groups: Iterable[str] = (),
-    oidc_roles: Iterable[str] = (), path: Path = DB_PATH,
-) -> str | None:
-    mapping = resolve_runtime_profile_mapping_details(
-        email=email, gateway_role=gateway_role, oidc_groups=oidc_groups,
-        oidc_roles=oidc_roles, path=path,
-    )
-    return str(mapping["profile_id"]) if mapping and mapping.get("profile_id") else None
 
 
 # ---------------------------------------------------------------------------
@@ -2351,29 +3197,66 @@ def put_operator_setting(
         raise ValueError(
             "service_registry must be written through the registry transaction primitive"
         )
-    ts = _now() if now is None else int(now)
-    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if setting_key == "prompt_memory":
-            _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
-            if value.get("never_keep"):
-                _record_prompt_erasure(conn, "*", ts)
-        conn.execute(
-            "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET "
-            "value_json = excluded.value_json, "
-            "updated_at = excluded.updated_at, "
-            "updated_by = excluded.updated_by",
-            (setting_key, payload, ts, updated_by),
-        )
-        _advance_setting_revision(conn, setting_key)
-        conn.commit()
-        row = conn.execute(
-            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
-        ).fetchone()
+        try:
+            record = put_operator_setting_in(conn, setting_key, value, updated_by=updated_by, now=now)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return record
+
+
+def put_operator_setting_in(
+    conn: sqlite3.Connection,
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """``put_operator_setting`` inside a transaction the caller owns and commits."""
+    setting_key, value = _canonical_setting(conn, str(key or "").strip(), value)
+    ts = _now() if now is None else int(now)
+    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    if setting_key == retention_contract.SETTING_KEY:
+        _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
+        if value.get("never_keep"):
+            _record_prompt_erasure(conn, "*", ts)
+    conn.execute(
+        "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET "
+        "value_json = excluded.value_json, "
+        "updated_at = excluded.updated_at, "
+        "updated_by = excluded.updated_by",
+        (setting_key, payload, ts, updated_by),
+    )
+    _advance_setting_revision(conn, setting_key)
+    row = conn.execute(_SETTING_SELECT + " WHERE s.key = ?", (setting_key,)).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+def _canonical_setting(
+    conn: sqlite3.Connection, key: str, value: Mapping[str, Any],
+) -> tuple[str, Mapping[str, Any]]:
+    """The setting a write lands on. The prompts group's view (key ``prompt_memory``, the names the settings screens
+    use) sets that group's values in the household policy, ``retention``, and leaves the other groups as they are."""
+    if key != retention_contract.PROMPTS_VIEW_KEY:
+        return key, value
+    stored = get_operator_setting_in(conn, retention_contract.SETTING_KEY)
+    return retention_contract.SETTING_KEY, retention_contract.apply_prompts_view(
+        stored["value"] if stored else None, value,
+    )
+
+
+def operator_setting_revision_in(conn: sqlite3.Connection, key: str) -> str:
+    """The revision of one setting as this connection sees it (``"0"`` when never written)."""
+    row = conn.execute(
+        "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?", (key,)
+    ).fetchone()
+    return str(row[0]) if row else "0"
 
 
 def put_operator_setting_with_audit(
@@ -2394,6 +3277,41 @@ def put_operator_setting_with_audit(
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Commit one ordinary setting and its audit fact in one transaction."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            record = put_operator_setting_with_audit_in(
+                conn, key, value, updated_by=updated_by, audit_action=audit_action,
+                audit_actor_kind=audit_actor_kind, audit_actor_id=audit_actor_id,
+                audit_actor_label=audit_actor_label, audit_target_kind=audit_target_kind,
+                audit_target_id=audit_target_id, audit_metadata=audit_metadata,
+                expected_revision=expected_revision, validate_in_transaction=validate_in_transaction, now=now,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return record
+
+
+def put_operator_setting_with_audit_in(
+    conn: sqlite3.Connection,
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None,
+    audit_action: str,
+    audit_actor_kind: str | None,
+    audit_actor_id: str | None,
+    audit_actor_label: str | None,
+    audit_target_kind: str | None,
+    audit_target_id: str | None,
+    audit_metadata: Mapping[str, Any] | None = None,
+    expected_revision: str | None = None,
+    validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """``put_operator_setting_with_audit`` inside a transaction the caller owns and commits."""
     setting_key = str(key or "").strip()
     if not setting_key:
         raise ValueError("operator setting key is required")
@@ -2404,49 +3322,23 @@ def put_operator_setting_with_audit(
     if not isinstance(value, Mapping):
         raise ValueError("operator setting value must be a mapping")
     ts = _now() if now is None else int(now)
-    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            current = conn.execute(
-                "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?",
-                (setting_key,),
-            ).fetchone()
-            revision = str(current[0]) if current else "0"
-            if expected_revision is not None and expected_revision != revision:
-                raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
-            if validate_in_transaction is not None:
-                validate_in_transaction(conn)
-            if setting_key == "prompt_memory":
-                _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
-                if value.get("never_keep"):
-                    _record_prompt_erasure(conn, "*", ts)
-            conn.execute(
-                "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
-                "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-                (setting_key, payload, ts, updated_by),
-            )
-            _advance_setting_revision(conn, setting_key)
-            _record_audit_in_transaction(
-                conn, audit_action,
-                actor_kind=audit_actor_kind,
-                actor_id=audit_actor_id,
-                actor_label=audit_actor_label,
-                target_kind=audit_target_kind,
-                target_id=audit_target_id,
-                metadata=audit_metadata,
-                now=ts,
-            )
-            row = conn.execute(
-                _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
-            ).fetchone()
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-    return _operator_setting_row_to_dict(row)
+    setting_key, value = _canonical_setting(conn, setting_key, value)
+    if expected_revision is not None and expected_revision != operator_setting_revision_in(conn, setting_key):
+        raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
+    if validate_in_transaction is not None:
+        validate_in_transaction(conn)
+    record = put_operator_setting_in(conn, setting_key, value, updated_by=updated_by, now=ts)
+    _record_audit_in_transaction(
+        conn, audit_action,
+        actor_kind=audit_actor_kind,
+        actor_id=audit_actor_id,
+        actor_label=audit_actor_label,
+        target_kind=audit_target_kind,
+        target_id=audit_target_id,
+        metadata=audit_metadata,
+        now=ts,
+    )
+    return record
 
 
 class SettingsConflictError(ValueError):
@@ -2509,23 +3401,31 @@ def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[s
 def write_service_registry(
     value: Mapping[str, Any], *, updated_by: str | None = None,
     expected_generation: int, now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
 
     This is the sole production writer for ``operator.service_registry``.  It
     intentionally owns no artifact/reload effect: those occur after commit.
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction; None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        next_generation = write_service_registry_in_transaction(
-            conn, value, updated_by=updated_by,
-            expected_generation=expected_generation, now=ts,
-        )
-        conn.commit()
+        try:
+            session_guard.require_live(conn, session)
+            next_generation = write_service_registry_in_transaction(
+                conn, value, updated_by=updated_by,
+                expected_generation=expected_generation, now=ts,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"key": "service_registry", "value": dict(value), "updated_at": ts,
             "updated_by": updated_by, "operator_settings_generation": next_generation}
 
@@ -2543,6 +3443,7 @@ def write_service_registry_with_audit(
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
     now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
@@ -2550,6 +3451,10 @@ def write_service_registry_with_audit(
     This is the production writer for ordinary registry mutations.  Artifact
     publication and reload stay outside this transaction because they observe
     the committed registry rather than participating in SQLite atomicity.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -2557,6 +3462,7 @@ def write_service_registry_with_audit(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn,
                 value,
@@ -2611,6 +3517,17 @@ def write_service_registry_in_transaction(
         raise OperatorSettingsGenerationConflict(
             f"operator settings generation mismatch: current={generation}"
         )
+    # A service id owns its overrides. Remove them in the same transaction as
+    # the registry change so deleting and recreating an id cannot revive facts.
+    previous = conn.execute(
+        "SELECT value_json FROM operator_settings WHERE key='service_registry'"
+    ).fetchone()
+    old_services = json.loads(previous[0]).get("services", {}) if previous else {}
+    removed_ids = set(old_services) - set(value.get("services") or {})
+    conn.executemany(
+        "DELETE FROM retention_fact_overrides WHERE target_type IN ('engine','provider') AND target_id=?",
+        [(str(service_id),) for service_id in removed_ids],
+    )
     next_generation = generation + 1
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     conn.execute(
@@ -2627,6 +3544,105 @@ def write_service_registry_in_transaction(
     return next_generation
 
 
+def _upsert_setting_in_transaction(
+    conn: sqlite3.Connection,
+    key: str,
+    payload: str,
+    now: int,
+    updated_by: str | None,
+) -> None:
+    """Write one ordinary setting and advance its revision in a caller-owned transaction."""
+    conn.execute(
+        "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
+        "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+        (key, payload, now, updated_by),
+    )
+    _advance_setting_revision(conn, key)
+
+
+def write_service_registry_and_setting_with_audits(
+    registry: Mapping[str, Any],
+    *,
+    expected_generation: int,
+    updated_by: str | None,
+    setting_key: str,
+    setting_value: Mapping[str, Any],
+    audits: Iterable[Mapping[str, Any]],
+    now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
+    path: Path = DB_PATH,
+    precheck: Callable[[sqlite3.Connection], None] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Commit a registry revision, one ordinary setting and their audit facts atomically.
+
+    Each audit mapping carries ``action`` plus the optional ``actor_kind``,
+    ``actor_id``, ``actor_label``, ``target_kind``, ``target_id`` and
+    ``metadata`` fields of :func:`record_audit`. Any failure rolls back every
+    row, including the generation bump. ``precheck`` runs inside the same write
+    lock, before any row is written, and may raise to refuse the whole change;
+    a caller that must read other tables consistently with the write reads them
+    there. Artifact publication and reload stay with the caller, after the commit.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
+    """
+    setting_name = str(setting_key or "").strip()
+    if not setting_name or setting_name in {"service_registry", retention_contract.SETTING_KEY, retention_contract.PROMPTS_VIEW_KEY}:
+        raise ValueError("an ordinary operator setting key is required")
+    if not isinstance(registry, Mapping) or not isinstance(setting_value, Mapping):
+        raise ValueError("registry and setting values must be mappings")
+    ts = _now() if now is None else int(now)
+    setting_payload = json.dumps(dict(setting_value), ensure_ascii=False, sort_keys=True)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            session_guard.require_live(conn, session)
+            if precheck is not None:
+                precheck(conn)
+            next_generation = write_service_registry_in_transaction(
+                conn,
+                registry,
+                updated_by=updated_by,
+                expected_generation=expected_generation,
+                now=ts,
+            )
+            _upsert_setting_in_transaction(conn, setting_name, setting_payload, ts, updated_by)
+            for audit in audits:
+                _record_audit_in_transaction(
+                    conn,
+                    str(audit.get("action") or ""),
+                    actor_kind=audit.get("actor_kind"),
+                    actor_id=audit.get("actor_id"),
+                    actor_label=audit.get("actor_label"),
+                    target_kind=audit.get("target_kind"),
+                    target_id=audit.get("target_id"),
+                    metadata=audit.get("metadata"),
+                    now=ts,
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return (
+        {
+            "key": "service_registry",
+            "value": dict(registry),
+            "updated_at": ts,
+            "updated_by": updated_by,
+            "operator_settings_generation": next_generation,
+        },
+        {
+            "key": setting_name,
+            "value": dict(setting_value),
+            "updated_at": ts,
+            "updated_by": updated_by,
+        },
+    )
+
+
 def get_operator_setting(
     key: str,
     *,
@@ -2639,6 +3655,12 @@ def get_operator_setting(
         row = conn.execute(
             _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
+    return _operator_setting_row_to_dict(row) if row is not None else None
+
+
+def get_operator_setting_in(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
+    """:func:`get_operator_setting` as one open transaction sees it, including its own uncommitted writes."""
+    row = conn.execute(_SETTING_SELECT + " WHERE s.key = ?", (str(key or "").strip(),)).fetchone()
     return _operator_setting_row_to_dict(row) if row is not None else None
 
 
@@ -2717,11 +3739,15 @@ def put_prompt_memory_preference(
 ) -> dict[str, Any]:
     if not user_id:
         raise ValueError("user_id is required")
-    if retention not in {"3_months", "1_year", "never"}:
-        raise ValueError("retention must be one of 3_months, 1_year, never")
+    choices = retention_contract.bundled().choices(retention_contract.LIBRARY_PROMPT)
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT retention FROM prompt_memory_preferences WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if retention not in choices and (current is None or retention != current[0]):
+            raise ValueError("retention must be one of " + ", ".join(choices))
         if validate_in_transaction is not None:
             validate_in_transaction(conn)
         if not remember:
@@ -2769,14 +3795,48 @@ def _operator_setting_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def retention_fact_overrides(path: Path = DB_PATH) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Return owner-authored lists, including empty lists that suppress bundled facts."""
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT target_type, target_id, facts_json FROM retention_fact_overrides"
+        ).fetchall()
+    return {(row["target_type"], row["target_id"]): json.loads(row["facts_json"]) for row in rows}
+
+
+def put_retention_fact_override(
+    target_type: str, target_id: str, facts: list[dict[str, Any]], *,
+    updated_by: str | None = None, path: Path = DB_PATH,
+) -> None:
+    if target_type not in {"engine", "provider", "system"} or not target_id or len(target_id) > 128:
+        raise ValueError("Choose a retention fact destination")
+    from gateway.retention_facts import validate_facts
+
+    checked = validate_facts(facts, for_write=True)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO retention_fact_overrides(target_type,target_id,facts_json,updated_at,updated_by) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(target_type,target_id) DO UPDATE SET "
+                "facts_json=excluded.facts_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+                (target_type, target_id, json.dumps(checked, sort_keys=True, ensure_ascii=False), _now(), updated_by),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
 __all__ = [
     "DB_PATH",
     "SCHEMA_VERSION",
     "SUBJECT_KINDS",
+    "list_trusted_addresses",
+    "add_trusted_address",
+    "delete_trusted_address",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
-    "RUNTIME_PROFILE_MAPPING_SOURCE_KINDS",
-    "RUNTIME_PROFILE_MAPPING_SOURCE_SPECS",
     "init_db",
     "secure_state_path",
     "schema_version",
@@ -2793,9 +3853,18 @@ __all__ = [
     "create_service_account",
     "ensure_service_account",
     "get_service_account",
-    "create_profile",
-    "get_profile",
-    "list_profiles",
+    "PERSON_ASSIGNMENT",
+    "access_plan_users",
+    "create_access_plan",
+    "delete_access_plan",
+    "get_access_plan",
+    "list_access_plans",
+    "set_app_access_plan",
+    "person_plan_id",
+    "INVITE_ACCESS_PLAN_SETTING_KEY",
+    "invite_access_plan",
+    "update_access_plan",
+    "runtime_access_row",
     "create_app",
     "ensure_personal_app_for_user",
     "ensure_session_app_for_user",
@@ -2806,9 +3875,13 @@ __all__ = [
     "list_apps",
     "list_apps_for_user",
     "create_credential_hash",
+    "create_admin_key_with_role",
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",
+    "find_oidc_user",
+    "effective_admin_roles",
+    "claim_first_owner",
     "find_runtime_credential_by_hash",
     "list_credentials",
     "list_active_credentials",
@@ -2817,18 +3890,17 @@ __all__ = [
     "revoke_admin_role",
     "list_admin_roles",
     "owner_display_name",
-    "create_runtime_profile_mapping",
-    "disable_runtime_profile_mapping",
-    "list_runtime_profile_mappings",
-    "resolve_runtime_profile_mapping",
     "put_operator_setting",
     "put_operator_setting_with_audit",
     "get_service_registry_with_generation",
     "write_service_registry",
     "write_service_registry_with_audit",
+    "write_service_registry_and_setting_with_audits",
     "write_service_registry_in_transaction",
     "OperatorSettingsGenerationConflict",
     "get_operator_setting",
+    "retention_fact_overrides",
+    "put_retention_fact_override",
     "list_operator_settings",
     "get_prompt_memory_preference",
     "ensure_prompt_memory_preference",

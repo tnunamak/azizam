@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import asyncio
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import receipt_store, receipts  # noqa: E402
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, record_validation_result  # noqa: E402
 
 
@@ -20,6 +22,80 @@ class FakeValidationResult:
 
 
 class TestRouteReceipt(unittest.TestCase):
+    def test_retention_is_client_visible_and_has_a_closed_value_vocabulary(self) -> None:
+        receipt = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+        receipt.set_retention(
+            kind="conversation", decision="kept", reason="kept",
+            kept_until_ms=None, parts=["accepted", "received"], limited_by="unbounded_store",
+        )
+        self.assertEqual(receipt.to_dict("client")["retention"], [{
+            "kind": "conversation", "decision": "kept", "reason": "kept",
+            "kept_until_ms": None, "parts": ["accepted", "received"],
+            "limited_by": "unbounded_store",
+        }])
+        for field, value in (
+            ("kind", "conversation PRIVATE_PROMPT"),
+            ("decision", "kept PRIVATE_PROMPT"),
+            ("reason", "kept PRIVATE_PROMPT"),
+            ("limited_by", "member_choice PRIVATE_PROMPT"),
+            ("parts", ["accepted", "PRIVATE_PROMPT"]),
+            ("kept_until_ms", "PRIVATE_PROMPT"),
+        ):
+            entry = {
+                "kind": "conversation", "decision": "kept", "reason": "kept",
+                "kept_until_ms": None, "parts": ["accepted", "received"],
+                "limited_by": "unbounded_store",
+            }
+            entry[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                receipt.set_retention(**entry)
+
+    def test_retention_store_guard_rejects_a_forged_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            receipt = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+            receipt.finish("succeeded")
+            data = receipt.to_dict("internal")
+            data["retention"] = [{
+                "kind": "conversation", "decision": "kept", "reason": "kept",
+                "kept_until_ms": None, "parts": ["accepted", "received"],
+                "limited_by": "unbounded_store", "note": "PRIVATE_PROMPT",
+            }]
+            with self.assertRaises(ValueError):
+                receipt_store.record(data, path=db)
+            self.assertEqual(receipt_store.count(db), 0)
+
+    def test_old_invalid_retention_entry_does_not_break_a_receipt_list(self) -> None:
+        import json
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            old = RouteReceipt(protocol="openai.responses", intent="chat.responses")
+            good = RouteReceipt(protocol="openai.responses", intent="chat.responses", maker_person_id="maker")
+            good.set_retention(kind="conversation", decision="not_kept", reason="request_forget")
+            receipt_store.record(old, path=db)
+            receipt_store.record(good, path=db)
+            with sqlite3.connect(db) as conn:
+                row = json.loads(conn.execute(
+                    "SELECT receipt_json FROM receipts WHERE request_id=?", (old.request_id,),
+                ).fetchone()[0])
+                row["retention"] = [{"kind": "conversation", "decision": "not_kept", "reason": "retired_reason"}]
+                conn.execute("UPDATE receipts SET receipt_json=? WHERE request_id=?",
+                             (json.dumps(row), old.request_id))
+            with patch.object(receipts, "_invalid_stored_retention_logged", False):
+                with self.assertLogs("gateway.receipts", level="WARNING") as logs:
+                    first = receipt_store.recent(path=db, audience="client", viewer_person_id="maker")
+                    second = receipt_store.recent(path=db, audience="client", viewer_person_id="maker")
+            self.assertEqual(len(logs.output), 1)
+            self.assertNotIn("retired_reason", logs.output[0])
+            self.assertEqual({row["request_id"] for row in first}, {old.request_id, good.request_id})
+            self.assertEqual(next(row for row in first if row["request_id"] == old.request_id)["retention"], [])
+            self.assertEqual(next(row for row in second if row["request_id"] == good.request_id)["retention"],
+                             [{"kind": "conversation", "decision": "not_kept", "reason": "request_forget"}])
+
     def test_receipt_records_inputs_without_values(self) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -86,19 +162,33 @@ class TestRouteReceipt(unittest.TestCase):
 
 class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
     async def test_default_store_wiring_begins_and_finalizes(self) -> None:
-        begun: list[RouteReceipt] = []
-        finalized: list[RouteReceipt] = []
-        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+            real_begin, real_finalize = receipt_store.begin, receipt_store.finalize
+            real_phases = receipt_store.update_phases
+            # The store functions bind ``path`` at definition time, so the
+            # spies route to this temporary store explicitly.
+            with patch.object(
+                receipt_store, "begin", side_effect=lambda r: real_begin(r, path=db)
+            ) as begun, patch.object(
+                receipt_store, "finalize", side_effect=lambda r: real_finalize(r, path=db)
+            ) as finalized, patch.object(
+                receipt_store, "update_phases", side_effect=lambda r: real_phases(r, path=db)
+            ):
+                owner = ReceiptLifecycleOwner(receipt)
+                async with owner:
+                    owner.report(status="succeeded", reason="completed")
 
-        with patch("gateway.receipt_store.begin", side_effect=begun.append), patch(
-            "gateway.receipt_store.finalize", side_effect=finalized.append
-        ):
-            owner = ReceiptLifecycleOwner(receipt)
-            async with owner:
-                owner.report(status="succeeded", reason="completed")
-
-        self.assertEqual(begun, [receipt])
-        self.assertEqual(finalized, [receipt])
+            begun.assert_called_once_with(receipt)
+            finalized.assert_called_once_with(receipt)
+            self.assertEqual(receipt_store.count(db), 1)
+            persisted = receipt_store.get(receipt.request_id, audience="internal", path=db)
+            self.assertIsNotNone(persisted)
+            self.assertEqual(persisted["request_id"], receipt.request_id)
+            self.assertEqual(persisted["status"], "succeeded")
+            self.assertEqual(persisted["metadata"]["terminal_reason"], "completed")
 
     async def test_cancellation_wins_and_store_errors_do_not_mask_it(self) -> None:
         begun: list[RouteReceipt] = []
@@ -138,6 +228,37 @@ class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item async for item in stream], [b"one"])
         self.assertEqual(finalized, [receipt])
         self.assertEqual(receipt.status, "succeeded")
+
+
+def test_category_failure_does_not_log_prompt_or_credentials(caplog) -> None:
+    """Backend errors containing request data retain only operational facts."""
+    import logging
+    from unittest.mock import Mock
+
+    from gateway.category_enforcement import CategoryGate
+
+    prompt = "PRIVATE_PROMPT: a clockwork fox walks through a violet orchard"
+    sensitive = prompt + " key=fake-test-key person@example.invalid https://example.invalid/?token=fake"
+    for error_type in (ValueError, RuntimeError):
+        caplog.clear()
+        gate = CategoryGate(Path("unused-category-store.db"))
+        gate._store = Mock()
+        gate._store.active_revision_counter = 1
+        gate._store.get_active.side_effect = error_type(sensitive)
+        gate._watch = Mock()
+        gate._watch.execute.return_value.fetchone.return_value = (1,)
+        with patch.object(Path, "exists", return_value=True):
+            with caplog.at_level(logging.DEBUG, logger="gateway.category_enforcement"):
+                assert gate._active_now() == (None, True)
+        assert "category rules unavailable" in caplog.text
+        assert error_type.__name__ in caplog.text
+        for value in (prompt, "fake-test-key", "person@example.invalid", "?token=fake"):
+            assert value not in caplog.text
+        records = [record for record in caplog.records
+                   if record.name == "gateway.category_enforcement"]
+        assert records
+        assert all(record.exc_info is None for record in records)
+        assert gate._failed
 
 
 if __name__ == "__main__":

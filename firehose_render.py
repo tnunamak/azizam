@@ -1,7 +1,7 @@
 """
-Server-side HTML renderer for the ai.vivid.fish status dashboard.
+Server-side HTML renderer for the gateway status dashboard.
 
-The operator dashboard is served at `/status`; `/firehose` redirects there.
+The operator's technical status page is served at `/status/raw`.
 
 Sections are grouped by purpose (banner & alerts → live activity → resources
 → capabilities → recent output → identity activity → diagnostics) and the
@@ -17,6 +17,7 @@ import json
 import re
 import time
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from gateway.gateway_shell import SHELL_CSS, render_shell_header
 
@@ -229,20 +230,42 @@ def _kv_table(rows: list[tuple[str, Any]]) -> str:
     return "".join(out)
 
 
+def _display_host(host: Optional[str], public_url: Optional[str] = None) -> str:
+    """Choose display-only text; never use the request host for authorization."""
+    if host and host.strip():
+        return host.strip()
+    if public_url and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in public_url):
+        try:
+            parsed = urlsplit(public_url)
+            if (
+                parsed.scheme in ("http", "https")
+                and parsed.hostname
+                and parsed.username is None
+                and parsed.password is None
+                and "\\" not in parsed.netloc
+            ):
+                parsed.port  # Reject malformed/out-of-range ports.
+                return parsed.netloc
+        except ValueError:
+            pass
+    return "Azizam"
+
+
 def render_html(
     payload: dict,
     *,
     host: Optional[str] = None,
+    public_url: Optional[str] = None,
     actor_label: Optional[str] = None,
     logout_url: Optional[str] = None,
     show_account: bool = True,
-    show_admin: bool = True,
     show_status: bool = True,
 ) -> str:
     """Render the status page from a /v1/status payload.
 
     ``host`` should be the request's ``Host`` header so the status banner
-    matches the address bar (loopback dev vs. ``ai.vivid.fish`` prod).
+    matches the address bar. ``public_url`` is the configured fallback URL;
+    without either input the page uses a neutral gateway label.
     ``actor_label`` and ``logout_url`` are optional shared-shell chrome inputs
     for callers that already have authenticated actor context.
 
@@ -258,7 +281,7 @@ def render_html(
       Group 7 — Diagnostics (collapsed by default; driver, daisy, drift,
                 config snapshot, vram measurements, errors).
     """
-    display_host = (host or "ai.vivid.fish").strip() or "ai.vivid.fish"
+    display_host = _display_host(host, public_url)
     parts: list[str] = []
     # Use str.replace, not .format — the template contains CSS braces that
     # would otherwise need to be doubled.
@@ -270,7 +293,6 @@ def render_html(
     parts.append(render_shell_header(
         current="status",
         show_account=show_account,
-        show_admin=show_admin,
         show_status=show_status,
         actor_label=actor_label,
         logout_url=logout_url,
@@ -514,7 +536,6 @@ _HTML_FOOT_TEMPLATE = """
 <footer>
   Auto-refreshing every 10s. For programmatic access,
   poll <a href="/v1/status">/v1/status</a> directly (bearer token required).
-  · <a href="https://github.com/tnunamak/azizam" target="_blank" rel="noopener">github.com/tnunamak/azizam</a>
   __VERSION_HTML__
 </footer>
 """
@@ -534,7 +555,7 @@ def _render_banner(p: dict, *, host: Optional[str] = None) -> str:
     }[cls]
     gen = p.get("generated_at")
     abs_gen = _abs_utc(gen) or "—"
-    display_host = (host or "ai.vivid.fish").strip() or "ai.vivid.fish"
+    display_host = _display_host(host)
     reasons = p.get("banner_reasons") or []
     reasons_html = ""
     if reasons:
@@ -713,8 +734,6 @@ def _render_critical_strip(p: dict) -> str:
             _add(key, xid_latest, label, summary, css)
 
     swap = p.get("swap_state") or {}
-    if swap.get("tabby_swap_in_progress"):
-        _add("swap_in_progress", now, "swap", "tabby model swap in progress", "warn")
     if swap.get("kobold_swap_in_progress"):
         _add("swap_in_progress", now, "swap", "kobold model swap in progress", "warn")
 
@@ -844,8 +863,6 @@ def _render_alert_box(p: dict) -> str:
                 f'Disk <b>{_esc(part.get("target"))}</b> is {_esc(pct)}% full '
                 f'({_bytes(part.get("avail_bytes"))} free of {_bytes(part.get("size_bytes"))})'))
     swap = p.get("swap_state") or {}
-    if swap.get("tabby_swap_in_progress"):
-        alerts.append(("warn", "TabbyAPI model swap is in progress"))
     if swap.get("kobold_swap_in_progress"):
         alerts.append(("warn", "Kobold/llama-turbo model swap is in progress"))
     by60 = ((p.get("driver") or {}).get("by_code_60min") or {})
@@ -962,10 +979,9 @@ def _render_swap_state(p: dict) -> str:
     """
     s = p.get("swap_state") or {}
     ws = p.get("comfy_ws_state") or {}
-    tabby = bool(s.get("tabby_swap_in_progress"))
     kobold = bool(s.get("kobold_swap_in_progress"))
     ws_connected = bool(ws.get("connected"))
-    all_quiet = (not tabby) and (not kobold) and ws_connected
+    all_quiet = (not kobold) and ws_connected
 
     if all_quiet:
         client_id = ws.get("client_id")
@@ -980,8 +996,6 @@ def _render_swap_state(p: dict) -> str:
         )
 
     rows: list[tuple[str, Any]] = []
-    if tabby:
-        rows.append(("Tabby model swap", "in progress"))
     if kobold:
         rows.append(("Kobold model swap", "in progress"))
     if not ws_connected:
@@ -2466,7 +2480,7 @@ def _render_backend_readiness(payload: dict) -> str:
     """Digest existing backend/aux/llama state into a single warmth grid.
 
     Pure presentation — no new probes. Helps the user see at a glance which
-    backends are warm vs cold-by-design (TabbyAPI is intentionally cold at idle).
+    backends are warm vs cold-by-design.
     """
     cards: list[tuple[str, str, str, str]] = []  # (name, state_pill, detail, hint)
 
@@ -2500,18 +2514,8 @@ def _render_backend_readiness(payload: dict) -> str:
         cards.append(("llama-turbo", _pill("cold"), "no model loaded",
                       "first chat will load weights"))
 
-    # TabbyAPI: cold-by-design at idle. Look at backends list.
     backends = payload.get("backends") or []
     bmap = {b.get("name"): b for b in backends if isinstance(b, dict)}
-    tabby = bmap.get("tabbyapi") or bmap.get("tabby")
-    if tabby:
-        live = tabby.get("live_status") or tabby.get("status")
-        if live == "up":
-            cards.append(("TabbyAPI", _pill("warm"), "responding", ""))
-        else:
-            cards.append(("TabbyAPI", _pill("cold"),
-                          str(live or "down"),
-                          "cold-start ~30-60s on first request"))
 
     # ComfyUI: warm if backend up
     comfy = bmap.get("comfyui") or bmap.get("comfy")
@@ -2611,31 +2615,31 @@ def _render_quick_test() -> str:
     # these, but for self-hosted-stack users the local names are more honest.
     examples = [
         ("Chat completion",
-         'curl -s https://ai.vivid.fish/openai/v1/chat/completions \\\n'
+         'curl -s https://gateway.example/openai/v1/chat/completions \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"default","messages":[{"role":"user","content":"hi"}]}\''),
         ("Image generation",
-         'curl -s https://ai.vivid.fish/openai/v1/images/generations \\\n'
+         'curl -s https://gateway.example/openai/v1/images/generations \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"flux2-klein-4b","prompt":"a calico cat","size":"512x512"}\''),
         ("Text-to-speech",
-         'curl -s https://ai.vivid.fish/openai/v1/audio/speech \\\n'
+         'curl -s https://gateway.example/openai/v1/audio/speech \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"voxtral-4b-tts","voice":"nova","input":"hello"}\' --output out.mp3'),
         ("Speech-to-text",
-         'curl -s https://ai.vivid.fish/openai/v1/audio/transcriptions \\\n'
+         'curl -s https://gateway.example/openai/v1/audio/transcriptions \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -F "file=@audio.mp3" -F "model=parakeet-tdt-0.6b-v3"'),
         ("Video — text-to-video",
-         'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
+         'curl -s https://gateway.example/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.5","prompt":"a calico cat playing chess","seconds":5}\''),
         ("Video — image-to-video",
-         'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
+         'curl -s https://gateway.example/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.5","prompt":"camera dolly in","input_image_url":"…"}\''),

@@ -1,6 +1,7 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -13,10 +14,11 @@ import {
 } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
+import { formatTimestamp } from "@/lib/format";
 import { memberTerms, taskNames } from "@/lib/terms";
 import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
-import { sourceGroups, type UsageSource } from "./source-options";
+import { sourceGroups, usageCsv, type UsageSource } from "./source-options";
 import { normalizeCapability, type UsageCapability } from "./usage-capability";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,8 +46,8 @@ import {
   CapabilityIcon,
   EmptyState,
   Money,
+  ErrorState,
   PageHeader,
-  RelativeTime,
 } from "@/components/product";
 
 const UsageChart = lazy(() => import("./usage-chart"));
@@ -75,6 +77,8 @@ interface UsageReceipt {
   createdAt: number | string | null;
   capability: UsageCapability;
   model: string | null;
+  /** Job-submission receipts name a workflow and no model. */
+  workflow: string | null;
   requestedModel: string | null;
   servedModel: string | null;
   fallbackModel: string | null;
@@ -83,6 +87,7 @@ interface UsageReceipt {
   costUsd: number | null;
   summary: string;
   sourceLabel: string | null;
+  personLabel?: string | null;
   raw: unknown;
 }
 
@@ -186,11 +191,38 @@ export default function UsagePage() {
   const filtersActive =
     effectivePerson !== (owner ? "all" : "self") || source !== "all";
 
+  function downloadCsv() {
+    if (!data || isFetching) return;
+    const csv = usageCsv(data.receipts.map((receipt) => {
+      const date = receipt.createdAt === null ? null : new Date(receipt.createdAt);
+      return {
+        date: date && !Number.isNaN(date.getTime()) ? date.toISOString() : "",
+        app: receipt.sourceLabel ?? nullableString(object(receipt.raw).app_label) ?? "",
+        modelName: receipt.model ? nameModel(receipt.model) : "",
+        requests: 1,
+        spendUsd: receipt.costUsd ?? (object(receipt.raw).remote === false ? 0 : null),
+      };
+    }));
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "usage-loaded-receipts.csv";
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      // Give the browser time to consume the object URL before releasing it.
+      const revoke = URL.revokeObjectURL.bind(URL);
+      window.setTimeout(() => revoke(url), 1000);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
         title="Usage"
-        subtitle="Current month usage"
+        subtitle="Usage this month"
         primaryAction={
           data && hasUsage ? (
             <Button
@@ -221,7 +253,7 @@ export default function UsagePage() {
                   htmlFor="usage-source"
                   className="sr-only"
                 >
-                  Source
+                  App or connection
                 </label>
                 <Select
                   value={source}
@@ -233,7 +265,7 @@ export default function UsagePage() {
                     size="sm"
                     className="w-52 max-w-full"
                   >
-                    <SelectValue placeholder="All sources" />
+                    <SelectValue placeholder="All apps and connections" />
                   </SelectTrigger>
                   <SelectContent
                     position="popper"
@@ -241,12 +273,22 @@ export default function UsagePage() {
                     collisionPadding={8}
                     className="max-w-[calc(100vw-1rem)]"
                   >
-                    <SelectItem value="all">All sources</SelectItem>
+                    <SelectItem value="all">All apps and connections</SelectItem>
                     {sources.active.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
                         {item.label}
                       </SelectItem>
                     ))}
+                    {sources.connections.length ? (
+                      <SelectGroup>
+                        <SelectLabel>Connected with sign-in</SelectLabel>
+                        {sources.connections.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
                     {sources.inactive.length ? (
                       <SelectGroup>
                         <SelectLabel>Turned off or no requests</SelectLabel>
@@ -268,6 +310,21 @@ export default function UsagePage() {
           <StatusLine compact tone="busy" text={data ? "Refreshing usage…" : "Loading usage…"} />
         ) : null}
       </PageHeader>
+      <ReceiptDeepLink />
+      {data ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={isFetching} onClick={downloadCsv}
+            aria-describedby="usage-csv-scope">
+            Download CSV
+          </Button>
+          <p id="usage-csv-scope" className="text-muted-foreground text-xs">
+            Exports {data.receipts.length} loaded request receipts for these filters.
+            {data.truncated || data.requests > data.receipts.length
+              ? " Recent receipts only; excludes requests not loaded."
+              : ""}
+          </p>
+        </div>
+      ) : null}
       {isError && data ? (
         <Callout
           severity="attention"
@@ -300,13 +357,13 @@ export default function UsagePage() {
           icon={Activity}
           title={
             filtersActive
-              ? "No matching requests"
-              : "No requests in this period"
+              ? "No requests match these filters this month"
+              : "No requests this month"
           }
           description={
             data.retentionDays
-              ? `Requests, generated media and ${data.retentionDays}-day receipts appear here after a gateway app makes a request.`
-              : "Requests, generated media and receipts appear here after a gateway app makes a request."
+              ? `Use a connected app to see its requests and generated media here. Request receipts are kept for ${data.retentionDays} days.`
+              : "Use a connected app to see its requests, generated media and request receipts here."
           }
           action={
             filtersActive ? (
@@ -321,7 +378,7 @@ export default function UsagePage() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <a href="/ui/apps/">Connect an app</a>
+                <Link prefetch={false} href="/apps/">Connect an app</Link>
               </Button>
             )
           }
@@ -334,6 +391,7 @@ export default function UsagePage() {
               receipts={data.receipts}
               nameModel={nameModel}
               loading={isFetching}
+              showPerson={owner && effectivePerson === "all"}
               onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
           ) : null}
@@ -374,7 +432,7 @@ function PersonFilter({
         className="sr-only"
         htmlFor="usage-person"
       >
-        Person
+        Whose usage
       </label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger
@@ -398,7 +456,7 @@ function PersonFilter({
       </Select>
       {/* Only people without a recorded name need their account ID to be told apart. */}
       {unnamed.length > 0 && <details className="text-meta">
-        <summary className="cursor-pointer">Person details</summary>
+        <summary className="min-h-11 min-w-11 cursor-pointer content-center">Person details</summary>
         <dl className="mt-2 space-y-2">
           {unnamed.map((person) => <div key={person.id}><dt>{person.label}</dt><dd className="break-all">{person.id}</dd></div>)}
         </dl>
@@ -414,7 +472,7 @@ function failedFigure(summary: UsageSummary): string {
     summary.requests > 0
       ? `${Math.round((summary.failedRequests / summary.requests) * 1000) / 10}%`
       : "Unknown";
-  return `${formatNumber(summary.failedRequests)} · ${share}`;
+  return `${formatRequests(summary.failedRequests)} · ${share === "Unknown" ? "share unknown" : `${share} of requests`}`;
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
@@ -425,30 +483,31 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
     <StatStrip label="This month">
       <Stat
         label="Requests"
-        value={formatNumber(summary.requests)}
+        value={formatRequests(summary.requests)}
         note="This month"
       />
       <Stat
-        label="Spend"
+        label="Spend this month (USD)"
         value={
           noPaidRequests ? (
             "No paid requests"
           ) : summary.remoteSpendUsd === null ? (
             "Cost not recorded"
           ) : (
-            <Money amount={summary.remoteSpendUsd} summary />
+            <Money amount={summary.remoteSpendUsd} summary precise />
           )
         }
         note={<><span>{spendCoverageDetail(summary)}</span><CoverageNote summary={summary} /></>}
       />
       <Stat
-        label="Media made"
-        value={formatNumber(summary.mediaCount)}
-        note="Images, video and audio"
+        label="Generated media"
+        value={`${formatNumber(summary.mediaCount)} media ${summary.mediaCount === 1 ? "item" : "items"}`}
+        note="Images, videos and audio this month"
       />
       <Stat
-        label="Failed"
+        label="Failed requests"
         value={failedFigure(summary)}
+        note="This month"
       />
     </StatStrip>
   );
@@ -464,7 +523,7 @@ function CoverageNote({ summary }: { summary: UsageSummary }) {
   if (!facts.length) return null;
   return (
     <details className="text-muted-foreground text-meta">
-      <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
+      <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11 max-sm:min-w-11">
         Receipt coverage
       </summary>
       <ul className="mt-1 list-inside list-disc">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
@@ -501,7 +560,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
-          Total requests
+          Daily request totals this month
           {overfullDays > 0 &&
             `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded totals and the daily table keeps the recorded task counts.`}
         </CardDescription>
@@ -520,7 +579,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
         )}
         {days.length > 0 && (
             <details className="mt-4 min-w-0 overflow-x-auto">
-              <summary className="flex min-h-8 w-fit cursor-pointer items-center text-meta max-sm:min-h-11">View daily totals</summary>
+              <summary className="flex min-h-8 w-fit cursor-pointer items-center text-meta max-sm:min-h-11 max-sm:min-w-11">View daily totals</summary>
               <table className="mt-2 w-full text-meta whitespace-nowrap [&_td]:px-2 [&_td]:py-1 [&_td]:text-right [&_td]:tabular-nums [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_thead_th]:text-muted-foreground [&_thead_th:not(:first-child)]:text-right">
                 <caption className="sr-only">Requests by day and {memberTerms.task}</caption>
                 <thead>
@@ -531,7 +590,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                         {capabilityLabels[capability]}
                       </th>
                     ))}
-                    <th scope="col">Total</th>
+                    <th scope="col">Daily total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -539,12 +598,12 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <tr key={day.date}>
                       <th scope="row">{day.date}</th>
                       {active.map((capability) => (
-                        <td key={capability}>{day.byCapability[capability] ?? "Unknown"}</td>
+                        <td key={capability}>{formatRequests(day.byCapability[capability])}</td>
                       ))}
                       <td>
-                        {day.total ?? "Unknown"}
+                        {formatRequests(day.total)}
                         {day.countsExceedTotal !== null &&
-                          ` (${memberTerms.task} counts add to ${day.countsExceedTotal})`}
+                          ` (${memberTerms.task} counts add to ${formatRequests(day.countsExceedTotal)})`}
                       </td>
                     </tr>
                   ))}
@@ -556,25 +615,25 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
           <h2 className="text-heading font-semibold">By task</h2>
           {tasks.length ? (
             <>
-              <p className="text-muted-foreground text-meta">Recorded model totals · share of this month’s requests</p>
+              <p className="text-muted-foreground text-meta">Request counts and recorded spend this month · share of this month’s requests</p>
               <Table dense aria-label="By task">
                 <TableHeader>
                   <TableRow>
                     <TableHead scope="col" className="max-sm:px-2">Task</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Requests</TableHead>
-                    <TableHead scope="col" numeric className="max-sm:px-2">Share</TableHead>
-                    <TableHead scope="col" numeric className="max-sm:px-2">Spend</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Share of requests (%)</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Spend (USD)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {tasks.map((task) => (
                     <TableRow key={task.capability} className="max-sm:h-(--row-phone-2)">
                       <TableCell rowName className="max-sm:px-2 max-sm:whitespace-normal">{capabilityLabels[task.capability]}</TableCell>
-                      <TableCell numeric className="max-sm:px-2">{formatNumber(task.requests)}</TableCell>
+                      <TableCell numeric className="max-sm:px-2">{formatRequests(task.requests)}</TableCell>
                       <TableCell numeric className="max-sm:px-2">{requests > 0 && task.requests !== null ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
                       <TableCell numeric className="max-sm:px-2 max-sm:whitespace-normal">
-                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary />}
-                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
+                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary precise />}
+                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span> : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -599,6 +658,7 @@ function ModelTable({
   showAll: boolean;
   onToggle: () => void;
 }) {
+  const modelsId = useId();
   const sortedRows = [...rows].sort((a, b) =>
     (b.requests ?? -1) - (a.requests ?? -1) || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
   );
@@ -607,12 +667,12 @@ function ModelTable({
     <Card>
       <CardHeader>
         <CardTitle>Models</CardTitle>
-        <CardDescription>Top models by requests</CardDescription>
+        <CardDescription>Request counts and recorded spend this month, busiest models first</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length ? (
           <div className="space-y-4">
-            <Table dense aria-label="Models">
+            <Table id={modelsId} dense aria-label="Models">
               <TableHeader>
                 <TableRow>
                   <TableHead scope="col">
@@ -622,7 +682,7 @@ function ModelTable({
                     Requests
                   </TableHead>
                   <TableHead scope="col" numeric>
-                    Spend
+                    Spend (USD)
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -645,7 +705,7 @@ function ModelTable({
                         </div>
                       </TableCell>
                       <TableCell numeric>
-                        {formatNumber(row.requests)}
+                        {formatRequests(row.requests)}
                       </TableCell>
                       {/* On a phone "Cost not recorded" wraps instead of clipping. */}
                       <TableCell numeric className="max-sm:whitespace-normal">
@@ -657,8 +717,8 @@ function ModelTable({
               </TableBody>
             </Table>
             {rows.length > 5 ? (
-              <Button variant="ghost" onClick={onToggle}>
-                {showAll ? "Show top 5" : `View all ${rows.length} models`}
+              <Button variant="ghost" className="min-h-11 min-w-11" aria-expanded={showAll} aria-controls={modelsId} onClick={onToggle}>
+                {showAll ? "Show top 5 models" : `View all ${rows.length} models`}
               </Button>
             ) : null}
           </div>
@@ -691,9 +751,9 @@ function ModelCost({ row }: { row: UsageModel }) {
     return <span className="text-muted-foreground">Cost not recorded</span>;
   return (
     <>
-      <Money amount={row.costUsd} summary />
+      <Money amount={row.costUsd} summary precise />
       {kind === "partial" ? (
-        <span className="text-muted-foreground ml-1 text-meta">partial</span>
+        <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span>
       ) : null}
     </>
   );
@@ -704,18 +764,20 @@ function ReceiptsList({
   nameModel,
   onSelect,
   loading,
+  showPerson,
 }: {
   receipts: UsageReceipt[];
   nameModel: (id: string) => string;
   onSelect: (receipt: UsageReceipt) => void;
   loading: boolean;
+  showPerson: boolean;
 }) {
   return (
     <Card id="usage-receipts">
       <CardHeader>
-        <CardTitle>Receipts</CardTitle>
+        <CardTitle>Recent request receipts</CardTitle>
         <CardDescription>
-          Open one to see what happened to a request.
+          Open a receipt to see what happened to a recent request.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -731,7 +793,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.selectionKey}
-                aria-label={`Receipt details for ${receipt.summary}`}
+                aria-label={`Receipt details for ${receipt.summary}${showPerson ? ` · ${receipt.personLabel ?? "Person not recorded"}` : ""}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
               >
@@ -740,12 +802,22 @@ function ReceiptsList({
                   <p className="break-words text-meta font-medium">
                     {receipt.summary}
                   </p>
+                  {showPerson && (
+                    <p className="text-muted-foreground mt-1 break-words text-meta">
+                      {receipt.personLabel ?? "Person not recorded"}
+                    </p>
+                  )}
                   {receipt.model && (
                     <p
                       className="text-muted-foreground mt-1 break-words text-meta"
                       title={nameModel(receipt.model)}
                     >
                       {nameModel(receipt.model)}
+                    </p>
+                  )}
+                  {!receipt.model && receipt.workflow && (
+                    <p className="text-muted-foreground mt-1 break-words text-meta">
+                      {receipt.workflow}
                     </p>
                   )}
                   {receipt.sourceLabel ? (
@@ -755,17 +827,17 @@ function ReceiptsList({
                   ) : null}
                   {(receipt.createdAt || receipt.durationMs != null) ? (
                     <p className="text-muted-foreground mt-1 text-meta">
-                      {[receipt.createdAt ? <RelativeTime key="time" ts={receipt.createdAt} /> : null,
+                      {[receipt.createdAt ? <time key="time" {...formatTimestamp(receipt.createdAt)} /> : null,
                         receipt.durationMs != null ? formatDuration(receipt.durationMs) : null]
                         .filter(Boolean)
                         .map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>)}
                     </p>
                   ) : null}
+                  <p className="mt-1 break-words text-meta">
+                    <ReceiptCost receipt={receipt} summary />
+                  </p>
                 </div>
                 <StatusBadge status={receipt.status} />
-                <span className="hidden text-meta sm:block">
-                  <ReceiptCost receipt={receipt} summary />
-                </span>
                 <ChevronRight
                   aria-hidden="true"
                   className="text-muted-foreground size-4 shrink-0"
@@ -781,6 +853,79 @@ function ReceiptsList({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// /usage/?receipt={request_id} opens that receipt (links from Try, Library,
+// Home, Models, Workflows and Status). Closing it drops the query parameter.
+class ReceiptUnavailable extends Error {}
+
+async function fetchReceipt(requestId: string): Promise<UsageReceipt> {
+  const response = await fetch(
+    `/me/api/receipts/${encodeURIComponent(requestId)}`,
+    { credentials: "same-origin", cache: "no-store" },
+  );
+  if (response.status === 404 || response.status === 403)
+    throw new ReceiptUnavailable();
+  if (!response.ok) throw new Error("The receipt could not be loaded.");
+  return normalizeReceipt(await response.json(), `receipt:${requestId}`);
+}
+
+function ReceiptDeepLink() {
+  const [requestId, setRequestId] = useState<string | null>(null);
+  useEffect(() => {
+    setRequestId(new URLSearchParams(window.location.search).get("receipt") || null);
+  }, []);
+  const {
+    data: receipt,
+    error,
+    isPending,
+    isError,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ["usage", "receipt", requestId],
+    queryFn: () => fetchReceipt(requestId!),
+    enabled: requestId !== null,
+    retry: false,
+  });
+  function close() {
+    setRequestId(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("receipt");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }
+  if (requestId === null) return null;
+  return isPending ? (
+    <StatusLine compact tone="busy" text="Opening receipt…" />
+  ) : isError ? (
+    error instanceof ReceiptUnavailable ? (
+      <ErrorState
+        severity="attention"
+        heading="Receipt not available"
+        message="This receipt isn’t available. It may belong to someone else or be deleted."
+        action={{ label: "Dismiss", onClick: close }}
+      />
+    ) : (
+      <ErrorState
+        heading="Couldn’t open this receipt"
+        message="We couldn’t load this receipt. Try again."
+        action={{ label: "Try again", onClick: () => void refetch() }}
+        retrying={isFetching}
+      />
+    )
+  ) : (
+    <ReceiptSheet
+      receipt={receipt}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+    />
   );
 }
 
@@ -954,6 +1099,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
         return {
           id: string(row.id, ""),
           label: string(row.label, "Source"),
+          kind: string(row.kind, "app"),
           requests: requestCount(row.requests),
           disabled: row.disabled === true,
           createdAt: nullableNumber(row.created_at),
@@ -1061,6 +1207,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     ),
     capability,
     model,
+    workflow: nullableString(data.resolved_workflow ?? data.requested_workflow),
     requestedModel,
     servedModel,
     fallbackModel,
@@ -1069,6 +1216,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     costUsd,
     summary: `${requestNouns[capability]} request`,
     sourceLabel: nullableString(object(data.source).label ?? data.source_label),
+    personLabel: nullableString(data.person_label),
     raw,
   };
 }
@@ -1129,6 +1277,7 @@ function normalizeCapabilityCounts(
   const counts = Object.fromEntries(
     capabilities.map((capability) => [capability, null]),
   ) as Record<UsageCapability, number | null>;
+  const seen = new Set<UsageCapability>();
   // Every recorded count lands somewhere: exact names, then aliases, then Other.
   for (const [key, value] of Object.entries(object(raw))) {
     if (dayFields.has(key)) continue;
@@ -1136,7 +1285,9 @@ function normalizeCapabilityCounts(
       ? (key as UsageCapability)
       : normalizeCapability(key);
     const count = requestCount(value);
-    counts[capability] = count === null ? null : (counts[capability] ?? 0) + count;
+    counts[capability] = count === null || (seen.has(capability) && counts[capability] === null)
+      ? null : (counts[capability] ?? 0) + count;
+    seen.add(capability);
   }
   return counts;
 }
@@ -1187,6 +1338,10 @@ function formatNumber(value: number | null) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function formatRequests(value: number | null) {
+  return value === null ? "Unknown" : `${formatNumber(value)} ${value === 1 ? "request" : "requests"}`;
+}
+
 function formatDuration(value: number | null) {
   if (value == null) return "";
   if (value < 1000) return `${Math.round(value)} ms`;
@@ -1213,7 +1368,7 @@ function ReceiptCost({
   summary?: boolean;
 }) {
   if (receipt.costUsd != null)
-    return <Money amount={receipt.costUsd} summary={summary} />;
+    return <Money amount={receipt.costUsd} summary={summary} precise={summary} />;
   if (object(receipt.raw).remote === false) return <>No provider charge</>;
   return <>Cost not recorded</>;
 }

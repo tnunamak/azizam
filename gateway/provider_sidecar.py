@@ -19,13 +19,15 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from gateway import log_scrub
 from gateway.bootstrap_config import resolve_admin_db_path
+from gateway.litellm_runtime import write_litellm_config_artifact
 from gateway.litellm_substrate import (
     litellm_config_path_from_registry,
     secret_env_name_for_provider,
-    write_litellm_config_artifact,
 )
 from gateway.secret_store import credential_origin_from_url, get_provider_secret
+from gateway.service_registry import service_base_url
 
 
 def provider_secret_env_map_from_registry(registry: Mapping[str, Any]) -> dict[str, str]:
@@ -88,7 +90,8 @@ def provider_secret_origin_map_from_registry(registry: Mapping[str, Any]) -> dic
         provider_id = str(config.get("provider_id") or raw_service.get("id") or raw_service_id or "")
         env_name = secret_env_name_for_provider(provider_id, secret_id)
         try:
-            origin = credential_origin_from_url(str(config.get("base_url") or ""))
+            # A local engine keeps host, port and path rather than a base URL.
+            origin = credential_origin_from_url(str(config.get("base_url") or service_base_url(config)))
         except Exception:
             origin = ""
         if origin:
@@ -159,6 +162,7 @@ def build_sidecar_env(
                 db_path=db_path,
                 expected_origin=expected_origin,
             )
+            log_scrub.remember(child_env[str(env_name)], str(secret_id))
         except Exception as exc:
             child_env.pop(str(env_name), None)
             print(

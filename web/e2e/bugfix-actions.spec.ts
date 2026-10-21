@@ -1,11 +1,18 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
-test("remove an app through Apps & keys and invalidate its key", async ({
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
+
+test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
   const name = "Removable browser client";
-  await page.goto("/ui/apps/");
+  await page.goto("/apps/");
   await page
     .getByRole("button", { name: "New app", exact: true })
     .first()
@@ -23,7 +30,7 @@ test("remove an app through Apps & keys and invalidate its key", async ({
   const { credential } = await (await mintedResponse).json();
   const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
   await expect(reveal).toBeVisible();
-  await reveal.getByRole("button", { name: "I’ve saved it" }).click();
+  await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
   expect(
     (
       await request.get("/openai/v1/models", {
@@ -62,54 +69,14 @@ test("remove an app through Apps & keys and invalidate its key", async ({
   ).toBe(401);
 });
 
-test("Showcase handles real structured request shapes in the browser", async ({
-  page,
-}) => {
-  const exceptions: string[] = [];
-  page.on("pageerror", (error) => exceptions.push(error.message));
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({
-      json: {
-        data: [
-          {
-            id: "structured",
-            base: "/showcase/examples/structured/",
-            card: "chat",
-            title: "Recorded structured request",
-            inputs: [
-              {
-                value: {
-                  model: "fast",
-                  max_tokens: 32,
-                  messages: [{ role: "user", content: "Hello" }],
-                },
-              },
-            ],
-            outputs: [{ kind: "text", text: "Recorded answer" }],
-          },
-        ],
-      },
-    }),
-  );
-  await page.goto("/ui/showcase/");
-  await expect(
-    page.getByText("Recorded answer", { exact: true }),
-  ).toBeVisible();
-  await page.getByText("Recorded input", { exact: true }).click();
-  await expect(page.locator("details pre")).toContainText('"model": "fast"');
-  await expect(page.locator("details pre")).toContainText('"messages": [');
-  expect(exceptions).toEqual([]);
-});
-
 test("audio capability never selects an image-only workflow", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ json: { aliases: [], models: [] } }),
+    fulfilJson(route, { aliases: [], models: [] }),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         workflows: [
           {
             id: "image-only",
@@ -118,19 +85,15 @@ test("audio capability never selects an image-only workflow", async ({
             inputs: [],
           },
         ],
-      },
-    }),
+      }),
   );
-  await page.goto("/ui/try/?capability=audio&model=audio");
+  await page.goto("/try/?capability=audio&model=audio");
   await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByText(
-      "Audio has no dedicated Try panel. Choose a workflow if this gateway exposes one.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  // No audio workflow: say so with the owner's next step, never another task.
+  await expect(page.getByText("No audio engine is set up.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Add one in Engines" })).toBeVisible();
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "Image-only workflow",
   );

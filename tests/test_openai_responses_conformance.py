@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import auth_identity  # noqa: E402
 from test_anthropic_schema_conformance import (  # noqa: E402
     _FakeClient,
     chat_completion,
@@ -75,7 +76,7 @@ class ResponsesConformanceTests(unittest.TestCase):
         proxy.responses_store.init_db()
         self.client = TestClient(proxy.app)
         self.auth = patch.object(proxy, "authenticate_request", return_value=proxy.AuthContext(
-            identity=proxy.AuthIdentity(name="conformance", key_hash="sha256:conformance-responses")
+            identity=auth_identity(name="conformance", key_hash="sha256:conformance-responses")
         ))
         self.auth.start()
         self.addCleanup(self.auth.stop)
@@ -457,24 +458,43 @@ class ResponsesConformanceTests(unittest.TestCase):
         from starlette.requests import Request
 
         async def exercise():
-            raw = json.dumps({"model": "default", "input": "hi", "stream": True, "store": True}).encode()
+            raw = json.dumps({"model": "default", "input": "ordering-sentinel",
+                              "stream": True, "store": True}).encode()
+
             async def receive():
                 return {"type": "http.request", "body": raw, "more_body": False}
-            request = Request({"type": "http", "method": "POST", "path": "/v1/responses",
+
+            request = Request({"type": "http", "method": "POST",
+                               "path": "/v1/responses",
                                "headers": [], "query_string": b""}, receive)
             upstream = sse([chunk({"content": "ok"}), chunk({}, "stop")])
+
             async def forward(*args, **kwargs):
                 return _FakeClient(), httpx.Response(200, content=upstream)
+
             real_save = proxy.responses_store.save
+            events = []
             with patch.object(proxy, "_forward_chat_completions", forward), patch.object(
                 proxy.responses_store, "save", wraps=real_save
             ) as save:
                 response = await proxy.create_response(request)
+                self.assertEqual(response.status_code, 200)
                 async for frame in response.body_iterator:
-                    event = parse_events(frame.decode())[0]
-                    if event["type"] == "response.completed":
-                        self.assertEqual(save.call_count, 1)
-                        self.assertIsNotNone(proxy.responses_store.get(event["response"]["id"]))
+                    for event in parse_events(frame.decode()):
+                        events.append(event)
+                        if event["type"] == "response.completed":
+                            self.assertEqual(save.call_count, 1)
+                            row = proxy.responses_store.get(event["response"]["id"])
+                            self.assertIsNotNone(row)
+                            self.assertEqual(row["request_json"]["input"], "ordering-sentinel")
+                            self.assertEqual(row["response_json"]["output_text"], "ok")
+                kinds = [event["type"] for event in events]
+                self.assertEqual(kinds.count("response.completed"), 1, kinds)
+                self.assertEqual(kinds[-1], "response.completed")
+                self.assertFalse({"error", "response.failed", "response.incomplete"} & set(kinds))
+                self.assertEqual(events[-1]["response"]["output_text"], "ok")
+                self.assertEqual(save.call_count, 1)
+
         asyncio.run(exercise())
 
     def test_stream_read_error_uses_flat_error_and_increasing_sequence(self):
@@ -488,7 +508,7 @@ class ResponsesConformanceTests(unittest.TestCase):
                     r = self.create(b"", {"input": "hi", "stream": True})
                 events = parse_events(r.text)
                 error = next(e for e in events if e["type"] == "error")
-                self.assertEqual(error["message"], "backend read failed")
+                self.assertEqual(error["message"], "The engine failed while handling this request.")   # not the exception text
                 self.assertIsNone(error["param"])
                 self.assertNotIn("error", error)
                 self.assertEqual([e["sequence_number"] for e in events], list(range(1, len(events) + 1)))

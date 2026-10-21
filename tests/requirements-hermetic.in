@@ -1,3 +1,5 @@
 # Test-only closure of the reviewed runtime dependency manifest.
 -r ../requirements.txt
 pytest>=8.0
+pytest-xdist>=3.6
+hypothesis>=6.100

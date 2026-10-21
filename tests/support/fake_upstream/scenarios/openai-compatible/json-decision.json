@@ -1,0 +1,14 @@
+{
+  "protocol": "openai-compatible",
+  "name": "json-decision",
+  "description": "A chat completion whose message content is the JSON decision object the gateway's helper asked for.",
+  "provenance": {"source": "hand-written", "reference": "OpenAI chat completions with response_format json_object"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}"}},
+      "response": {"json": {"id": "chatcmpl-fk-decision", "object": "chat.completion", "created": 1767225600, "model": "{{model}}",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "{\"remove_background\": true, \"confidence\": 0.9, \"reason\": \"logo\"}"}, "finish_reason": "stop"}]}}
+    }
+  ]
+}

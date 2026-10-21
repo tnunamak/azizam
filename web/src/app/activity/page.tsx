@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Requests } from "./requests";
+import Link from "next/link";
+import { useEffect, useId, useRef, useState } from "react";
+import { Requests, ResultsStatus } from "./requests";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { History, ChevronRight } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
-import { auditDescription, auditTargetName } from "@/lib/audit-description";
+import { auditDescription } from "@/lib/audit-description";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -26,16 +26,18 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
-import { Callout, StatusLine } from "@/components/product/status-ui";
-import { RelativeTime } from "@/components/product";
+import { Callout, DelayedSpinner, StatusLine } from "@/components/product/status-ui";
+import { formatTimestamp } from "@/lib/format";
+
+const auditRowLayout = "flex w-full items-center gap-4 py-4 text-left";
 
 const categories = [
   { value: "", label: "All changes" },
   { value: "app.", label: "Apps" },
   { value: "credential.", label: "Keys" },
   { value: "profile.", label: "Access plans" },
-  { value: "operator.", label: "Gateway settings" },
-  { value: "runtime_profile_mapping.", label: "Access mappings" },
+  { value: "operator.", label: "Shared settings" },
+  { value: "runtime_profile_mapping.", label: "Access assignments" },
 ];
 
 function auditSummary(entry: AuditEntry) {
@@ -44,7 +46,7 @@ function auditSummary(entry: AuditEntry) {
   if (entry.action === "usage.summary.everyone")
     return "Viewed everyone’s usage";
   if (entry.action === "operator.instance.update")
-    return "Updated instance settings";
+    return "Updated shared settings";
   if (entry.action === "operator.default_access_plan.update")
     return "Updated the default access plan";
   return auditDescription(entry);
@@ -55,12 +57,20 @@ function changedName(entry: AuditEntry) {
     credential: "Key",
     profile: "Access plan",
     user: "Person",
-    operator_setting: "Gateway settings",
+    operator_setting: "Shared settings",
     service: "Engine",
-    runtime_profile_mapping: "Access mapping",
+    runtime_profile_mapping: "Access assignment",
     app: "App",
   };
-  return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
+  return labels[entry.target_kind ?? ""] ?? "Item";
+}
+
+function personLabel(person: {
+  display_name?: string | null;
+  name?: string | null;
+  email?: string | null;
+}) {
+  return person.display_name || person.name || person.email || "Person";
 }
 
 function activityActorName(
@@ -75,15 +85,19 @@ function activityActorName(
 }
 
 export default function ActivityPage() {
+  const rowId = useId();
+  const filterRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const pageButtonRef = useRef<HTMLButtonElement | null>(null);
+  const endRef = useRef<HTMLParagraphElement>(null);
   const [category, setCategory] = useState("");
   const [showAccessAudit, setShowAccessAudit] = useState(false);
   const [showAutomated, setShowAutomated] = useState(false);
   const [actor, setActor] = useState("");
-  const [actorInput, setActorInput] = useState("");
   function clearFilters() {
     setCategory("");
     setActor("");
-    setActorInput("");
+    filterRef.current?.focus();
   }
   const {
     data: people,
@@ -131,11 +145,19 @@ export default function ActivityPage() {
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   const entries = auditData?.pages.flatMap((page) => page.records) ?? [];
+  // One name per person: the people list wins, so the selector, the rows and
+  // the sheet never disagree about who made a change.
+  const personNames = new Map(
+    (people ?? []).map((person) => [person.id, personLabel(person)] as const),
+  );
+  const actorName = (row: AuditEntry) =>
+    personNames.get(row.actor_id) ??
+    activityActorName(row.actor_label, row.actor_kind);
   const actors = Array.from(
     new Map([
       ...(people ?? []).map((person) => [
         person.id,
-        person.display_name || person.name || person.email || "Person",
+        personLabel(person),
       ] as const),
       ...(optionsData?.records ?? [])
         .filter((row) => !people?.some((person) => person.id === row.actor_id))
@@ -147,8 +169,25 @@ export default function ActivityPage() {
   );
   const automatedCount =
     auditData?.pages[0]?.automated_count ?? optionsData?.automated_count ?? 0;
+  useEffect(() => {
+    if (fetchingNextPage || !pageButtonRef.current) return;
+    const button = pageButtonRef.current;
+    if (!hasNextPage && (document.activeElement === button ||
+      (!button.isConnected && document.activeElement === document.body))) {
+      endRef.current?.focus();
+    }
+    pageButtonRef.current = null;
+  }, [hasNextPage, fetchingNextPage]);
+  function loadMore(button: HTMLButtonElement) {
+    if (fetchingNextPage) return;
+    pageButtonRef.current = button;
+    void fetchNextPage();
+  }
+  const status = auditPending ? "Loading changes" : fetchingNextPage ? "Loading more changes"
+    : auditFetching ? "Refreshing changes" : auditError ? ""
+    : `${entries.length} ${entries.length === 1 ? "change" : "changes"} loaded. ${hasNextPage ? "More changes are available." : category || actor ? "No more matching changes." : "End of changes."}`;
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none">
       <PageHeader title="Activity" subtitle="Changes and request outcomes" />
       <Tabs defaultValue="requests">
         <TabsList>
@@ -156,6 +195,7 @@ export default function ActivityPage() {
           <TabsTrigger value="audit">Changes</TabsTrigger>
         </TabsList>
         <TabsContent value="audit" className="mt-6 space-y-6">
+          <ResultsStatus label="Changes updates" message={status} />
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-2">
               <label
@@ -172,7 +212,8 @@ export default function ActivityPage() {
               >
                 <SelectTrigger
                   id="audit-category"
-                  className="w-[180px] max-w-full"
+                  ref={filterRef}
+                  className="min-h-6 min-w-6 w-[180px] max-w-full"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -200,12 +241,11 @@ export default function ActivityPage() {
                 onValueChange={(value) => {
                   const next = value === "everyone" ? "" : value;
                   setActor(next);
-                  setActorInput(next);
                 }}
               >
                 <SelectTrigger
                   id="audit-person"
-                  className="w-[180px] max-w-full"
+                  className="min-h-6 min-w-6 w-[180px] max-w-full"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -224,8 +264,8 @@ export default function ActivityPage() {
             </div>
             <Button
               variant="outline"
-              onClick={() => void refetchAudit()}
-              disabled={auditFetching}
+              onClick={() => { if (!auditFetching) void refetchAudit(); }}
+              aria-disabled={auditFetching}
             >
               Refresh
             </Button>
@@ -252,7 +292,12 @@ export default function ActivityPage() {
                 </Button>
               }
             >
-              <p>Recent activity names are still available.</p>
+              <p>
+                People could not be loaded. Try again.
+                {optionsData?.records.length
+                  ? " Names from recent changes are still shown."
+                  : ""}
+              </p>
             </Callout>
           )}
           <div className="flex flex-wrap items-center gap-3">
@@ -264,8 +309,8 @@ export default function ActivityPage() {
               >
                 <span>
                   {showAutomated
-                    ? `Showing ${automatedCount} automated changes`
-                    : `${automatedCount} automated changes hidden`}
+                    ? `Showing ${automatedCount} automated ${automatedCount === 1 ? "change" : "changes"}`
+                    : `${automatedCount} automated ${automatedCount === 1 ? "change" : "changes"} hidden`}
                 </span>
                 <Button
                   variant="outline"
@@ -283,28 +328,8 @@ export default function ActivityPage() {
               aria-pressed={showAccessAudit}
               onClick={() => setShowAccessAudit((value) => !value)}
             >
-              {showAccessAudit ? "Hide access audit" : "Show access audit"}
+              {showAccessAudit ? "Hide access history" : "Show access history"}
             </Button>
-            <details className="text-muted-foreground text-sm">
-              <summary className="cursor-pointer">Technical: filter by person ID</summary>
-            <form
-              className="mt-3 flex max-w-md gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setActor(actorInput.trim());
-              }}
-            >
-              <Input
-                aria-label="Technical person ID"
-                value={actorInput}
-                onChange={(e) => setActorInput(e.target.value)}
-                placeholder="Person ID"
-              />
-              <Button type="submit" variant="outline">
-                Apply
-              </Button>
-            </form>
-            </details>
           </div>
           {auditError && entries.length > 0 && !nextPageError && (
             <Callout
@@ -317,19 +342,29 @@ export default function ActivityPage() {
                 </Button>
               }
             >
-              <p>The changes already loaded are still shown.</p>
+              <p>
+                The changes list could not be refreshed. We could
+                not identify the cause. The changes already loaded are still
+                shown.
+              </p>
             </Callout>
           )}
           {auditPending ? (
-            <div
-              aria-label="Loading changes"
-              aria-busy="true"
-              className="space-y-5"
-            >
-              <StatusLine tone="unknown" text="Loading changes" compact />
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Skeleton className="h-14 w-full" key={i} />
-              ))}
+            <div aria-label="Loading changes" aria-busy="true" className="relative">
+              <span className="absolute right-0 top-4 z-10"><DelayedSpinner /></span>
+              <div aria-hidden="true" className="divide-border divide-y">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div className={auditRowLayout} key={i}>
+                    <Skeleton className="hidden size-8 shrink-0 rounded-full sm:flex motion-reduce:animate-none" />
+                    <div className="min-w-0 flex-1">
+                      <Skeleton className="h-5 w-2/3 motion-reduce:animate-none" />
+                      <Skeleton className="mt-1 h-4 w-1/2 motion-reduce:animate-none" />
+                    </div>
+                    <Skeleton className="h-4 w-16 shrink-0 motion-reduce:animate-none" />
+                    <span className="size-4 shrink-0" />
+                  </div>
+                ))}
+              </div>
             </div>
           ) : auditError && !entries.length ? (
             <Callout
@@ -341,31 +376,44 @@ export default function ActivityPage() {
                   Try again
                 </Button>
               }
-            />
+            >
+              <p>
+                The changes list could not be loaded. We could not
+                identify the cause. Try again.
+              </p>
+            </Callout>
           ) : !entries.length ? (
             <EmptyState
               icon={History}
               title={
                 category || actor
                   ? "No matching changes"
-                  : "No changes yet"
+                  : automatedCount > 0 && !showAutomated
+                    ? "No visible changes"
+                    : "No changes yet"
               }
               description={
                 category || actor
-                  ? "Clear filters to see other changes."
-                  : "Changes to apps, keys and access plans appear here."
+                  ? "Changes to apps, keys and access plans appear here; none match these filters."
+                  : automatedCount > 0 && !showAutomated
+                    ? "Changes to apps, keys and access plans appear here; automated changes are currently hidden."
+                    : "Changes to apps, keys and access plans appear here."
               }
               action={
                 category || actor ? (
                   <Button
-                    variant="outline"
+                    size="sm"
                     onClick={clearFilters}
                   >
-                    Clear filters
+                    Clear filters and show all changes
+                  </Button>
+                ) : automatedCount > 0 && !showAutomated ? (
+                  <Button size="sm" onClick={() => setShowAutomated(true)}>
+                    Show automated changes
                   </Button>
                 ) : (
-                  <Button asChild variant="outline">
-                    <a href="/ui/apps/?action=create-key">Create an app</a>
+                  <Button asChild size="sm">
+                    <Link prefetch={false} href="/">Go to Home</Link>
                   </Button>
                 )
               }
@@ -373,13 +421,17 @@ export default function ActivityPage() {
           ) : (
             <>
               <div className="divide-border divide-y">
-                {entries.map((row) => (
+                {entries.map((row, index) => (
                   <button
                     type="button"
                     key={row.id}
-                    aria-label={`Details: ${auditSummary(row)} by ${activityActorName(row.actor_label, row.actor_kind)}`}
-                    onClick={() => setEntry(row)}
-                    className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
+                    aria-label={`Details: ${auditSummary(row)} by ${actorName(row)}`}
+                    aria-describedby={`${rowId}-${index}-context ${rowId}-${index}-time`}
+                    onClick={(event) => {
+                      openerRef.current = event.currentTarget;
+                      setEntry(row);
+                    }}
+                    className={`${auditRowLayout} group hover:bg-muted/40 focus-visible:outline-ring transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none`}
                   >
                     <div className="bg-muted hidden size-8 shrink-0 items-center justify-center rounded-full sm:flex">
                       <History
@@ -387,15 +439,15 @@ export default function ActivityPage() {
                         className="text-muted-foreground size-4"
                       />
                     </div>
-                    <div className="min-w-0 flex-1">
+                    <div id={`${rowId}-${index}-context`} className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
-                        {activityActorName(row.actor_label, row.actor_kind)}
+                        {actorName(row)}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                     </div>
-                    <div className="text-muted-foreground shrink-0 text-xs">
-                      <RelativeTime ts={row.created_at} />
+                    <div id={`${rowId}-${index}-time`} className="text-muted-foreground shrink-0 text-xs">
+                      <time {...formatTimestamp(row.created_at)} />
                     </div>
                     <ChevronRight
                       aria-hidden="true"
@@ -411,27 +463,31 @@ export default function ActivityPage() {
                     severity="critical"
                     title="Couldn't load more changes"
                     headerAction={
-                      <Button variant="outline" onClick={() => void fetchNextPage()}>
+                      <Button variant="outline" aria-disabled={fetchingNextPage} onClick={(event) => loadMore(event.currentTarget)}>
                         Try again
                       </Button>
                     }
                   >
-                    <p>The changes already loaded are still shown.</p>
+                    <p>
+                      More changes could not be loaded. We
+                      could not identify the cause. The changes already loaded
+                      are still shown.
+                    </p>
                   </Callout>
                 )}
                 {hasNextPage ? (
                   <Button
                     variant="outline"
-                    disabled={fetchingNextPage}
-                    onClick={() => void fetchNextPage()}
+                    aria-disabled={fetchingNextPage}
+                    onClick={(event) => loadMore(event.currentTarget)}
                   >
                     {fetchingNextPage ? "Loading…" : "Load more"}
                   </Button>
                 ) : (
-                  <p className="text-muted-foreground text-xs">
+                  <p ref={endRef} tabIndex={-1} className="text-muted-foreground text-xs focus-visible:outline-ring focus-visible:outline-2">
                     {category || actor
-                      ? "No more matching events"
-                      : "End of audit log"}
+                      ? "No more matching changes"
+                      : "End of changes"}
                   </p>
                 )}
               </div>
@@ -448,20 +504,26 @@ export default function ActivityPage() {
           if (!open) setEntry(null);
         }}
       >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
+          }}
+          className="w-full overflow-y-auto sm:max-w-lg motion-reduce:animate-none motion-reduce:transition-none motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none [&_button]:min-h-6 [&_button]:min-w-6"
+        >
           {entry && (
             <>
               <SheetHeader className="pr-14">
                 <SheetTitle>{auditSummary(entry)}</SheetTitle>
-                <SheetDescription>
-                  {activityActorName(entry.actor_label, entry.actor_kind)} · <RelativeTime ts={entry.created_at} />
+                <SheetDescription className="sr-only">
+                  Details of this change
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
                 <dl className="space-y-4 text-sm">
                   <div>
                     <dt className="text-muted-foreground">Changed by</dt>
-                    <dd className="mt-1">{activityActorName(entry.actor_label, entry.actor_kind)}</dd>
+                    <dd className="mt-1">{actorName(entry)}</dd>
                   </div>
                   {changedName(entry) && (
                     <div>
@@ -472,18 +534,18 @@ export default function ActivityPage() {
                   <div>
                     <dt className="text-muted-foreground">When</dt>
                     <dd className="mt-1">
-                      <RelativeTime ts={entry.created_at} />
+                      <time {...formatTimestamp(entry.created_at)} />
                     </dd>
                   </div>
                 </dl>
                 <details>
-                  <summary className="cursor-pointer text-sm font-medium">
+                  <summary className="min-h-6 min-w-6 cursor-pointer content-center text-sm font-medium focus-visible:outline-ring focus-visible:outline-2">
                     Technical details
                   </summary>
                   <div className="mt-4">
                     <pre
                       tabIndex={0}
-                      aria-label="Technical audit details"
+                      aria-label="Technical change details"
                       className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
                     >
                       <code>

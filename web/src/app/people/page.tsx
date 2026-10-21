@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { api, adminFetch, ApiError, type Profile } from "@/lib/api";
+import { api, adminFetch, ApiError, type AccessPlan, type AccessPlanChoice } from "@/lib/api";
 import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -49,21 +49,19 @@ import {
   listFactClass,
 } from "@/components/product/list-card";
 import { PersonMark } from "@/components/product/person-mark";
+import { useAvatarDirectory } from "@/lib/use-avatars";
 import {
   peopleApi,
-  planSummary,
-  planCounts,
-  planSourceLabel,
   grantLabel,
   protectedLabel,
   type Person,
   type Invite,
 } from "./people-api";
-import { PlanEditor, TestAccess } from "./plans";
+import { CheckAccess, PlanEditor } from "./plans";
 
 const peopleKey = ["people", "list"];
 const invitesKey = ["people", "invites"];
-const plansKey = ["profiles"];
+const plansKey = ["access-plans"];
 const message = (error: unknown) =>
   error instanceof Error
     ? error.message
@@ -74,7 +72,7 @@ function PlanSelect({
   value,
   onChange,
 }: {
-  profiles: Profile[];
+  profiles: AccessPlanChoice[];
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -113,6 +111,7 @@ function Loading({ label }: { label: string }) {
 export default function PeoplePage() {
   const client = useQueryClient();
   const owner = useViewer().role === "owner";
+  const avatars = useAvatarDirectory();
   const container = useRef<HTMLDivElement>(null);
   const invoker = useRef<HTMLElement | null>(null);
   const restoreFocus = (event: Event) => {
@@ -159,7 +158,7 @@ export default function PeoplePage() {
     isError: plansIsError,
     isFetching: plansIsFetching,
     refetch: plansRefetch,
-  } = useQuery({ queryKey: plansKey, queryFn: api.profiles.list });
+  } = useQuery({ queryKey: plansKey, queryFn: api.accessPlans.list });
   const [tab, setTab] = useState("people");
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -202,8 +201,22 @@ export default function PeoplePage() {
     title: string;
   } | null>(null);
   const linkNeedsPublicBase = link && !/^https?:\/\//i.test(link.url);
-  const [editor, setEditor] = useState<Profile | "new" | null>(null);
-  const [testing, setTesting] = useState<Profile | null>(null);
+  const [editor, setEditor] = useState<AccessPlan | "new" | null>(null);
+  const [testing, setTesting] = useState<AccessPlan | null>(null);
+  // Check access links to /people?plan=<id>: open that plan's editor once, for the owner.
+  const requestedPlan = useRef(
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("plan"),
+  );
+  useEffect(() => {
+    if (!owner || !requestedPlan.current || !plansData) return;
+    const found = plansData.find((item) => item.id === requestedPlan.current);
+    requestedPlan.current = null;
+    if (!found) return;
+    setTab("plans");
+    setEditor(found);
+  }, [owner, plansData]);
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: peopleKey }),
@@ -224,8 +237,8 @@ export default function PeoplePage() {
     onSuccess: (data) => setLink({ ...data, title: "Invitation link" }),
     onError: (error) => toast.error(message(error)),
   });
-  const profiles =
-    plansData || peopleData?.profiles || invitesData?.profiles || [];
+  const profiles: AccessPlanChoice[] =
+    plansData || peopleData?.access_plans || invitesData?.access_plans || [];
   const invites = invitesData?.invites || [];
   // Why "Invite someone" cannot be used yet: an invitation needs an access plan.
   const planGate: "ready" | "loading" | "failed" | "none" = profiles.length
@@ -363,6 +376,16 @@ export default function PeoplePage() {
       ref={container}
       tabIndex={-1}
       aria-label="People workspace"
+      onPointerDownCapture={(event) => {
+        const button =
+          event.target instanceof Element
+            ? event.target.closest("button")
+            : null;
+        // Dropdown triggers prevent pointer focus; record the opener before
+        // the new dialog's focus trap can intercept menu-close autofocus.
+        if (button && !button.closest('[role="dialog"]'))
+          invoker.current = button;
+      }}
       onFocusCapture={(event) => {
         if (
           event.target instanceof HTMLButtonElement &&
@@ -491,9 +514,6 @@ export default function PeoplePage() {
                         </span>,
                       ]
                     : [];
-                const mapped =
-                  person.plan_source &&
-                  !["assigned", "gateway_default"].includes(person.plan_source);
                 return (
                   <ListRow
                     key={person.id}
@@ -510,6 +530,8 @@ export default function PeoplePage() {
                     leading={
                       <PersonMark
                         name={name || person.email || "?"}
+                        personId={person.id}
+                        avatar={avatars?.[person.id]}
                         size="md"
                       />
                     }
@@ -521,6 +543,8 @@ export default function PeoplePage() {
                     badge={
                       person.disabled ? (
                         <StateBadge state="off" word="Disabled" />
+                      ) : !person.plan_id ? (
+                        <StateBadge state="off" word="No access plan" />
                       ) : undefined
                     }
                     meta={[
@@ -539,15 +563,9 @@ export default function PeoplePage() {
                     facts={[
                       <span
                         key="plan"
-                        title={person.plan_name || "Gateway default"}
+                        title={person.plan_name || "No access plan"}
                       >
-                        <span>{person.plan_name || "Gateway default"}</span>
-                        {mapped ? (
-                          <>
-                            {" · "}
-                            <span>{planSourceLabel(person.plan_source)}</span>
-                          </>
-                        ) : null}
+                        <span>{person.plan_name || "Choose a plan"}</span>
                       </span>,
                       person.last_active ? (
                         <RelativeTime
@@ -652,10 +670,16 @@ export default function PeoplePage() {
               Access plans control capabilities, models and remote access. Save
               a plan, then test a request before assigning it.
             </p>
-            <Button variant="outline" onClick={() => setEditor("new")}>
-              <Plus />
-              New access plan
-            </Button>
+            {owner ? (
+              <Button variant="outline" onClick={() => setEditor("new")}>
+                <Plus />
+                New access plan
+              </Button>
+            ) : (
+              <p className="text-muted-foreground text-meta">
+                Only the owner can change access plans.
+              </p>
+            )}
           </div>
           {plansIsPending ? (
             <Loading label="Loading access plans" />
@@ -667,12 +691,18 @@ export default function PeoplePage() {
           ) : !plansData.length ? (
             <EmptyState
               icon={ShieldCheck}
-              title="Create your first access plan"
-              description="Choose access before inviting people."
+              title={owner ? "Create your first access plan" : "No access plans yet"}
+              description={
+                owner
+                  ? "Choose access before inviting people."
+                  : "The owner creates access plans."
+              }
               action={
-                <Button onClick={() => setEditor("new")}>
-                  Create an access plan
-                </Button>
+                owner ? (
+                  <Button onClick={() => setEditor("new")}>
+                    Create an access plan
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
@@ -685,32 +715,27 @@ export default function PeoplePage() {
                   titleAs="h2"
                   // One line: what the plan allows and its counts; with the
                   // description, in full on hover and in the plan editor.
-                  meta={[
-                    planSummary(plan.profile),
-                    planCounts(plan.profile) || null,
-                  ]}
-                  metaTitle={[
-                    plan.description,
-                    planSummary(plan.profile),
-                    planCounts(plan.profile),
-                  ]
+                  meta={[plan.summary, usedByLabel(plan)]}
+                  metaTitle={[plan.summary, usedByLabel(plan)]
                     .filter(Boolean)
                     .join(" · ")}
                   trailing={
                     <>
-                      <Button
-                        variant="outline"
-                        className="max-sm:hidden"
-                        onClick={() => setEditor(plan)}
-                      >
-                        Edit plan
-                      </Button>
+                      {owner && (
+                        <Button
+                          variant="outline"
+                          className="max-sm:hidden"
+                          onClick={() => setEditor(plan)}
+                        >
+                          Edit plan
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         className="max-sm:hidden"
                         onClick={() => setTesting(plan)}
                       >
-                        Test access
+                        Check access
                       </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -723,28 +748,34 @@ export default function PeoplePage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => setEditor(plan)}>
-                            Edit access plan
-                          </DropdownMenuItem>
+                          {owner && (
+                            <DropdownMenuItem onSelect={() => setEditor(plan)}>
+                              Edit access plan
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onSelect={() => setTesting(plan)}>
-                            Test access
+                            Check access
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() =>
-                              setConfirmation({
-                                title: "Delete access plan?",
-                                confirmLabel: "Delete access plan",
-                                name: plan.name,
-                                description:
-                                  "The gateway blocks deletion while this plan is in use. Reassign people, apps and invitations first.",
-                                run: () => api.profiles.delete(plan.id),
-                              })
-                            }
-                          >
-                            Delete access plan
-                          </DropdownMenuItem>
+                          {owner && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() =>
+                                  setConfirmation({
+                                    title: "Delete access plan?",
+                                    confirmLabel: "Delete access plan",
+                                    name: plan.name,
+                                    description:
+                                      "The gateway blocks deletion while this plan is in use. Move people, apps and invitations to another plan first.",
+                                    run: () => api.accessPlans.delete(plan.id),
+                                  })
+                                }
+                              >
+                                Delete access plan
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </>
@@ -759,6 +790,7 @@ export default function PeoplePage() {
         <InviteDialog
           restoreFocus={restoreFocus}
           profiles={profiles}
+          preselected={invitesData?.invite_access_plan ?? null}
           close={() => setInviteOpen(false)}
           saved={async (data) => {
             setLink({
@@ -845,10 +877,17 @@ export default function PeoplePage() {
         />
       )}
       {testing && (
-        <TestAccess
+        <CheckAccess
           restoreFocus={restoreFocus}
           plan={testing}
           close={() => setTesting(null)}
+          canEdit={owner}
+          onEditPlan={(planId) => {
+            const found = plansData?.find((item) => item.id === planId);
+            if (!found) return;
+            setTesting(null);
+            setEditor(found);
+          }}
         />
       )}
     </div>
@@ -941,16 +980,19 @@ function InviteRow({
 }
 function InviteDialog({
   profiles,
+  preselected,
   close,
   saved,
   restoreFocus,
 }: {
-  profiles: Profile[];
+  profiles: AccessPlanChoice[];
+  /** The Settings choice for new invitations; null means "Ask each time". */
+  preselected: string | null;
   restoreFocus: (event: Event) => void;
   close: () => void;
   saved: (data: { invite: Invite; url: string }) => Promise<void>;
 }) {
-  const [plan, setPlan] = useState("");
+  const [plan, setPlan] = useState(preselected ?? "");
   const [email, setEmail] = useState("");
   const [allowAnyone, setAllowAnyone] = useState(false);
   const [expiry, setExpiry] = useState("604800");
@@ -958,7 +1000,7 @@ function InviteDialog({
   const mutation = useMutation({
     mutationFn: () =>
       peopleApi.invite({
-        profile_id: plan,
+        access_plan: plan,
         email: email.trim() || undefined,
         expires_in: Number(expiry),
       }),
@@ -1066,15 +1108,15 @@ function ChangePlan({
   restoreFocus,
 }: {
   person: Person;
-  profiles: Profile[];
+  profiles: AccessPlanChoice[];
   restoreFocus: (event: Event) => void;
   close: () => void;
   saved: () => Promise<void>;
 }) {
-  const [plan, setPlan] = useState(person.profile_id || "");
+  const [plan, setPlan] = useState(person.plan_id || "");
   const selectedPlan = profiles.find((profile) => profile.id === plan);
   const mutation = useMutation({
-    mutationFn: () => peopleApi.change(person.id, { profile_id: plan }),
+    mutationFn: () => peopleApi.change(person.id, { access_plan: plan }),
     onSuccess: async () => {
       await saved();
       close();
@@ -1115,25 +1157,28 @@ function ChangePlan({
     </Dialog>
   );
 }
-function PlanPreview({ plan }: { plan: Profile }) {
+function PlanPreview({ plan }: { plan: AccessPlanChoice }) {
   return (
     <div className="rounded-panel border p-4">
       <p className="text-body min-w-0 font-medium [overflow-wrap:anywhere]">
         {plan.name}
       </p>
-      <p className="text-muted-foreground text-meta mt-2">
-        {planSummary(plan.profile)}
-      </p>
-      {planCounts(plan.profile) && (
-        <p className="text-muted-foreground text-meta mt-2">
-          {planCounts(plan.profile)}
-        </p>
-      )}
-      {plan.description && (
-        <p className="text-meta mt-2 break-words">{plan.description}</p>
+      {plan.summary && (
+        <p className="text-muted-foreground text-meta mt-2">{plan.summary}</p>
       )}
     </div>
   );
+}
+
+/** "Used by 3 people and 5 apps" (design §3.4). */
+function usedByLabel(plan: AccessPlan): string | null {
+  const used = plan.used_by;
+  if (!used) return null;
+  const parts = [
+    used.people.length ? `${used.people.length} ${used.people.length === 1 ? "person" : "people"}` : null,
+    used.apps.length ? `${used.apps.length} ${used.apps.length === 1 ? "app" : "apps"}` : null,
+  ].filter(Boolean);
+  return parts.length ? `Used by ${parts.join(" and ")}` : "Not used yet";
 }
 function Confirmation({
   title,

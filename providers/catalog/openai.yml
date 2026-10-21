@@ -19,3 +19,26 @@ key_url: https://platform.openai.com/api-keys
 billing_dimensions:
   - prompt_tokens
   - completion_tokens
+retention_facts:
+  - id: abuse-monitoring
+    holds: prompts, responses and derived metadata
+    where: provider abuse-monitoring logs
+    how_long: up to 30 days by default; legal, safety and feature exceptions can last longer
+    default: 'on'
+    condition: null
+    reach: authorized provider staff and reviewers for abuse and support
+    control: ask the provider about approved modified abuse monitoring or zero data retention and check feature eligibility
+    evidence_url: https://developers.openai.com/api/docs/guides/your-data
+    checked: '2026-10-19'
+    confidence: documented
+  - id: application-state
+    holds: stored response or completion content
+    where: provider application-state objects
+    how_long: endpoint-dependent; Responses are normally kept for 30 days and files have separate expiry
+    default: conditional
+    condition: endpoint, account defaults and the store parameter determine storage
+    reach: authorized account users and provider staff under its access rules
+    control: set store=false where supported; delete existing stored objects separately
+    evidence_url: https://developers.openai.com/api/docs/guides/your-data
+    checked: '2026-10-19'
+    confidence: documented

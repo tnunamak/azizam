@@ -46,17 +46,40 @@ const waitForStoredCatalog = async (agentDir: string, count: number, timeoutMs =
 	}
 };
 
-/**
- * Wait until Pi's background refresh has hit the gateway (past request index `from`) and got `status`, then give Pi
- * a moment to record the outcome. Callers keep the forced failure active until their catalog check is done.
- */
-const waitForRefreshFailure = async (mock: MockGateway, from: number, status: number, timeoutMs = 10000) => {
+/** Patch the CLI's ModelRuntime from a test-only extension and record when its startup refresh settles. */
+const refreshObserver = (agentDir: string) => {
+	const extensionPath = join(agentDir, "refresh-observer.mjs");
+	const marker = join(agentDir, `startup-refresh-settled-${crypto.randomUUID()}`);
+	writeFileSync(extensionPath, `
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { writeFileSync } from "node:fs";
+const refresh = ModelRuntime.prototype.refresh;
+ModelRuntime.prototype.refresh = async function(options = {}) {
+	const result = await refresh.call(this, options);
+	if (options.signal) writeFileSync(process.env.PI_TEST_REFRESH_MARKER, "settled");
+	return result;
+};
+export default function() {}
+`);
+	return { extensionPath, marker };
+};
+
+const waitForRefreshSettled = async (marker: string, timeoutMs = 10000) => {
+	const deadline = Date.now() + timeoutMs;
+	while (!existsSync(marker)) {
+		assert.ok(Date.now() < deadline, `Pi startup model refresh did not settle (${marker})`);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+};
+
+/** Wait for the failed gateway response and the corresponding startup refresh promise to settle. */
+const waitForRefreshFailure = async (mock: MockGateway, from: number, status: number, marker: string, timeoutMs = 10000) => {
 	const deadline = Date.now() + timeoutMs;
 	while (!mock.requests.slice(from).some((r) => r.url === "/v1/models" && r.status === status)) {
 		assert.ok(Date.now() < deadline, `no /v1/models request answered with ${status}`);
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
-	await new Promise((resolve) => setTimeout(resolve, 300));
+	await waitForRefreshSettled(marker, timeoutMs);
 };
 
 before(async () => { gateway = await startMockGateway({ apiKey: KEY }); });
@@ -143,20 +166,22 @@ test("catalog persists for offline start and survives a failed refresh", { skip:
 	} finally { await offline.close(); }
 
 	// Online but the gateway fails (503): last good catalog stays. The failure stays forced until the refresh has
-	// hit the gateway and Pi has had time to report its outcome; only then is the catalog checked.
+	// hit the gateway and Pi's startup refresh promise has settled; only then is the catalog checked.
 	gateway.setStatus(503);
-	const failing = startPi({ agentDir, env });
+	const failingObserver = refreshObserver(agentDir);
+	const failing = startPi({ agentDir, env: { ...env, PI_TEST_REFRESH_MARKER: failingObserver.marker }, args: ["--extension", failingObserver.extensionPath] });
 	try {
-		await waitForRefreshFailure(gateway, before, 503);
+		await waitForRefreshFailure(gateway, before, 503, failingObserver.marker);
 		assert.deepEqual((await azizamModels(failing)).map((m) => m.id).sort(), ["chat-small", "coder"]);
 		assert.ok(!failing.stderr().includes(KEY), "key leaked to stderr");
 	} finally { gateway.setStatus(200); await failing.close(); }
 
 	// A wrong key (401) also keeps the last catalog.
 	const beforeWrong = gateway.requests.length;
-	const wrongKey = startPi({ agentDir, env: { ...env, AZIZAM_API_KEY: "wrong-key-abc" } });
+	const wrongObserver = refreshObserver(agentDir);
+	const wrongKey = startPi({ agentDir, env: { ...env, AZIZAM_API_KEY: "wrong-key-abc", PI_TEST_REFRESH_MARKER: wrongObserver.marker }, args: ["--extension", wrongObserver.extensionPath] });
 	try {
-		await waitForRefreshFailure(gateway, beforeWrong, 401);
+		await waitForRefreshFailure(gateway, beforeWrong, 401, wrongObserver.marker);
 		assert.deepEqual((await azizamModels(wrongKey)).map((m) => m.id).sort(), ["chat-small", "coder"]);
 		assert.ok(!wrongKey.stderr().includes("wrong-key-abc"), "key leaked to stderr");
 	} finally { await wrongKey.close(); }
@@ -230,14 +255,16 @@ test("works when installed as a package (settings.json), not just via --extensio
 // Cold start with the key supplied only through Pi (no AZIZAM_API_KEY): T3 Code launches
 // `pi --mode rpc --provider azizam --model X` on a fresh agent dir exactly like this.
 const coldStartResolves = async (agentDir: string, label: string) => {
+	const observer = refreshObserver(agentDir);
 	assert.equal(existsSync(join(agentDir, "models-store.json")), false);
 	const session = startPi({
 		agentDir,
-		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
-		args: ["--provider", "azizam", "--model", "chat-small"],
+		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "", PI_TEST_REFRESH_MARKER: observer.marker },
+		args: ["--extension", observer.extensionPath, "--provider", "azizam", "--model", "chat-small"],
 	});
 	try {
 		const state = await session.send({ type: "get_state" });
+		await waitForRefreshSettled(observer.marker);
 		assert.equal(state.data.model?.id, "chat-small", `${label}: ${session.stderr()}`);
 		assert.ok(!session.stderr().includes(KEY), "key leaked to stderr");
 		assert.ok(gateway.requests.some((r) => r.url === "/v1/models" && r.authorization === `Bearer ${KEY}`));
@@ -321,6 +348,7 @@ test("loading the extension adds no credential command runs for other providers"
 	const countRuns = async (withExtension: boolean) => {
 		const agentDir = freshAgentDir();
 		const counter = join(agentDir, "other.count");
+		const observer = refreshObserver(agentDir);
 		writeFileSync(join(agentDir, "auth.json"), JSON.stringify({
 			openai: { type: "api_key", key: `!echo run >> ${counter}; echo k-other` },
 			azizam: { type: "api_key", key: KEY },
@@ -328,13 +356,13 @@ test("loading the extension adds no credential command runs for other providers"
 		const session = startPi({
 			agentDir,
 			noExtension: !withExtension,
-			env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
-			args: withExtension ? ["--provider", "azizam", "--model", "chat-small"] : [],
+			env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "", PI_TEST_REFRESH_MARKER: observer.marker },
+			args: ["--extension", observer.extensionPath, ...(withExtension ? ["--provider", "azizam", "--model", "chat-small"] : [])],
 		});
 		try {
 			await session.send({ type: "get_state" });
 			await session.send({ type: "get_available_models" });
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await waitForRefreshSettled(observer.marker);
 		} finally { await session.close(); }
 		return existsSync(counter) ? readFileSync(counter, "utf8").split("\n").filter(Boolean).length : 0;
 	};
@@ -347,35 +375,58 @@ test("a cold-start models.json !command key runs at most twice (prefetch + Pi's 
 	const counter = join(agentDir, "azizam.count");
 	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { apiKey: `!echo run >> ${counter}; echo ${KEY}` } } }));
 	await coldStartResolves(agentDir, "counted !command");
-	await new Promise((resolve) => setTimeout(resolve, 500));
 	const runs = readFileSync(counter, "utf8").split("\n").filter(Boolean).length;
 	assert.ok(runs >= 1 && runs <= 2, `ran ${runs} times`);
 });
 
-test("models.json baseUrl drives discovery and chat; conflicting env URL sends no credentials", { skip: !piAvailable }, async () => {
-	const agentDir = freshAgentDir();
-	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
-	const session = startPi({ agentDir, env: { AZIZAM_BASE_URL: "", AZIZAM_API_KEY: "" }, args: ["--provider", "azizam", "--model", "coder"] });
-	try {
-		const state = await session.send({ type: "get_state" });
-		assert.equal(state.data.model?.baseUrl, gateway.baseUrl, session.stderr());
-		const started = await session.send({ type: "prompt", message: "Say hello" });
-		assert.equal(started.success, true);
-		await session.waitFor((e) => e.type === "agent_settled" || e.type === "agent_end");
-		assert.ok(gateway.requests.some((r) => r.url === "/v1/chat/completions"));
-	} finally { await session.close(); }
-
+test("models.json URL handles this prompt and conflicting URLs receive no requests", { skip: !piAvailable }, async () => {
+	const ownGateway = await startMockGateway({ apiKey: KEY });
 	const decoy = await startMockGateway();
-	const before = gateway.requests.length;
-	const conflictDir = freshAgentDir();
-	writeFileSync(join(conflictDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
-	const blocked = startPi({ agentDir: conflictDir, env: { AZIZAM_BASE_URL: decoy.baseUrl, AZIZAM_API_KEY: "" } });
 	try {
-		await blocked.send({ type: "get_state" });
-		await new Promise((r) => setTimeout(r, 300));
+		const agentDir = freshAgentDir();
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: ownGateway.baseUrl, apiKey: KEY } } }));
+		const session = startPi({
+			agentDir,
+			env: { AZIZAM_BASE_URL: "", AZIZAM_API_KEY: "", PI_OFFLINE: "" },
+			args: ["--provider", "azizam", "--model", "coder"],
+		});
+		try {
+			const state = await session.send({ type: "get_state" });
+			assert.equal(state.success, true, JSON.stringify(state));
+			assert.equal(state.data.model?.baseUrl, ownGateway.baseUrl);
+			const eventStart = session.events.length;
+			const started = await session.send({ type: "prompt", message: "Configured URL audit prompt" });
+			assert.equal(started.success, true, JSON.stringify(started));
+			await session.waitFor((event) => session.events.indexOf(event) >= eventStart && (event.type === "agent_settled" || event.type === "agent_end"));
+			const updates = session.events.slice(eventStart).filter((event) => event.type === "message_update").map((event) => event.assistantMessageEvent);
+			assert.equal(updates.filter((event) => event.type === "text_delta").map((event) => event.delta).join(""), "Hello from Azizam", session.stderr());
+			const chats = ownGateway.requests.filter((request) => request.method === "POST" && request.url === "/v1/chat/completions");
+			assert.equal(chats.length, 1, "this session must issue its own chat request");
+			assert.equal(chats[0].authorization, `Bearer ${KEY}`);
+			const body = JSON.parse(chats[0].body!);
+			assert.equal(body.model, "coder");
+			assert.equal(body.stream, true);
+			assert.ok(body.messages.some((message: any) => message.role === "user" && JSON.stringify(message.content).includes("Configured URL audit prompt")));
+			assert.ok(!session.stderr().includes(KEY));
+		} finally {
+			await session.close();
+		}
+
+		const before = ownGateway.requests.length;
+		const conflictDir = freshAgentDir();
+		writeFileSync(join(conflictDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: ownGateway.baseUrl, apiKey: KEY } } }));
+		const blocked = startPi({ agentDir: conflictDir, env: { AZIZAM_BASE_URL: decoy.baseUrl, AZIZAM_API_KEY: "", PI_OFFLINE: "" } });
+		try {
+			const state = await blocked.send({ type: "get_state" });
+			assert.equal(state.success, true, JSON.stringify(state));
+		} finally {
+			await blocked.close();
+		}
 		assert.equal(decoy.requests.length, 0);
-		assert.equal(gateway.requests.length, before);
+		assert.equal(ownGateway.requests.length, before);
 		assert.match(blocked.stderr(), /AZIZAM_BASE_URL.*models.json.*conflict/);
 		assert.ok(!blocked.stderr().includes(KEY));
-	} finally { await blocked.close(); await decoy.close(); }
+	} finally {
+		await Promise.all([ownGateway.close(), decoy.close()]);
+	}
 });

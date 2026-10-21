@@ -137,7 +137,7 @@ before injecting authentication or opening an upstream connection.
 
 ## Access Plans
 
-Profiles grant paid provider access through the `remote` block:
+Access plans grant paid provider access through the `remote` block:
 
 ```yaml
 remote:
@@ -148,9 +148,9 @@ remote:
   allow_paid_fallback: false
 ```
 
-The default profile has no remote providers.  A paid fallback also needs
+The default access plan has no remote providers.  A paid fallback also needs
 `allow_paid_fallback: true`; naming a fallback in an alias is not enough.
-Provider ids are canonical lowercase ids in configuration, profiles, admin
+Provider ids are canonical lowercase ids in configuration, access plans, admin
 policy, and the spend ledger. Model paths after the provider prefix retain
 their case.
 
@@ -317,7 +317,7 @@ provider that supports both chat and decisions uses the appropriate price
 estimate for each call. Invalid streaming options fail before reserving spend;
 known failures before transport dispatch release their reservation.
 
-An absent provider `allowed_plans` restriction preserves the profile's provider
+An absent provider `allowed_plans` restriction preserves the access plan's provider
 permission and appears as `null` in admin JSON. An explicit empty list denies
 every plan. Updating only caps keeps
 that distinction. Client receipt serialization omits `cost.provider` for both

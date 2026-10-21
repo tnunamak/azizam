@@ -6,7 +6,7 @@ browser. ``render_setup_page`` is a pure function that returns HTML for
 the first-run states:
 
 * OIDC is configured and no owner exists -> primary action that links to
-  ``/login?return_to=/setup`` and copy that calls out that the first
+  ``/login?return_to=%2Fsetup%2F`` and copy that calls out that the first
   allowed OIDC login becomes owner.
 * OIDC is not configured and no owner exists -> primary action is a
   short "create the local owner account" form (email + password). After
@@ -316,19 +316,9 @@ _PAGE_CSS = """
   }
 """
 
-# Retained native POST responses share the public React presentation. These
-# same-origin font assets are emitted from the pinned Geist dependency.
+# Retained native POST responses share the public web app presentation. They
+# use the system font stack, so they never depend on hashed export file names.
 _PUBLIC_SETUP_CSS = """
-  @font-face {
-    font-family: Geist; font-style: normal; font-display: swap;
-    font-weight: 100 900;
-    src: url('/ui/_next/static/media/Geist-Variable.0b78ff37.woff2') format('woff2');
-  }
-  @font-face {
-    font-family: 'Geist Mono'; font-style: normal; font-display: swap;
-    font-weight: 100 900;
-    src: url('/ui/_next/static/media/GeistMono-Variable.723e11e5.woff2') format('woff2');
-  }
   html.setup-public {
     color-scheme: light;
     --bg: #ffffff; --panel: #ffffff; --panel-2: #f4f4f5;
@@ -336,9 +326,9 @@ _PUBLIC_SETUP_CSS = """
     --text: #18181b; --muted: #65656e; --soft: #65656e;
     --accent: #087f75; --accent-ink: #ffffff; --link: #087f75;
     --bad: #b42335; --bad-bg: #fcecef;
-    --font-sans: 'Geist', sans-serif;
+    --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-serif: var(--font-sans);
-    --font-mono: 'Geist Mono', monospace;
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
     --radius: 0.75rem; --radius-sm: 0.5rem;
   }
   html.setup-public.dark {
@@ -651,8 +641,7 @@ def _complete_card(
         # labeled buttons + the sign-in line carry it.
         + signed_in_line
         + '<div class="actions">'
-        '<a class="pill primary" href="/">Open user portal</a>'
-        '<a class="pill secondary" href="/admin">Open admin dashboard</a>'
+        '<a class="pill primary" href="/">Open Azizam</a>'
         "</div>"
         "</section>"
     )
@@ -827,7 +816,7 @@ def render_setup_page(
     wordmark: tuple[str, str] | None = None,
     owner_or_admin_exists: bool,
     oidc_enabled: bool,
-    login_url: str = "/login?return_to=/setup",
+    login_url: str = "/login?return_to=%2Fsetup%2F",
     is_admin_signed_in: bool = False,
     actor_label: str | None = None,
     logout_url: str | None = None,
@@ -911,7 +900,6 @@ def render_setup_page(
         wordmark=wordmark,
         current="",
         show_account=is_admin_signed_in,
-        show_admin=is_admin_signed_in,
         show_status=is_admin_signed_in,
         actor_label=actor_label if is_admin_signed_in else None,
         logout_url=logout_url if is_admin_signed_in else None,

@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import admin_store, service_registry
 from gateway.transforms import REGISTRY, TransformContext, run_request_pipeline
 
@@ -68,7 +69,7 @@ def fixture_registry(service_id, existing):
     return {"services": {service_id: service}}
 
 
-@pytest.mark.parametrize("service_id", ["kobold", "tabby"])
+@pytest.mark.parametrize("service_id", ["kobold"])
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("effort", ["absent", None, "none", "minimal", "low", "medium", "high", "xhigh", "invalid", 42])
@@ -87,7 +88,7 @@ def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effo
     first = snapshot(db)
     admin_store.init_db(db)
     assert snapshot(db) == first
-    assert first[1] == 8
+    assert first[1] == 9  # Schema 10 also writes the engine-record v2 projection once.
     new_registry = json.loads(first[0])
     body = {"model": "current", "messages": [{"role": "user", "content": "héllo"}], "stream": stream}
     if effort != "absent":
@@ -109,7 +110,7 @@ def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effo
         BEFORE_NAMESPACE["config"] = runtime
         # The frozen function's helper was defined in proxy's module globals;
         # patching config makes it observe this same registry projection.
-        with patch.object(proxy, "config", runtime), patch.object(proxy, "AUTH_ENABLED", False), \
+        with patch.object(proxy, "config", runtime), authenticated(), \
              patch.object(proxy, "_prepare_resolved_openai_request", prepare), \
              patch.object(proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5111"}), \
              patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), \
@@ -233,12 +234,19 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     raw, generation = snapshot(db)
     migrated = json.loads(raw)
-    assert generation == 8
+    # Reasoning rows, credential origin (schema 8), then engine-record v2 (schema 10).
+    assert generation == 10
+    assert migrated["services"]["remote"]["config"].pop("credential_origin").startswith("http")
     for key in changes:
         expected = copy.deepcopy(original["services"][key])
         if key in {"local", "completion-only", "already"}:
             expected["config"]["transforms"].append("reasoning-effort-final-chat")
-        assert migrated["services"][key] == expected
+        actual = copy.deepcopy(migrated["services"][key])
+        for field in ("process", "observations", "residency"):
+            actual.pop(field, None)
+        expected.pop("lifecycle", None)
+        expected["config"].pop("lifecycle", None)
+        assert actual == expected
     migrated["services"]["local"]["config"]["transforms"] = []
     with sqlite3.connect(db) as conn:
         conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(migrated),))
@@ -278,25 +286,55 @@ def test_fresh_seed_declares_opt_in_as_data():
     import yaml
     config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
     seed = service_registry.build_service_registry_seed(config)
-    for service_id in ("kobold", "tabby"):
+    for service_id in ("kobold",):
         assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]
     custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
 
 
-@pytest.mark.parametrize("preset", ["openai-compatible", "vllm", "ollama", "tabbyapi", "lmstudio"])
-def test_local_chat_preset_declares_overridable_attachment(preset):
-    form = {"preset": preset, "base_url": "http://127.0.0.1:5111/v1"}
-    raw = service_registry.service_form_to_raw(form)
+def _local_chat_definitions():
+    from gateway.engine_definitions import load_engine_catalog
+
+    catalog = load_engine_catalog()
+    return [catalog.definition(i) for i in catalog.ids() if "chat" in catalog.definition(i)["capabilities"]]
+
+
+def _new_engine_raw(definition, **values):
+    from gateway.engine_admin import build_raw, clean_values
+    from gateway.engine_definitions import load_engine_catalog
+
+    clean = clean_values(definition, {"address": "http://127.0.0.1:5111/v1", **values})
+    return build_raw(load_engine_catalog(), definition, clean, name="Local chat", capabilities=["chat"], models=[],
+                     enabled=True, check={}, tests=None, secret_id=None)
+
+
+@pytest.mark.parametrize("definition", _local_chat_definitions(), ids=lambda d: d["definition"])
+def test_a_new_local_chat_engine_carries_the_overridable_reasoning_attachment(definition):
+    """D-1: the reasoning transform is opt-in per service, and every local chat kind opts in by default (as data)."""
+    assert definition["record"]["transforms"] == ["reasoning-effort-final-chat"]
+    raw = _new_engine_raw(definition)
     assert raw["transforms"] == ["reasoning-effort-final-chat"]
     raw["transforms"].clear()
-    assert service_registry.provider_preset(preset)["transforms"] == ["reasoning-effort-final-chat"]
-    assert service_registry.service_form_to_raw({**form, "transforms": []})["transforms"] == []
+    assert definition["record"]["transforms"] == ["reasoning-effort-final-chat"], "the definition is not shared state"
+    # The owner can remove it, and the removal is kept as an explicit empty list.
+    assert _new_engine_raw(definition, transforms=[])["transforms"] == []
+    record = service_registry.service_from_backend_config("local", _new_engine_raw(definition, transforms=[]), source="ui")
+    assert record["config"]["transforms"] == []
 
 
-def test_media_and_unselected_presets_do_not_attach_reasoning():
-    for form in ({"preset": "comfyui"}, {}):
+def test_the_local_chat_kinds_cover_the_old_presets():
+    """openai-compatible, vLLM, LM Studio (OpenAI-compatible) and Ollama (own model list) are all local chat kinds."""
+    assert {d["definition"] for d in _local_chat_definitions()} == {"openai-compatible", "own-model-list"}
+
+
+def test_a_raw_record_without_a_definition_attaches_no_reasoning():
+    for form in ({"protocol": "comfyui"}, {}):
         assert "transforms" not in service_registry.service_form_to_raw(form)
+
+
+def test_a_raw_form_that_names_a_preset_is_refused():
+    with pytest.raises(ValueError, match="presets are gone"):
+        service_registry.service_form_to_raw({"preset": "vllm", "base_url": "http://127.0.0.1:5111/v1"})
 
 
 def test_migration_rolls_back_registry_generation_and_version_together(tmp_path):
@@ -312,7 +350,7 @@ def test_migration_rolls_back_registry_generation_and_version_together(tmp_path)
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
         conn.execute("DROP TRIGGER reject_migration")
     admin_store.init_db(db)
-    assert snapshot(db)[1] == before[1] + 1
+    assert snapshot(db)[1] == before[1] + 2  # Reasoning attachment and engine-record v2.
 
 
 def test_attached_translation_reads_updated_runtime_budgets():

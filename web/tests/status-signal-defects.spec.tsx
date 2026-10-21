@@ -11,7 +11,7 @@ import { MemberStatus } from "@/app/status/status-view";
 import type { ProviderStatusView } from "@/lib/provider-status";
 import { StatusClient } from "@/app/status/status-client";
 
-vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: vi.fn() }) }));
 const state = vi.hoisted(() => ({ providers: [] as ProviderStatusView[] }));
 vi.mock("@/lib/provider-status", () => ({
   useOptionalProviderStatus: () => ({ state: "ready", providers: state.providers, refetch: vi.fn() }),
@@ -127,81 +127,8 @@ it("keeps the member status sign-in action for HTTP 401", async () => {
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(401));
   mountHealthErrorPage(<MemberStatus />);
   expect(await screen.findByText("Sign in to see your status")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
   expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();
-});
-
-async function openEndpointEditor(baseUrl: string) {
-  vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
-  const registry = {
-    schema_version: 1,
-    services: {
-      endpoint: {
-        id: "endpoint", name: "Endpoint regression engine", enabled: true,
-        editable: true, source: "provisioned", role: "primary", priority: 1,
-        capabilities: [], config: { base_url: baseUrl, note: "Original note" },
-      },
-    },
-  } as unknown as Awaited<ReturnType<typeof api.services.registry>>;
-  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
-  vi.spyOn(api, "status").mockResolvedValue({});
-  const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
-  mountHealthErrorPage(<EnginesPage />);
-  fireEvent.click(await screen.findByText("Show infrastructure"));
-  const table = screen.getByRole("table", { name: "Engines" });
-  const row = within(table).getByText("Endpoint regression engine").closest("tr")!;
-  expect(within(row).getAllByRole("button", { name: /Endpoint regression engine/ }).length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByText("Endpoint regression engine").closest("button")!);
-  await screen.findByRole("button", { name: "Save engine" });
-  return edit;
-}
-
-it.each([
-  "https://engine.example/v1",
-  "ftp://engine.example/v1",
-  "http://[invalid",
-  "",
-])("saves an unrelated engine edit without validating or rewriting unchanged endpoint %s", async (endpoint) => {
-  const edit = await openEndpointEditor(endpoint);
-  fireEvent.change(screen.getByRole("textbox", { name: "Note" }), { target: { value: "Updated note" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
-  expect(edit).toHaveBeenCalledWith("endpoint", expect.objectContaining({
-    base_url: endpoint, note: "Updated note",
-  }));
-  expect(edit.mock.calls[0][1]).not.toHaveProperty("host");
-  expect(edit.mock.calls[0][1]).not.toHaveProperty("port");
-  expect(edit.mock.calls[0][1]).not.toHaveProperty("base_path");
-});
-
-it.each(["https://secure.example/v1/", "https://secure.example:8443/v1/"])(
-  "still rejects a NEW https endpoint %s, because health checks are http-only",
-  async (endpoint) => {
-    const edit = await openEndpointEditor("http://old.example/v1");
-    fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
-    fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-    expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this editor yet.")).toBeVisible();
-    expect(edit).not.toHaveBeenCalled();
-  },
-);
-
-it("keeps changed HTTP engine endpoints supported and removes a stale HTTPS base URL", async () => {
-  const edit = await openEndpointEditor("https://old.example/v1");
-  fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: "http://plain.example/v2/" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
-  expect(edit).toHaveBeenCalledWith("endpoint", expect.objectContaining({
-    host: "plain.example", port: 80, base_path: "/v2",
-  }));
-  expect(edit.mock.calls[0][1]).not.toHaveProperty("base_url");
-});
-
-it.each(["ftp://other.example/v1", "ws://other.example/v1"])("rejects a changed unsupported engine endpoint %s with the existing message", async (endpoint) => {
-  const edit = await openEndpointEditor("https://old.example/v1");
-  fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
-  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-  expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this editor yet.")).toBeVisible();
-  expect(edit).not.toHaveBeenCalled();
 });
 
 function mockEngineRows() {
@@ -257,6 +184,55 @@ it("shows Ready, Degraded, Off and Unknown with only recorded engine check times
   for (const id of ["degraded", "off", "unknown"]) {
     const row = document.querySelector(`[data-engine-id="${id}"]`) as HTMLElement;
     expect(within(row).queryByText(/Last checked/)).toBeNull();
+  }
+});
+
+it("renders engine states from actual observations with arbitrary IDs", async () => {
+  // No mockEngineRows: the real engineHealthPresentation classifies each row.
+  expect(vi.isMockFunction(healthPresentation.engineHealthPresentation)).toBe(false);
+  vi.spyOn(session, "useViewer").mockReturnValue({
+    authenticated: true, role: "owner", admin: true, name: "Alex", email: null,
+  } as ReturnType<typeof session.useViewer>);
+  const ids = ["fixture-a", "fixture-b", "fixture-c", "fixture-d", "fixture-e", "fixture-f"];
+  const services = Object.fromEntries(ids.map((id) => [id, {
+    id, name: id, capabilities: ["chat"], enabled: id !== "fixture-d",
+    kind: "openai-compatible", editable: true, source: "ui",
+    role: "primary", priority: 1, config: { host: "localhost", port: 18123 },
+  }]));
+  vi.spyOn(api.services, "registry").mockResolvedValue({
+    schema_version: 1, services,
+  } as unknown as Awaited<ReturnType<typeof api.services.registry>>);
+  vi.spyOn(api, "status").mockResolvedValue({
+    generated_at: 1760000120,
+    backends: [{ service_id: "fixture-a", observed_at_s: 1760000000 }],
+    current_health: {
+      observation_available: true,
+      signals: [],
+      services: [
+        { service_id: "fixture-a", observation: "up", tone: "ok", in_use: true },
+        { service_id: "fixture-b", observation: "up", tone: "warn", in_use: true },
+        { service_id: "fixture-c", observation: "down", tone: "bad", in_use: true },
+        { service_id: "fixture-d", observation: "up", tone: "ok", in_use: true },
+        { service_id: "fixture-f", observation: "up", tone: "bad", in_use: true },
+      ],
+    },
+  } as unknown as StatusPayload);
+  mountHealthErrorPage(<EnginesPage />);
+  fireEvent.click(await screen.findByRole("switch", { name: "Show not in use" }));
+  const row = (id: string) => document.querySelector<HTMLElement>(`[data-engine-id="${id}"]`);
+  await waitFor(() => {
+    for (const [id, label] of [
+      ["fixture-a", "Ready"], ["fixture-b", "Degraded"],
+      ["fixture-c", "Unavailable"], ["fixture-d", "Off"], ["fixture-e", "Unknown"],
+      ["fixture-f", "Unavailable"],
+    ]) {
+      expect(row(id)).not.toBeNull();
+      expect(within(row(id)!).getByText(label, { exact: true })).toBeVisible();
+    }
+  });
+  expect(within(row("fixture-a")!).getByText(/Last checked/)).toBeVisible();
+  for (const id of ids.slice(1)) {
+    expect(within(row(id)!).queryByText(/Last checked/)).toBeNull();
   }
 });
 

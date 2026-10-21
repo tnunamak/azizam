@@ -1,5 +1,5 @@
 [Unit]
-Description=Azizam - Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
+Description=Azizam - Unified local AI API for local LLM/TTS/STT/ComfyUI
 After=network.target
 
 [Service]
@@ -11,7 +11,6 @@ RestartSec=10
 
 # Environment
 Environment="AZIZAM_PORT=5000"
-Environment="TABBY_IDLE_TIMEOUT=300"
 Environment="TTS_ENABLED=true"
 Environment="TTS_HOST=http://127.0.0.1:8001"
 
@@ -22,6 +21,11 @@ Environment="TTS_HOST=http://127.0.0.1:8001"
 KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=150s
+
+# Temporary files. start.sh points TMPDIR at data/private-tmp (mode 0700, on disk, emptied at start), so every
+# temporary file of the gateway, LiteLLM, ffmpeg and the engines it starts lands there. There is no PrivateTmp=yes:
+# in a user unit it needs unprivileged user namespaces, and on hosts that restrict them (Ubuntu with
+# kernel.apparmor_restrict_unprivileged_userns=1) systemd accepts the line, /tmp stays shared and sudo stops working.
 
 # Resource limits
 LimitNOFILE=65535

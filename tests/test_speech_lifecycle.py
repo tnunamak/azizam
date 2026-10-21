@@ -17,6 +17,12 @@ from gateway.backends.cancellation import CancellationRegistry
 from tests.speech_tier_helpers import RouteCase, SttCase, _multipart
 
 
+# Hang guard, not an oracle: every wait below is on an event the test is about, so the guard
+# only turns a real hang into a failure and never decides pass/fail for a correct run. In-process
+# steps take milliseconds; a stall measured at load 51 was 0.27 s, so 30 s is >100x that.
+_HANG_GUARD_S = 30.0
+
+
 class ControlledStream(httpx.AsyncByteStream):
     def __init__(self, chunks, *, after_chunks=None):
         self.chunks = chunks
@@ -92,6 +98,52 @@ class NativeSttLifecycleTests(SttCase):
             finally:
                 _ = [part async for part in response.body_iterator]
                 await response.body_iterator.aclose()
+        asyncio.run(scenario())
+
+    def test_first_native_event_arrives_before_the_producer_can_finish(self):
+        async def scenario():
+            release_tail = asyncio.Event()
+            first = b'data: {"type":"transcript.text.delta","delta":"first"}\n\n'
+            last = b'data: {"type":"transcript.text.done","text":"first"}\n\n'
+
+            class GatedStream(ControlledStream):
+                async def __aiter__(self):
+                    yield first
+                    await release_tail.wait()
+                    yield last
+
+            stream = GatedStream([])
+            response = None
+            try:
+                response = await asyncio.wait_for(
+                    self.open_response(stream), timeout=5
+                )
+                self.assertEqual(
+                    await asyncio.wait_for(
+                        anext(response.body_iterator), timeout=5
+                    ),
+                    first,
+                )
+                self.assertFalse(release_tail.is_set())
+                self.assertFalse(stream.closed)
+                proxy.receipt_store.finalize.assert_not_called()
+
+                release_tail.set()
+
+                async def drain():
+                    return b"".join(
+                        [part async for part in response.body_iterator]
+                    )
+
+                self.assertEqual(
+                    await asyncio.wait_for(drain(), timeout=5), last
+                )
+                self.assert_terminal(stream, "succeeded")
+            finally:
+                release_tail.set()
+                if response is not None:
+                    await response.body_iterator.aclose()
+
         asyncio.run(scenario())
 
     def test_body_transport_failure_has_one_failed_receipt(self):
@@ -170,7 +222,8 @@ class NativeSttLifecycleTests(SttCase):
             else:
                 read.cancel()
             try:
-                done, _ = await asyncio.wait({read}, timeout=0.5)
+                # hang guard only (see _HANG_GUARD_S); the oracle is that the read finished
+                done, _ = await asyncio.wait({read}, timeout=_HANG_GUARD_S)
                 self.assertIn(read, done, "body read ignored cancellation")
                 with self.assertRaises(asyncio.CancelledError):
                     await read

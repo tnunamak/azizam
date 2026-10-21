@@ -1,0 +1,138 @@
+# Count ceilings enforced by scripts/ci/policy.py (docs/design/TEST_STRATEGY.md 6).
+# Units: pytest collected items (each parameter set counts; subtests do not);
+# vitest test cases; Playwright test x project over the gate configs
+# (playwright.config.ts, .live-data, .household). Retries never count.
+# Updated from measured suite/list counts on 2026-10-18 for W5 round 4. Only a slice that must add cases
+# raises a ceiling, in the same PR and with its reason; S14 lowers them.
+
+# VT (browser display-state cases moved to vitest, plus VT-FIX oracle restorations):
+# Playwright 759 -> 425 (-334: moved or collapsed, with 4 browser representatives restored:
+# multipart wire contract, signed media load failure, 1440 px long instance name,
+# post-search model grouping geometry); vitest +165 (1708 -> 1873). Counted with
+# ~/.tmp/vt-tools/counts.sh at b03f1053 + VT + VT-FIX.
+
+# Slice S13 (orphaned e2e files): +25 vitest and +24 Playwright cases that carry
+# the orphans' assertions into gated suites; node:test cases are new, from
+# probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
+[ceilings]
+# Long-audio STT: +9 collected cases = +3 planner contracts (four replace one),
+# +1 segment-only executor case, +2 late-model fallback/policy cases,
+# +3 replay-storage/deadline/pre-stream-connection-loss cases. The duplicate
+# admission-limit case is folded into test_segment_limit_and_deadline_are_deterministic;
+# its no-extraction/no-upload assertions cover both silence and forced cuts.
+# Gate speed r5: three more ci-local cases after r4 = 12702 collected.
+# Measured full-gate count before that consolidation: 12303; after: 12302 on the pre-merge base; train r69 (12664) + 9 = 12673 after the merge.
+# Measured after merging main r79 with D47: full hermetic pytest collected 14856;
+# the two review followups add one malformed-audio case and one migration case (14858).
+# Vitest ran 3046 cases, and Playwright listed 469 + 18 + 3 cases across gate configs.
+# Retention Slice 1b + Slice 2: 13 new pytest cases, then 6 first-review
+# and 6 second-review regression cases (14858 -> 14883), and
+# 2 new Vitest cases (3047 -> 3049), remeasured on this branch.
+# Retention Slice 6: 17 direct Python cases plus 25 generated route-probe
+# cases, one Vitest case, and two browser viewport cases. The full hermetic
+# suite collected 14936; Playwright lists 471 + 3 + 18 across gate configs.
+# Round 3: one shared-App route, one structural read-site scan, eight
+# store method/audience cases, and one Library usage case (+11).
+# Retention slice 4 (private temporary directory): 17 private-directory cases, 11 canary cases and 1 start.sh case (+29),
+# remeasured with --collect-only (14894 -> 14923).
+# Slice 4 review fixes: +21 cases for interrupted multipart parsing, worker cancellation,
+# lifetime ownership/exec, directory swaps, parent/ancestor permissions and relative STT escape.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14945.
+# Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
+# legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
+# STT scoring: +5 overlapping-word window/counting paths, +3 perfect recipe scores,
+# +1 Unicode/split/drop timing case, +2 interrupted-download cleanup cases,
+# +1 rights visibility case, and +4 source-rights/provenance schema cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 14975 (14959 + 16).
+# STT review followups: +11 tokenizer inputs, +2 source-rights cases,
+# +1 default/CLI case, +2 REST/MCP rights surfaces, +2 stale-scorer versions,
+# +1 filtered-overlap runner case and +1 MCP description case.
+# Full hermetic collection on 2026-10-20: 14995; full Vitest list: 3050.
+# D47 conformance: +55 cases for misleading duration metadata, bounded decode,
+# source-sample hard limits, off-grid frames, whole-file mode/envelope guards,
+# buffered voice references and direct/chunked receipt outcomes.
+# Review regressions include frame-grid round trips, fractional source samples,
+# bounded whole-file verification, missing-duration packet scans, internal attempts
+# and an exact on-grid hard maximum affected by floating-point subtraction.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 15014.
+# Private-temp hardening: 32 regression cases for explicit workspace escapes,
+# metadata staging/orphans, anonymous memfd failures and allocation ownership,
+# including rejected segment aliases with local and route-owned cleanup.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14991.
+# Review followups: one late-alias cross-spool chunking case and two measurement
+# scratch-symlink cases (+3). Full hermetic collection remeasured: 14994.
+# Merged retention slices 4 and 6: full hermetic collection measured 15091.
+# Vitest list and all three Playwright gate configs remeasured on the merged tree.
+# Round-3 followups: +10 deterministic write/cleanup/honesty/logging cases,
+# +4 real-auth current-ledger cases and +4 generated management probes.
+# Full hermetic collection on the merged repaired tree measured 15109.
+# Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
+# Admin sweep receipt isolation: +1 pre-existing-store teardown regression.
+# Full hermetic collection remeasured at 15110 after this repair.
+# Round-4 followups: invalid unsaved facts, three writer cancellation/error
+# cases, and a virtual-clock reload event case (+5). Full hermetic collection
+# remeasured at 15115.
+# Train r84: remeasured hermetic pytest 15241, Vitest 3051, Playwright 471 + 3 + 18 = 492 (2026-10-20).
+# D47 followups: +31 regression cases for decode reuse, guarded voice references,
+# disk accounting, integer sample limits, bounded WAV preparation, exact mono/stereo
+# codec cuts, resampled near-cap uploads, concurrency, implicit cleanup failures
+# replanning a source-sample tail hidden by resampling, and verification cleanup
+# preserving cancellation, deadline and media failures when unlink also fails.
+# Full hermetic collection on 2026-10-20 measured 15272.
+# D47 cross-vendor review: +17 cases for decode-cap/disk fallback equality,
+# two-hour stereo admission, early PCM cleanup, staged disk claims, bounded
+# metadata retries, canonical/retryable voice errors, and high-rate WAV normalization. Full hermetic
+# --collect-only on 2026-10-20 measured 15289.
+# D47 round-2 review: +4 multitrack first-audio-stream shared/fallback cases,
+# +2 lease receipt/unlink-race cases, +5 voice failure/retry-shape cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15300.
+# D47 admission followups: +10 transcription/translation status cases,
+# +2 gate disk-classification cases and +3 voice denial/receipt cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15315.
+# D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15319.
+pytest = 15319
+vitest = 3051
+playwright = 492
+
+# Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
+# node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
+# cases. The 20 showcase cases are gone with the /showcase site, so the node
+# ceiling falls by 20 (107 -> 87).
+node = 87  # -20: tests/showcase/core.test.mjs is deleted with the /showcase site. Earlier: +3: pi store-lock tests (orphan reclaimed, live holder kept, fresh orphan degrades)
+
+# Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
+# new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
+# a migration lowers it in the same change. Counted with the AST scanner on
+# 0bff0431: 55 files (the earlier regex scan found 29 and missed
+# patch.object(proxy.httpx, "AsyncClient", ...) fakes). FK-NEXT: 50 -> 47 (video workflow
+# execution, speech privacy over HTTP, prompt-memory image route).
+[ratchets]
+ad_hoc_upstream_fake_files = 46
+
+# Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3, and 3.4's intercept rule):
+# occurrences in Playwright code under web/e2e and *.e2e.* / *.playwright.*
+# files under web/src. The first six were 18, 9, 4, 1, 3, 0 and are 0 since HYG-G2:
+# 16 of the 18 timers and 8 of the 9 networkidle were in manual capture scripts
+# (web/e2e/*capture*.mjs, d1-*.mjs), which now wait on observable state
+# (e2e/capture-settle.mjs); the other 2 and 1 were in the sweep; all 4 force: true
+# were fs.rm flags, not click forces; the one-shot expect and 2 of the 3 bare
+# isVisible were in specs, the third in d1-task-flows.mjs.
+# raw_fulfil counts .fulfill( in TypeScript outside web/e2e/fixtures/intercept.ts:
+# every stub goes through fulfilJson or fulfilBytes. malformed_stub counts the JSON
+# stubs that say, with a reason, they are deliberately unlike the gateway.
+# unprobed_endpoint counts the endpoints of web/e2e/fixtures/intercept-registry.ts that
+# have no structural oracle (no read probe, and no call on the oracle gateway of
+# e2e/fixtures/oracle.ts). It was 33; G2-FIN gave 32 an oracle and moved the last one
+# (POST /gateway/v1/workflows/{id}/run answers with bytes) to a component test.
+[hygiene]
+waitForTimeout = 0
+networkidle = 0
+force_true = 0
+one_shot_expect = 0
+bare_isVisible = 0
+absolute_home_path = 0
+raw_fulfil = 0
+malformed_stub = 0
+unprobed_endpoint = 0

@@ -37,14 +37,18 @@ Use the hermetic runner before you report a change as ready. It expects a clean,
 committed tree because it proves the checked-in state, not a local scratch diff:
 
 ```bash
-scripts/run-hermetic-pytest.sh -q
+scripts/run-hermetic-pytest.sh -q -n 12
 ```
 
+`-n N` runs the suite in N pytest-xdist workers (about 3.5 minutes with 12,
+against 34 minutes in one process). Leave it out to run serially.
+
 For a narrow Python check while iterating, pass the test path through the same
-runner:
+runner, or let `scripts/test-affected` pick the tests your commits can reach:
 
 ```bash
 scripts/run-hermetic-pytest.sh -q tests/test_name.py
+scripts/test-affected --list   # show the selection; drop --list to run it
 ```
 
 For web changes, also run:

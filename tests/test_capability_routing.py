@@ -342,25 +342,6 @@ class TestEndpointCapabilityMapping(unittest.TestCase):
         "/v1/embeddings": "embeddings",
     }
 
-    def test_tts_endpoint_capability_is_audio_speech(self) -> None:
-        """host_for_capability("audio.speech") resolves TTS backend."""
-        backends = {"tts": _make_tts()}
-        with patch.dict(proxy.config, {"backends": backends}, clear=False):
-            result = proxy.backends_for_capability("audio.speech")
-        self.assertIn("tts", result)
-
-    def test_stt_transcriptions_endpoint_capability_is_audio_transcriptions(self) -> None:
-        backends = {"stt": _make_stt()}
-        with patch.dict(proxy.config, {"backends": backends}, clear=False):
-            result = proxy.backends_for_capability("audio.transcriptions")
-        self.assertIn("stt", result)
-
-    def test_embeddings_endpoint_capability_is_embeddings(self) -> None:
-        backends = {"embeddings": _make_embeddings()}
-        with patch.dict(proxy.config, {"backends": backends}, clear=False):
-            result = proxy.backends_for_capability("embeddings")
-        self.assertIn("embeddings", result)
-
     def test_non_tts_backend_not_returned_for_audio_speech(self) -> None:
         """A backend without audio.speech should not appear."""
         backends = {

@@ -138,10 +138,24 @@ const fetchMock = vi.fn();
 const hex = "c".repeat(64);
 const libraryAssets = {
   assets: [
-    { asset_id: `img_${hex}`, kind: "image", prompt: "A teal fish", available: true },
+    { asset_id: `img_${hex}`, kind: "image", prompt: "A teal fish", available: true, thumbnail_url: "http://gateway.test/v1/assets/signed-thumbnail" },
     { asset_id: `img_${"d".repeat(64)}`, kind: "image", prompt: "Gone", available: false },
   ],
 };
+const SIGNED = "http://gateway.test/v1/assets/signed-picture";
+const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+const link = () => json({ asset_id: `img_${hex}`, download_url: SIGNED });
+const pictureBytes = () =>
+  new Response(PNG_SIGNATURE, { headers: { "content-type": "image/png" } });
+/** The Library as the picker sees it: the list, a signed link, then the file. */
+function serveLibrary() {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.startsWith("/me/api/media?")) return json(libraryAssets);
+    if (url.includes("/download")) return link();
+    if (url === SIGNED) return pictureBytes();
+    return json({}, 404);
+  });
+}
 const PNG = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "boat.png", {
   type: "image/png",
 });
@@ -192,7 +206,7 @@ afterEach(() => {
 async function openWorkflow() {
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
       "LTX 2.5 Distilled I2V",
     ),
   );
@@ -233,7 +247,8 @@ describe("an image-to-video workflow on Try", () => {
 
   it("names the selected tab once, with no matching heading above the form", async () => {
     await openWorkflow();
-    expect(screen.getAllByText("Workflow")).toHaveLength(1);
+    // The phone task picker (an <option>) is hidden by CSS above 640 px.
+    expect(screen.getAllByText("Workflow", { ignore: "option" })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Workflow" })).toBeNull();
   });
 
@@ -299,7 +314,13 @@ describe("an image-to-video workflow on Try", () => {
     expect(await screen.findByText(/not a picture/)).toBeVisible();
   });
 
-  it("chooses from the Library and sends the asset id", async () => {
+  it("chooses from the Library and sends the picture itself, not its id", async () => {
+    const baseline = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (!init?.method && url.includes("/download")) return link();
+      if (url === SIGNED) return pictureBytes();
+      return baseline(url, init);
+    });
     const user = userEvent.setup();
     await openWorkflow();
     await user.type(
@@ -314,14 +335,14 @@ describe("an image-to-video workflow on Try", () => {
     expect(within(dialog).queryByRole("button", { name: "Gone" })).toBeNull();
     await user.click(tiles[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(await screen.findByRole("img", { name: "Chosen picture" })).toHaveAttribute(
-      "src",
-      `/me/api/media/img_${hex}/download?scope=me`,
+    expect(await screen.findByText("From your Library")).toBeVisible();
+    expect(screen.getByRole("img", { name: "Chosen picture" }).getAttribute("src")).toMatch(
+      /^data:image\/png;base64,/,
     );
-    expect(screen.getByText("From your Library")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(postedBody().input_reference).toBe(`img_${hex}`);
+    expect(postedBody().input_reference).toMatch(/^data:image\/png;base64,/);
+    expect(postedBody().input_reference).not.toContain(`img_${hex}`);
   });
 
   it("takes a pasted Library link under Advanced", async () => {
@@ -394,21 +415,25 @@ describe("a workflow catalog that failed to load", () => {
     render(<TryPage />);
     await user.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
-      await screen.findByRole("button", { name: "Retry workflow catalog" }),
+      await screen.findByRole("button", { name: "Retry" }),
     ).toBeVisible();
   });
 });
 
-it("says the Try key is temporary, in plain words", async () => {
+// PF-011: Try manages its key; how the key works is folded into Key details.
+it("keeps the Try key out of the normal view, under Key details", async () => {
   account.params = new URLSearchParams();
   const user = userEvent.setup();
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
-  expect(await screen.findByText(/Try uses a temporary key/)).toBeVisible();
-  expect(screen.queryByText(/Using a Try key/)).toBeNull();
+  const summary = await screen.findByText("Key details");
+  expect(screen.getByText(/Try runs with its own key, which ends when you sign out/)).not.toBeVisible();
+  expect(screen.queryByText(/temporary key/)).toBeNull();
+  await user.click(summary);
+  expect(screen.getByRole("button", { name: "Remove this key" })).toBeVisible();
 });
 
 function deferredReaders() {
@@ -544,7 +569,7 @@ describe("media selection races", () => {
     ));
     await openWorkflow();
     fireEvent.change(pickerInput(), { target: { files: [PNG] } });
-    const select = screen.getByRole("combobox");
+    const select = screen.getByRole("combobox", { name: "Model" });
     select.focus();
     fireEvent.keyDown(select, { key: "Enter" });
     fireEvent.click(await screen.findByRole("option", { name: /Another workflow/ }));
@@ -611,16 +636,126 @@ describe("readable Try model choices", () => {
       return json(catalog);
     });
     render(<TryPage />);
-    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Example Model"));
-    expect(screen.getByRole("combobox")).not.toHaveTextContent("/private/");
-    expect(screen.getByRole("combobox")).not.toHaveTextContent(".gguf");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Example Model"));
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("/private/");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(".gguf");
+    if (source === "fallback") {
+      // Run waits while the list has failed; Retry reads the fallback list.
+      await screen.findByRole("button", { name: "Retry" });
+      expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    }
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect(postedBody().model).toBe(raw);
-    expect(screen.getByRole("combobox")).toHaveTextContent("Example Model");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Example Model");
     if (source !== "unverified") {
-      expect(screen.getByRole("combobox")).not.toHaveTextContent("Unverified model");
+      expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Unverified model");
     }
   });
 });
 
+
+describe("media input states", () => {
+  const mediaUrls = () =>
+    fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith("/me/api/media?"));
+
+  it.each([
+    ["video", "Choose a video from your Library", "vid"],
+    ["audio", "Choose an audio clip from your Library", "aud"],
+  ] as const)("lists only %s in the Library picker", async (kind, title, prefix) => {
+    const id = `${prefix}_${hex}`;
+    fetchMock.mockImplementation(async () =>
+      json({ assets: [{ asset_id: id, kind, prompt: `A ${kind} take`, available: true }] }));
+    render(<MediaInput id="m" label="Clip" kind={kind} onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+    await screen.findByRole("button", { name: `A ${kind} take` });
+    expect(mediaUrls()[0]).toContain(`kind=${kind}`);
+  });
+
+  it("shows more Library items with the next cursor and says when that fails", async () => {
+    const asset = (letter: string) => ({
+      asset_id: `img_${letter.repeat(64)}`, kind: "image", prompt: `Pic ${letter}`, available: true,
+    });
+    let fail = true;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (!url.includes("cursor=c1")) return json({ assets: [asset("a")], next_cursor: "c1" });
+      if (fail) return json({}, 500);
+      return json({ assets: [asset("a"), asset("b")], next_cursor: null });
+    });
+    render(<MediaInput id="m" label="Picture" kind="image" onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    await screen.findByRole("button", { name: "Pic a" });
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("Could not load more pictures. Try again.")).toBeVisible();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByRole("button", { name: "Pic b" });
+    expect(screen.getAllByRole("button", { name: "Pic a" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("keeps a Library tile pickable when its thumbnail fails", async () => {
+    const onChange = vi.fn();
+    serveLibrary();
+    render(<MediaInput id="m" label="Picture" kind="image" onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    const tile = await screen.findByRole("button", { name: "A teal fish" });
+    fireEvent.error(tile.querySelector("img")!);
+    expect(within(tile).getByText("Preview unavailable")).toBeVisible();
+    fireEvent.click(tile);
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(expect.stringMatching(/^data:image\/png;base64,/)),
+    );
+  });
+
+  it("says a picture is being added and holds the form until it is", async () => {
+    let finish!: (response: Response) => void;
+    const download = new Promise<Response>((resolve) => { finish = resolve; });
+    fetchMock.mockImplementation((url: string) =>
+      url.includes("/download") ? download : Promise.resolve(json(libraryAssets)));
+    const submitted = vi.fn((event: React.FormEvent) => event.preventDefault());
+    const Form = () => {
+      const [file, setFile] = useState<File | null>(null);
+      return (
+        <form onSubmit={submitted}>
+          <MediaInput id="m" label="Picture" kind="image" file={file} onFileChange={setFile} />
+          <button type="submit">Run</button>
+        </form>
+      );
+    };
+    render(<Form />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByText(/Adding picture…/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(submitted).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Wait for it to finish");
+    fetchMock.mockImplementation(async (url: string) =>
+      url === SIGNED ? pictureBytes() : json(libraryAssets));
+    await act(async () => {
+      finish(link());
+      await download;
+    });
+    await waitFor(() => expect(screen.queryByText(/Adding picture…/)).toBeNull());
+    expect(screen.getByText("From your Library")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(submitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Retry and Remove when a preview fails", () => {
+    const onChange = vi.fn();
+    render(<MediaInput id="m" label="Picture" kind="image"
+      value="https://example.test/a.png" onChange={onChange} />);
+    fireEvent.error(screen.getByRole("img", { name: "Chosen picture" }));
+    expect(screen.getByText("Preview unavailable")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove picture for Picture" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry preview of picture for Picture" }));
+    expect(screen.getByRole("img", { name: "Chosen picture" })).toBeVisible();
+    expect(screen.queryByText("Preview unavailable")).toBeNull();
+  });
+});

@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, media_jobs, prompt_memory, receipt_store
-from gateway.policy import DEFAULT_PROFILE
+from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
+from gateway import accounts, admin_store, media_jobs, prompt_memory, receipt_store, retention
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 from tests.test_anthropic_schema_conformance import chat_completion
 
@@ -45,8 +45,10 @@ def responses_gateway(tmp_path, monkeypatch):
     user = admin_store.upsert_oidc_user(
         "local", "maker", email="maker@example.test", path=admin_db
     )
+    accounts.initialize(admin_db)
+    accounts.change_person(user["id"], "test", path=admin_db, plan_id=store_plan("Everything", path=admin_db)["id"])
     app = admin_store.create_app(
-        "Maker app", kind="personal", owner_user_id=user["id"], path=admin_db
+        "Maker app", kind="personal", owner_user_id=user["id"], access_plan="person", path=admin_db
     )
     raw_key = "prompt-memory-responses-key"
     key_hash = hash_api_key(raw_key)
@@ -54,7 +56,7 @@ def responses_gateway(tmp_path, monkeypatch):
         name="Maker app key",
         key_hash=key_hash,
         downstream={},
-        profile=DEFAULT_PROFILE,
+        access=access(plan_for("everything")),
         app_id=app["id"],
         person_id=user["id"],
     )
@@ -71,8 +73,6 @@ def responses_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(media_jobs, "DB_PATH", media_db)
     monkeypatch.setattr(prompt_memory, "DB_PATH", media_db)
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
 
     sent: list[dict] = []
@@ -81,6 +81,9 @@ def responses_gateway(tmp_path, monkeypatch):
     real_response_delete = proxy.responses_store.delete
     real_walk_chain = proxy.responses_store.walk_chain
     real_receipt_record = receipt_store.record
+    real_receipt_begin = receipt_store.begin
+    real_receipt_finalize = receipt_store.finalize
+    real_receipt_update_phases = receipt_store.update_phases
 
     def save_response(response_id: str, **kwargs):
         kwargs.setdefault("path", responses_db)
@@ -102,11 +105,26 @@ def responses_gateway(tmp_path, monkeypatch):
         kwargs.setdefault("path", receipts_db)
         return real_receipt_record(receipt, **kwargs)
 
+    def begin_receipt(receipt, **kwargs):
+        kwargs.setdefault("path", receipts_db)
+        return real_receipt_begin(receipt, **kwargs)
+
+    def finalize_receipt(receipt, **kwargs):
+        kwargs.setdefault("path", receipts_db)
+        return real_receipt_finalize(receipt, **kwargs)
+
+    def update_receipt_phases(receipt, **kwargs):
+        kwargs.setdefault("path", receipts_db)
+        return real_receipt_update_phases(receipt, **kwargs)
+
     monkeypatch.setattr(proxy.responses_store, "save", save_response)
     monkeypatch.setattr(proxy.responses_store, "get", get_response)
     monkeypatch.setattr(proxy.responses_store, "walk_chain", walk_chain)
     monkeypatch.setattr(proxy.responses_store, "delete", delete_response)
     monkeypatch.setattr(receipt_store, "record", record_receipt)
+    monkeypatch.setattr(receipt_store, "begin", begin_receipt)
+    monkeypatch.setattr(receipt_store, "finalize", finalize_receipt)
+    monkeypatch.setattr(receipt_store, "update_phases", update_receipt_phases)
 
     async def fake_forward(request, auth_context, cc_body, *, stream):
         sent.append(cc_body)
@@ -125,6 +143,7 @@ def responses_gateway(tmp_path, monkeypatch):
         "data": data,
         "cache": cache,
         "responses_db": responses_db,
+        "receipts_db": receipts_db,
         "media_db": media_db,
         "admin_db": admin_db,
         "person_id": user["id"],
@@ -141,6 +160,78 @@ def _post_response(fixture, body: dict):
         headers=fixture["headers"],
         json={"model": "default", **body},
     )
+
+
+def _response_retention(fixture, *, audience="client"):
+    receipts = receipt_store.recent(
+        path=fixture["receipts_db"], audience=audience,
+        viewer_person_id=fixture["person_id"] if audience == "client" else None,
+    )
+    response_receipts = [row for row in receipts if row["protocol"] == "openai.responses"]
+    assert response_receipts
+    return response_receipts[0]["retention"]
+
+
+def test_response_receipt_reports_committed_content_and_actual_unbounded_store(responses_gateway):
+    response = _post_response(responses_gateway, {"input": "receipt-kept"})
+    assert response.status_code == 200, response.text
+    assert _response_retention(responses_gateway) == [{
+        "kind": "conversation", "decision": "kept", "reason": "kept",
+        "kept_until_ms": None, "parts": ["accepted", "received"],
+        "limited_by": "unbounded_store",
+    }]
+
+
+@pytest.mark.parametrize(("body", "policy", "reason"), [
+    ({"input": "receipt-forget", "store": False}, None, "request_forget"),
+    ({"input": "receipt-kill"}, {"default_remember": True, "never_keep": True, "retention_cap": "never"}, "server_disabled"),
+])
+def test_response_receipt_names_the_control_that_prevented_storage(responses_gateway, body, policy, reason):
+    if policy is not None:
+        admin_store.put_operator_setting("prompt_memory", policy, path=responses_gateway["admin_db"])
+    response = _post_response(responses_gateway, body)
+    assert response.status_code == 200, response.text
+    assert _response_retention(responses_gateway) == [{
+        "kind": "conversation", "decision": "not_kept", "reason": reason,
+    }]
+
+
+def test_response_receipt_never_claims_kept_when_writer_fails(responses_gateway, monkeypatch):
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(proxy.responses_store, "save", fail_save)
+    response = _post_response(responses_gateway, {"input": "receipt-write-failure"})
+    assert response.status_code == 500, response.text
+    assert _response_retention(responses_gateway) == [{
+        "kind": "conversation", "decision": "failed", "reason": "write_failed",
+    }]
+
+
+def test_response_receipt_preserves_storage_unavailable_without_failing_request(responses_gateway, monkeypatch):
+    unavailable = retention.Decision(
+        responses_gateway["person_id"], False, "storage_unavailable", kind=retention.CONVERSATION,
+    )
+    monkeypatch.setattr(prompt_memory, "decide_for_person", lambda *_args, **_kwargs: unavailable)
+    response = _post_response(responses_gateway, {"input": "busy receipt"})
+    assert response.status_code == 200, response.text
+    assert _response_retention(responses_gateway) == [{
+        "kind": "conversation", "decision": "not_kept", "reason": "storage_unavailable",
+    }]
+
+
+def test_response_receipt_names_missing_stable_scope_instead_of_missing_person(responses_gateway, monkeypatch):
+    candidate = replace(responses_gateway["identity"], person_id=None, app_id=None)
+    monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, **_kw: proxy.AuthContext(identity=candidate))
+    monkeypatch.setattr(proxy, "_responses_scope", lambda _auth: None)
+    response = _post_response(responses_gateway, {"input": "unscoped prompt", "store": True})
+    assert response.status_code == 200, response.text
+    assert _response_retention(responses_gateway, audience="internal") == [{
+        "kind": "conversation", "decision": "not_kept", "reason": "no_scope",
+    }]
+    assert _response_retention(responses_gateway) == [{
+        "kind": "conversation", "decision": "not_kept",
+    }]
 
 
 def test_owned_personal_app_keeps_stored_response_by_default(responses_gateway):
@@ -233,23 +324,21 @@ def test_response_reads_delete_and_continuation_use_person_and_app(responses_gat
     assert response.status_code == expected, response.text
 
 
-@pytest.mark.parametrize("scope", ["service_app", "legacy_key", "lan", "no_auth"])
+@pytest.mark.parametrize("scope", ["service_app", "legacy_key"])
 @pytest.mark.parametrize("explicit_store", [False, True])
 def test_no_person_requires_explicit_store_and_durable_scope(responses_gateway, monkeypatch, scope, explicit_store):
     identity = responses_gateway["identity"]
     candidate = replace(identity, person_id=None)
     if scope == "legacy_key":
         candidate = replace(candidate, app_id=None)
-    elif scope == "lan":
-        candidate = proxy._identity_for("lan-bypass", "lan")
-    auth = proxy.NO_AUTH_CONTEXT if scope == "no_auth" else proxy.AuthContext(identity=candidate)
+    auth = proxy.AuthContext(identity=candidate)
     monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, **_kw: auth)
     body = {"input": "no-person-response-prompt"}
     if explicit_store:
         body["store"] = True
     response = _post_response(responses_gateway, body)
     assert response.status_code == 200, response.text
-    stored = explicit_store and scope in {"service_app", "legacy_key"}
+    stored = explicit_store
     row = proxy.responses_store.get(response.json()["id"], path=responses_gateway["responses_db"])
     assert (row is not None) == stored
     assert response.json()["store"] is stored
@@ -341,7 +430,7 @@ def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses
     owner = admin_store.upsert_oidc_user("local", "minting-owner", path=path)
     if app_kind == "service":
         sa = admin_store.ensure_service_account("shared-responses", path=path)
-        app = admin_store.create_app("Shared", kind="service", owner_service_account_id=sa["id"], path=path)
+        app = service_app("Shared", path=path)
     else:
         app = admin_store.get_app(gateway["app_id"], path=path)
     key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(

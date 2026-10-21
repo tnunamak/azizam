@@ -1,7 +1,7 @@
 """Fresh-instance API journey gauntlet for the Azizam.
 
 Exercises the full operator journey a sophisticated self-hoster needs after a
-fresh install: health, discovery, admin auth, service inventory, profile
+fresh install: health, discovery, admin auth, service inventory, access plan
 CRUD, app/key lifecycle, capabilities, OpenAI-compatible routes, denied
 requests, unknown-model errors, unsupported routes, and provider-native
 discovery.
@@ -116,6 +116,9 @@ class GatewayClient:
     def patch(self, path: str, *, bearer: str | None = None, body: Any = None) -> Resp:
         return self.request("PATCH", path, bearer=bearer, body=body)
 
+    def put(self, path: str, *, bearer: str | None = None, body: Any = None) -> Resp:
+        return self.request("PUT", path, bearer=bearer, body=body)
+
     def delete(self, path: str, *, bearer: str | None = None) -> Resp:
         return self.request("DELETE", path, bearer=bearer)
 
@@ -177,10 +180,6 @@ class TestPublicSurfaces(unittest.TestCase):
 
     # -- health --
 
-    def test_health_returns_200(self) -> None:
-        r = self.gw.get("/health")
-        self.assertEqual(r.status, 200, r.text())
-
     def test_health_json_ok_field(self) -> None:
         r = self.gw.get("/health")
         self.assertEqual(r.status, 200)
@@ -201,12 +200,6 @@ class TestPublicSurfaces(unittest.TestCase):
         svc = data["service"]
         self.assertIn("product", svc)
         self.assertIn("Azizam", svc["product"], svc["product"])
-
-    def test_well_known_azizam_alias(self) -> None:
-        r = self.gw.get("/.well-known/azizam")
-        self.assertEqual(r.status, 200, r.text()[:300])
-        data = r.json()
-        self.assertIn("service", data)
 
     def test_llms_txt(self) -> None:
         r = self.gw.get("/llms.txt")
@@ -272,7 +265,7 @@ class TestAdminPlane(unittest.TestCase):
     _app_id: str | None = None
     _app_key_id: str | None = None
     _app_api_key: str | None = None
-    _profile_id: str | None = None
+    _plan_id: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -299,10 +292,10 @@ class TestAdminPlane(unittest.TestCase):
                 )
             except Exception:
                 pass
-        if cls._profile_id:
+        if cls._plan_id:
             try:
                 cls.gw.delete(
-                    f"/admin/api/profiles/{cls._profile_id}",
+                    f"/admin/api/access-plans/{cls._plan_id}",
                     bearer=cls.admin_key,
                 )
             except Exception:
@@ -320,7 +313,7 @@ class TestAdminPlane(unittest.TestCase):
         self.assertIn("actor", data)
         self.assertIn("counts", data)
         counts = data["counts"]
-        for key in ("users", "apps", "profiles", "credentials"):
+        for key in ("users", "apps", "access_plans", "credentials"):
             self.assertIn(key, counts, f"overview.counts missing {key!r}")
 
     def test_admin_overview_requires_auth(self) -> None:
@@ -353,61 +346,58 @@ class TestAdminPlane(unittest.TestCase):
         data = r.json()
         self.assertIsInstance(data, dict, "service registry response must be a dict")
 
-    # -- profiles CRUD --
+    # -- access plans CRUD --
 
-    def test_admin_list_profiles(self) -> None:
-        r = self.gw.get("/admin/api/profiles", bearer=self._auth())
+    @staticmethod
+    def _plan_document(name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "can_use": {"chat": {"items": "all"}},
+            "direct_engine_access": {"engines": [], "operations": []},
+            "paid_providers": [],
+            "provider_fallback": False,
+            "can_load_models": False,
+            "receipt_detail": "basic",
+            "media_metadata": "none",
+        }
+
+    def test_admin_list_access_plans(self) -> None:
+        r = self.gw.get("/admin/api/access-plans", bearer=self._auth())
         self.assertEqual(r.status, 200, r.text()[:300])
         data = r.json()
-        self.assertIn("profiles", data)
-        self.assertIsInstance(data["profiles"], list)
+        self.assertIn("access_plans", data)
+        self.assertIsInstance(data["access_plans"], list)
 
-    def test_admin_create_profile(self) -> None:
+    def test_admin_create_access_plan(self) -> None:
         import time as _time
-        unique_id = f"gauntlet-probe-{int(_time.time())}"
         r = self.gw.post(
-            "/admin/api/profiles",
+            "/admin/api/access-plans",
             bearer=self._auth(),
-            body={
-                "name": unique_id,
-                "profile": {
-                    "id": unique_id,
-                    "protocols": ["openai.chat"],
-                    "fallback": {"cloud_allowed": False},
-                    "status_visibility": {"level": "basic"},
-                },
-            },
+            body=self._plan_document(f"gauntlet-probe-{int(_time.time())}"),
         )
         self.assertEqual(r.status, 201, r.text()[:300])
         data = r.json()
-        self.assertIn("profile", data)
-        TestAdminPlane._profile_id = data["profile"]["id"]
+        self.assertIn("access_plan", data)
+        TestAdminPlane._plan_id = data["access_plan"]["id"]
 
-    def test_admin_read_profile(self) -> None:
-        if not TestAdminPlane._profile_id:
-            self.skipTest("profile not created yet")
-        r = self.gw.get(
-            f"/admin/api/profiles/{TestAdminPlane._profile_id}",
-            bearer=self._auth(),
-        )
+    def test_admin_read_access_plan(self) -> None:
+        if not TestAdminPlane._plan_id:
+            self.skipTest("access plan not created yet")
+        r = self.gw.get(f"/admin/api/access-plans/{TestAdminPlane._plan_id}", bearer=self._auth())
         self.assertEqual(r.status, 200, r.text()[:300])
-        data = r.json()
-        self.assertIn("profile", data)
-        self.assertEqual(data["profile"]["id"], TestAdminPlane._profile_id)
+        self.assertEqual(r.json()["access_plan"]["id"], TestAdminPlane._plan_id)
 
-    def test_admin_update_profile(self) -> None:
-        if not TestAdminPlane._profile_id:
-            self.skipTest("profile not created yet")
+    def test_admin_update_access_plan(self) -> None:
+        if not TestAdminPlane._plan_id:
+            self.skipTest("access plan not created yet")
         import time as _time
-        new_name = f"gauntlet-upd-{int(_time.time() * 1000)}"
-        r = self.gw.patch(
-            f"/admin/api/profiles/{TestAdminPlane._profile_id}",
+        r = self.gw.put(
+            f"/admin/api/access-plans/{TestAdminPlane._plan_id}",
             bearer=self._auth(),
-            body={"name": new_name},
+            body=self._plan_document(f"gauntlet-upd-{int(_time.time() * 1000)}"),
         )
         self.assertEqual(r.status, 200, r.text()[:300])
-        data = r.json()
-        self.assertIn("profile", data)
+        self.assertIn("access_plan", r.json())
 
     # -- app CRUD --
 
@@ -419,10 +409,9 @@ class TestAdminPlane(unittest.TestCase):
         self.assertIsInstance(data["apps"], list)
 
     def test_admin_create_app(self) -> None:
-        profile_id = TestAdminPlane._profile_id
-        body: dict[str, Any] = {"name": "gauntlet-probe-app"}
-        if profile_id:
-            body["profile_id"] = profile_id
+        if not TestAdminPlane._plan_id:
+            self.skipTest("access plan not created yet")
+        body: dict[str, Any] = {"name": "gauntlet-probe-app", "access_plan": TestAdminPlane._plan_id}
         r = self.gw.post("/admin/api/apps", bearer=self._auth(), body=body)
         self.assertEqual(r.status, 201, r.text()[:300])
         data = r.json()
@@ -492,28 +481,18 @@ class TestAdminPlane(unittest.TestCase):
         )
         self.assertIsInstance(audit_list, list)
 
-    # -- policy simulation --
+    # -- check access --
 
-    def test_admin_policy_simulate(self) -> None:
+    def test_admin_check_access(self) -> None:
+        if not TestAdminPlane._plan_id:
+            self.skipTest("access plan not created yet")
         r = self.gw.post(
-            "/admin/api/policy/simulate",
+            "/admin/api/access/check",
             bearer=self._auth(),
-            body={
-                "profile": {
-                    "id": "sim-test",
-                    "protocols": ["openai.chat"],
-                    "fallback": {"cloud_allowed": False},
-                },
-                "request": {
-                    "protocol": "openai.chat",
-                    "intent": "chat.completion",
-                },
-            },
+            body={"plan": TestAdminPlane._plan_id, "request": {"intent": "image.generate", "model": "probe"}},
         )
-        self.assertIn(r.status, (200, 400), r.text()[:300])
-        if r.status == 200:
-            data = r.json()
-            self.assertIn("decision", data)
+        self.assertEqual(r.status, 200, r.text()[:300])
+        self.assertEqual(r.json()["decision"]["decision"], "denied")
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +762,7 @@ class TestRuntimePlane(unittest.TestCase):
     def test_provider_native_route_requires_policy(self) -> None:
         """Accessing a provider-native path without native_passthrough profile -> 403 or 404."""
         r = self.gw.get(
-            "/gateway/v1/providers/tabby/v1/models",
+            "/gateway/v1/providers/example-llm/v1/models",
             bearer=self._key(),
         )
         self.assertIn(
@@ -798,7 +777,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status == 404:
             record_gap(
                 "provider_native_not_found",
-                "GET /gateway/v1/providers/tabby/v1/models -> 404 (provider may not exist in this harness)",
+                "GET /gateway/v1/providers/example-llm/v1/models -> 404 (provider may not exist in this harness)",
                 {"status": r.status},
             )
 
@@ -835,10 +814,6 @@ class TestBootstrapDetect(unittest.TestCase):
                 "GET /setup did not contain expected state markers",
                 {"body_snippet": body[:200]},
             )
-
-    def test_health_is_always_public(self) -> None:
-        r = self.gw.get("/health")
-        self.assertEqual(r.status, 200)
 
 
 # ---------------------------------------------------------------------------

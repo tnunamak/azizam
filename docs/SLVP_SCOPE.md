@@ -24,18 +24,18 @@ Status on `main`:
 - A mounted `/gateway/v1` router exists in `proxy.py` for workflow discovery,
   capabilities, durable receipts, and media jobs.
 - A pure capability model exists in `gateway/capabilities.py`.
-- Pure app-profile policy module exists in `gateway/policy.py`.
-- A pure app-profile loader for existing key-entry config exists in
-  `gateway/profiles.py`.
-- `/admin` provides the thin operator loop for Apps, Profiles, runtime keys,
-  credential revocation, access-issue previews, and policy simulation.
-- `/` provides the thin normal-user account portal; `/me` is a legacy browser
-  alias that redirects to `/`. Signed-in users can create and delete their own
+- Pure App/access-plan policy module exists in `gateway/policy.py`.
+- Access plans v4 replace the legacy Profile loader and key-entry setup
+  model. The current loader path is UNVERIFIED here.
+- The web app at `/` provides the operator loop for Apps, Access plans, runtime
+  keys, credential revocation, access-issue previews, and policy simulation
+  (`/apps/`, `/people/`); the old `/admin` and `/me` browser pages are gone.
+- `/` is also the thin normal-user home. Signed-in users can create and delete their own
   Personal Apps, mint/revoke their own App keys, inspect an owned key's
   effective access, paste an `opk_...` key locally for setup help, and copy SDK
   settings. Media jobs remain on the gateway-native `/gateway/v1/media/jobs`
   API rather than being a user-page feed.
-- Profile-aware image-route receipts run in
+- Access-plan-aware image-route receipts run in
   `/v1/images/generations` and `/v1/images/edits`, recording safe field-name
   accepted/rejected/ignored outcomes, manifest identity, durable persistence,
   and body-free firehose events.
@@ -68,14 +68,14 @@ they become generally useful.
 The anti-micromanagement rule:
 
 ```text
-Profiles select capability metadata.
+Access plans select capability metadata.
 Capabilities declare metadata.
 Per-model/per-workflow allow-lists are overrides.
 ```
 
 Adding a model/workflow/service should usually mean editing that thing's
-manifest or adapter metadata, not every App or Profile. New stable interactive
-chat models can become available automatically to chat Profiles. Experimental,
+manifest or adapter metadata, not every App or Access plan. New stable interactive
+chat models can become available automatically to chat Access plans. Experimental,
 expensive, native, or admin-power capabilities require opt-in.
 
 Community fit:
@@ -90,7 +90,7 @@ Community fit:
 
 Admin access UX research and prior-art notes live in
 `docs/ADMIN_ACCESS_UX_RESEARCH.md`. That note is the reference for why the UI
-uses task-shaped grant flows while preserving Apps, Profiles, and Keys as the
+uses task-shaped grant flows while preserving Apps, Access plans, and Keys as the
 durable access model.
 
 ## Product Model (Brief)
@@ -99,7 +99,7 @@ Detail lives in `docs/CORE_CONTRACTS.md`; the short version the dashboard
 should optimize for is:
 
 ```text
-User -> owns App -> has Profile -> has Keys -> produces Activity
+User -> owns App -> has Access plan -> has Keys -> produces Activity
 ```
 
 Capabilities, Providers, Workflows, Jobs, Receipts, UsageRecords, resource
@@ -107,7 +107,7 @@ claims, service accounts, roles, and audit events are still real internal
 facts. They should surface when they answer a concrete operator question, not
 as concepts every family member or app integrator has to learn.
 
-Invariant: every executed request resolves an App + Profile + policy decision
+Invariant: every executed request resolves an App + Access plan + policy decision
 before it runs, and produces exactly one body-free Receipt. Anything that
 violates that invariant is out of scope for the SLVP.
 
@@ -119,9 +119,9 @@ Core should include:
 - backend adapter contract
 - workflow manifest schema
 - media job/assets API
-- access plane: Users, Apps, Profiles, Keys
+- access plane: Users, Apps, Access plans, Keys
 - route receipts
-- app templates, policy Profiles, and compatibility harness
+- app templates, policy Access plans, and compatibility harness
 - diagnostics
 - resource-aware scheduling boundary
 - native passthrough lanes with policy controls
@@ -169,7 +169,7 @@ Examples:
 - `strength`
 
 These are still manifest inputs, but the gateway can give them nicer validation,
-docs, and app/profile support.
+docs, and App/access-plan support.
 
 ### 3. Canonical Intent Field
 

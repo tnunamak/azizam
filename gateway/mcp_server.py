@@ -1,4 +1,4 @@
-"""MCP server for the gateway: three meta-tools over the existing capability core.
+"""MCP server for the gateway: media meta-tools and optional owner operator commands.
 
 Transport: Streamable HTTP at one endpoint (``POST /mcp``). Protocol: the current
 revision (2026-07-28, stateless: every request carries its version and
@@ -6,9 +6,19 @@ identity in ``_meta``, no ``initialize``, no session) plus the handshake-based
 revisions 2025-03-26 to 2025-11-25, which Claude Code and most SDKs still speak.
 Legacy clients get a session-less ``initialize`` answer (we never mint
 ``Mcp-Session-Id``); ``GET`` and ``DELETE`` return 405 because the server has
-no stream to offer. Responses are always plain JSON.
+no stream to offer. Responses are always plain JSON. 2026-07-28 requests must
+carry their version and client capabilities in ``_meta`` (400/-32602 if not)
+and do not have ``initialize`` or ``ping`` (404/-32601). JSON-RPC batches are
+2025-03-26 only.
 
-Tools (about 200 standing tokens each, generated from discovery, never one tool
+Authorization: every request is authenticated by ``McpDeps.authenticate``,
+which accepts an API key or an OAuth access token issued for this endpoint
+(gateway/mcp_oauth.py). A 401 carries an RFC 9728 ``resource_metadata``
+challenge, and both protected-resource metadata documents name the
+authorization server, so any spec-following client can sign in. Browser
+``Origin`` headers must be on an explicit list.
+
+Tools (about 200 standing tokens each for the media tools, generated from discovery, never one tool
 per model):
 
 * ``capabilities``: list or describe workflows, stable aliases and operations
@@ -16,6 +26,10 @@ per model):
 * ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
+* ``stt_measurement`` (when wired): owner long-audio settings and measurement jobs.
+* ``rename_app`` and ``rename_key``: give one of the signed-in person's own Apps or keys a new name. They
+  work for a client the person signed in (an OAuth connection) whose consent included renaming (the grant's
+  ``mcp:rename`` scope), never for an App key, and change a label only: no new key, no new access.
 
 The module owns no business logic. Authentication, profile policy, receipts and
 job storage stay in the core routes: every action is dispatched in process to
@@ -25,7 +39,7 @@ base64 blobs. A feature the core cannot do returns an explicit tool error.
 """
 from __future__ import annotations
 
-from gateway.media_jobs import PHASE_FIELDS, is_terminal
+from gateway.media_jobs import ERROR_FIELDS, PHASE_FIELDS, is_terminal
 
 import asyncio
 import base64
@@ -35,6 +49,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
+
+from gateway.stt_samples import RIGHTS_CAVEAT
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -47,7 +63,10 @@ MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)
 
+OLDEST_VERSION = LEGACY_VERSIONS[-1]
+
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
+META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
 
 # JSON-RPC and MCP error codes.
 PARSE_ERROR = -32700
@@ -62,7 +81,8 @@ SERVER_NAME = "azizam"
 INSTRUCTIONS = (
     "Media generation gateway. Call `capabilities` to see workflows and aliases "
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
-    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs."
+    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs. "
+    "`rename_app` and `rename_key` rename the signed-in person's own apps and keys."
 )
 
 DEFAULT_WAIT_SECONDS = 30
@@ -99,8 +119,26 @@ class McpDeps:
     read_asset: Callable[[Request, Any, str], bytes | None]
     public_base_url: Callable[[Request], str | None]
     server_version: str = "1"
-    allowed_origins: Callable[[], list[str]] = lambda: []
+    # Browser origins that may call the endpoint (DNS-rebinding defence). The
+    # request's own Host is not evidence: a rebinding page controls it.
+    allowed_origins: Callable[[Request], list[str]] = lambda _request: []
     poll_interval: float = 1.0
+    # (request, auth, entry) -> whether this caller may see the entry. An entry is a
+    # workflow summary ({"id", "intent"}) or a speech name ({"id", "operation": "speech"}).
+    # The default shows everything; the gateway passes the same check discovery uses.
+    visible: Callable[[Request, Any, Mapping[str, Any]], bool] = lambda _request, _auth, _entry: True
+    # OAuth (RFC 9728): issuers listed in the protected-resource metadata and
+    # the scopes the 401 challenge asks for. Empty means API keys only.
+    authorization_servers: Callable[[Request], list[str]] = lambda _request: []
+    scopes: tuple[str, ...] = ()
+    stt_measurement: Callable[..., Awaitable[dict]] | None = None
+    # The owner-only operator tool is omitted from discovery unless this check passes.
+    owner_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
+    # (request, auth, tool name, arguments) -> the result, or a ``CallError`` the model can act on. The gateway
+    # decides who may rename what; ``None`` means this host offers no renaming.
+    rename: Callable[[Request, Any, str, Mapping[str, Any]], dict[str, Any]] | None = None
+    retention_ledger: Callable[[Request, Any, str | None], dict[str, Any] | None] | None = None
+    retention_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -122,18 +160,17 @@ def _decode_header_value(value: str) -> str:
     return value
 
 
-def _origin_allowed(request: Request, extra: list[str]) -> bool:
+def _normal_origin(value: str) -> str:
+    parts = urlsplit(value.strip())
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}" if parts.scheme and parts.netloc else ""
+
+
+def _origin_allowed(request: Request, allowed: list[str]) -> bool:
     origin = request.headers.get("origin")
     if not origin:
         return True  # not a browser
-    if origin in extra:
-        return True
-    host = urlsplit(origin).netloc.lower()
-    own = {
-        (request.headers.get("x-forwarded-host") or "").lower(),
-        (request.headers.get("host") or "").lower(),
-    }
-    return bool(host) and host in own
+    origin = _normal_origin(origin)
+    return bool(origin) and origin in {_normal_origin(value) for value in allowed}
 
 
 # ---------------------------------------------------------------- tool schemas
@@ -197,8 +234,69 @@ TOOLS: list[dict[str, Any]] = [
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
+    {
+        "name": "rename_app",
+        "title": "Rename one of your apps",
+        "description": (
+            "Give one of the signed-in person's own apps a new name. Only the name changes: its keys and access stay."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "The app's current name (or its id if two share a name)."},
+                "name": {"type": "string", "minLength": 1, "maxLength": 80, "description": "The new name."},
+            },
+            "required": ["app", "name"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "rename_key",
+        "title": "Rename one of your keys",
+        "description": (
+            "Give an active key of one of the signed-in person's own apps a new name. Only the label changes: the key "
+            "still works and no new key is made."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "The app's current name (or its id)."},
+                "key": {"type": "string", "description": "The key's current name (or its id if two share a name)."},
+                "name": {"type": "string", "minLength": 1, "maxLength": 80, "description": "The new name."},
+            },
+            "required": ["app", "key", "name"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
 ]
 
+TOOLS.append({
+    "name": "stt_measurement", "title": "Long-audio operator settings and measurement",
+    "description": "Owner only (MCP OAuth). Configure saved cutting settings independently, or fetch public human-transcribed samples and measure through the gateway. Start returns a durable job id; status reports progress, deletions by piece length, seam excess versus noise and a recommendation. Cancel stops work. Apply is an explicit separate action; configure/apply require the current registry revision from options. " + RIGHTS_CAVEAT,
+    "inputSchema": {"type": "object", "properties": {
+        "service_id": {"type": "string"}, "action": {"type": "string", "enum": ["options", "configure", "start", "status", "cancel", "apply"]},
+        "job_id": {"type": "string"}, "revision": {"type": "string"},
+        "inputs": {"type": "object", "properties": {"sample_ids": {"type": "array", "items": {"type": "string"}},
+            "lengths": {"type": "array", "items": {"type": "number"}}, "search_widths": {"type": "array", "items": {"type": "number"}}, "model": {"type": "string"}}, "additionalProperties": False},
+        "settings": {"type": "object", "properties": {"target_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "search_seconds": {"type": "number", "minimum": 0}, "max_segment_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "native_long_audio_offline": {"type": "boolean"},
+            "native_long_audio_streaming": {"type": "boolean"}}, "additionalProperties": False},
+    }, "required": ["service_id", "action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+})
+
+TOOLS.append({
+    "name": "requests", "title": "Read the retention ledger",
+    "description": "Owner and administrators can see dated facts about where request content may remain. Action: ledger.",
+    "inputSchema": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["ledger"]},
+        "request_id": {"type": "string", "description": "Optional saved request id; omit for today's facts."},
+    }, "required": ["action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+})
 
 # ------------------------------------------------------------------ result I/O
 
@@ -284,7 +382,13 @@ class Tools:
 
     def _speech_names(self) -> list[str]:
         section = (self.deps.aliases().get("operations") or self.deps.aliases()).get("speech") or {}
-        return [str(a.get("alias")) for a in section.get("stable") or [] if a.get("alias")]
+        return [str(a["alias"]) for a in section.get("stable") or [] if a.get("alias")
+                and self.deps.visible(self.request, self.auth, {"id": str(a["alias"]), "operation": "speech"})]
+
+    def _catalog(self) -> list[dict[str, Any]]:
+        """The workflows this caller may see: what discovery lists, and no hidden ones."""
+        return [entry for entry in self.deps.catalog()
+                if self.deps.visible(self.request, self.auth, {"id": entry["id"], "intent": entry["intent"]})]
 
     def resolve(self, target: str, inputs: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any] | None, str | None]:
         """(kind, catalog entry, speech model). kind is ``workflow`` or ``speech``.
@@ -295,7 +399,7 @@ class Tools:
         t = target.strip()
         if t == SPEECH_TARGET or t in self._speech_names():
             return "speech", None, None if t == SPEECH_TARGET else t
-        entries = self.deps.catalog()
+        entries = self._catalog()
         matches = [e for e in entries if t in (e["id"], e["short_id"]) or t in (e.get("aliases") or [])]
         if matches:
             def rank(entry: Mapping[str, Any]) -> tuple[int, int]:
@@ -333,7 +437,7 @@ class Tools:
         query = str(args.get("query") or "").lower()
         intent = str(args.get("intent") or "")
         rows = []
-        for entry in self.deps.catalog():
+        for entry in self._catalog():
             hay = " ".join([entry["id"], entry.get("description") or "", entry["intent"], *(entry.get("aliases") or [])]).lower()
             if query and query not in hay or intent and entry["intent"] != intent:
                 continue
@@ -477,6 +581,8 @@ class Tools:
             out["assets"] = await self._job_assets(job_id, out.get("target") or "result")
         elif state["status"] in ("failed", "canceled"):
             out["error"] = state["error"] or state["status"]
+            # Who refused: the gateway (an access plan, inputs, capacity) or the upstream work.
+            out.update({name: state["raw"][name] for name in ERROR_FIELDS if state["raw"].get(name) is not None})
         else:
             out["next"] = "Call `job` with this job_id to keep waiting (set wait_seconds)."
         return out
@@ -503,32 +609,85 @@ class Tools:
         return await self._await(job_id, wait, None)
 
 
-def tool_result(payload: Mapping[str, Any], *, is_error: bool = False) -> dict[str, Any]:
-    """MCP tool result: JSON text for any client, structured content, links for media."""
+    async def rename(self, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``rename_app`` and ``rename_key``: the gateway renames; this adapter only checks the arguments are text."""
+        fields = ("app", "name") if tool == "rename_app" else ("app", "key", "name")
+        for field in fields:
+            if not isinstance(args.get(field), str) or not args[field].strip():
+                raise CallError(f"`{field}` is required")
+        unknown = sorted(set(args) - set(fields))
+        if unknown:
+            raise CallError(f"unknown argument {unknown[0]!r}")
+        if self.deps.rename is None:
+            raise CallError("this gateway does not offer renaming over MCP")
+        return await asyncio.to_thread(self.deps.rename, self.request, self.auth, tool, dict(args))
+
+
+def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: str = MODERN_VERSION) -> dict[str, Any]:
+    """MCP tool result: JSON text for any client, structured content, links for media.
+
+    2025-03-26 has neither ``structuredContent`` nor ``resource_link`` (both
+    arrived in 2025-06-18), so its clients get text alone. Errors lead with a
+    plain message; the JSON block preserves details for every protocol era.
+    """
     content: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, separators=(",", ":"), default=str)}]
-    for asset in payload.get("assets") or []:
-        link: dict[str, Any] = {"type": "resource_link", "uri": asset["url"], "name": asset.get("name") or "asset"}
-        if asset.get("media_type"):
-            link["mimeType"] = asset["media_type"]
-        if asset.get("size_bytes") is not None:
-            link["size"] = asset["size_bytes"]
-        content.append(link)
-    result: dict[str, Any] = {"content": content, "structuredContent": dict(payload)}
+    if is_error:
+        content.insert(0, {"type": "text", "text": str(payload.get("error") or "Tool execution failed")})
+    if version == OLDEST_VERSION:
+        result: dict[str, Any] = {"content": content}
+    else:
+        for asset in payload.get("assets") or []:
+            link: dict[str, Any] = {"type": "resource_link", "uri": asset["url"], "name": asset.get("name") or "asset"}
+            if asset.get("media_type"):
+                link["mimeType"] = asset["media_type"]
+            if asset.get("size_bytes") is not None:
+                link["size"] = asset["size_bytes"]
+            content.append(link)
+        result = {"content": content, "structuredContent": dict(payload)}
     if is_error:
         result["isError"] = True
     return result
 
 
-async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
+                    version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
-    handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
+    if name == "requests":
+        if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
+                or args.get("action") != "ledger" or set(args) - {"action", "request_id"}):
+            return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
+                               is_error=True, version=version)
+        request_id = args.get("request_id")
+        if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
+            return tool_result({"status": "error", "error": "request_id must be a saved request id."},
+                               is_error=True, version=version)
+        try:
+            view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
+        except PermissionError:
+            view = None
+        return tool_result({"ledger": view} if view is not None else
+                           {"status": "error", "error": "Ledger not found."},
+                           is_error=view is None, version=version)
+    if name == "stt_measurement":
+        if deps.stt_measurement is None:
+            return tool_result({"status": "error", "error": "Long-audio operator commands are unavailable."}, is_error=True, version=version)
+        try:
+            return tool_result(await deps.stt_measurement(request, auth, args), version=version)
+        except CallError as error:
+            return tool_result({"status": "error", "error": str(error), **error.details}, is_error=True, version=version)
+    handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job,
+               "rename_app": lambda a: tools.rename("rename_app", a), "rename_key": lambda a: tools.rename("rename_key", a)}[name]
     try:
-        return tool_result(await handler(args))
+        # Both run and job expose generation failures to the caller as errors.
+        # A canceled job is a valid outcome, including an explicit cancel request.
+        payload = await handler(args)
+        return tool_result(payload, is_error=payload.get("status") == "failed", version=version)
     except CallError as exc:
-        return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True)
+        return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True, version=version)
     except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
         print(f"[mcp] tool {name} failed: {type(exc).__name__}: {exc}", flush=True)
-        return tool_result({"status": "error", "error": "the adapter hit an unexpected error; see the gateway log"}, is_error=True)
+        return tool_result({"status": "error", "error": "the adapter hit an unexpected error; see the gateway log"},
+                           is_error=True, version=version)
 
 
 # ------------------------------------------------------------------- transport
@@ -538,37 +697,57 @@ def _json(status: int, body: Any, headers: Mapping[str, str] | None = None) -> J
     return JSONResponse(body, status_code=status, headers=dict(headers or {}))
 
 
-def _validate_modern(request: Request, msg: Mapping[str, Any], meta: Mapping[str, Any]) -> JSONResponse | None:
+def _bad_request(mid: Any, code: int, message: str, data: Any = None) -> JSONResponse:
+    return _json(400, rpc_error(mid, code, message, data))
+
+
+def _validate_modern(request: Request, msg: Mapping[str, Any]) -> JSONResponse | None:
+    """2026-07-28: every request carries its version and capabilities in ``_meta``
+    and mirrors the version, method and tool name in headers."""
     mid = msg.get("id")
-    header_version = request.headers.get("mcp-protocol-version")
+    params = msg.get("params")
+    meta = params.get("_meta") if isinstance(params, Mapping) else None
+    if not isinstance(meta, Mapping):
+        return _bad_request(mid, INVALID_PARAMS, "Invalid params: _meta is required")
     version = meta.get(META_VERSION)
+    if not isinstance(version, str) or not version:
+        return _bad_request(mid, INVALID_PARAMS, f"Invalid params: _meta.{META_VERSION} is required")
+    if not isinstance(meta.get(META_CAPABILITIES), Mapping):
+        return _bad_request(mid, INVALID_PARAMS, f"Invalid params: _meta.{META_CAPABILITIES} is required")
+    header_version = request.headers.get("mcp-protocol-version")
     if version != header_version:
-        return _json(400, rpc_error(mid, HEADER_MISMATCH,
-                                    f"Header mismatch: MCP-Protocol-Version {header_version!r} does not match _meta {version!r}"))
+        return _bad_request(mid, HEADER_MISMATCH,
+                            f"Header mismatch: MCP-Protocol-Version {header_version!r} does not match _meta {version!r}")
     if version != MODERN_VERSION:
-        return _json(400, rpc_error(mid, UNSUPPORTED_VERSION, "Unsupported protocol version",
-                                    {"supported": list(SUPPORTED_VERSIONS), "requested": version}))
+        return _bad_request(mid, UNSUPPORTED_VERSION, "Unsupported protocol version",
+                            {"supported": list(SUPPORTED_VERSIONS), "requested": version})
     if request.headers.get("mcp-method") != msg.get("method"):
-        return _json(400, rpc_error(mid, HEADER_MISMATCH,
-                                    f"Header mismatch: Mcp-Method {request.headers.get('mcp-method')!r} does not match body {msg.get('method')!r}"))
+        return _bad_request(mid, HEADER_MISMATCH,
+                            f"Header mismatch: Mcp-Method {request.headers.get('mcp-method')!r} does not match body {msg.get('method')!r}")
     if msg.get("method") == "tools/call":
-        name = (msg.get("params") or {}).get("name")
+        name = (params or {}).get("name")
         header = request.headers.get("mcp-name")
         if header is None or _decode_header_value(header) != name:
-            return _json(400, rpc_error(mid, HEADER_MISMATCH,
-                                        f"Header mismatch: Mcp-Name {header!r} does not match body {name!r}"))
+            return _bad_request(mid, HEADER_MISMATCH, f"Header mismatch: Mcp-Name {header!r} does not match body {name!r}")
     return None
 
 
-async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mapping[str, Any], modern: bool) -> dict[str, Any] | None:
-    """One JSON-RPC message. ``None`` means a notification (no response)."""
+def _valid_envelope(msg: Any) -> bool:
+    return (isinstance(msg, Mapping) and msg.get("jsonrpc") == "2.0" and isinstance(msg.get("method"), str)
+            and ("params" not in msg or isinstance(msg["params"], Mapping))
+            and ("id" not in msg or (isinstance(msg["id"], (str, int)) and not isinstance(msg["id"], bool))))
+
+
+async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mapping[str, Any], version: str) -> dict[str, Any] | None:
+    """One JSON-RPC message under ``version``. ``None`` means a notification (no response)."""
     mid, method = msg.get("id"), msg.get("method")
     params = msg.get("params") or {}
+    modern = version == MODERN_VERSION
     if "id" not in msg:
         return None
-    if method == "ping":
+    if method == "ping" and not modern:
         result: dict[str, Any] = {}
-    elif method == "initialize":
+    elif method == "initialize" and not modern:
         asked = params.get("protocolVersion")
         result = {
             "protocolVersion": asked if asked in LEGACY_VERSIONS else LEGACY_VERSIONS[0],
@@ -580,83 +759,139 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
         result = {
             "supportedVersions": list(SUPPORTED_VERSIONS),
             "capabilities": {"tools": {"listChanged": False}},
-            "_meta": {"io.modelcontextprotocol/serverInfo": {"name": SERVER_NAME, "version": deps.server_version}},
             "instructions": INSTRUCTIONS, "ttlMs": 3600000, "cacheScope": "public",
         }
     elif method == "tools/list":
-        result = {"tools": TOOLS}
+        owner_can_measure = (deps.stt_measurement is not None
+                             and deps.owner_visible(request, auth))
+        can_read_ledger = deps.retention_ledger is not None and deps.retention_visible(request, auth)
+        result = {"tools": [tool for tool in TOOLS if
+                             (tool["name"] != "stt_measurement" or owner_can_measure)
+                             and (tool["name"] != "requests" or can_read_ledger)]}
         if modern:
-            result.update(ttlMs=300000, cacheScope="public")
+            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure or can_read_ledger else "public")
     elif method == "tools/call":
         name = params.get("name")
-        if name not in {t["name"] for t in TOOLS}:
+        if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:
             return rpc_error(mid, INVALID_PARAMS, f"Unknown tool: {name}")
-        args = params.get("arguments") or {}
+        args = params.get("arguments", {})
         if not isinstance(args, Mapping):
             return rpc_error(mid, INVALID_PARAMS, "arguments must be an object")
-        result = await call_tool(deps, request, auth, name, args)
+        result = await call_tool(deps, request, auth, name, args, version)
     else:
         return rpc_error(mid, METHOD_NOT_FOUND, f"Method not found: {method}")
     if modern:
-        result = {"resultType": "complete", **result}
+        meta = {**(result.get("_meta") or {}), "io.modelcontextprotocol/serverInfo": {"name": SERVER_NAME, "version": deps.server_version}}
+        result = {"resultType": "complete", **result, "_meta": meta}
     return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
+def _quoted(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def bearer_challenge(metadata_url: str, scopes: tuple[str, ...], *, error: str | None = None,
+                     description: str | None = None) -> str:
+    """RFC 6750 challenge with the RFC 9728 ``resource_metadata`` pointer."""
+    parts = []
+    if error:
+        parts.append(f'error="{_quoted(error)}"')
+    if description:
+        parts.append(f'error_description="{_quoted(description)}"')
+    parts.append(f'resource_metadata="{_quoted(metadata_url)}"')
+    if scopes:
+        parts.append(f'scope="{_quoted(" ".join(scopes))}"')
+    return "Bearer " + ", ".join(parts)
+
+
 def register_mcp_routes(app: FastAPI, deps: McpDeps, *, path: str = "/mcp") -> None:
+    def base(request: Request) -> str:
+        return (deps.public_base_url(request) or "").rstrip("/")
+
     def metadata_url(request: Request) -> str:
-        base = (deps.public_base_url(request) or "").rstrip("/")
-        return f"{base}/.well-known/oauth-protected-resource{path}"
+        return f"{base(request)}/.well-known/oauth-protected-resource{path}"
+
+    async def dispatch(request: Request, auth: Any, body: Any) -> Response:
+        header_version = request.headers.get("mcp-protocol-version")
+        if header_version is not None and header_version not in SUPPORTED_VERSIONS:
+            mid = body.get("id") if isinstance(body, Mapping) else None
+            return _bad_request(mid, UNSUPPORTED_VERSION, "Unsupported protocol version",
+                                {"supported": list(SUPPORTED_VERSIONS), "requested": header_version})
+        if isinstance(body, list):
+            # JSON-RPC batches exist only in 2025-03-26, whose clients send no
+            # version header.
+            if header_version not in (None, OLDEST_VERSION) or not body:
+                return _bad_request(None, INVALID_REQUEST, "Invalid Request: batches are not supported")
+            replies = []
+            for msg in body:
+                if not _valid_envelope(msg):
+                    replies.append(rpc_error(msg.get("id") if isinstance(msg, Mapping) else None, INVALID_REQUEST, "Invalid Request"))
+                    continue
+                reply = await handle_message(deps, request, auth, msg, OLDEST_VERSION)
+                if reply:
+                    replies.append(reply)
+            return _json(200, replies) if replies else Response(status_code=202)
+        if not _valid_envelope(body):
+            return _bad_request(body.get("id") if isinstance(body, Mapping) else None, INVALID_REQUEST, "Invalid Request")
+        params = body.get("params") or {}
+        meta = params.get("_meta") if isinstance(params.get("_meta"), Mapping) else {}
+        modern = header_version == MODERN_VERSION or META_VERSION in meta
+        if "id" not in body:  # notification
+            return Response(status_code=202)
+        if modern:
+            failure = _validate_modern(request, body)
+            if failure is not None:
+                return failure
+            version = MODERN_VERSION
+        elif body["method"] == "initialize":
+            asked = params.get("protocolVersion")
+            version = asked if asked in LEGACY_VERSIONS else LEGACY_VERSIONS[0]
+        else:
+            # 2025-06-18 and later send the version header after initialize;
+            # a request without one is 2025-03-26.
+            version = header_version or OLDEST_VERSION
+        reply = await handle_message(deps, request, auth, body, version)
+        status = 404 if modern and reply and reply.get("error", {}).get("code") == METHOD_NOT_FOUND else 200
+        return _json(status, reply)
 
     @app.post(path, include_in_schema=False)
     async def mcp_post(request: Request) -> Response:
-        if not _origin_allowed(request, deps.allowed_origins()):
+        if not _origin_allowed(request, deps.allowed_origins(request)):
             return _json(403, rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
-        auth = deps.authenticate(request, path)
+        auth = await asyncio.to_thread(deps.authenticate, request, path)
         if isinstance(auth, Response):
             if auth.status_code == 401:
-                auth.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata_url(request)}"'
+                presented = bool(request.headers.get("authorization"))
+                auth.headers["WWW-Authenticate"] = bearer_challenge(
+                    metadata_url(request), deps.scopes,
+                    error="invalid_token" if presented else None,
+                    description="The access token is missing, expired or revoked" if presented else None,
+                )
             return auth
         try:
             body = json.loads(await request.body())
         except (ValueError, UnicodeDecodeError):
-            return _json(400, rpc_error(None, PARSE_ERROR, "Parse error"))
-        if isinstance(body, list):  # JSON-RPC batch: only 2025-03-26 allowed these
-            if not body or not all(isinstance(m, Mapping) for m in body):
-                return _json(400, rpc_error(None, INVALID_REQUEST, "Invalid batch"))
-            replies = [r for r in [await handle_message(deps, request, auth, m, False) for m in body] if r]
-            return _json(200, replies) if replies else Response(status_code=202)
-        if not isinstance(body, Mapping) or body.get("jsonrpc") != "2.0" or not isinstance(body.get("method"), str):
-            return _json(400, rpc_error(None, INVALID_REQUEST, "Invalid Request"))
-
-        params = body.get("params") if isinstance(body.get("params"), Mapping) else {}
-        meta = params.get("_meta") if isinstance(params.get("_meta"), Mapping) else {}
-        header_version = request.headers.get("mcp-protocol-version")
-        modern = body["method"] != "initialize" and (META_VERSION in meta or header_version == MODERN_VERSION)
-        if "id" not in body:  # notification
-            return Response(status_code=202)
-        if modern:
-            failure = _validate_modern(request, body, meta)
-            if failure is not None:
-                return failure
-        elif header_version and header_version not in SUPPORTED_VERSIONS:
-            return _json(400, rpc_error(body.get("id"), UNSUPPORTED_VERSION, "Unsupported protocol version",
-                                        {"supported": list(SUPPORTED_VERSIONS), "requested": header_version}))
-        reply = await handle_message(deps, request, auth, body, modern)
-        status = 404 if modern and reply and reply.get("error", {}).get("code") == METHOD_NOT_FOUND else 200
-        return _json(status, reply)
+            return _bad_request(None, PARSE_ERROR, "Parse error")
+        return await dispatch(request, auth, body)
 
     @app.api_route(path, methods=["GET", "DELETE"], include_in_schema=False)
     async def mcp_no_stream(request: Request) -> Response:
         return Response(status_code=405, headers={"Allow": "POST"})
 
     async def protected_resource(request: Request) -> JSONResponse:
-        base = (deps.public_base_url(request) or "").rstrip("/")
-        return JSONResponse({
-            "resource": f"{base}{path}",
+        root = base(request)
+        document: dict[str, Any] = {
+            "resource": f"{root}{path}",
             "bearer_methods_supported": ["header"],
             "resource_name": SERVER_NAME,
-            "resource_documentation": f"{base}/llms.txt",
-        })
+            "resource_documentation": f"{root}/llms.txt",
+        }
+        servers = deps.authorization_servers(request)
+        if servers:
+            document["authorization_servers"] = servers
+        if deps.scopes:
+            document["scopes_supported"] = list(deps.scopes)
+        return JSONResponse(document, headers={"access-control-allow-origin": "*", "cache-control": "no-store"})
 
     app.add_api_route(f"/.well-known/oauth-protected-resource{path}", protected_resource, methods=["GET"], include_in_schema=False)
     app.add_api_route("/.well-known/oauth-protected-resource", protected_resource, methods=["GET"], include_in_schema=False)

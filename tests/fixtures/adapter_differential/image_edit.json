@@ -1,0 +1,680 @@
+{
+  "assets": [
+    {
+      "json": {
+        "asset_id": "img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f",
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f.meta.json",
+      "size": 148,
+      "suffix": ".json"
+    },
+    {
+      "name": "4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f.png",
+      "sha256": "4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f",
+      "size": 77,
+      "suffix": ".png"
+    }
+  ],
+  "caller": [
+    {
+      "label": "edit with image and mask",
+      "request": {
+        "body": {
+          "boundary": "<boundary>",
+          "epilogue": "\r\n",
+          "kind": "multipart",
+          "parts": [
+            {
+              "body": {
+                "kind": "text",
+                "text": "make the fox blue"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"prompt\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "b64_json"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"response_format\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "opaque"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"background\""
+            },
+            {
+              "body": {
+                "kind": "binary",
+                "len": 77,
+                "magic": "89504e470d0a1a0a",
+                "sha256": "f3b51772604a6b6908a27ebfe2c9fa7d34167cfdb752d650b46b669834a09551"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"in.png\"\r\nContent-Type: image/png"
+            },
+            {
+              "body": {
+                "kind": "binary",
+                "len": 78,
+                "magic": "89504e470d0a1a0a",
+                "sha256": "47c0b232b83e0aaf92d46f39b9066c67528fc4c31fc88bc50d7d8e2291137145"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"mask\"; filename=\"mask.png\"\r\nContent-Type: image/png"
+            }
+          ],
+          "preamble": ""
+        },
+        "headers": {
+          "content-length": "759",
+          "content-type": "multipart/form-data; boundary=<boundary>"
+        },
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"created\": \"<time>\", \"data\": [{\"asset_id\": \"img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f\", \"asset_url\": \"http://gateway.test/v1/assets/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\", \"media_type\": \"image/png\", \"b64_json\": \"iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGMUERFhwAaYsIoOWgkANXAATOBnBRAAAAAASUVORK5CYII=\"}], \"output_format\": \"png\", \"background\": \"opaque\", \"size\": \"8x8\"}"
+        },
+        "headers": {
+          "content-length": "<486 after normalisation>",
+          "content-type": "application/json",
+          "x-image-background-removal": "false",
+          "x-image-background-removal-source": "forced_bypass",
+          "x-image-mask": "workflow",
+          "x-image-mask-source": "grayscale",
+          "x-image-returned": "1",
+          "x-image-rounds": "1"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "POST /v1/images/edits multipart with image and mask: upload then prompt",
+  "engine_requests": [
+    {
+      "body": {
+        "boundary": "<boundary>",
+        "epilogue": "\r\n",
+        "kind": "multipart",
+        "parts": [
+          {
+            "body": {
+              "kind": "binary",
+              "len": 77,
+              "magic": "89504e470d0a1a0a",
+              "sha256": "96a23e926e44e62998cbea0d432570960c9edde0ec32432957151b851053a00d"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"in.png\"\r\nContent-Type: image/png"
+          }
+        ],
+        "preamble": ""
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "245",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/upload/image",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"qwen_image_2.1_int8_convrot.safetensors\",\"weight_dtype\":\"default\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen3vl_8b_w4a8.safetensors\",\"type\":\"qwen_image\",\"device\":\"default\"}},\"3\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"texture_fix_vae_for_qwen_image_2.1_bf16.safetensors\"}},\"4\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"uploaded.png\"}},\"5\":{\"class_type\":\"QwenImage21Cache\",\"inputs\":{\"model\":[\"1\",0],\"device\":\"auto\",\"dtype\":\"default\"}},\"6\":{\"class_type\":\"JWString\",\"inputs\":{\"text\":\"make the fox blue\"}},\"9\":{\"class_type\":\"TextEncodeQwenImage21\",\"inputs\":{\"clip\":[\"2\",0],\"prompt\":[\"6\",0],\"negative_prompt\":\"\",\"resolution\":1024,\"vae\":[\"3\",0],\"images.image_1\":[\"4\",0]}},\"10\":{\"class_type\":\"LanPaint_ImageEncode\",\"inputs\":{\"image\":[\"4\",0],\"vae\":[\"3\",0],\"mask\":[\"15\",0]}},\"11\":{\"class_type\":\"LanPaint_KSampler\",\"inputs\":{\"model\":[\"5\",0],\"seed\":192058881,\"steps\":25,\"cfg\":1.0,\"sampler_name\":\"euler\",\"scheduler\":\"karras\",\"positive\":[\"9\",0],\"negative\":[\"9\",1],\"latent_image\":[\"10\",0],\"denoise\":1.0,\"LanPaint_NumSteps\":5,\"LanPaint_PromptMode\":\"Image First\",\"LanPaint_Info\":\"LanPaint KSampler.\",\"Inpainting_mode\":\"🖼️ Image Inpainting\"}},\"12\":{\"class_type\":\"LanPaint_ImageDecode\",\"inputs\":{\"samples\":[\"11\",0],\"vae\":[\"3\",0],\"image\":[\"4\",0],\"mask\":[\"15\",0],\"blend_overlap\":9}},\"13\":{\"class_type\":\"SaveImage\",\"inputs\":{\"images\":[\"12\",0],\"filename_prefix\":\"qwen-image-2.1-inpaint\"}},\"14\":{\"class_type\":\"GrowMask\",\"inputs\":{\"mask\":[\"4\",1],\"expand\":0,\"tapered_corners\":true}},\"15\":{\"class_type\":\"FeatherMask\",\"inputs\":{\"mask\":[\"14\",0],\"left\":0,\"top\":48,\"right\":0,\"bottom\":48}},\"99\":{\"class_type\":\"RMBG\",\"inputs\":{\"image\":[\"12\",0],\"model\":\"RMBG-2.0\",\"sensitivity\":1.0,\"process_res\":1024,\"mask_blur\":2,\"mask_offset\":0,\"invert_output\":false,\"refine_foreground\":true,\"background\":\"Alpha\",\"background_color\":\"#00000000\"}}},\"extra_data\":{\"extra_pnginfo\":{\"workflow\":{\"id\":\"<uuid:1>\",\"revision\":0,\"last_node_id\":99,\"last_link_id\":19,\"nodes\":[{\"id\":1,\"type\":\"UNETLoader\",\"pos\":[100,80],\"size\":[300,120],\"flags\":{},\"order\":0,\"mode\":0,\"inputs\":[{\"name\":\"unet_name\",\"localized_name\":\"unet_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"unet_name\"}},{\"name\":\"weight_dtype\",\"localized_name\":\"weight_dtype\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"weight_dtype\"}}],\"outputs\":[{\"name\":\"MODEL\",\"localized_name\":\"MODEL\",\"type\":\"MODEL\",\"links\":[1],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"UNETLoader\"},\"widgets_values\":[\"qwen_image_2.1_int8_convrot.safetensors\",\"default\"]},{\"id\":2,\"type\":\"CLIPLoader\",\"pos\":[440,80],\"size\":[300,120],\"flags\":{},\"order\":1,\"mode\":0,\"inputs\":[{\"name\":\"clip_name\",\"localized_name\":\"clip_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"clip_name\"}},{\"name\":\"type\",\"localized_name\":\"type\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"type\"}},{\"name\":\"device\",\"localized_name\":\"device\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"device\"}}],\"outputs\":[{\"name\":\"CLIP\",\"localized_name\":\"CLIP\",\"type\":\"CLIP\",\"links\":[2],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"CLIPLoader\"},\"widgets_values\":[\"qwen3vl_8b_w4a8.safetensors\",\"qwen_image\",\"default\"]},{\"id\":3,\"type\":\"VAELoader\",\"pos\":[780,80],\"size\":[300,120],\"flags\":{},\"order\":2,\"mode\":0,\"inputs\":[{\"name\":\"vae_name\",\"localized_name\":\"vae_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"vae_name\"}}],\"outputs\":[{\"name\":\"VAE\",\"localized_name\":\"VAE\",\"type\":\"VAE\",\"links\":[4,6,13],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"VAELoader\"},\"widgets_values\":[\"texture_fix_vae_for_qwen_image_2.1_bf16.safetensors\"]},{\"id\":4,\"type\":\"LoadImage\",\"pos\":[1120,80],\"size\":[300,120],\"flags\":{},\"order\":3,\"mode\":0,\"inputs\":[{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"image\"}}],\"outputs\":[{\"name\":\"IMAGE\",\"localized_name\":\"IMAGE\",\"type\":\"IMAGE\",\"links\":[5,14],\"slot_index\":0},{\"name\":\"MASK\",\"localized_name\":\"MASK\",\"type\":\"MASK\",\"links\":[17],\"slot_index\":1}],\"properties\":{\"Node name for S&R\":\"LoadImage\"},\"widgets_values\":[\"input.png\"]},{\"id\":5,\"type\":\"QwenImage21Cache\",\"pos\":[100,320],\"size\":[300,120],\"flags\":{},\"order\":4,\"mode\":0,\"inputs\":[{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":1,\"widget\":{\"name\":\"model\"}},{\"name\":\"device\",\"localized_name\":\"device\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"device\"}},{\"name\":\"dtype\",\"localized_name\":\"dtype\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"dtype\"}}],\"outputs\":[{\"name\":\"MODEL\",\"localized_name\":\"MODEL\",\"type\":\"MODEL\",\"links\":[8],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"QwenImage21Cache\"},\"widgets_values\":[\"auto\",\"default\"]},{\"id\":6,\"type\":\"JWString\",\"pos\":[440,320],\"size\":[300,120],\"flags\":{},\"order\":5,\"mode\":0,\"inputs\":[{\"name\":\"text\",\"localized_name\":\"text\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"text\"}}],\"outputs\":[{\"name\":\"STRING\",\"localized_name\":\"STRING\",\"type\":\"STRING\",\"links\":[3],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"JWString\"},\"widgets_values\":[\"fill in the masked area\"]},{\"id\":9,\"type\":\"TextEncodeQwenImage21\",\"pos\":[780,320],\"size\":[300,120],\"flags\":{},\"order\":6,\"mode\":0,\"inputs\":[{\"name\":\"clip\",\"localized_name\":\"clip\",\"type\":\"*\",\"link\":2,\"widget\":{\"name\":\"clip\"}},{\"name\":\"prompt\",\"localized_name\":\"prompt\",\"type\":\"*\",\"link\":3,\"widget\":{\"name\":\"prompt\"}},{\"name\":\"negative_prompt\",\"localized_name\":\"negative_prompt\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"negative_prompt\"}},{\"name\":\"resolution\",\"localized_name\":\"resolution\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"resolution\"}},{\"name\":\"images\",\"localized_name\":\"images\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"images\"}},{\"name\":\"vae\",\"localized_name\":\"vae\",\"type\":\"*\",\"link\":4,\"widget\":{\"name\":\"vae\"}}],\"outputs\":[{\"name\":\"positive\",\"localized_name\":\"positive\",\"type\":\"CONDITIONING\",\"links\":[9],\"slot_index\":0},{\"name\":\"negative\",\"localized_name\":\"negative\",\"type\":\"CONDITIONING\",\"links\":[10],\"slot_index\":1},{\"name\":\"latent\",\"localized_name\":\"latent\",\"type\":\"LATENT\",\"links\":[],\"slot_index\":2}],\"properties\":{\"Node name for S&R\":\"TextEncodeQwenImage21\"},\"widgets_values\":[\"\",1024,{\"image_1\":[\"4\",0]}]},{\"id\":10,\"type\":\"LanPaint_ImageEncode\",\"pos\":[1120,320],\"size\":[300,120],\"flags\":{},\"order\":7,\"mode\":0,\"inputs\":[{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"*\",\"link\":5,\"widget\":{\"name\":\"image\"}},{\"name\":\"vae\",\"localized_name\":\"vae\",\"type\":\"*\",\"link\":6,\"widget\":{\"name\":\"vae\"}},{\"name\":\"mask\",\"localized_name\":\"mask\",\"type\":\"*\",\"link\":7,\"widget\":{\"name\":\"mask\"}}],\"outputs\":[{\"name\":\"latent\",\"localized_name\":\"latent\",\"type\":\"LATENT\",\"links\":[11],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"LanPaint_ImageEncode\"},\"widgets_values\":[]},{\"id\":11,\"type\":\"LanPaint_KSampler\",\"pos\":[100,560],\"size\":[300,120],\"flags\":{},\"order\":8,\"mode\":0,\"inputs\":[{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":8,\"widget\":{\"name\":\"model\"}},{\"name\":\"seed\",\"localized_name\":\"seed\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"seed\"}},{\"name\":\"steps\",\"localized_name\":\"steps\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"steps\"}},{\"name\":\"cfg\",\"localized_name\":\"cfg\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"cfg\"}},{\"name\":\"sampler_name\",\"localized_name\":\"sampler_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"sampler_name\"}},{\"name\":\"scheduler\",\"localized_name\":\"scheduler\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"scheduler\"}},{\"name\":\"positive\",\"localized_name\":\"positive\",\"type\":\"*\",\"link\":9,\"widget\":{\"name\":\"positive\"}},{\"name\":\"negative\",\"localized_name\":\"negative\",\"type\":\"*\",\"link\":10,\"widget\":{\"name\":\"negative\"}},{\"name\":\"latent_image\",\"localized_name\":\"latent_image\",\"type\":\"*\",\"link\":11,\"widget\":{\"name\":\"latent_image\"}},{\"name\":\"denoise\",\"localized_name\":\"denoise\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"denoise\"}},{\"name\":\"LanPaint_NumSteps\",\"localized_name\":\"LanPaint_NumSteps\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"LanPaint_NumSteps\"}},{\"name\":\"LanPaint_PromptMode\",\"localized_name\":\"LanPaint_PromptMode\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"LanPaint_PromptMode\"}},{\"name\":\"LanPaint_Info\",\"localized_name\":\"LanPaint_Info\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"LanPaint_Info\"}},{\"name\":\"Inpainting_mode\",\"localized_name\":\"Inpainting_mode\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"Inpainting_mode\"}}],\"outputs\":[{\"name\":\"LATENT\",\"localized_name\":\"LATENT\",\"type\":\"LATENT\",\"links\":[12],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"LanPaint_KSampler\"},\"widgets_values\":[0,25,1.0,\"euler\",\"karras\",1.0,5,\"Image First\",\"LanPaint KSampler.\",\"🖼️ Image Inpainting\"]},{\"id\":12,\"type\":\"LanPaint_ImageDecode\",\"pos\":[440,560],\"size\":[300,120],\"flags\":{},\"order\":9,\"mode\":0,\"inputs\":[{\"name\":\"samples\",\"localized_name\":\"samples\",\"type\":\"*\",\"link\":12,\"widget\":{\"name\":\"samples\"}},{\"name\":\"vae\",\"localized_name\":\"vae\",\"type\":\"*\",\"link\":13,\"widget\":{\"name\":\"vae\"}},{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"*\",\"link\":14,\"widget\":{\"name\":\"image\"}},{\"name\":\"mask\",\"localized_name\":\"mask\",\"type\":\"*\",\"link\":15,\"widget\":{\"name\":\"mask\"}},{\"name\":\"blend_overlap\",\"localized_name\":\"blend_overlap\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"blend_overlap\"}}],\"outputs\":[{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"IMAGE\",\"links\":[16,19],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"LanPaint_ImageDecode\"},\"widgets_values\":[9]},{\"id\":13,\"type\":\"SaveImage\",\"pos\":[780,560],\"size\":[300,120],\"flags\":{},\"order\":10,\"mode\":0,\"inputs\":[{\"name\":\"images\",\"localized_name\":\"images\",\"type\":\"*\",\"link\":16,\"widget\":{\"name\":\"images\"}},{\"name\":\"filename_prefix\",\"localized_name\":\"filename_prefix\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"filename_prefix\"}}],\"outputs\":[{\"name\":\"images\",\"localized_name\":\"images\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"SaveImage\"},\"widgets_values\":[\"qwen-image-2.1-inpaint\"]},{\"id\":14,\"type\":\"GrowMask\",\"pos\":[1120,560],\"size\":[300,120],\"flags\":{},\"order\":11,\"mode\":0,\"inputs\":[{\"name\":\"mask\",\"localized_name\":\"mask\",\"type\":\"*\",\"link\":17,\"widget\":{\"name\":\"mask\"}},{\"name\":\"expand\",\"localized_name\":\"expand\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"expand\"}},{\"name\":\"tapered_corners\",\"localized_name\":\"tapered_corners\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"tapered_corners\"}}],\"outputs\":[{\"name\":\"MASK\",\"localized_name\":\"MASK\",\"type\":\"MASK\",\"links\":[18],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"GrowMask\"},\"widgets_values\":[0,true]},{\"id\":15,\"type\":\"FeatherMask\",\"pos\":[100,800],\"size\":[300,120],\"flags\":{},\"order\":12,\"mode\":0,\"inputs\":[{\"name\":\"mask\",\"localized_name\":\"mask\",\"type\":\"*\",\"link\":18,\"widget\":{\"name\":\"mask\"}},{\"name\":\"left\",\"localized_name\":\"left\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"left\"}},{\"name\":\"top\",\"localized_name\":\"top\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"top\"}},{\"name\":\"right\",\"localized_name\":\"right\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"right\"}},{\"name\":\"bottom\",\"localized_name\":\"bottom\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"bottom\"}}],\"outputs\":[{\"name\":\"MASK\",\"localized_name\":\"MASK\",\"type\":\"MASK\",\"links\":[7,15],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"FeatherMask\"},\"widgets_values\":[0,48,0,48]},{\"id\":99,\"type\":\"RMBG\",\"pos\":[440,800],\"size\":[300,120],\"flags\":{},\"order\":13,\"mode\":0,\"inputs\":[{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"*\",\"link\":19,\"widget\":{\"name\":\"image\"}},{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"model\"}},{\"name\":\"sensitivity\",\"localized_name\":\"sensitivity\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"sensitivity\"}},{\"name\":\"process_res\",\"localized_name\":\"process_res\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"process_res\"}},{\"name\":\"mask_blur\",\"localized_name\":\"mask_blur\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"mask_blur\"}},{\"name\":\"mask_offset\",\"localized_name\":\"mask_offset\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"mask_offset\"}},{\"name\":\"invert_output\",\"localized_name\":\"invert_output\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"invert_output\"}},{\"name\":\"refine_foreground\",\"localized_name\":\"refine_foreground\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"refine_foreground\"}},{\"name\":\"background\",\"localized_name\":\"background\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"background\"}},{\"name\":\"background_color\",\"localized_name\":\"background_color\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"background_color\"}}],\"outputs\":[{\"name\":\"IMAGE\",\"localized_name\":\"IMAGE\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":0},{\"name\":\"MASK\",\"localized_name\":\"MASK\",\"type\":\"MASK\",\"links\":[],\"slot_index\":1},{\"name\":\"MASK_IMAGE\",\"localized_name\":\"MASK_IMAGE\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":2}],\"properties\":{\"Node name for S&R\":\"RMBG\"},\"widgets_values\":[\"RMBG-2.0\",1.0,1024,2,0,false,true,\"Alpha\",\"#00000000\"]}],\"links\":[[1,1,0,5,0,\"MODEL\"],[2,2,0,9,0,\"CLIP\"],[3,6,0,9,1,\"STRING\"],[4,3,0,9,5,\"VAE\"],[5,4,0,10,0,\"IMAGE\"],[6,3,0,10,1,\"VAE\"],[7,15,0,10,2,\"MASK\"],[8,5,0,11,0,\"MODEL\"],[9,9,0,11,6,\"CONDITIONING\"],[10,9,1,11,7,\"CONDITIONING\"],[11,10,0,11,8,\"LATENT\"],[12,11,0,12,0,\"LATENT\"],[13,3,0,12,1,\"VAE\"],[14,4,0,12,2,\"IMAGE\"],[15,15,0,12,3,\"MASK\"],[16,12,0,13,0,\"IMAGE\"],[17,4,1,14,0,\"MASK\"],[18,14,0,15,0,\"MASK\"],[19,12,0,99,0,\"IMAGE\"]],\"groups\":[],\"config\":{},\"extra\":{},\"version\":0.4}}}}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<13054 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/view",
+      "query": [
+        [
+          "filename",
+          "out.png"
+        ],
+        [
+          "type",
+          "output"
+        ]
+      ],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "image.edit",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [
+            {
+              "asset_id": "img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f",
+              "kind": "image",
+              "media_type": "image/png"
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<req:1>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "image.edit",
+          "job_id": "<job:1>",
+          "metadata": {
+            "mode": "sync_media_route"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": null,
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": null,
+          "request_id": "<req:1>",
+          "retryable": null,
+          "started_at": null,
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "qwen-image-2.1-inpaint"
+        },
+        "parent_request_id": null,
+        "progress": 100,
+        "request_id": "<req:1>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": "qwen-image-2.1-inpaint"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 4
+      }
+    ],
+    "retention_fact_destinations": [
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "comfyui",
+        "metadata_json": {
+          "address": "127.0.0.1:7890",
+          "kind": "engine",
+          "name": "ComfyUI (Image + Video Generation)",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_revisions": [
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "host swap, hibernation, and crash capture settings",
+          "confidence": "documented",
+          "control": "review swap, hibernation, and crash-dump settings on the host",
+          "default": "conditional",
+          "evidence_url": "https://man7.org/linux/man-pages/man2/mlock.2.html",
+          "holds": "request bodies while a request runs",
+          "how_long": "during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine",
+          "id": "gateway-temporary-copies",
+          "reach": "the machine owner and anyone with access to its files or memory image",
+          "where": "process memory and temporary workspaces"
+        },
+        "first_seen": "<time>",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a permitted crash dump handled by systemd-coredump",
+          "confidence": "documented",
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
+        },
+        "first_seen": "<time>",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "store_prompts_in_spend_logs or its environment override is enabled",
+          "confidence": "documented",
+          "control": "inspect effective UI, environment and file settings; disable content storage and delete old rows separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/ui_logs",
+          "holds": "request and response content if spend-content storage is enabled",
+          "how_long": "unknown; cleanup requires a separately configured retention period",
+          "id": "litellm-spend-content",
+          "reach": "LiteLLM administrators and anyone with access to its spend database",
+          "where": "LiteLLM spend rows"
+        },
+        "first_seen": "<time>",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
+          "confidence": "documented",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
+        },
+        "first_seen": "<time>",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "image.edit",
+        "job_id": "<job:1>",
+        "parent_request_id": null,
+        "path": "/v1/images/edits",
+        "protocol": "openai.images",
+        "receipt_json": {
+          "accepted_at_ms": null,
+          "accepted_inputs": [
+            "model",
+            "background",
+            "n",
+            "response_format",
+            "image",
+            "prompt",
+            "mask"
+          ],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "image.edit",
+          "job_id": "<job:1>",
+          "latency_ms": "<duration>",
+          "manifest_hash": "85907627f62c60bfe8202f854f51b1080d6c851553a32b6cebe4a924955bc268",
+          "manifest_id": "image.edit.qwen-image-2.1-inpaint",
+          "manifest_version": "0.1.0",
+          "metadata": {},
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/images/edits",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "allowed by your access plan",
+            "allowed by your access plan",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "access_plan:plan_everything",
+            "access_plan:plan_everything",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.images",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "qwen-image-2.1-edit",
+          "requested_workflow": "qwen-image-2.1-inpaint",
+          "resolved_model": "qwen-image-2.1-inpaint",
+          "resolved_workflow": "qwen-image-2.1-inpaint",
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+            "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+          ],
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "ok",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "ok"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "image_edit",
+  "schema": 1
+}

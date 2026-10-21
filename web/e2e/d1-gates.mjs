@@ -7,6 +7,7 @@ import { chromium } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { quiet } from "./capture-settle.mjs";
 
 const base = process.env.D1_BASE ?? "http://127.0.0.1:18431";
 const manifest = JSON.parse(await readFile(process.env.D1_MANIFEST ?? `${process.env.HOME}/.tmp/azizam-redesign/d1-work/manifest-18431.json`, "utf8"));
@@ -24,7 +25,7 @@ async function context(role, width, theme) {
     await ctx.addCookies(JSON.parse(await readFile(stateFile, "utf8")));
   } catch {
     const page = await ctx.newPage();
-    await page.goto(`${base}/ui/sign-in/`);
+    await page.goto(`${base}/sign-in/`);
     await page.getByLabel("Email", { exact: true }).fill(role === "owner" ? manifest.owner_email : manifest.member_email);
     await page.getByLabel("Password", { exact: true }).fill(manifest.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -87,15 +88,13 @@ for (const role of ["owner", "member"]) {
   for (const theme of ["light", "dark"]) {
     for (const width of [1440, 390]) {
       const ctx = await context(role, width, theme);
-      for (const [surface, route] of [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"]]) {
+      for (const [surface, route] of [["home", "/"], ["status", "/status/"], ["library", "/library/"]]) {
         const page = await ctx.newPage();
         const consoleErrors = [];
         page.on("console", m => { if (m.type() === "error") consoleErrors.push(m.text()); });
         page.on("response", r => { if (r.status() >= 400 && r.url().startsWith(base)) consoleErrors.push(`${r.status()} ${r.url().replace(base, "")}`); });
         await page.goto(`${base}${route}`);
-        await page.waitForLoadState("networkidle");
-        await page.evaluate(() => document.fonts.ready);
-        await page.waitForTimeout(400);
+        await quiet(page);
         const result = await inspect(page, `${role} ${surface} ${theme} ${width}`, width);
         result.errors = consoleErrors;
         results.push(result);
@@ -103,7 +102,8 @@ for (const role of ["owner", "member"]) {
           const open = page.getByRole("button", { name: /^Open / }).first();
           if (await open.count()) {
             await open.click();
-            await page.waitForTimeout(800);
+            await page.locator("[role=dialog]").first().waitFor({ state: "visible" });
+            await quiet(page);
             const viewer = await inspect(page, `${role} library-viewer ${theme} ${width}`, width);
             viewer.errors = [];
             results.push(viewer);

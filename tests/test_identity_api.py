@@ -231,32 +231,99 @@ class PeopleParsingTests(unittest.TestCase):
 
 class AsyncRouteTests(unittest.TestCase):
     def test_identity_route_hands_long_runs_to_the_job_queue(self) -> None:
-        client, calls, _ = build([GOOD])
-        submitted = {}
+        from fastapi.responses import JSONResponse
 
-        async def submit_job(request, auth, req, fmt):
-            from fastapi.responses import JSONResponse
-            submitted["req"] = req
-            return JSONResponse({"object": "media.job", "id": "job_1", "status": "queued", "progress": 0,
-                                 "poll_url": "/gateway/v1/media/jobs/job_1", "content_url": "/gateway/v1/media/jobs/job_1/content"},
-                                status_code=202)
+        auth = object()
+        submitted = []
+        workflow_calls = []
+        stored = []
 
-        # rebuild with a submit_job dep
-        from fastapi import FastAPI
-        app2 = FastAPI()
-        deps = identity_api.IdentityApiDeps(
-            authenticate=lambda r, p: "auth", enforce_policy=lambda a, p: None, ensure_face_service=lambda: _none(),
-            face_client=lambda: FakeClient(), run_workflow=lambda a, g, u: _good(), template=lambda: (TEMPLATE, BINDING),
-            store_image=lambda *a: {"asset_id": "i"}, models=("buffalo_l",), submit_job=submit_job)
-        identity_api.register_identity_routes(app2, deps)
-        c2 = TestClient(app2)
-        r = c2.post(identity_api.IDENTITY_PATH, files=[("image", ("p.png", PHOTO, "image/png"))], data={"prompt": "x"})
-        self.assertEqual(r.status_code, 202)
-        self.assertEqual(r.json()["poll_url"], "/gateway/v1/media/jobs/job_1")
-        r = c2.post(identity_api.IDENTITY_PATH, files=[("image", ("p.png", PHOTO, "image/png"))],
-                    data={"prompt": "x", "attempts": "1", "refine": "off"})
-        self.assertEqual(r.status_code, 200)  # a short run stays synchronous
-        self.assertEqual(calls, [])
+        async def submit_job(request, received_auth, req, fmt):
+            submitted.append((received_auth, req, fmt))
+            return JSONResponse(
+                {
+                    "object": "media.job",
+                    "id": "job_1",
+                    "status": "queued",
+                    "progress": 0,
+                    "poll_url": "/gateway/v1/media/jobs/job_1",
+                    "content_url": "/gateway/v1/media/jobs/job_1/content",
+                },
+                status_code=202,
+            )
+
+        async def run_workflow(received_auth, graph, uploads):
+            workflow_calls.append((received_auth, graph, uploads))
+            return GOOD
+
+        def store_image(request, received_auth, content, fmt):
+            stored.append((received_auth, content, fmt))
+            return {
+                "asset_id": "selected-image",
+                "asset_url": "http://testserver/selected-image",
+                "media_type": "image/png",
+            }
+
+        app = FastAPI()
+        identity_api.register_identity_routes(
+            app,
+            identity_api.IdentityApiDeps(
+                authenticate=lambda request, path: auth,
+                enforce_policy=lambda received_auth, path: None,
+                ensure_face_service=_none,
+                face_client=lambda: FakeClient(),
+                run_workflow=run_workflow,
+                template=lambda: (TEMPLATE, BINDING),
+                store_image=store_image,
+                models=("buffalo_l",),
+                submit_job=submit_job,
+            ),
+        )
+        with TestClient(app) as client:
+            queued = client.post(
+                identity_api.IDENTITY_PATH,
+                files=[("image", ("p.png", PHOTO, "image/png"))],
+                data={
+                    "prompt": "A garden portrait",
+                    "attempts": "3",
+                    "refine": "off",
+                    "seed": "17",
+                    "response_format": "url",
+                },
+            )
+            self.assertEqual(queued.status_code, 202, queued.text)
+            self.assertEqual(
+                queued.json()["poll_url"], "/gateway/v1/media/jobs/job_1",
+            )
+            self.assertEqual(len(submitted), 1)
+            received_auth, req, fmt = submitted[0]
+            self.assertIs(received_auth, auth)
+            self.assertEqual(req.photos, [PHOTO])
+            self.assertEqual(req.prompt, "A garden portrait")
+            self.assertEqual((req.attempts, req.seed, fmt), (3, 17, "url"))
+            self.assertEqual(workflow_calls, [])
+            self.assertEqual(stored, [])
+
+            completed = client.post(
+                identity_api.IDENTITY_PATH,
+                files=[("image", ("p.png", PHOTO, "image/png"))],
+                data={
+                    "prompt": "A garden portrait",
+                    "attempts": "1",
+                    "refine": "off",
+                    "seed": "18",
+                    "response_format": "url",
+                },
+            )
+            self.assertEqual(completed.status_code, 200, completed.text)
+            self.assertEqual(len(submitted), 1)
+            self.assertEqual(len(workflow_calls), 1)
+            self.assertIs(workflow_calls[0][0], auth)
+            self.assertEqual(stored, [(auth, GOOD, "url")])
+            self.assertEqual(
+                completed.json()["data"][0]["asset_id"], "selected-image",
+            )
+
 
 
 async def _none():

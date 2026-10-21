@@ -9,12 +9,8 @@ import proxy
 
 @pytest.fixture
 def public_client(monkeypatch):
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
-    monkeypatch.setattr(proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False)
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
-    monkeypatch.setattr(proxy, "PATH_TOKENS", {})
     client = TestClient(proxy.app, base_url="https://gateway.example", client=("203.0.113.25", 41000))
     try:
         yield client
@@ -38,7 +34,6 @@ def public_client(monkeypatch):
     ("GET", "/gateway/v1/providers/absent/v1/models"),
     ("GET", "/typesafe/v1/models"), ("POST", "/typesafe/v1/systemone"),
     ("POST", "/v1/decisions"), ("POST", "/mcp"),
-    ("GET", "/showcase/api/status"),
     ("POST", "/me/api/apps"), ("GET", "/me/api/media"),
     ("GET", "/me/api/usage/summary"), ("GET", "/admin/api/people"),
     ("GET", "/admin/api/operator/service-registry"),
@@ -69,7 +64,7 @@ def test_public_activity_has_no_member_records(public_client):
     assert not response.json().get("receipts")
 
 
-@pytest.mark.parametrize("path,status", [("/status/raw", 401), ("/ui/settings/", 302)])
+@pytest.mark.parametrize("path,status", [("/status/raw", 401), ("/settings/", 302)])
 def test_owner_pages_refuse_anonymous_browsers(public_client, path, status):
     response = public_client.get(path, follow_redirects=False)
     assert response.status_code == status

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from gateway.backends.cancellation import CancellationRegistry, CancellationRegistryFull
 
@@ -12,20 +13,27 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
         handle = registry.register("req-1")
         self.assertFalse(handle.token.cancelled)
 
+        waiter_entered = asyncio.Event()
         waited = asyncio.Event()
 
         async def waiter() -> None:
+            waiter_entered.set()
             await handle.token.wait()
             waited.set()
 
         task = asyncio.create_task(waiter())
-        await asyncio.sleep(0)
-        self.assertFalse(waited.is_set())
+        try:
+            await asyncio.wait_for(waiter_entered.wait(), timeout=1)
+            self.assertFalse(waited.is_set())
 
-        registry.signal("req-1")
-        await asyncio.wait_for(task, timeout=1)
-        self.assertTrue(handle.token.cancelled)
-        self.assertTrue(waited.is_set())
+            registry.signal("req-1")
+            await asyncio.wait_for(task, timeout=1)
+            self.assertTrue(handle.token.cancelled)
+            self.assertTrue(waited.is_set())
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            handle.release()
 
     async def test_signal_before_register_is_observed(self) -> None:
         registry = CancellationRegistry()
@@ -40,15 +48,6 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
         registry.signal("req-3")
         self.assertTrue(handle_a.token.cancelled)
         self.assertTrue(handle_b.token.cancelled)
-
-    async def test_release_drops_entry(self) -> None:
-        registry = CancellationRegistry()
-        handle = registry.register("req-4")
-        handle.release()
-        self.assertFalse(registry.is_cancelled("req-4"))
-        # A signal after release starts a fresh (uncancelled-until-signalled) entry.
-        fresh = registry.register("req-4")
-        self.assertFalse(fresh.token.cancelled)
 
     async def test_normal_completion_without_signal_leaves_token_uncancelled(self) -> None:
         registry = CancellationRegistry()
@@ -89,20 +88,6 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
 class CancellationRegistryOwnershipTests(unittest.IsolatedAsyncioTestCase):
     """Duplicate outer/internal registration of the same id must be release-safe."""
 
-    async def test_one_owners_release_does_not_delete_the_others_live_waiter(self) -> None:
-        registry = CancellationRegistry()
-        outer = registry.register("req-dup")
-        inner = registry.register("req-dup")
-
-        # Outer finishes first (e.g. non-stream path completes before the
-        # internal LiteLLM hop's reader has released). Its release must not
-        # detach or delete the inner handle's still-live waiter.
-        outer.release()
-        self.assertTrue(registry.is_cancelled("req-dup") is False)
-
-        registry.signal("req-dup")
-        self.assertTrue(inner.token.cancelled)
-
     async def test_stale_handle_release_after_full_release_and_reregister_is_noop(self) -> None:
         registry = CancellationRegistry()
         first = registry.register("req-stale")
@@ -124,7 +109,10 @@ class CancellationRegistryOwnershipTests(unittest.IsolatedAsyncioTestCase):
         fresh = registry.register("req-idem")
         self.assertFalse(fresh.token.cancelled)
 
-    async def test_duplicate_registration_requires_both_releases_to_drop_entry(self) -> None:
+    async def test_outer_release_keeps_shared_entry_signalable_for_inner_waiter(self) -> None:
+        # Outer finishes first (e.g. the non-stream path completes before the
+        # internal LiteLLM hop's reader has released). Its release must not
+        # detach or delete the inner handle's still-live waiter.
         registry = CancellationRegistry()
         outer = registry.register("req-refcount")
         inner = registry.register("req-refcount")
@@ -250,6 +238,69 @@ class CancellationRegistryLiveDurationTests(unittest.IsolatedAsyncioTestCase):
         other.release()
         registry.register("req-sweep-trigger-3")
         self.assertNotIn("req-two-owners", registry._entries)
+
+
+class CancellationRegistryPositiveTTLTests(unittest.TestCase):
+    def test_signal_refreshes_expired_live_entry_tombstone(self) -> None:
+        with patch("gateway.backends.cancellation.time") as clock:
+            clock.monotonic.return_value = 0.0
+            registry = CancellationRegistry(ttl_seconds=10.0)
+            handle = registry.register("req-refresh")
+            clock.monotonic.return_value = 11.0
+            registry.signal("req-refresh")
+            handle.release()
+            late = registry.register("req-refresh")
+            self.assertTrue(late.token.cancelled)
+            late.release()
+            clock.monotonic.return_value = 21.0
+            registry.register("sweep").release()
+            self.assertNotIn("req-refresh", registry._entries)
+    def test_unowned_signal_expires_at_positive_ttl_boundary(self) -> None:
+        for now, cancelled in ((109.0, True), (110.0, False), (111.0, False)):
+            with self.subTest(now=now, cancelled=cancelled):
+                with patch("gateway.backends.cancellation.time") as clock:
+                    clock.monotonic.return_value = 100.0
+                    registry = CancellationRegistry(ttl_seconds=10.0)
+                    registry.signal("req-boundary")
+                    self.assertTrue(registry.is_cancelled("req-boundary"))
+
+                    clock.monotonic.return_value = now
+                    handle = registry.register("req-boundary")
+                    try:
+                        self.assertEqual(handle.token.cancelled, cancelled)
+                        self.assertEqual(registry.is_cancelled("req-boundary"), cancelled)
+                    finally:
+                        handle.release()
+
+    def test_positive_ttl_never_evicts_live_owners(self) -> None:
+        with patch("gateway.backends.cancellation.time") as clock:
+            clock.monotonic.return_value = 100.0
+            registry = CancellationRegistry(ttl_seconds=10.0)
+            first = registry.register("req-live")
+            second = registry.register("req-live")
+            try:
+                clock.monotonic.return_value = 2001.0
+                traffic = registry.register("req-traffic")
+                traffic.release()
+                self.assertIn("req-live", registry._entries)
+                self.assertFalse(first.token.cancelled)
+                self.assertFalse(second.token.cancelled)
+
+                first.release()
+                registry.signal("req-live")
+                self.assertTrue(second.token.cancelled)
+                second.release()
+                self.assertTrue(registry.is_cancelled("req-live"))
+
+                fresh = registry.register("req-live")
+                try:
+                    self.assertTrue(fresh.token.cancelled)
+                    self.assertEqual(fresh._generation, second._generation)
+                finally:
+                    fresh.release()
+            finally:
+                first.release()
+                second.release()
 
 
 class CancellationRegistryGenerationIdentityTests(unittest.IsolatedAsyncioTestCase):

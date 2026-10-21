@@ -1,10 +1,10 @@
 {
   "title": "Engines detect and apply review",
-  "url": "http://127.0.0.1:18580/ui/",
-  "start": "/home/",
+  "url": "http://127.0.0.1:18580/",
+  "start": "/",
   "crawl": {
-    "include": ["^/ui/(home|engines|services)/"],
-    "extraRoutes": ["/engines/", "/services/"],
+    "include": ["^/(engines/)?$"],
+    "extraRoutes": ["/engines/"],
     "maxDepth": 2,
     "maxPages": 4
   },

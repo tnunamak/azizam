@@ -334,6 +334,21 @@ def _has_encoder(name: str) -> bool:
 TAGS = ["-metadata", 'prompt={"1": {}}', "-metadata", 'workflow={"nodes": []}']
 
 
+def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
+    from unittest.mock import patch
+
+    with patch.object(mm.shutil, "which", return_value=None), patch.object(
+        mm, "_media_buffers",
+        side_effect=AssertionError("must reject before allocating media buffers"),
+    ):
+        try:
+            mm.strip_metadata(b"tagged private media", ".mp4")
+        except mm.MediaMetadataError as exc:
+            assert str(exc) == "ffmpeg not found"
+        else:
+            raise AssertionError("missing ffmpeg must never return unstripped bytes")
+
+
 @unittest.skipUnless(HAVE_FFMPEG, SKIP_FF)
 class FfmpegTests(unittest.TestCase):
     @classmethod
@@ -488,6 +503,24 @@ class FfmpegTests(unittest.TestCase):
         self.assertEqual(mm.embed_media_tags(buf.getvalue(), ".jpg", {"a": "b"}), buf.getvalue())
 
 
+def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
+    from unittest.mock import patch
+
+    with (
+        patch.object(mm.shutil, "which", return_value=None),
+        patch.object(
+            mm, "_media_buffers",
+            side_effect=AssertionError("must reject before allocating media buffers"),
+        ),
+    ):
+        try:
+            mm.strip_metadata(b"tagged private media", ".mp4")
+        except mm.MediaMetadataError as exc:
+            assert str(exc) == "ffmpeg not found"
+        else:
+            raise AssertionError("missing ffmpeg must never return unstripped bytes")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -510,8 +543,8 @@ class AnonymousBufferTests(unittest.TestCase):
     def test_buffers_fall_back_to_libc_when_python_omits_memfd_create(self):
         from unittest import mock
         import os
-        with mock.patch.object(os, "memfd_create", create=True) as patched:
-            del os.memfd_create
+        # patch.dict restores the module namespace whether or not this Python has the function.
+        with mock.patch.dict(os.__dict__):
+            os.__dict__.pop("memfd_create", None)
             self.assertFalse(hasattr(os, "memfd_create"))
             self._assert_anonymous()
-        patched.assert_not_called()

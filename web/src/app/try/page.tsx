@@ -65,6 +65,7 @@ import {
 import { taskNames } from "@/lib/terms";
 import { modelDisplayName } from "@/lib/model-name";
 import { Button } from "@/components/ui/button";
+import { useCopied } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -96,9 +97,11 @@ type TryError = {
   lost?: boolean;
   /** Offer the Library, where a finished creation appears. */
   library?: boolean;
-  status?: number;
+  /** Where the request stopped, when the gateway said (P3). */
+  layer?: string;
   receiptId?: string | null;
-  elapsedMs?: number;
+  /** HTTP status, time and the raw answer, for Technical details. */
+  technical?: string;
 };
 type RequestInfo = {
   path: string;
@@ -134,6 +137,10 @@ type WorkflowOption = {
   short_id?: string;
   title: string;
   description?: string;
+  /** The catalog's declared capability: "video", "music", "sfx", ... */
+  capability?: string;
+  /** Other names the gateway accepts for this workflow. */
+  aliases?: string[];
   availability?: WorkflowAvailability;
   inputs: WorkflowInput[];
   inputMapping?: WorkflowInputMapping;
@@ -159,11 +166,20 @@ type CatalogGroups = Partial<Record<TryTab, CatalogOption[]>>;
 type Result = {
   title: string;
   body: string;
+  answerNote?: string;
+  copyAnswer?: boolean;
+  runId?: number;
   elapsedMs: number;
   cost?: string;
   receiptId: string | null;
+  /** The receipt could not be checked; this is what to check again. */
+  receiptLookup?: ReceiptLookup;
+  checkingReceipt?: boolean;
+  /** What the gateway did not return ("reply", "picture"), when it was missing. */
+  missing?: string;
   request: RequestInfo;
   imageUrl?: string;
+  imageModel?: string;
   audioUrl?: string;
   downloadUrl?: string;
   downloadName?: string;
@@ -180,40 +196,14 @@ type Result = {
 const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
 /** "Don't keep this prompt", remembered for the browser session. */
 const FORGET_SESSION_KEY = "azizam.try.forget";
-/** This browser's Try key. It works only for the sign-in that made it. */
+/** Remove secrets persisted by older versions; new keys stay in page memory. */
 const TRY_KEY_STORAGE_KEY = "azizam.try.key";
-type StoredTryKey = { id: string; secret: string; appName: string };
-
-function readStoredTryKey(): StoredTryKey | null {
-  try {
-    const value: unknown = JSON.parse(
-      localStorage.getItem(TRY_KEY_STORAGE_KEY) ?? "null",
-    );
-    if (!value || typeof value !== "object") return null;
-    const { id, secret, appName } = value as Record<string, unknown>;
-    return typeof id === "string" &&
-      typeof secret === "string" &&
-      typeof appName === "string"
-      ? { id, secret, appName }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeTryKey(key: StoredTryKey) {
-  try {
-    localStorage.setItem(TRY_KEY_STORAGE_KEY, JSON.stringify(key));
-  } catch {
-    // A blocked store only means the next visit makes a new key.
-  }
-}
 
 function forgetStoredTryKey() {
   try {
     localStorage.removeItem(TRY_KEY_STORAGE_KEY);
   } catch {
-    // Nothing was stored.
+    // Storage may be blocked; never fall back to persisting a secret.
   }
 }
 
@@ -312,10 +302,54 @@ const CAPABILITY_TABS: Record<string, TryTab> = {
   decision: "decide",
   embed: "embed",
   embeddings: "embed",
-  audio: "workflow",
-  music: "workflow",
-  sfx: "workflow",
   workflow: "workflow",
+};
+
+/**
+ * Kinds of work Try runs through a workflow. A request for one opens
+ * Workflow with only the workflows whose catalog capability matches. The
+ * keys are the capability vocabulary, not engine or workflow names.
+ */
+type RequestedKind = {
+  /** Lower case, for sentences: "No video is available to you right now." */
+  noun: string;
+  /** The noun takes "are": "No sound effects are available". */
+  plural?: boolean;
+  /** Catalog workflow capabilities that make this kind. */
+  capabilities: string[];
+  /** Try has no way to run this kind at all. */
+  untryable?: boolean;
+};
+const REQUESTED_KINDS: Record<string, RequestedKind> = {
+  video: { noun: "video", capabilities: ["video"] },
+  music: { noun: "music", capabilities: ["music"] },
+  sfx: { noun: "sound effects", plural: true, capabilities: ["sfx"] },
+  sound_effects: { noun: "sound effects", plural: true, capabilities: ["sfx"] },
+  audio: { noun: "audio", capabilities: ["music", "sfx", "audio"] },
+  rerank: { noun: "reranking", capabilities: [], untryable: true },
+};
+
+function requestedTabFor(key: string | undefined): TryTab | null {
+  if (!key) return null;
+  if (CAPABILITY_TABS[key]) return CAPABILITY_TABS[key];
+  const kind = REQUESTED_KINDS[key];
+  return kind && !kind.untryable ? "workflow" : null;
+}
+
+function workflowMakes(option: CatalogOption, kind: RequestedKind) {
+  const capability = option.workflow?.capability;
+  return Boolean(capability && kind.capabilities.includes(capability));
+}
+
+/** What the model picker is called in the "none available" line. */
+const EMPTY_NOUN: Record<TryTab, string> = {
+  chat: "chat models",
+  image: "picture models",
+  speech: "voice models",
+  transcribe: "transcription models",
+  decide: "decision models",
+  embed: "embedding models",
+  workflow: "workflows",
 };
 
 function baseUrl() {
@@ -337,7 +371,37 @@ class PublicRequestError extends ApiError {
   ) {
     super("public_request_failed", message, response.status);
   }
+
+  /** The layer the gateway named in the error's details, if any. */
+  get layer() {
+    const layer = (
+      this.payload as { error?: { details?: { layer?: unknown } } } | null
+    )?.error?.details?.layer;
+    return typeof layer === "string" && layer in LAYER_HEADINGS
+      ? layer
+      : undefined;
+  }
 }
+
+/**
+ * A failure's heading names the layer that stopped it (P3). The layers are
+ * the gateway's public failure vocabulary; "unknown" has no heading of its
+ * own, so the card keeps "<task> request failed".
+ */
+const LAYER_HEADINGS: Record<string, string> = Object.fromEntries([
+  ["request", "The request wasn’t accepted"],
+  ["account", "Your account stopped this request"],
+  ["library", "A Library item isn’t available"],
+  ["gateway", "The gateway stopped this request"],
+  ["engine", "The engine stopped this request"],
+  // Pairs, not an object literal: the model/voice guard reads `model: "…"`
+  // as a hard-coded model id.
+  ["model", "The model stopped this request"],
+  ["workflow", "The workflow stopped this request"],
+]);
+
+/** Said when nothing shows where a request stopped. */
+const UNKNOWN_FAILURE = "We couldn’t tell where this request stopped.";
 
 /** The connection dropped and the gateway may still have finished the work. */
 class LostRequestError extends Error {
@@ -445,7 +509,11 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
   });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json")
-    ? await response.json().catch(() => null)
+    ? await response.json().catch((error: unknown) => {
+        if (isNetworkFailure(error)) throw error;
+        if (!response.ok) return null;
+        throw new Error("The gateway sent a reply we could not read. Try again.");
+      })
     : await response.blob();
   const elapsedMs = Math.round(performance.now() - started);
   if (!response.ok) {
@@ -456,7 +524,7 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
       typeof (payload as { error?: { message?: unknown } }).error?.message ===
         "string"
         ? (payload as { error: { message: string } }).error.message
-        : `Request failed with HTTP ${response.status}.`;
+        : UNKNOWN_FAILURE;
     throw new PublicRequestError(message, response, payload, elapsedMs);
   }
   return { response, payload, elapsedMs };
@@ -476,46 +544,70 @@ function receiptFrom(response: Response, payload: unknown) {
   return null;
 }
 
-async function verifiedReceiptId(
+/** Where a run's receipt can be found: its request id, or its creations. */
+type ReceiptLookup = { requestId: string | null; assetIds: string[] };
+
+function receiptLookup(
   response: Response,
   payload: unknown,
   hint?: string | null,
-) {
+): ReceiptLookup {
+  // Media routes can return asset handles without a request-id header. The
+  // account-scoped asset record carries the exact generation's provenance.
+  const record = payload as {
+    data?: Array<{ asset_id?: unknown }>;
+    assets?: Array<{ asset_id?: unknown }>;
+  } | null;
+  const items = [
+    ...(Array.isArray(record?.data) ? record.data : []),
+    ...(Array.isArray(record?.assets) ? record.assets : []),
+  ];
+  return {
+    requestId: receiptFrom(response, payload) ?? hint ?? null,
+    assetIds: [
+      ...new Set(
+        items
+          .map((item) => item?.asset_id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    ].slice(0, 10),
+  };
+}
+
+/**
+ * Finds the run's receipt. "No receipt" and "could not check" are different
+ * answers (PF-008): a missing receipt is a fact, a failed check is retried.
+ */
+async function checkReceipt(
+  lookup: ReceiptLookup,
+): Promise<{ receiptId: string | null; receiptLookup?: ReceiptLookup }> {
+  let failed = false;
+  /** The id when its receipt exists; null when it does not. Throws on failure. */
   async function verify(requestId: string | null) {
     if (!requestId) return null;
     const receipt = await fetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
       { credentials: "same-origin" },
     );
-    return receipt.ok ? requestId : null;
+    if (receipt.ok) return requestId;
+    if (receipt.status === 404) return null;
+    throw new Error(`Receipt check returned HTTP ${receipt.status}`);
   }
   try {
-    const direct = await verify(receiptFrom(response, payload) ?? hint ?? null);
-    if (direct) return direct;
-    // Media routes can return asset handles without a request-id header. The
-    // account-scoped asset record carries the exact generation's provenance.
-    const record = payload as {
-      data?: Array<{ asset_id?: unknown }>;
-      assets?: Array<{ asset_id?: unknown }>;
-    } | null;
-    const items = [
-      ...(Array.isArray(record?.data) ? record.data : []),
-      ...(Array.isArray(record?.assets) ? record.assets : []),
-    ];
-    const ids = [
-      ...new Set(
-        items
-          .map((item) => item?.asset_id)
-          .filter(
-            (id): id is string => typeof id === "string" && id.length > 0,
-          ),
-      ),
-    ].slice(0, 10);
-    for (const id of ids) {
+    const direct = await verify(lookup.requestId);
+    if (direct) return { receiptId: direct };
+  } catch {
+    failed = true;
+  }
+  for (const id of lookup.assetIds) {
+    try {
       const detail = await fetch(`/me/api/media/${encodeURIComponent(id)}`, {
         credentials: "same-origin",
       });
-      if (!detail.ok) continue;
+      if (!detail.ok) {
+        if (detail.status !== 404) failed = true;
+        continue;
+      }
       const value = (await detail.json()) as {
         asset?: { request_id?: unknown };
       };
@@ -524,13 +616,44 @@ async function verifiedReceiptId(
           ? value.asset.request_id
           : null;
       const verified = await verify(requestId);
-      if (verified) return verified;
+      if (verified) return { receiptId: verified };
+    } catch {
+      failed = true;
     }
-  } catch {
-    return null;
   }
-  return null;
+  return failed ? { receiptId: null, receiptLookup: lookup } : { receiptId: null };
 }
+
+/** Bound receipt waiting even when a fetch does not settle. */
+async function timedReceipt(lookup: ReceiptLookup) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      checkReceipt(lookup),
+      new Promise<{ receiptId: string | null; receiptLookup: ReceiptLookup }>((resolve) => {
+        timer = setTimeout(() => resolve({ receiptId: null, receiptLookup: lookup }), 10_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A media job's state in plain words (PF-006); the raw status is technical. */
+function jobPhase(status: string) {
+  const value = status.toLowerCase();
+  if (["queued", "pending", "waiting", "submitted"].includes(value))
+    return "Waiting to start";
+  if (["running", "processing", "in_progress", "started"].includes(value))
+    return "Being made";
+  if (["succeeded", "completed"].includes(value)) return "Ready";
+  if (["failed", "cancelled", "canceled", "expired", "error"].includes(value))
+    return "Couldn’t finish";
+  return "The gateway sent a state Try doesn’t know";
+}
+
+const FINISHED_JOB = ["succeeded", "completed"];
+const ENDED_JOB = [...FINISHED_JOB, "failed", "cancelled", "canceled", "expired", "error"];
 
 function codeSnippets(request: RequestInfo) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
@@ -633,7 +756,8 @@ function textFromChat(payload: unknown) {
   const choice = (
     payload as { choices?: Array<{ message?: { content?: string } }> }
   )?.choices?.[0];
-  return choice?.message?.content ?? JSON.stringify(payload, null, 2);
+  const content = choice?.message?.content;
+  return typeof content === "string" && content.trim() ? content : null;
 }
 
 function imageFrom(payload: unknown) {
@@ -798,6 +922,10 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
         stringValue(record.display_name) ??
         String(record.id ?? ""),
       description: stringValue(record.description) ?? undefined,
+      capability: stringValue(record.capability) ?? undefined,
+      aliases: Array.isArray(record.aliases)
+        ? record.aliases.filter((name): name is string => typeof name === "string")
+        : undefined,
       availability: record.availability as WorkflowOption["availability"],
       outputs: Array.isArray(record.outputs)
         ? (record.outputs as WorkflowOption["outputs"])
@@ -1029,7 +1157,28 @@ export default function TryPage() {
   const requestedCapability = searchParams.get("capability");
   const requestedModel = searchParams.get("model") ?? searchParams.get("alias");
   const requestedCapabilityKey = requestedCapability?.toLowerCase().trim();
+  const requestedTab = requestedTabFor(requestedCapabilityKey);
+  const requestedKind = requestedCapabilityKey
+    ? (REQUESTED_KINDS[requestedCapabilityKey] ?? null)
+    : null;
+  // A model in the link is a deliberate choice for this task, even when the
+  // catalog does not list it. A kind of work names workflows, not models.
+  const linkedModelTab: TryTab | null =
+    requestedModel && !requestedKind ? (requestedTab ?? "chat") : null;
+  // "Show all workflows" (or another task, for a kind Try cannot run)
+  // clears what the link asked for; a new link asks again.
+  const [kindCleared, setKindCleared] = useState(false);
+  const [kindKey, setKindKey] = useState(requestedCapabilityKey);
+  if (kindKey !== requestedCapabilityKey) {
+    setKindKey(requestedCapabilityKey);
+    setKindCleared(false);
+  }
+  const kindFilter =
+    requestedKind && !requestedKind.untryable && !kindCleared && !requestedWorkflow
+      ? requestedKind
+      : null;
   const [key, setKey] = useState<TryKey | null>(null);
+  const keyGeneration = useRef(0);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
@@ -1073,10 +1222,12 @@ export default function TryPage() {
   const stream = useRef<MediaStream | null>(null);
   const objectUrls = useRef<string[]>([]);
   const mounted = useRef(true);
+  const acquiringMicrophone = useRef(false);
   const activeTabRef = useRef<TryTab>("chat");
   const explicitModelTabs = useRef<Set<TryTab>>(new Set());
   const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const runIds = useRef<Partial<Record<TryTab, number>>>({});
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, TryError>>>({});
@@ -1101,11 +1252,17 @@ export default function TryPage() {
         .filter(Boolean),
     [options],
   );
+  const workflowChoices = useMemo(
+    () =>
+      (catalog.workflow ?? []).filter(
+        (option) => !kindFilter || workflowMakes(option, kindFilter),
+      ),
+    [catalog.workflow, kindFilter],
+  );
   const selectedWorkflow = useMemo(
     () =>
-      catalog.workflow?.find((option) => option.id === model.workflow)
-        ?.workflow,
-    [catalog.workflow, model.workflow],
+      workflowChoices.find((option) => option.id === model.workflow)?.workflow,
+    [workflowChoices, model.workflow],
   );
   const owner = viewer.admin;
   const workflowAvailability = selectedWorkflow
@@ -1139,6 +1296,7 @@ export default function TryPage() {
     const urls = objectUrls.current;
     return () => {
       mounted.current = false;
+      keyGeneration.current += 1;
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
       urls.forEach((url) => URL.revokeObjectURL(url));
@@ -1146,12 +1304,21 @@ export default function TryPage() {
   }, []);
 
   useEffect(() => {
-    const tab =
-      requestedCapability == null
-        ? null
-        : CAPABILITY_TABS[requestedCapability.toLowerCase().trim()];
-    if (tab) setActiveTab(tab);
-  }, [requestedCapability]);
+    forgetStoredTryKey();
+  }, []);
+
+  useEffect(() => {
+    keyGeneration.current += 1;
+    if (!viewer.authenticated) {
+      setKey(null);
+      setKeyBusy(false);
+      setKeyError(null);
+    }
+  }, [viewer.authenticated]);
+
+  useEffect(() => {
+    if (requestedTab) setActiveTab(requestedTab);
+  }, [requestedTab]);
 
   useEffect(() => {
     try {
@@ -1179,14 +1346,10 @@ export default function TryPage() {
   }, [personViewer]);
 
   useEffect(() => {
-    if (!requestedModel || requestedCapabilityKey === "audio") return;
-    const tab =
-      requestedCapability == null
-        ? "chat"
-        : (CAPABILITY_TABS[requestedCapability.toLowerCase().trim()] ?? "chat");
-    explicitModelTabs.current.add(tab);
-    setModel((current) => ({ ...current, [tab]: requestedModel }));
-  }, [requestedCapability, requestedCapabilityKey, requestedModel]);
+    if (!requestedModel || !linkedModelTab) return;
+    explicitModelTabs.current.add(linkedModelTab);
+    setModel((current) => ({ ...current, [linkedModelTab]: requestedModel }));
+  }, [linkedModelTab, requestedModel]);
 
   useEffect(() => {
     if (requestedWorkflow) {
@@ -1254,17 +1417,39 @@ export default function TryPage() {
     }
   }
 
+  function chooseTab(tab: TryTab) {
+    setActiveTab(tab);
+    // A kind Try cannot run was a notice about the link; choosing a task
+    // answers it.
+    if (requestedKind?.untryable) setKindCleared(true);
+  }
+
+  async function retryCatalog(section: CatalogSection) {
+    const loaded = await loadCatalogSection(section, key?.secret);
+    // Without a key only the account catalog can be read. Run is off until
+    // a list loads, so preparing the key, as Run does, also tries the
+    // gateway's own model list.
+    if (!loaded && section === "models" && !key?.secret && mounted.current)
+      await prepareKey();
+  }
+
   async function prepareKey() {
+    const generation = keyGeneration.current;
+    const current = () => mounted.current && generation === keyGeneration.current;
     setKeyBusy(true);
     setKeyError(null);
     try {
       const account = await accountApi.session();
-      if (!account.authenticated)
+      if (!current()) return null;
+      if (!account.authenticated) {
+        setKey(null);
         throw new Error("Sign in to create a Try key.");
-      // The gateway shows a secret once, so this browser keeps it until the
-      // key ends with the sign-in. The gateway decides whether it is reusable.
-      const cached = readStoredTryKey();
+      }
+      // Only reuse a key whose secret this page still holds. A reload or
+      // another tab asks for a fresh key without touching other tabs' keys.
+      const cached = key;
       const credential = await accountApi.tryKey(cached?.id ?? null);
+      if (!current()) return null;
       const secret = credential.reused ? cached?.secret : credential.api_key;
       if (!secret || (credential.reused && cached?.id !== credential.id))
         throw new Error("Could not prepare a Try key. Try again.");
@@ -1273,19 +1458,18 @@ export default function TryPage() {
         secret,
         appName: credential.app_name,
       };
-      if (!credential.reused) storeTryKey(prepared);
       setKey(prepared);
       const preparedCatalog = await loadCatalog(secret);
-      return { ...prepared, catalog: preparedCatalog };
+      return current() ? { ...prepared, catalog: preparedCatalog } : null;
     } catch (error) {
-      setKeyError(
+      if (current()) setKeyError(
         error instanceof Error
           ? error.message
           : "Could not prepare a Try key. Try again.",
       );
       return null;
     } finally {
-      setKeyBusy(false);
+      if (current()) setKeyBusy(false);
     }
   }
 
@@ -1309,6 +1493,10 @@ export default function TryPage() {
   }
 
   async function startRecording() {
+    // One permission request at a time: a second click while the prompt is
+    // open would acquire a second stream and recorder.
+    if (acquiringMicrophone.current) return;
+    acquiringMicrophone.current = true;
     setRecordingError(null);
     let mediaStream: MediaStream | null = null;
     try {
@@ -1321,7 +1509,13 @@ export default function TryPage() {
       }
       stream.current = mediaStream;
       const acquiredStream = mediaStream;
-      const mediaRecorder = new MediaRecorder(mediaStream);
+      const mimeType = ["audio/webm", "audio/mp4", "audio/ogg"].find(
+        (type) => MediaRecorder.isTypeSupported?.(type),
+      );
+      const mediaRecorder = new MediaRecorder(
+        mediaStream,
+        mimeType ? { mimeType } : undefined,
+      );
       chunks.current = [];
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size) chunks.current.push(event.data);
@@ -1329,8 +1523,13 @@ export default function TryPage() {
       mediaRecorder.onstop = () => {
         acquiredStream.getTracks().forEach((track) => track.stop());
         stream.current = null;
-        const blob = new Blob(chunks.current, { type: "audio/webm" });
-        setFile(new File([blob], "recording.webm", { type: "audio/webm" }));
+        const type = mediaRecorder.mimeType || chunks.current[0]?.type || mimeType || "";
+        const extension = type.split(";")[0] === "audio/mp4"
+          ? "m4a"
+          : type.split(";")[0] === "audio/ogg" ? "ogg"
+          : type.split(";")[0] === "audio/webm" ? "webm" : "bin";
+        const blob = new Blob(chunks.current, { type });
+        setFile(new File([blob], `recording.${extension}`, { type }));
         setRecording(false);
       };
       recorder.current = mediaRecorder;
@@ -1343,6 +1542,8 @@ export default function TryPage() {
         setRecordingError(
           "Recording is not available in this browser. Check microphone access and try again.",
         );
+    } finally {
+      acquiringMicrophone.current = false;
     }
   }
 
@@ -1355,8 +1556,25 @@ export default function TryPage() {
     sourceModel: Record<TryTab, string> = model,
   ) {
     const next = { ...sourceModel };
+    const workflows = (grouped.workflow ?? []).filter(
+      (option) => !kindFilter || workflowMakes(option, kindFilter),
+    );
+    // A link that names a kind of work and a model picks that workflow
+    // when it is one of them; any other name is not a workflow.
+    const linkedWorkflow =
+      kindFilter && requestedModel
+        ? workflows.find(
+            (option) =>
+              option.id === requestedModel ||
+              option.workflow?.short_id === requestedModel ||
+              option.workflow?.aliases?.includes(requestedModel),
+          )
+        : undefined;
+    if (linkedWorkflow && !workflows.some((option) => option.id === next.workflow))
+      next.workflow = linkedWorkflow.id;
     for (const tab of TAB_ITEMS) {
-      const options = grouped[tab.value] ?? [];
+      const options =
+        tab.value === "workflow" ? workflows : (grouped[tab.value] ?? []);
       next[tab.value] = selectedOrDefaultModel(
         next[tab.value],
         options,
@@ -1380,7 +1598,11 @@ export default function TryPage() {
     return mounted.current ? catalogRef.current : null;
   }
 
-  async function loadCatalogSection(section: CatalogSection, secret?: string) {
+  /** True when this section's list loaded (even empty). */
+  async function loadCatalogSection(
+    section: CatalogSection,
+    secret?: string,
+  ): Promise<boolean> {
     catalogRequests.current[section]?.abort();
     const controller = new AbortController();
     catalogRequests.current[section] = controller;
@@ -1401,18 +1623,7 @@ export default function TryPage() {
       let unknownCount = 0;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
-        let workflowOptions = groupWorkflows(await response.json());
-        if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
-          workflowOptions = workflowOptions.filter((option) =>
-            option.workflow?.outputs?.some(
-              (output) =>
-                output.kind === "audio" ||
-                output.type === "audio" ||
-                output.media_type?.startsWith("audio/"),
-            ),
-          );
-        }
-        grouped = { workflow: workflowOptions };
+        grouped = { workflow: groupWorkflows(await response.json()) };
       } else if (response.ok) {
         grouped = groupCatalog(await response.json());
       } else if (secret) {
@@ -1435,7 +1646,7 @@ export default function TryPage() {
       } else {
         throw new Error("Model catalog unavailable");
       }
-      if (!current()) return;
+      if (!current()) return false;
       const merged =
         section === "workflows"
           ? { ...catalogRef.current, workflow: grouped.workflow }
@@ -1451,9 +1662,11 @@ export default function TryPage() {
         ...states,
         [section]: hasOptions ? "ready" : "empty",
       }));
+      return true;
     } catch {
       if (current())
         setCatalogState((states) => ({ ...states, [section]: "error" }));
+      return false;
     }
   }
 
@@ -1461,6 +1674,7 @@ export default function TryPage() {
     tab: TryTab,
     selectedModel: Record<TryTab, string> = model,
     selectedCatalog: CatalogGroups = catalog,
+    requestWorkflow: WorkflowOption | undefined = selectedWorkflow,
   ): RequestInfo {
     if (tab === "chat") {
       return {
@@ -1514,23 +1728,23 @@ export default function TryPage() {
       };
     }
     if (tab === "workflow") {
-      const route = selectedWorkflow?.example_request?.path;
+      const route = requestWorkflow?.example_request?.path;
       if (!route) {
         throw new Error(
           "This workflow does not include a runnable example request yet.",
         );
       }
-      const multipart = requestIsMultipart(selectedWorkflow);
+      const multipart = requestIsMultipart(requestWorkflow);
       const values = parseWorkflowInputs(
         prompt.workflow || "{}",
-        selectedWorkflow.inputs,
-        selectedWorkflow.inputMapping,
+        requestWorkflow.inputs,
+        requestWorkflow.inputMapping,
       );
       const body = multipart ? {} : values;
       const formBody = multipart ? values : {};
       if (multipart) {
-        for (const input of selectedWorkflow.inputs) {
-          const mapping = selectedWorkflow.inputMapping?.[input.name];
+        for (const input of requestWorkflow.inputs) {
+          const mapping = requestWorkflow.inputMapping?.[input.name];
           if (
             mapping?.in !== "file+extension" ||
             !mapping.field ||
@@ -1556,13 +1770,13 @@ export default function TryPage() {
         body.model === undefined &&
         body.request === undefined
       ) {
-        body.model = selectedWorkflow.short_id ?? selectedWorkflow.id;
+        body.model = requestWorkflow.short_id ?? requestWorkflow.id;
       }
       return {
         path: route,
         body,
         form: formBody,
-        files: workflowFileSpecs(selectedWorkflow).map((file) => ({
+        files: workflowFileSpecs(requestWorkflow).map((file) => ({
           ...file,
           examplePath: workflowFiles[file.field]?.name ?? file.examplePath,
           type: workflowFiles[file.field]?.type || file.type,
@@ -1579,6 +1793,20 @@ export default function TryPage() {
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
+    if (tab === "chat" && !prompt.chat.trim()) {
+      setErrors((current) => ({
+        ...current,
+        chat: { message: "Enter a prompt before running chat." },
+      }));
+      return;
+    }
+    // A sign-out or unmount (both advance keyGeneration) ends the identity
+    // this run started under.
+    const runGeneration = keyGeneration.current;
+    const runId = (runIds.current[tab] ?? 0) + 1;
+    runIds.current[tab] = runId;
+    const superseded = () => !mounted.current ||
+      runGeneration !== keyGeneration.current || runIds.current[tab] !== runId;
     if (tab === "workflow" && workflowAvailability?.runnable === false) return;
     if (tab === "workflow" && selectedWorkflow?.example_request?.path) {
       // Nothing doomed goes to the gateway: say what is missing, on the field.
@@ -1609,6 +1837,25 @@ export default function TryPage() {
       preparedCatalog = prepared?.catalog ?? null;
       if (!runKey?.secret) return;
     }
+    if (superseded()) return;
+    const runCatalog = preparedCatalog ?? catalog;
+    const runWorkflow = runCatalog.workflow?.find(
+      (option) => option.id === model.workflow,
+    )?.workflow;
+    if (tab === "workflow" && (!runWorkflow ||
+      !workflowAvailabilityView(runWorkflow.availability, {
+        owner, engineBinding: runWorkflow.engine_binding,
+      }).runnable || !runWorkflow.example_request?.path)) {
+      setErrors((current) => ({
+        ...current,
+        workflow: { message: runWorkflow
+          ? workflowAvailabilityView(runWorkflow.availability, {
+              owner, engineBinding: runWorkflow.engine_binding,
+            }).text || "This workflow does not include a runnable example request yet."
+          : "This workflow is no longer available." },
+      }));
+      return;
+    }
     const selectedModel = preparedCatalog
       ? nextModelForCatalog(preparedCatalog, model)
       : model;
@@ -1623,7 +1870,7 @@ export default function TryPage() {
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
-      const built = buildRequest(tab, selectedModel, preparedCatalog ?? catalog);
+      const built = buildRequest(tab, selectedModel, runCatalog, runWorkflow);
       // Preserve the promise shown when Run was pressed, even if a refresh
       // finds that another tab has since enabled memory.
       let refreshedState = keepState;
@@ -1636,6 +1883,7 @@ export default function TryPage() {
           setPromptMemory(null);
           refreshedState = "unknown";
         }
+        if (superseded()) return;
       }
       if (
         personViewer &&
@@ -1714,11 +1962,12 @@ export default function TryPage() {
           body: JSON.stringify(request.body),
         });
       }
-      const receiptId = await verifiedReceiptId(
-        result.response,
-        result.payload,
-        result.requestId,
-      );
+      if (superseded()) return;
+      const lookup = receiptLookup(result.response, result.payload, result.requestId);
+      const receipt = tab === "chat"
+        ? { receiptId: null, receiptLookup: lookup }
+        : await checkReceipt(lookup);
+      if (superseded()) return;
       const oldUrls = [
         results[tab]?.audioUrl,
         ...(results[tab]?.media?.map((item) => item.url) ?? []),
@@ -1743,13 +1992,29 @@ export default function TryPage() {
                 catalog[tab]?.find((option) => option.id === selectedModel[tab])
                   ?.locality,
             ),
-            receiptId,
+            receipt.receiptId,
             request,
           ),
+          receiptLookup: receipt.receiptLookup,
+          imageModel: tab === "image"
+            ? runCatalog.image?.find((option) => option.id === selectedModel.image)?.label ?? selectedModel.image
+            : undefined,
+          checkingReceipt: tab === "chat",
+          runId,
           promptNotSaved,
         },
       }));
+      if (tab === "chat") {
+        void timedReceipt(lookup).then((checked) => {
+          if (superseded()) return;
+          setResults((current) => current[tab]?.runId === runId
+            ? { ...current, [tab]: { ...current[tab]!, ...checked,
+                receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+            : current);
+        });
+      }
     } catch (error) {
+      if (superseded()) return;
       const lost =
         error instanceof LostRequestError || isNetworkFailure(error)
           ? lostCopy(tab)
@@ -1760,18 +2025,28 @@ export default function TryPage() {
           ...(lost ? { ...lost, lost: true } : {}),
           message:
             lost?.message ??
+            (tab === "image" && error instanceof PublicRequestError
+              ? error.status === 403 && error.message !== UNKNOWN_FAILURE
+                ? error.message
+                : "We couldn’t make this picture. Try again, or choose another model."
+              :
             (error instanceof ApiError &&
             tab === "decide" &&
             error.status === 404
               ? "Decisions not enabled on this gateway"
               : error instanceof Error
                 ? error.message
-                : "This request could not be completed."),
+                : "This request could not be completed.")),
           ...(error instanceof PublicRequestError
             ? {
-                status: error.status,
+                layer: error.layer,
                 receiptId: receiptFrom(error.response, error.payload),
-                elapsedMs: error.elapsedMs,
+                technical: [
+                  `HTTP ${error.status} · ${error.elapsedMs} ms`,
+                  error.payload instanceof Blob
+                    ? `${error.payload.type || "file"} · ${error.payload.size} bytes`
+                    : JSON.stringify(error.payload, null, 2),
+                ].join("\n"),
               }
             : {}),
         },
@@ -1882,6 +2157,27 @@ export default function TryPage() {
     }
   }
 
+  /** Checks a result's receipt again after the check itself failed. */
+  async function recheckReceipt(tab: TryTab) {
+    const lookup = results[tab]?.receiptLookup;
+    if (!lookup) return;
+    const update = (patch: Partial<Result>) =>
+      setResults((current) => {
+        const result = current[tab];
+        return result?.receiptLookup === lookup
+          ? { ...current, [tab]: { ...result, ...patch } }
+          : current;
+      });
+    update({ checkingReceipt: true });
+    const receipt = await timedReceipt(lookup);
+    if (!mounted.current) return;
+    update({
+      checkingReceipt: false,
+      receiptId: receipt.receiptId,
+      ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
+    });
+  }
+
   function editFailedRun(tab: TryTab) {
     const form = formRefs.current[tab];
     if (!form) return;
@@ -1921,14 +2217,10 @@ export default function TryPage() {
       }
       const requestId =
         previous.receiptId ?? job.requestId ?? previous.job.requestId;
-      const receiptId = requestId
-        ? await verifiedReceiptId(
-            new Response(null, {
-              headers: { "x-azizam-receipt-id": requestId },
-            }),
-            null,
-          )
-        : null;
+      const receipt = await checkReceipt({
+        requestId: requestId ?? null,
+        assetIds: [],
+      });
       setResults((current) => ({
         ...current,
         workflow: {
@@ -1939,7 +2231,8 @@ export default function TryPage() {
             payload instanceof Blob
               ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
               : JSON.stringify(payload, null, 2),
-          receiptId,
+          receiptId: receipt.receiptId,
+          receiptLookup: receipt.receiptLookup,
         },
       }));
     } catch (error) {
@@ -1980,65 +2273,59 @@ export default function TryPage() {
     receiptId: string | null,
     request: RequestInfo,
   ): Result {
+    const common = { elapsedMs, cost, receiptId, request };
+    const raw =
+      payload instanceof Blob
+        ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
+        : JSON.stringify(payload, null, 2);
+    // A success with nothing in it says what is missing; the raw answer
+    // stays under Technical details (PF-007).
+    const nothing = (title: string, missing: string): Result => ({
+      title,
+      body: "",
+      missing,
+      technical: raw,
+      ...common,
+    });
     if (tab === "chat") {
-      return {
-        title: "Chat result",
-        body: textFromChat(payload),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      const text = textFromChat(payload);
+      return text
+        ? { title: "Chat result", body: text, copyAnswer: true,
+            answerNote: (() => {
+              const reason = (payload as { choices?: Array<{ finish_reason?: string }> })?.choices?.[0]?.finish_reason;
+              return reason === "length"
+                ? "This answer stopped early because it reached its length limit."
+                : reason === "content_filter"
+                  ? "This answer was cut short by a content filter." : undefined;
+            })(), ...common }
+        : nothing("Chat result", "reply");
     }
     if (tab === "image") {
       const imageUrl = imageFrom(payload);
-      return {
-        title: "Image result",
-        body: imageUrl ? "Image generated." : JSON.stringify(payload, null, 2),
-        imageUrl,
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      return imageUrl
+        ? { title: "Image result", body: "Image generated.", imageUrl, ...common }
+        : nothing("Image result", "picture");
     }
     if (tab === "speech") {
-      const audioUrl =
-        payload instanceof Blob ? URL.createObjectURL(payload) : undefined;
-      if (audioUrl) {
-        objectUrls.current.push(audioUrl);
-      }
-      return {
-        title: "Speech result",
-        body: audioUrl ? "Audio generated." : JSON.stringify(payload, null, 2),
-        audioUrl,
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      if (!(payload instanceof Blob) || !payload.size)
+        return nothing("Speech result", "audio");
+      const audioUrl = URL.createObjectURL(payload);
+      objectUrls.current.push(audioUrl);
+      return { title: "Speech result", body: "Audio generated.", audioUrl, ...common };
     }
     if (tab === "transcribe") {
-      return {
-        title: "Transcription result",
-        body:
-          (payload as { text?: string } | null)?.text ??
-          JSON.stringify(payload, null, 2),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      const text = (payload as { text?: unknown } | null)?.text;
+      return typeof text === "string" && text.trim()
+        ? { title: "Transcription result", body: text, copyAnswer: true, ...common }
+        : nothing("Transcription result", "transcript");
     }
     if (tab === "decide") {
       return {
         title: "Decision result",
-        body: JSON.stringify(payload, null, 2),
+        body: "",
         probabilities: decisionRows(payload, parsedOptions),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
+        technical: raw,
+        ...common,
       };
     }
     if (tab === "workflow") {
@@ -2048,32 +2335,20 @@ export default function TryPage() {
       return {
         title: "Workflow result",
         body: job
-          ? `Job ${job.status}.`
+          ? `${jobPhase(job.status)}.`
           : media.length
             ? `${media.length} output${media.length === 1 ? "" : "s"} returned.`
             : "Workflow returned a response. Open Technical details to inspect it.",
         media,
         job,
-        technical:
-          payload instanceof Blob
-            ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
-            : JSON.stringify(payload, null, 2),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
+        technical: raw,
+        ...common,
       };
     }
     const vector = embeddingStats(payload);
-    return {
-      title: "Embedding result",
-      body: vector ? "Vector created." : JSON.stringify(payload, null, 2),
-      vector: vector ?? undefined,
-      elapsedMs,
-      cost,
-      receiptId,
-      request,
-    };
+    return vector
+      ? { title: "Embedding result", body: "Vector created.", vector, ...common }
+      : nothing("Embedding result", "result");
   }
 
   return (
@@ -2098,35 +2373,59 @@ export default function TryPage() {
                 className="inline-flex items-center gap-2"
               >
                 <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-                Creating Try key
+                Getting Try ready…
               </span>
             )}
           </div>
         ) : (
-          <p>
-            Try uses a temporary key that ends when you sign out
-            <span aria-hidden="true"> · </span>
-            <button
-              type="button"
-              className="text-foreground underline underline-offset-4 disabled:opacity-50"
-              onClick={() => void revokeTryKey()}
-              disabled={keyBusy}
-            >
-              Revoke
-            </button>
-          </p>
+          // Try manages its key; how it works is a detail (PF-011). The
+          // gateway ends the key with the sign-in session
+          // (ensure_try_session_key), so "ends when you sign out" holds.
+          <details>
+            <summary className="inline-flex min-h-11 cursor-pointer items-center">
+              Key details
+            </summary>
+            <p>
+              Try runs with its own key, which ends when you sign out.{" "}
+              <button
+                type="button"
+                className="text-foreground min-h-11 underline underline-offset-4 disabled:opacity-50"
+                onClick={() => void revokeTryKey()}
+                disabled={keyBusy}
+              >
+                Remove this key
+              </button>
+            </p>
+          </details>
         )}
       </section>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as TryTab)}
-      >
+      {requestedKind?.untryable && !kindCleared ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Try can’t run {requestedKind.noun}. Choose another task.
+        </p>
+      ) : null}
+
+      <Tabs value={activeTab} onValueChange={(value) => chooseTab(value as TryTab)}>
+        {/* A phone has no room for seven task names in a row, and a strip
+            that scrolls hides the ones past the edge. A select lists them
+            all (P4); wider screens keep the tabs. */}
+        <label className="block space-y-2 sm:hidden">
+          <span className="text-sm font-medium">Task</span>
+          <select
+            className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
+            value={activeTab}
+            onChange={(event) => chooseTab(event.target.value as TryTab)}
+          >
+            {TAB_ITEMS.map((tab) => (
+              <option key={tab.value} value={tab.value}>
+                {tab.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div
-          // On a phone the strip runs edge to edge and fades at both ends,
-          // so a chip that is partly off screen reads as "more this way",
-          // not as a label cut mid-word.
-          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)] max-sm:px-5"
+          className="overflow-x-auto pb-1 max-sm:hidden"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
@@ -2137,7 +2436,7 @@ export default function TryPage() {
                 value={tab.value}
                 // A chip keeps its full label; the strip scrolls instead of
                 // squeezing chips into each other.
-                className="flex-none shrink-0 max-sm:min-w-fit"
+                className="flex-none shrink-0"
               >
                 <tab.icon aria-hidden="true" />
                 {tab.label}
@@ -2148,7 +2447,19 @@ export default function TryPage() {
         {TAB_ITEMS.map((tab) => {
           const currentResult = results[tab.value];
           const currentError = errors[tab.value];
-          const unavailableMessage = catalog[tab.value]?.find((option) => option.id === model[tab.value])?.unavailableMessage;
+          const section: CatalogSection =
+            tab.value === "workflow" ? "workflows" : "models";
+          const choices =
+            tab.value === "workflow"
+              ? workflowChoices
+              : (catalog[tab.value] ?? []);
+          const unavailableMessage = choices.find((option) => option.id === model[tab.value])?.unavailableMessage;
+          const linked = linkedModelTab === tab.value && Boolean(model[tab.value]);
+          const listed =
+            catalogState[section] === "ready" ||
+            catalogState[section] === "empty";
+          // Run waits for the list, and needs something on it to run.
+          const runBlocked = !listed || (!choices.length && !linked);
           return (
             <TabsContent key={tab.value} value={tab.value} className="mt-4">
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -2168,9 +2479,9 @@ export default function TryPage() {
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">Model name</span>
                     <ModelSelect
-                      loading={["idle", "loading"].includes(catalogState[tab.value === "workflow" ? "workflows" : "models"])}
+                      loading={["idle", "loading"].includes(catalogState[section])}
                       value={model[tab.value]}
-                      options={catalog[tab.value] ?? []}
+                      options={choices}
                       onChange={(value) => {
                         setModel((current) => ({
                           ...current,
@@ -2184,33 +2495,30 @@ export default function TryPage() {
                   ) : null}
                   {tab.value === activeTab && (
                     <CatalogNotice
-                      state={
-                        catalogState[
-                          tab.value === "workflow" ? "workflows" : "models"
-                        ]
-                      }
+                      state={catalogState[section]}
                       unknownModelCount={unknownModelCount}
-                      section={
-                        tab.value === "workflow" ? "workflows" : "models"
+                      section={section}
+                      empty={
+                        listed &&
+                        !choices.length &&
+                        !linked &&
+                        !(tab.value === "workflow" && kindFilter)
+                          ? EMPTY_NOUN[tab.value]
+                          : null
                       }
-                      onRetry={() =>
-                        void loadCatalogSection(
-                          tab.value === "workflow" ? "workflows" : "models",
-                          key?.secret,
-                        )
-                      }
+                      owner={owner}
+                      onRetry={() => void retryCatalog(section)}
                     />
                   )}
-                  {tab.value === "workflow" &&
-                    requestedCapabilityKey === "audio" && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground text-sm"
-                      >
-                        Audio has no dedicated Try panel. Choose a workflow if
-                        this gateway exposes one.
-                      </p>
-                    )}
+                  {tab.value === "workflow" && kindFilter && listed ? (
+                    <KindNotice
+                      kind={kindFilter}
+                      matches={workflowChoices.length}
+                      others={(catalog.workflow?.length ?? 0) > workflowChoices.length}
+                      owner={owner}
+                      onShowAll={() => setKindCleared(true)}
+                    />
+                  ) : null}
                   {tab.value === "image" && (
                     <p className="text-muted-foreground text-xs">
                       Editing, upscaling and other tools that start from a
@@ -2227,7 +2535,9 @@ export default function TryPage() {
                   )}
                   {tab.value === "decide" && (
                     <label className="block space-y-2">
-                      <span className="text-sm font-medium">State</span>
+                      <span className="text-sm font-medium">
+                        What is happening?
+                      </span>
                       <Textarea
                         value={decisionState}
                         onChange={(event) =>
@@ -2406,6 +2716,7 @@ export default function TryPage() {
                       running !== null ||
                       keyBusy ||
                       checkingJob ||
+                      runBlocked ||
                       (tab.value === "workflow" &&
                         (!workflowAvailability ||
                           !workflowAvailability.runnable))
@@ -2427,7 +2738,7 @@ export default function TryPage() {
                       {workflowAvailability.fix && (
                         <>
                           {" "}
-                          <Link
+                          <Link prefetch={false}
                             className="underline underline-offset-4"
                             href={workflowAvailability.fix.href}
                           >
@@ -2466,43 +2777,33 @@ export default function TryPage() {
                           to load has its own retry button above the form. */}
                       <ErrorState
                         heading={
-                          currentError.heading ?? `${tab.label} request failed`
+                          currentError.heading ??
+                          (currentError.layer
+                            ? LAYER_HEADINGS[currentError.layer]
+                            : `${tab.label} request failed`)
                         }
                         message={currentError.message}
                         severity={currentError.lost ? "attention" : "critical"}
                         action={
                           currentError.library
-                            ? { label: "Open Library", href: "/ui/library/" }
+                            ? { label: "Open Library", href: "/library/" }
                             : {
                                 label: "Edit and run again",
                                 onClick: () => editFailedRun(tab.value),
                               }
                         }
                       />
-                      {currentError.status !== undefined && (
-                        <dl className="grid gap-3 text-sm sm:grid-cols-3">
-                          <Fact
-                            label="Status"
-                            value={`HTTP ${currentError.status}`}
-                          />
-                          <Fact
-                            label="Time"
-                            value={`${currentError.elapsedMs} ms`}
-                          />
-                          {currentError.receiptId && (
-                            <Fact
-                              label="Receipt"
-                              value={
-                                <ReceiptLink id={currentError.receiptId} />
-                              }
-                            />
-                          )}
-                        </dl>
+                      {currentError.receiptId && (
+                        <ReceiptLink id={currentError.receiptId} />
+                      )}
+                      {currentError.technical && (
+                        <TechnicalDetails text={currentError.technical} />
                       )}
                     </div>
                   ) : currentResult ? (
                     <ResultView
                       result={currentResult}
+                      onCheckReceipt={() => void recheckReceipt(tab.value)}
                       onCheckJob={() => void checkWorkflowJob()}
                       checkingJob={checkingJob}
                       jobError={jobError}
@@ -2510,7 +2811,7 @@ export default function TryPage() {
                   ) : (
                     <EmptyState
                       icon={tab.icon}
-                      title={`Run ${tab.label.toLowerCase()}`}
+                      title="Your result appears here"
                     />
                   )}
                 </section>
@@ -2525,19 +2826,25 @@ export default function TryPage() {
 
 function ResultView({
   result,
+  onCheckReceipt,
   onCheckJob,
   checkingJob,
   jobError,
 }: {
   result: Result;
+  onCheckReceipt: () => void;
   onCheckJob: () => void;
   checkingJob: boolean;
   jobError: string | null;
 }) {
+  const { copied, failed, copy } = useCopied(JSON.stringify([result.runId, result.body]));
   const probabilityRows = result.probabilities?.filter(
     (row): row is { option: string; probability: number } =>
       row.probability !== null,
   );
+  const job = result.job;
+  const jobStatus = job?.status.toLowerCase() ?? "";
+  const noMedia = !result.media?.length;
   return (
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
@@ -2548,6 +2855,12 @@ function ResultView({
             Prompt not kept
           </p>
         ) : null}
+        {result.missing && (
+          <p className="text-sm">
+            The gateway returned no {result.missing}.
+            {result.receiptId ? " Open the receipt for details." : ""}
+          </p>
+        )}
         {Boolean(result.media?.length) && (
           <p className="text-muted-foreground text-sm">
             {result.media?.length} output{result.media?.length === 1 ? "" : "s"}{" "}
@@ -2555,17 +2868,17 @@ function ResultView({
           </p>
         )}
         {result.imageUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={result.imageUrl}
-            alt="Generated result"
-            className="max-h-96 w-full rounded-lg border object-contain"
-          />
+          <div className="max-w-2xl space-y-2">
+            <ResultMedia key={result.imageUrl} kind="image" url={result.imageUrl} />
+            <Button asChild variant="outline">
+              <a href={result.imageUrl} download="generated-picture" target="_blank" rel="noopener noreferrer">
+                Download picture
+              </a>
+            </Button>
+          </div>
         )}
         {result.audioUrl && (
-          <audio controls src={result.audioUrl} className="w-full">
-            <a href={result.audioUrl}>Download audio</a>
-          </audio>
+          <ResultMedia kind="audio" url={result.audioUrl} label="Generated audio" />
         )}
         {result.downloadUrl && (
           <a
@@ -2584,6 +2897,9 @@ function ResultView({
             <Fact label="Mean" value={result.vector.mean.toFixed(3)} />
           </dl>
         )}
+        {result.probabilities && !probabilityRows?.length ? (
+          <p className="text-sm">No answer was returned.</p>
+        ) : null}
         {probabilityRows?.length ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
@@ -2608,29 +2924,8 @@ function ResultView({
         ) : null}
         {result.media?.map((item, index) => (
           <div key={`${item.url}-${index}`} className="space-y-2">
-            {item.kind === "image" && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={item.url}
-                alt="Generated result"
-                className="max-h-96 w-full rounded-lg border object-contain"
-              />
-            )}
-            {item.kind === "audio" && (
-              <audio
-                aria-label={item.label}
-                controls
-                src={item.url}
-                className="w-full"
-              />
-            )}
-            {item.kind === "video" && (
-              <video
-                aria-label={item.label}
-                controls
-                src={item.url}
-                className="max-h-96 w-full rounded-lg"
-              />
+            {item.kind !== "file" && (
+              <ResultMedia kind={item.kind} url={item.url} label={item.label} />
             )}
             <a
               href={item.url}
@@ -2642,89 +2937,196 @@ function ResultView({
             </a>
           </div>
         ))}
-        {result.job && (
+        {job && (
           <div className="space-y-2">
-            <p className="text-sm">Job status: {result.job.status}</p>
+            <p className="text-sm">{jobPhase(job.status)}</p>
             {jobError && <ErrorState message={jobError} onRetry={onCheckJob} />}
-            {result.job.error && (
-              <p className="text-destructive text-sm">{result.job.error}</p>
+            {job.error && (
+              <p className="text-destructive text-sm">{job.error}</p>
             )}
-            {!result.media?.length &&
-              !["failed", "cancelled", "canceled"].includes(
-                result.job.status,
-              ) && (
+            {noMedia && FINISHED_JOB.includes(jobStatus) ? (
+              <p className="text-sm">
+                The workflow finished but returned no creation.
+                {result.receiptId ? " Open its receipt." : ""}
+              </p>
+            ) : null}
+            {noMedia && !ENDED_JOB.includes(jobStatus) && (
+              <>
+                <p className="text-muted-foreground text-sm">
+                  The gateway is still making this. Check again to load it.
+                </p>
                 <Button
                   type="button"
                   variant="outline"
                   disabled={checkingJob}
                   onClick={onCheckJob}
                 >
-                  {checkingJob ? "Checking job…" : "Check job"}
+                  {checkingJob ? "Checking…" : "Check again"}
                 </Button>
-              )}
-            {!result.media?.length &&
-              ![
-                "succeeded",
-                "completed",
-                "failed",
-                "cancelled",
-                "canceled",
-              ].includes(result.job.status) && (
-                <p className="text-muted-foreground text-sm">
-                  The gateway is still processing this request. Check again to
-                  load its output.
-                </p>
-              )}
+              </>
+            )}
           </div>
         )}
         {!result.imageUrl &&
           !result.audioUrl &&
           !result.media?.length &&
-          !result.job &&
+          !job &&
           !result.vector &&
-          !result.probabilities && (
+          !result.probabilities &&
+          !result.missing && (
             <pre className="bg-muted overflow-x-auto rounded-lg p-3 font-mono text-sm whitespace-pre-wrap">
               {result.body}
             </pre>
           )}
       </div>
+      {result.answerNote && <p className="text-muted-foreground text-sm">{result.answerNote}</p>}
+      {result.copyAnswer && (
+        <div>
+          <Button type="button" variant="outline" onClick={() => void copy(result.body)}>
+            {copied ? "Copied" : "Copy answer"}
+          </Button>
+          {failed && <p role="alert" className="text-destructive text-sm">{"Couldn't copy. Select the text and copy it yourself."}</p>}
+        </div>
+      )}
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
+        {result.imageModel && <Fact label="Model" value={result.imageModel} />}
         <Fact
-          label={result.job ? "Request time" : "Time"}
+          label={result.imageModel ? "Run time" : job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
         {result.cost && <Fact label="Cost" value={result.cost} />}
         <Fact
           label="Receipt"
           value={
-            result.receiptId ? (
+            result.checkingReceipt ? (
+              "Checking receipt..."
+            ) : result.receiptId ? (
               <ReceiptLink id={result.receiptId} />
+            ) : result.receiptLookup ? (
+              // The check failed, which says nothing about the receipt.
+              <span className="flex flex-wrap items-center gap-x-2">
+                Receipt couldn’t be checked.
+                <button
+                  type="button"
+                  className="min-h-11 underline underline-offset-4 disabled:opacity-50"
+                  disabled={result.checkingReceipt}
+                  onClick={onCheckReceipt}
+                >
+                  {result.checkingReceipt ? "Checking…" : "Check again"}
+                </button>
+              </span>
             ) : (
-              "Not available for this session"
+              "No receipt was returned."
             )
           }
         />
       </dl>
-      {result.technical && (
-        <details className="border-t pt-3">
-          <summary className="min-h-11 cursor-pointer text-sm font-medium">
-            Technical details
-          </summary>
-          <pre
-            tabIndex={0}
-            className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-          >
-            {result.technical}
-          </pre>
-        </details>
-      )}
+      {result.technical && <TechnicalDetails text={result.technical} />}
       <details className="space-y-2 border-t pt-3">
         <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
-          Copy as
+          Copy request as
         </summary>
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </details>
+    </div>
+  );
+}
+
+/** Raw answers and status codes, folded away from the normal view (P15). */
+function TechnicalDetails({ text }: { text: string }) {
+  return (
+    <details className="border-t pt-3">
+      <summary className="min-h-11 cursor-pointer text-sm font-medium">
+        Technical details
+      </summary>
+      <pre
+        tabIndex={0}
+        className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
+      >
+        {text}
+      </pre>
+    </details>
+  );
+}
+
+const MEDIA_NOUN = { image: "picture", audio: "audio", video: "video" } as const;
+
+/**
+ * One generated picture, sound or video, with its own wait and failure
+ * (PF-009). Retry loads the same address again.
+ */
+function ResultMedia({
+  kind,
+  url,
+  label,
+}: {
+  kind: "image" | "audio" | "video";
+  url: string;
+  label?: string;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [attempt, setAttempt] = useState(0);
+  const noun = MEDIA_NOUN[kind];
+  const events = {
+    onError: () => setState("error"),
+    ...(kind === "image"
+      ? { onLoad: () => setState("ready") }
+      : { onLoadedMetadata: () => setState("ready") }),
+  };
+  if (state === "error")
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-x-3 rounded-lg border p-3 text-sm">
+        The {noun} couldn’t be loaded.
+        <button
+          type="button"
+          className="min-h-11 underline underline-offset-4"
+          onClick={() => {
+            setAttempt((value) => value + 1);
+            setState("loading");
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  return (
+    <div className="space-y-1" aria-busy={state === "loading"}>
+      {kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={attempt}
+          src={url}
+          alt="Generated result"
+          className="max-h-96 w-full rounded-lg border object-contain"
+          {...events}
+        />
+      ) : kind === "audio" ? (
+        <audio
+          key={attempt}
+          aria-label={label}
+          controls
+          src={url}
+          className="w-full"
+          {...events}
+        >
+          <a href={url}>Download audio</a>
+        </audio>
+      ) : (
+        <video
+          key={attempt}
+          aria-label={label}
+          controls
+          src={url}
+          className="max-h-96 w-full rounded-lg"
+          {...events}
+        />
+      )}
+      {state === "loading" && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading {noun === "audio" ? "the audio" : `the ${noun}`}…
+        </p>
+      )}
     </div>
   );
 }
@@ -2760,7 +3162,7 @@ function PromptKeepControl({
     state === "member-off" ? (
       <>
         You turned off prompt keeping.{" "}
-        <Link
+        <Link prefetch={false}
           href="/account"
           className="text-foreground underline underline-offset-4"
         >
@@ -2770,7 +3172,7 @@ function PromptKeepControl({
     ) : owner ? (
       <>
         You turned off prompt keeping for everyone.{" "}
-        <Link
+        <Link prefetch={false}
           href="/settings#prompts"
           className="text-foreground underline underline-offset-4"
         >
@@ -2845,21 +3247,15 @@ function SnippetBlock({
 }) {
   const firstLanguage = snippets[0]?.language ?? "";
   const [activeLanguage, setActiveLanguage] = useState(firstLanguage);
-  const [copied, setCopied] = useState<string | null>(null);
-  async function copy(language: string, code: string) {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(language);
-    } catch {
-      setCopied("Copy failed");
-    }
-  }
+  const selectedLanguage = snippets.some((snippet) => snippet.language === activeLanguage)
+    ? activeLanguage
+    : firstLanguage;
+  const { copied, failed, copy } = useCopied(JSON.stringify([selectedLanguage, snippets]));
   return (
     <Tabs
-      value={activeLanguage || firstLanguage}
+      value={selectedLanguage}
       onValueChange={(language) => {
         setActiveLanguage(language);
-        setCopied(null);
       }}
       className="bg-muted rounded-lg border"
     >
@@ -2878,18 +3274,15 @@ function SnippetBlock({
           className="min-h-11 self-end sm:self-auto"
           onClick={() => {
             const snippet =
-              snippets.find((item) => item.language === activeLanguage) ??
+              snippets.find((item) => item.language === selectedLanguage) ??
               snippets[0];
-            if (snippet) void copy(snippet.language, snippet.code);
+            if (snippet) void copy(snippet.code);
           }}
         >
-          {copied === "Copy failed"
-            ? "Copy failed"
-            : copied
-              ? "Copied"
-              : "Copy"}
+          {copied ? "Copied" : "Copy"}
         </Button>
       </div>
+      {failed && <p role="alert" className="text-destructive p-3 text-sm">{"Couldn't copy. Select the text and copy it yourself."}</p>}
       {snippets.map((snippet) => (
         <TabsContent
           key={snippet.language}
@@ -2931,7 +3324,8 @@ function ModelSelect({
       ? [
           {
             id: value,
-            label: `${modelDisplayName(value)} · Unverified model`,
+            // Only a link puts a model here that the list does not have.
+            label: `${modelDisplayName(value)} · from your link, not in your list`,
             price: "",
             locality: "Not in the catalog",
           },
@@ -2971,15 +3365,20 @@ function ModelSelect({
 function CatalogNotice({
   state,
   section,
+  empty,
+  owner,
   unknownModelCount = 0,
   onRetry,
 }: {
   state: CatalogState;
   section: CatalogSection;
+  /** What the empty list holds ("chat models"), when this task has none. */
+  empty: string | null;
+  owner: boolean;
   unknownModelCount?: number;
   onRetry: () => void;
 }) {
-  const label = section === "workflows" ? "Workflow" : "Model";
+  const noun = section === "workflows" ? "workflow" : "model";
   const unsupported = unknownModelCount ? (
     <Badge variant="outline">
       {unknownModelCount} model{unknownModelCount === 1 ? " has" : "s have"} no
@@ -2991,18 +3390,92 @@ function CatalogNotice({
     return (
       <div onClick={(event) => event.preventDefault()}>
         <ErrorState
-          heading={`${label} catalog unavailable`}
-          message={`${label} catalog could not be loaded.`}
-          action={{
-            label: `Retry ${label.toLowerCase()} catalog`,
-            onClick: onRetry,
-          }}
+          heading={`${noun === "model" ? "Models" : "Workflows"} couldn’t be loaded`}
+          message={`We couldn’t tell why the ${noun} list didn’t load.`}
+          action={{ label: "Retry", onClick: onRetry }}
         />
         {unsupported}
       </div>
     );
-  if (unsupported) return unsupported;
-  if (state === "empty")
-    return <Badge variant="outline">No {section} are listed</Badge>;
+  const none = empty ? (
+    <p role="status" className="text-muted-foreground text-sm">
+      No {empty} are available
+      {owner ? (
+        <>
+          .{" "}
+          <Link prefetch={false} className="text-foreground underline underline-offset-4" href="/engines/">
+            Add one in Engines
+          </Link>
+          .
+        </>
+      ) : (
+        ". Ask the owner."
+      )}
+    </p>
+  ) : null;
+  if (unsupported || none)
+    return (
+      <>
+        {none}
+        {unsupported}
+      </>
+    );
   return null;
+}
+
+/**
+ * The link asked for a kind of work (video, music, sound effects) that Try
+ * runs through workflows. Only workflows of that kind are offered, and the
+ * line says so, with a way back to all of them.
+ */
+function KindNotice({
+  kind,
+  matches,
+  others,
+  owner,
+  onShowAll,
+}: {
+  kind: RequestedKind;
+  matches: number;
+  /** Other workflows exist beyond this kind. */
+  others: boolean;
+  owner: boolean;
+  onShowAll: () => void;
+}) {
+  const showAll = others ? (
+    <button
+      type="button"
+      className="text-foreground min-h-11 underline underline-offset-4"
+      onClick={onShowAll}
+    >
+      Show all workflows
+    </button>
+  ) : null;
+  if (!matches)
+    return (
+      <div role="status" className="text-muted-foreground space-y-1 text-sm">
+        <p>
+          {owner ? (
+            <>
+              No {kind.noun} engine is set up.{" "}
+              <Link prefetch={false} className="text-foreground underline underline-offset-4" href="/engines/">
+                Add one in Engines
+              </Link>
+              .
+            </>
+          ) : (
+            `No ${kind.noun} ${kind.plural ? "are" : "is"} available to you right now. Ask the owner about ${kind.noun}.`
+          )}
+        </p>
+        {showAll}
+      </div>
+    );
+  return (
+    <p role="status" className="text-muted-foreground text-sm">
+      {kind.capabilities.length > 1
+        ? "Choose an audio workflow to make music or sound effects."
+        : `Showing ${kind.noun} workflows.`}{" "}
+      {showAll}
+    </p>
+  );
 }

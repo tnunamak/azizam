@@ -28,6 +28,8 @@ import zlib
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+from scripts import scratch_owner  # noqa: E402
+
 OWNER_EMAIL = "owner-live-data@example.test"
 MEMBER_EMAIL = "member-live-data@example.test"
 PASSWORD = "Live data browser password 2026"
@@ -43,12 +45,8 @@ def _write_config(state: Path, port: int, engine_port: int) -> Path:
   host: 127.0.0.1
   port: {port}
 auth:
-  enabled: true
   public_paths: [/health]
-  lan_bypass_enabled: true
-  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128"]
 backends:
-  tabby: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   kobold: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   comfyui: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   embeddings: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
@@ -167,23 +165,28 @@ def seed(state: Path, port: int) -> dict[str, object]:
     receipt_store.init_db(receipts_path)
     media_jobs.init_db(jobs_path)
 
-    profile = admin_store.create_profile("Live data plan", {"id": "live-data", "protocols": ["openai"], "models": ["demo-chat"], "backends": ["litellm"]}, path=admin_path)
+    plan = admin_store.create_access_plan({
+        "name": "Live data plan", "can_use": {"chat": {"items": [{"model": "demo-chat"}]}},
+        "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [],
+        "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None}, "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none",
+    }, path=admin_path)
     owner = admin_store.upsert_oidc_user("local", "owner-live-data", email=OWNER_EMAIL, display_name="Owner", path=admin_path)
     member = admin_store.upsert_oidc_user("local", "member-live-data", email=MEMBER_EMAIL, display_name="Member", path=admin_path)
     for user in (owner, member):
         admin_store.set_local_password_verifier(user["id"], local_hash_password(PASSWORD), path=admin_path)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=admin_path)
+    for user in (owner, member):
+        accounts.change_person(user["id"], "live-data-seed", plan_id=plan["id"], path=admin_path)
 
-    owner_app = admin_store.create_app("Owner desktop", kind="personal", owner_user_id=owner["id"], default_profile_id=profile["id"], path=admin_path)
-    member_app = admin_store.create_app("Member phone", kind="personal", owner_user_id=member["id"], default_profile_id=profile["id"], path=admin_path)
-    svc = admin_store.ensure_service_account("daisy-service", path=admin_path)
-    service_app = admin_store.create_app("Daisy", kind="service", owner_service_account_id=svc["id"], default_profile_id=profile["id"], path=admin_path)
+    owner_app = admin_store.create_app("Owner desktop", kind="personal", owner_user_id=owner["id"], access_plan="person", path=admin_path)
+    member_app = admin_store.create_app("Member phone", kind="personal", owner_user_id=member["id"], access_plan="person", path=admin_path)
+    service_app = admin_store.create_app("Daisy", kind="service", owner_user_id=owner["id"], access_plan=plan["id"], path=admin_path)
     owner_key = "opk_live_owner_fixture_key"
     member_key = "opk_live_member_fixture_key"
     owner_hash = hash_api_key(owner_key)
     member_hash = hash_api_key(member_key)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=owner_app["id"], app_id=owner_app["id"], hash=owner_hash, prefix="opk_live_owner", profile_id=profile["id"], path=admin_path)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=member_app["id"], app_id=member_app["id"], hash=member_hash, prefix="opk_live_member", profile_id=profile["id"], path=admin_path)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=owner_app["id"], app_id=owner_app["id"], hash=owner_hash, prefix="opk_live_owner", path=admin_path)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=member_app["id"], app_id=member_app["id"], hash=member_hash, prefix="opk_live_member", path=admin_path)
 
     cache = state / "images"
     service_asset = _sha_asset(cache, PNG_1X1, ".png", [], "req_service_media")
@@ -253,9 +256,12 @@ def serve(state_base: Path, port: int, copy_from: Path | None = None, restarted:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if copy_from is None:
+        scratch_owner.sweep(state_base, "live-data-")  # what a SIGKILLed server left
     holder = _copy_state_dir() if copy_from is not None else tempfile.TemporaryDirectory(prefix="live-data-", dir=state_base)
     with holder as temp:
         state = Path(temp)
+        scratch_owner.mark(state)
         if copy_from is not None:
             # Copy mode: production data, copied; the gateway runs behind the connection guard.
             from scripts.ui import live_data_copy

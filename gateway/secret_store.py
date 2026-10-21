@@ -5,22 +5,54 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import sqlite3
 import stat
 import tempfile
+import threading
 import time
 import fcntl
 import hashlib
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from gateway import sqlite_startup
+from gateway import log_scrub, session_guard, sqlite_startup
 
 DEFAULT_KEY_FILE = "provider-secrets.key"
+
+# What must wait for a commit: the scrubber forgets a deleted secret only once its deletion is durable (a rolled-back
+# deletion leaves the secret stored and so still to be scrubbed). Keyed by connection; the connection is held so its id
+# is not reused. Holds no secret value. ``transaction_begun`` drops what a transaction nobody settled left behind.
+_PENDING: "dict[int, tuple[sqlite3.Connection, list[Callable[[], None]]]]" = {}
+_PENDING_LOCK = threading.Lock()
+
+
+def transaction_begun(conn: sqlite3.Connection) -> None:
+    """A new write transaction starts on ``conn``: whatever an earlier, unsettled one deferred is dropped."""
+    with _PENDING_LOCK:
+        _PENDING.pop(id(conn), None)
+
+
+def transaction_ended(conn: sqlite3.Connection, committed: bool) -> None:
+    """The write transaction on ``conn`` committed (the deferred actions run) or rolled back (they are dropped)."""
+    with _PENDING_LOCK:
+        _, actions = _PENDING.pop(id(conn), (conn, []))
+    if committed:
+        for action in actions:
+            action()
+
+
+def _after_commit(conn: sqlite3.Connection | None, action: Callable[[], None]) -> None:
+    """Run ``action`` now (no caller transaction; the caller has committed) or once the caller's transaction commits."""
+    if conn is None:
+        action()
+        return
+    with _PENDING_LOCK:
+        _PENDING.setdefault(id(conn), (conn, []))[1].append(action)
 
 
 @contextmanager
@@ -58,43 +90,60 @@ class SecretStatus:
         }
 
 
+def ensure_provider_secret_schema_on(conn: sqlite3.Connection) -> None:
+    """Create or upgrade the secret table on ``conn``, inside whatever transaction it holds."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_secrets (
+          id TEXT PRIMARY KEY,
+          nonce_b64 TEXT NOT NULL,
+          ciphertext_b64 TEXT NOT NULL,
+          suffix TEXT NOT NULL,
+          approved_origin TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_secrets)")}
+    if "approved_origin" not in columns:
+        conn.execute("ALTER TABLE provider_secrets ADD COLUMN approved_origin TEXT")
+
+
 def ensure_provider_secret_schema(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite_startup.connect(path)) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS provider_secrets (
-              id TEXT PRIMARY KEY,
-              nonce_b64 TEXT NOT NULL,
-              ciphertext_b64 TEXT NOT NULL,
-              suffix TEXT NOT NULL,
-              approved_origin TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """
-        )
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_secrets)")}
-        if "approved_origin" not in columns:
-            conn.execute("ALTER TABLE provider_secrets ADD COLUMN approved_origin TEXT")
+        ensure_provider_secret_schema_on(conn)
         conn.commit()
 
 
-def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None) -> SecretStatus:
+def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None, allow_short: bool = False, keep_suffix: bool = True, session: session_guard.BrowserSession | None = None) -> SecretStatus:
+    """Store one secret. With ``conn``, write inside the caller's open transaction and leave the commit to
+    the caller; the caller must have run :func:`ensure_provider_secret_schema` before it began.
+
+    A provider key must be longer than 4 characters and keeps its last 4 as a display suffix. A secret
+    entry of a record (a header, an environment value, a command argument, a URL credential) may be any
+    non-empty text (``allow_short``) and keeps no suffix (``keep_suffix=False``): nothing of it is ever shown.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41). It is checked in the write's
+    own transaction, so a sign-out that committed first stores nothing. None for a write no browser started
+    (a migration).
+    """
     secret_id = _normalize_secret_id(secret_id)
     approved_origin = _normalize_origin(approved_origin) if approved_origin else None
-    if len(value) <= 4:
+    if not value:
+        raise ValueError("secret value is required")
+    if len(value) <= 4 and not allow_short:
         raise ValueError("secret value must be longer than 4 characters")
-    ensure_provider_secret_schema(db_path)
+    if conn is None:
+        ensure_provider_secret_schema(db_path)
     key = load_or_create_secret_key(db_path.parent / DEFAULT_KEY_FILE if key_path is None else key_path)
     nonce = os.urandom(12)
     aad = _secret_aad(secret_id, approved_origin)
     ciphertext = AESGCM(key).encrypt(nonce, value.encode("utf-8"), aad)
     timestamp = int(time.time() if now is None else now)
-    suffix = value[-4:]
-    with closing(sqlite_startup.connect(db_path)) as conn:
-        conn.execute(
-            """
+    suffix = value[-4:] if keep_suffix else ""
+    insert = """
             INSERT INTO provider_secrets(id, nonce_b64, ciphertext_b64, suffix, approved_origin, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
@@ -103,18 +152,28 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
               suffix=excluded.suffix,
               approved_origin=excluded.approved_origin,
               updated_at=excluded.updated_at
-            """,
-            (
-                secret_id,
-                base64.b64encode(nonce).decode("ascii"),
-                base64.b64encode(ciphertext).decode("ascii"),
-                suffix,
-                approved_origin,
-                timestamp,
-                timestamp,
-            ),
-        )
-        conn.commit()
+            """
+    row = (
+        secret_id,
+        base64.b64encode(nonce).decode("ascii"),
+        base64.b64encode(ciphertext).decode("ascii"),
+        suffix,
+        approved_origin,
+        timestamp,
+        timestamp,
+    )
+    if conn is not None:
+        session_guard.require_live(conn, session)
+        conn.execute(insert, row)
+    else:
+        with closing(sqlite_startup.connect(db_path)) as own:
+            own.row_factory = sqlite3.Row   # the sign-in check reads rows by name
+            session_guard.begin_write(own, session)
+            own.execute(insert, row)
+            own.commit()
+    # Registered at once, committed or not: a value that was never stored is scrubbed for nothing, and a rolled-back
+    # replacement leaves the stored value in the retired ones. The registry never drops a value because of this call.
+    log_scrub.hold(log_scrub.secret_source(secret_id), [value])
     return SecretStatus(secret_id, "set", suffix, timestamp)
 
 
@@ -138,12 +197,90 @@ def get_provider_secret(secret_id: str, *, db_path: Path, key_path: Path | None 
     return AESGCM(key).decrypt(nonce, ciphertext, _secret_aad(secret_id, stored_origin)).decode("utf-8")
 
 
-def delete_provider_secret(secret_id: str, *, db_path: Path) -> SecretStatus:
+def provider_secret_origin(secret_id: str, *, db_path: Path) -> str | None:
+    """The origin a stored secret is bound to (metadata only; the value is not decrypted), or None when it has none or is missing."""
     secret_id = _normalize_secret_id(secret_id)
     ensure_provider_secret_schema(db_path)
     with closing(sqlite_startup.connect(db_path)) as conn:
+        row = conn.execute("SELECT approved_origin FROM provider_secrets WHERE id = ?", (secret_id,)).fetchone()
+    return str(row[0]) if row is not None and row[0] is not None else None
+
+
+def read_provider_secret_on(conn: sqlite3.Connection, secret_id: str, *, db_path: Path) -> tuple[str, str | None]:
+    """``(value, bound origin)`` of a stored secret, read inside the caller's transaction (a migration). Raises ``KeyError``
+    when it is missing. The caller decides what the value may be used for."""
+    secret_id = _normalize_secret_id(secret_id)
+    key = load_secret_key(db_path.parent / DEFAULT_KEY_FILE)
+    row = conn.execute("SELECT nonce_b64, ciphertext_b64, approved_origin FROM provider_secrets WHERE id = ?", (secret_id,)).fetchone()
+    if row is None:
+        raise KeyError(secret_id)
+    stored_origin = str(row[2]) if row[2] is not None else None
+    value = AESGCM(key).decrypt(base64.b64decode(row[0]), base64.b64decode(row[1]), _secret_aad(secret_id, stored_origin)).decode("utf-8")
+    return value, stored_origin
+
+
+def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guard: "Callable[[sqlite3.Connection], None] | None" = None) -> int:
+    """Bind stored secrets to an origin, all or none, in one transaction. Returns how many changed.
+
+    Each item is ``(secret_id, origin)``; ``origin`` is an origin text, or a function of the secret's own value that returns
+    one (a URL kept whole has its address inside the secret). The value is read and sealed again inside this function
+    and goes nowhere else. Raises ``KeyError`` for a missing secret and ``ValueError`` when no origin results; nothing
+    is changed then.
+
+    This is the one function that opens the binding transaction. ``guard(conn)``, when given, runs first, inside it, on the
+    same connection (so it reads the registry and the sign-in tables as they are at the moment of the write); whatever it
+    raises ends the call with nothing bound. The destination check of ``confirm_address`` is a guard, and so is the check that
+    the signed-in session is still live (``session_guard.require_live``).
+    """
+    ensure_provider_secret_schema(db_path)
+    changed = 0
+    with closing(sqlite_startup.connect(db_path)) as conn:
+        conn.row_factory = sqlite3.Row   # the sign-in check reads rows by name
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            transaction_begun(conn)
+            if guard is not None:
+                guard(conn)
+            for secret_id, origin in items:
+                value, stored_origin = read_provider_secret_on(conn, secret_id, db_path=db_path)
+                target = origin(value) if callable(origin) else origin
+                if not target:
+                    raise ValueError("a stored credential has no address to bind to")
+                if stored_origin == _normalize_origin(target):
+                    continue
+                put_provider_secret(secret_id, value, db_path=db_path, approved_origin=target, conn=conn, allow_short=True, keep_suffix=False)
+                changed += 1
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            transaction_ended(conn, False)
+            raise
+        transaction_ended(conn, True)
+    return changed
+
+
+def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None,
+                           session: session_guard.BrowserSession | None = None) -> SecretStatus:
+    """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`).
+
+    ``session`` is the browser sign-in that asked for the delete, checked in its transaction (decision D41).
+    Leave it out for clean-up of a secret this same request just stored or a save has just replaced: that must
+    run even when the sign-in has ended.
+    """
+    secret_id = _normalize_secret_id(secret_id)
+    forget = lambda: log_scrub.forget(log_scrub.secret_source(secret_id))  # noqa: E731 - the registry is bounded by the secrets that exist
+    if conn is not None:
+        session_guard.require_live(conn, session)
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
-        conn.commit()
+        _after_commit(conn, forget)  # not before the caller's commit: a rollback leaves the secret stored
+        return SecretStatus(secret_id, "missing", None, None)
+    ensure_provider_secret_schema(db_path)
+    with closing(sqlite_startup.connect(db_path)) as own:
+        own.row_factory = sqlite3.Row   # the sign-in check reads rows by name
+        session_guard.begin_write(own, session)
+        own.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
+        own.commit()
+    _after_commit(None, forget)
     return SecretStatus(secret_id, "missing", None, None)
 
 

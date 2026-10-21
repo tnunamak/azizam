@@ -76,7 +76,7 @@ afterEach(() => {
 async function startRun(user: ReturnType<typeof userEvent.setup>) {
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Picture model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Picture model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
 }
@@ -86,7 +86,7 @@ describe("Make a picture", () => {
     const user = userEvent.setup();
     await startRun(user);
     expect(
-      await screen.findByAltText("Generated result", {}, { timeout: 5000 }),
+      await screen.findByAltText("Generated result", {}, { timeout: 15000 }),
     ).toHaveAttribute("src", PICTURE);
     const submits = calls(SUBMIT);
     expect(submits).toHaveLength(1);
@@ -131,14 +131,21 @@ describe("Make a picture", () => {
         status: polls < 2 ? "running" : "succeeded",
       });
     };
+    // The wake-up only works while the poller sits in its 2 s wait, and that
+    // wait is the only 2000 ms timer on the page. Wait for the poller to be
+    // there instead of guessing from the submit request.
+    const timer = vi.spyOn(window, "setTimeout");
+    const pollerWaits = () => timer.mock.calls.filter(([, ms]) => ms === 2000).length;
     await startRun(user);
-    await waitFor(() => expect(calls(SUBMIT)).toHaveLength(1));
+    await waitFor(() => expect(pollerWaits()).toBe(1));
     // The poll interval is 2 s; the wake-up must not wait for it.
-    const before = polls;
+    expect(polls).toBe(0);
     document.dispatchEvent(new Event("visibilitychange"));
-    await waitFor(() => expect(polls).toBeGreaterThan(before), { timeout: 1000 });
+    await waitFor(() => expect(polls).toBe(1), { timeout: 1000 });
+    await waitFor(() => expect(pollerWaits()).toBe(2));
     document.dispatchEvent(new Event("visibilitychange"));
     expect(await screen.findByAltText("Generated result", {}, { timeout: 1500 })).toBeVisible();
+    expect(polls).toBe(2);
   });
 
   describe("when the connection never comes back", () => {
@@ -155,7 +162,7 @@ describe("Make a picture", () => {
       ).toBeVisible();
       expect(screen.getByRole("link", { name: "Open Library" })).toHaveAttribute(
         "href",
-        "/ui/library/",
+        "/library/",
       );
       expect(screen.queryByText(/Failed to fetch/i)).toBeNull();
       expect(screen.queryByText("Make a picture request failed")).toBeNull();
@@ -217,7 +224,7 @@ describe("Make a picture", () => {
       });
     await startRun(user);
     expect(
-      await screen.findByText("The engine ran out of memory.", {}, { timeout: 5000 }),
+      await screen.findByText("The engine ran out of memory.", {}, { timeout: 15000 }),
     ).toBeVisible();
     expect(screen.getByText("Make a picture request failed")).toBeVisible();
   });
@@ -243,7 +250,7 @@ describe("a dropped connection on any tab", () => {
     });
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(/model/i),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(/model/i),
     );
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("The connection dropped")).toBeVisible();

@@ -16,10 +16,8 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from gateway import decision_provider_execution as execution
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway import decisions_api, receipt_store
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
 def _profile(
     *,
     providers=frozenset({"typesafe", "openai"}),
@@ -27,21 +25,24 @@ def _profile(
     budget=Decimal("5.00"),
     monthly=Decimal("20.00"),
 ):
-    return DEFAULT_PROFILE.with_overrides(
-        id="paid-decisions",
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_request,
-            budget_usd_per_day=budget,
-            budget_usd_per_month=monthly,
-        ),
-    )
+    return access(plan_for(
+        "paid-decisions", paid=sorted(providers),
+        usd_per_request=None if max_request is None else str(max_request),
+        usd_per_day=None if budget is None else str(budget),
+        usd_per_month=None if monthly is None else str(monthly),
+    ))
 
 
-def _auth(app_id="app_1", *, delegated=False):
-    return SimpleNamespace(
-        identity=SimpleNamespace(app_id=app_id, name="Decision App", delegated=delegated)
-    )
+def _auth(app_id="app_1", *, access_=None):
+    return SimpleNamespace(identity=SimpleNamespace(
+        app_id=app_id, name="Decision App", access=access_ or _profile(),
+        accountable_person_id="usr_1", person_id=None))
+
+
+def _ctx(app_id="app_1", **profile_kwargs):
+    """An authenticated App and the plans that bound it, so the reservation and the check agree."""
+    plans = _profile(**profile_kwargs)
+    return _auth(app_id, access_=plans), plans
 
 
 def _registry(
@@ -104,26 +105,37 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.ledger = Path(self.tmp.name) / "ledger.db"
-        self.receipts = []
+        self.receipts_db = Path(self.tmp.name) / "receipts.db"
+        receipt_store.init_db(self.receipts_db)
+        self.addCleanup(self.tmp.cleanup)
+        self.receipts_path = patch.object(receipt_store, "DB_PATH", self.receipts_db)
+        self.receipts_path.start()
+        self.addCleanup(self.receipts_path.stop)
         self.env = patch.dict(
             os.environ,
             {"TYPESAFE_TEST_KEY": "ts-key", "OPENAI_TEST_KEY": "oa-key"},
         )
-        self.begin = patch.object(receipt_store, "begin", lambda _receipt: None)
-        self.finalize = patch.object(
-            receipt_store,
-            "finalize",
-            side_effect=lambda receipt: self.receipts.append(receipt) or True,
+        # begin/finalize/update_phases bind ``path`` at definition time, so the
+        # spies route to this test's store explicitly instead of the default.
+        real_begin, real_finalize = receipt_store.begin, receipt_store.finalize
+        real_phases = receipt_store.update_phases
+        self.begin = patch.object(
+            receipt_store, "begin", side_effect=lambda r: real_begin(r, path=self.receipts_db)
         )
+        self.finalize = patch.object(
+            receipt_store, "finalize", side_effect=lambda r: real_finalize(r, path=self.receipts_db)
+        )
+        self.phases = patch.object(
+            receipt_store, "update_phases", side_effect=lambda r: real_phases(r, path=self.receipts_db)
+        )
+        self.phases.start()
+        self.addCleanup(self.phases.stop)
         self.env.start()
-        self.begin.start()
-        self.finalize.start()
-
-    def tearDown(self) -> None:
-        self.finalize.stop()
-        self.begin.stop()
-        self.env.stop()
-        self.tmp.cleanup()
+        self.addCleanup(self.env.stop)
+        self.begun = self.begin.start()
+        self.addCleanup(self.begin.stop)
+        self.finalized = self.finalize.start()
+        self.addCleanup(self.finalize.stop)
 
     async def test_typesafe_unknown_cost_dispatch_result_links_reconciliation_reservation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
@@ -145,8 +157,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
         ):
             result = await execution.systemone(
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -199,8 +210,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
         ):
             result = await execution.systemone(
-                _auth(),
-                _profile(),
+                *_ctx(),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -222,18 +232,19 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("settled", "0.000012684", "req-ts-priced")])
 
     async def test_typesafe_timeout_result_marks_reconciliation_needed(self) -> None:
-        async def timeout_call(provider, profile, body, **kwargs):
-            reservation = execution.providers.reserve_provider_spend(profile, provider,
-                execution.providers.Cost(Decimal("0.001"), "price-table", provider.id), path=kwargs["ledger_path"])
-            execution.providers.identify_provider_spend(reservation, request_id=kwargs["request_id"], path=kwargs["ledger_path"])
-            execution.providers.settle_provider_spend(reservation, None, path=kwargs["ledger_path"])
-            raise execution.providers.ProviderTimeout("provider request timed out")
+        async def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("provider request timed out", request=request)
 
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
         registry = _registry(models=[{"id": "typesafe/jev-latest"}])
-        with patch.object(execution.providers, "call_typesafe_systemone", timeout_call):
+        with patch.object(
+            execution.providers.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
+        ):
             result = await execution.systemone(
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -247,6 +258,9 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status_code, 504)
         self.assertEqual(result.reconciliation_status, "needs_reconciliation")
         self.assertIsNotNone(result.reservation_id)
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT id, status, request_id FROM provider_spend").fetchall()
+        self.assertEqual(rows, [(result.reservation_id, "needs_reconciliation", "req-ts-timeout")])
 
     async def test_openai_unknown_cost_response_links_receipt_and_marks_reconciliation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
@@ -270,23 +284,29 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 registry,
                 self.ledger,
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
-        self.assertEqual(len(self.receipts), 1)
-        self.assertEqual(self.receipts[0].cost["reconciliation_status"], "needs_reconciliation")
-        self.assertIsNotNone(self.receipts[0].cost["reservation_id"])
+        self.finalized.assert_called_once()
+        receipt = self.finalized.call_args.args[0]
+        self.begun.assert_called_once_with(receipt)
+        self.assertEqual(receipt_store.count(self.receipts_db), 1)
+        persisted = receipt_store.get(receipt.request_id, audience="internal", path=self.receipts_db)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["request_id"], "req-openai")
+        self.assertEqual(persisted["cost"]["reconciliation_status"], "needs_reconciliation")
+        self.assertIsNotNone(persisted["cost"]["reservation_id"])
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute(
                 "SELECT id, status, request_id FROM provider_spend"
             ).fetchall()
-        self.assertEqual(rows[0][1:], ("needs_reconciliation", "req-openai"))
-        self.assertEqual(self.receipts[0].cost["reservation_id"], rows[0][0])
+        self.assertEqual(rows, [(persisted["cost"]["reservation_id"], "needs_reconciliation", "req-openai")])
+        self.assertEqual(receipt.cost["reservation_id"], persisted["cost"]["reservation_id"])
+        self.assertEqual(receipt.cost["reconciliation_status"], "needs_reconciliation")
 
 
 class DecisionsApiReconciliationReceiptTests(unittest.TestCase):

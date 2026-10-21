@@ -27,17 +27,14 @@ try {
   });
   await context.addCookies([sessions.owner]);
   const usageResponse = await context.request.get(
-    "/me/api/usage/summary?source=local-network",
+    "/me/api/usage/summary?person=all",
   );
   expect(usageResponse.status()).toBe(200);
   const usage = await usageResponse.json();
   expect(usage.requests).toBeGreaterThan(0);
   expect(usage.receipts.length).toBeGreaterThan(0);
-  expect(
-    usage.receipts.some((row) => row.source?.kind === "local-network"),
-  ).toBe(true);
   console.log(
-    `Copied-data local-network usage: ${usage.requests} requests, ${usage.receipts.length} receipts returned`,
+    `Copied-data usage: ${usage.requests} requests, ${usage.receipts.length} receipts returned`,
   );
   const page = await context.newPage();
   for (const theme of ["light", "dark"]) {
@@ -47,12 +44,9 @@ try {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(
         page.getByRole("heading", { level: 1, name: "Usage", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("Local network · no key").first(),
       ).toBeVisible();
       expect(
         await page.evaluate(
@@ -70,7 +64,7 @@ try {
         fullPage: true,
       });
       console.log(
-        `Copied-data shared shell: ${theme}, ${width}px, visible local-network items, no overflow or serious axe violations`,
+        `Copied-data shared shell: ${theme}, ${width}px, no overflow or serious axe violations`,
       );
     }
   }

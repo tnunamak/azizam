@@ -142,37 +142,50 @@ async def _run(app, scope):
 class InflightMiddlewareTests(unittest.TestCase):
     def test_sse_stays_counted_until_last_chunk(self) -> None:
         state = drain.DrainState()
-        observed: list[dict] = []
-        release = asyncio.Event()
-
-        async def sse_app(scope, receive, send):
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [(b"content-type", b"text/event-stream")],
-                }
-            )
-            await send({"type": "http.response.body", "body": b"data: 1\n\n", "more_body": True})
-            observed.append(state.snapshot())  # headers and first chunk are out
-            await release.wait()
-            await send({"type": "http.response.body", "body": b"data: [DONE]\n\n"})
 
         async def scenario():
-            app = drain.InflightMiddleware(sse_app, state)
-            task = asyncio.create_task(_run(app, _scope("POST", "/v1/chat/completions")))
-            await asyncio.sleep(0.01)
-            mid = state.snapshot()
-            release.set()
-            await task
-            return mid
+            first_chunk_sent = asyncio.Event()
+            release_final_chunk = asyncio.Event()
 
-        mid = asyncio.run(scenario())
-        self.assertEqual(mid["active"]["requests"], 1)
-        self.assertEqual(mid["active"]["streams"], 1)
-        self.assertEqual(mid["inflight"][0]["path"], "/v1/chat/completions")
-        self.assertTrue(mid["inflight"][0]["stream"])
-        self.assertTrue(state.snapshot()["idle"])
+            async def sse_app(scope, receive, send):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [(b"content-type", b"text/event-stream")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"data: 1\n\n", "more_body": True})
+                first_chunk_sent.set()
+                await release_final_chunk.wait()
+                await send({"type": "http.response.body", "body": b"data: [DONE]\n\n", "more_body": False})
+
+            task = asyncio.create_task(
+                _run(drain.InflightMiddleware(sse_app, state), _scope("POST", "/v1/chat/completions"))
+            )
+            try:
+                await asyncio.wait_for(first_chunk_sent.wait(), timeout=5)
+                mid = state.snapshot()
+                self.assertEqual(mid["active"]["requests"], 1)
+                self.assertEqual(mid["active"]["streams"], 1)
+                self.assertEqual(mid["inflight"][0]["path"], "/v1/chat/completions")
+                self.assertTrue(mid["inflight"][0]["stream"])
+            finally:
+                release_final_chunk.set()
+                try:
+                    sent = await asyncio.wait_for(task, timeout=5)
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+            self.assertEqual(
+                [m["body"] for m in sent if m["type"] == "http.response.body"],
+                [b"data: 1\n\n", b"data: [DONE]\n\n"],
+            )
+            self.assertTrue(state.snapshot()["idle"])
+
+        asyncio.run(scenario())
 
     def test_counter_released_when_app_raises(self) -> None:
         state = drain.DrainState()

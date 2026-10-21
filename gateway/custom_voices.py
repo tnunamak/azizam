@@ -21,26 +21,25 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
-
-from gateway.transforms import CANONICAL_TTS_VOICES, LEGACY_TTS_VOICE_ALIASES
+from typing import Any, Callable, Collection, Iterable
 
 VOICE_ID_RE = re.compile(r"^voice_[0-9a-f]{24}$")
 CONSENT_ID_RE = re.compile(r"^cons_[0-9a-f]{24}$")
 LOCAL_OWNER = "local"
-RESERVED_NAMES = frozenset(CANONICAL_TTS_VOICES) | frozenset(LEGACY_TTS_VOICE_ALIASES)
 CONSENT_MODES = ("optional", "required")
 
 
 class VoiceError(Exception):
     """A request the voice API refuses. ``code`` is stable; ``status`` is the HTTP status."""
 
-    def __init__(self, status: int, code: str, message: str, *, param: str | None = None):
+    def __init__(self, status: int, code: str, message: str, *, param: str | None = None,
+                 retry_after: int | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.param = param
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)
@@ -62,13 +61,14 @@ def owner_dir_name(owner_key: str | None) -> str:
     return hashlib.sha256(owner_key.encode("utf-8")).hexdigest()[:32]
 
 
-def validate_name(value: Any, *, param: str = "name") -> str:
+def validate_name(value: Any, *, reserved: Collection[str] = (), param: str = "name") -> str:
+    """A voice name; ``reserved`` holds the lower-case names of built-in voices."""
     if not isinstance(value, str) or not value.strip():
         raise VoiceError(400, "invalid_name", "name must be a non-empty string.", param=param)
     name = value.strip()
     if len(name) > 256 or any(ord(ch) < 32 for ch in name):
         raise VoiceError(400, "invalid_name", "name must be 1-256 printable characters.", param=param)
-    if name.lower() in RESERVED_NAMES:
+    if name.lower() in reserved:
         raise VoiceError(400, "voice_name_reserved", f"'{name}' is the name of a built-in voice; choose another name.", param=param)
     return name
 

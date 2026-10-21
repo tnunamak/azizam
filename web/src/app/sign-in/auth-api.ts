@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { uiPages } from "@/lib/product";
 
 export interface SignInOptions {
   built_in: boolean;
@@ -7,6 +8,8 @@ export interface SignInOptions {
   oidc_url: string;
   instance_name: string;
   owner_name: string;
+  /** The owner's own password works even while built-in sign-in is off. */
+  owner_password?: boolean;
   signed_in_oidc?: { email: string; name: string; csrf_token: string } | null;
 }
 export async function authFetch<T>(
@@ -51,19 +54,41 @@ export async function authFetch<T>(
   }
   return result;
 }
+// Where sign-in may send someone next (D2.8). The rule and its cases are
+// shared with the gateway's sanitizer: tests/fixtures/return_paths.json.
+// Allowed: "/" or "/{page}/" for a page in gateway/ui_pages.json, and
+// "/status/raw" or "/status/raw/", each with an optional query and fragment.
+// Everything else falls back to Home.
+const STATUS_RAW_PATHS = ["/status/raw", "/status/raw/"];
 export function safeContinuePath(next: string): string {
+  const fallback = "/";
   if (
     !next.startsWith("/") ||
     next.startsWith("//") ||
     /[\\\x00-\x1f\x7f]/.test(next)
   )
-    return "/ui/home/";
-  const url = new URL(next, window.location.origin);
-  if (url.origin !== window.location.origin) return "/ui/home/";
-  return url.pathname.startsWith("/ui/") ||
-    ["/setup", "/setup/", "/status/raw", "/status/raw/"].includes(url.pathname)
-    ? next
-    : "/ui/home/";
+    return fallback;
+  const path = next.split(/[?#]/, 1)[0];
+  const segments = path.split("/").slice(1);
+  for (const [index, segment] of segments.entries()) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return fallback;
+    }
+    const last = index === segments.length - 1;
+    if ((segment === "" && !last) || [segment, decoded].some(isDotSegment))
+      return fallback;
+  }
+  const name = path.slice(1, -1);
+  const page =
+    path === "/" ||
+    (path.endsWith("/") && name !== "" && !name.includes("/") && Object.hasOwn(uiPages, name));
+  return page || STATUS_RAW_PATHS.includes(path) ? next : fallback;
+}
+function isDotSegment(segment: string): boolean {
+  return segment === "." || segment === "..";
 }
 export function continueTo(next: string) {
   window.location.assign(safeContinuePath(next));

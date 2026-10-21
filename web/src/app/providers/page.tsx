@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   Cloud,
   ExternalLink,
-  Fish,
   KeyRound,
   Loader2,
   MinusCircle,
@@ -54,8 +53,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { adminFetch, ApiError } from "@/lib/api";
+import { useViewer } from "@/components/shell/session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/cn";
 
@@ -141,7 +140,8 @@ interface TestResult {
 interface ReconciliationRow {
   id: number;
   provider: string;
-  profileId: string;
+  /** The App the charge belongs to (the ledger records no plan). */
+  appName: string;
   status: string;
   estimatedUsd: number | null;
   actualUsd: number | null;
@@ -362,34 +362,20 @@ function mapCatalog(raw: unknown): CatalogProvider[] {
 function mapPlans(raw: unknown): AccessPlan[] {
   const obj =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const rows = Array.isArray(obj.plans)
-    ? obj.plans
-    : Array.isArray(obj.profiles)
-      ? obj.profiles
-      : [];
+  const rows = Array.isArray(obj.access_plans) ? obj.access_plans : [];
   return rows.map((item, index) => {
     const row =
       item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const doc =
+      row.plan && typeof row.plan === "object"
+        ? (row.plan as { paid_providers?: unknown })
+        : {};
     return {
-      id: text(
-        row.policy_id,
-        text(
-          (row.profile as { id?: unknown } | undefined)?.id,
-          text(row.id, `plan-${index}`),
-        ),
-      ),
-      name: text(row.name, text(row.label, `Plan ${index + 1}`)),
-      description: text(row.description, "") || undefined,
+      id: text(row.id, `plan-${index}`),
+      name: text(row.name, `Plan ${index + 1}`),
+      description: text(row.summary, "") || undefined,
       paidAllowed:
-        bool(row.paid_allowed) ??
-        bool(
-          (
-            row.profile as
-              | { fallback?: { cloud_allowed?: boolean } }
-              | undefined
-          )?.fallback?.cloud_allowed,
-        ) ??
-        false,
+        Array.isArray(doc.paid_providers) && doc.paid_providers.length > 0,
     };
   });
 }
@@ -474,11 +460,12 @@ function mapProviders(raw: unknown): ProviderRecord[] {
       capMonthly: numberOrNull(
         capsObj.monthly_usd ?? row.cap_monthly_usd ?? row.cap_usd,
       ),
-      plans: Array.isArray(row.allowed_plans)
-        ? row.allowed_plans.map((v) => String(v))
-        : Array.isArray(row.plans)
-          ? row.plans.map((v) => String(v))
-          : [],
+      // Read-only: each access plan's Paid providers decide this.
+      plans: Array.isArray(row.access_plans)
+        ? row.access_plans.map((v) =>
+            String((v as { id?: unknown })?.id ?? v),
+          )
+        : [],
       recommendation:
         text(firstRecommendation?.message, text(row.recommendation, "")) ||
         undefined,
@@ -528,7 +515,7 @@ function mapReconciliations(raw: unknown): ReconciliationPayload {
       return {
         id: Number(row.id),
         provider: text(row.provider, ""),
-        profileId: text(row.profile_id, ""),
+        appName: text(row.app_name, "Unknown app"),
         status: text(row.status, "unknown"),
         estimatedUsd: nonnegativeNumberOrNull(row.estimated_usd),
         actualUsd: nonnegativeNumberOrNull(row.actual_usd),
@@ -818,9 +805,11 @@ function DetailCard({
   onAction,
   onSaveModels,
   onSaveCaps,
-  onSavePlans,
+  readOnly = false,
 }: {
   provider: ProviderRecord;
+  /** An administrator who is not the owner may look, not change. */
+  readOnly?: boolean;
   featured?: boolean;
   plans: AccessPlan[];
   busy?: boolean;
@@ -835,7 +824,6 @@ function DetailCard({
     daily: string,
     monthly: string,
   ) => void;
-  onSavePlans: (provider: ProviderRecord, allowedPlans: string[]) => void;
 }) {
   const state = providerState(provider);
   const enabledModels = provider.models.filter((model) => model.enabled);
@@ -865,9 +853,7 @@ function DetailCard({
     monthly: provider.capMonthly == null ? "" : String(provider.capMonthly),
   });
   const capsDraft = caps.draft;
-  const planState = useServerDraft([...provider.plans].sort());
-  const planDraft = planState.draft;
-  const [editing, setEditing] = useState<"models" | "caps" | "plans" | null>(
+  const [editing, setEditing] = useState<"models" | "caps" | null>(
     null,
   );
   const [modelPriceError, setModelPriceError] = useState<string | null>(null);
@@ -915,10 +901,6 @@ function DetailCard({
   function setCapsDraft(update: (draft: typeof capsDraft) => typeof capsDraft) {
     onEdit();
     caps.setDraft(update);
-  }
-  function setPlanDraft(update: (draft: string[]) => string[]) {
-    onEdit();
-    planState.setDraft(update);
   }
   const queryClient = useQueryClient();
   // The check's own result, shown on this provider; the HTTP status alone
@@ -992,7 +974,7 @@ function DetailCard({
             ))}
           {!provider.plans.length && (
             <span className="text-muted-foreground text-meta">
-              No access plans can use this provider
+              No access plan includes {provider.name}.
             </span>
           )}
         </div>
@@ -1099,15 +1081,17 @@ function DetailCard({
                 Spend totals include estimates until you record the verified
                 provider charges. Check charges before removing this provider.
               </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => onAction("reconcile", provider)}
-              >
-                Check charges
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => onAction("reconcile", provider)}
+                >
+                  Check charges
+                </Button>
+              )}
             </div>
           )}
           <div
@@ -1183,6 +1167,7 @@ function DetailCard({
               </TableBody>
             </Table>
           </div>
+          {!readOnly && (
           <div className="mt-5 flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -1207,13 +1192,6 @@ function DetailCard({
               onClick={() => setEditing(editing === "caps" ? null : "caps")}
             >
               Edit caps
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setEditing(editing === "plans" ? null : "plans")}
-            >
-              Edit access plans
             </Button>
             <Button
               variant="outline"
@@ -1282,6 +1260,7 @@ function DetailCard({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          )}
           {check.isSuccess ? (
             <p
               role="status"
@@ -1436,48 +1415,6 @@ function DetailCard({
               )}
             </div>
           )}
-          {editing === "plans" && (
-            <div className="mt-4 space-y-3 rounded-panel border p-3">
-              <h3 className="text-meta font-medium">Edit access plans</h3>
-              {planDraft.length === 0 && (
-                <p className="text-muted-foreground text-meta">
-                  No access plans selected. Paid requests will be denied.
-                </p>
-              )}
-              {plans.map((plan) => (
-                <label
-                  key={plan.id}
-                  className="flex items-center justify-between gap-3 rounded-panel border p-3 text-meta"
-                >
-                  <span>{plan.name}</span>
-                  <Switch
-                    checked={planDraft.includes(plan.id)}
-                    onCheckedChange={(checked) =>
-                      setPlanDraft((rows) =>
-                        checked
-                          ? [...new Set([...rows, plan.id])]
-                          : rows.filter((id) => id !== plan.id),
-                      )
-                    }
-                    aria-label={`Allow ${plan.name} for ${provider.name}`}
-                  />
-                </label>
-              ))}
-              {planState.conflict && (
-                <DraftConflict
-                  onUseSaved={planState.useSaved}
-                  onKeepMine={planState.keepMine}
-                />
-              )}
-              <Button
-                size="sm"
-                onClick={() => onSavePlans(provider, planDraft)}
-                disabled={busy || planState.conflict}
-              >
-                Save access plans
-              </Button>
-            </div>
-          )}
         </div>
       </details>
     </li>
@@ -1486,12 +1423,10 @@ function DetailCard({
 
 function ReconciliationDialog({
   provider,
-  plans,
   open,
   onOpenChange,
 }: {
   provider: ProviderRecord | null;
-  plans: AccessPlan[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -1592,12 +1527,9 @@ function ReconciliationDialog({
                       </div>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Access plan</span>
+                      <span className="text-muted-foreground">App</span>
                       <div className="break-all">
-                        {formatIdentity(
-                          plans.find((plan) => plan.id === row.profileId)
-                            ?.name ?? row.profileId,
-                        )}
+                        {row.appName}
                       </div>
                     </div>
                     <div>
@@ -1666,7 +1598,6 @@ function AddProviderDialog({
   open,
   onOpenChange,
   catalog,
-  plans,
   metadataLoading,
   metadataError,
   onRetry,
@@ -1674,7 +1605,6 @@ function AddProviderDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   catalog: CatalogProvider[];
-  plans: AccessPlan[];
   metadataLoading: boolean;
   metadataError: unknown;
   onRetry: () => void;
@@ -1691,7 +1621,6 @@ function AddProviderDialog({
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [dailyCap, setDailyCap] = useState("5");
   const [monthlyCap, setMonthlyCap] = useState("50");
-  const [allowedPlans, setAllowedPlans] = useState<string[]>([]);
   const checkGeneration = useRef(0);
   const credentialOrigin = useRef("\u0000");
   // Each open of the dialog is a session. A save belongs to the session that
@@ -1722,7 +1651,6 @@ function AddProviderDialog({
     clearCredentialsAndCheck();
     // Access is chosen per provider: a plan picked for another provider
     // must not carry over.
-    setAllowedPlans([]);
     setStep("credentials");
   }
 
@@ -1758,8 +1686,7 @@ function AddProviderDialog({
       resetCheck();
       setDailyCap("5");
       setMonthlyCap("50");
-      setAllowedPlans([]);
-      setStep("catalog");
+        setStep("catalog");
     }
     onOpenChange(nextOpen);
   }
@@ -1843,7 +1770,6 @@ function AddProviderDialog({
             daily_usd: capInput(dailyCap),
             monthly_usd: capInput(monthlyCap),
           },
-          allowed_plans: allowedPlans,
           expected_generation: null,
         },
       });
@@ -2009,13 +1935,7 @@ function AddProviderDialog({
                   <div className="flex gap-3">
                     <Logo value={provider.logoKey || provider.name} />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 font-medium">
-                        <Fish
-                          className="text-link size-4"
-                          aria-hidden="true"
-                        />
-                        {provider.name}
-                      </div>
+                      <div className="font-medium">{provider.name}</div>
                       <div className="text-muted-foreground mt-1 text-meta [overflow-wrap:anywhere]">
                         {provider.baseUrl}
                       </div>
@@ -2208,43 +2128,10 @@ function AddProviderDialog({
                 />
               </label>
             </div>
-            <div className="space-y-3">
-              <h3 className="text-meta font-medium">Access plans</h3>
-              {allowedPlans.length === 0 && (
-                <p className="text-muted-foreground rounded-panel border p-3 text-meta">
-                  No access plans selected. Paid requests will be denied until an owner
-                  allows an access plan.
-                </p>
-              )}
-              {plans.map((plan) => (
-                <label
-                  key={plan.id}
-                  className="flex items-start justify-between gap-3 rounded-panel border p-3"
-                >
-                  <span>
-                    <span className="block font-medium">{plan.name}</span>
-                    <span className="text-muted-foreground text-meta">
-                      {plan.description ||
-                        (plan.paidAllowed
-                          ? "Paid providers allowed"
-                          : "Local only by default")}
-                    </span>
-                  </span>
-                  <Switch
-                    checked={allowedPlans.includes(plan.id)}
-                    onCheckedChange={(checked) => {
-                      saveProvider.reset();
-                      setAllowedPlans((rows) =>
-                        checked
-                          ? [...new Set([...rows, plan.id])]
-                          : rows.filter((id) => id !== plan.id),
-                      );
-                    }}
-                    aria-label={`Allow ${plan.name}`}
-                  />
-                </label>
-              ))}
-            </div>
+            <p className="text-muted-foreground rounded-panel border p-3 text-meta">
+              No access plan includes a new provider. Add it to a plan&apos;s
+              Paid providers in People → Access plans.
+            </p>
             {saveProvider.error && saveProvider.variables === session && (
               <div role="alert" className="text-danger text-meta">
                 {saveProvider.error instanceof Error
@@ -2314,13 +2201,19 @@ function AddProviderDialog({
   );
 }
 
-function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
+function ProviderEmptyState({
+  onAdd,
+  readOnly = false,
+}: {
+  onAdd: () => void;
+  readOnly?: boolean;
+}) {
   return (
     <div className="border-border bg-card rounded-panel border p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 gap-3">
           <div className="bg-primary/10 text-link relative flex size-12 shrink-0 items-center justify-center rounded-panel">
-            <Fish className="size-9" aria-hidden="true" />
+            <Cloud className="size-9" aria-hidden="true" />
             <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
           </div>
           <div>
@@ -2331,9 +2224,11 @@ function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
             </p>
           </div>
         </div>
-        <Button onClick={onAdd}>
-          <Plus aria-hidden="true" /> Add provider
-        </Button>
+        {!readOnly && (
+          <Button onClick={onAdd}>
+            <Plus aria-hidden="true" /> Add provider
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -2345,8 +2240,10 @@ function GlobalCapsEditor({
   error,
   onEdit,
   onSave,
+  readOnly = false,
 }: {
   global: GlobalProviderState;
+  readOnly?: boolean;
   busy?: boolean;
   error?: string | null;
   onEdit: () => void;
@@ -2374,6 +2271,7 @@ function GlobalCapsEditor({
             {capSummary(global.capDaily, global.capMonthly)}
           </p>
         </div>
+        {!readOnly && (
         <details className="group">
           <summary className="list-none marker:hidden">
             <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 cursor-pointer items-center justify-center rounded-control border px-3 text-meta font-medium transition-colors">
@@ -2413,6 +2311,7 @@ function GlobalCapsEditor({
             )}
           </div>
         </details>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-danger mt-3 text-meta">
@@ -2540,6 +2439,9 @@ function ReplaceKeyDialog({
 }
 
 export default function ProvidersPage() {
+  const viewer = useViewer();
+  // Every provider write belongs to the owner; an administrator may only look.
+  const readOnly = viewer.admin && viewer.role !== "owner";
   const [addOpen, setAddOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{
     action: "delete-key" | "remove";
@@ -2578,7 +2480,7 @@ export default function ProvidersPage() {
     isPending: plansIsPending,
   } = useQuery({
     queryKey: ["providers", "plans"],
-    queryFn: () => jsonFetch("/admin/api/profiles").then(mapPlans),
+    queryFn: () => jsonFetch("/admin/api/access-plans").then(mapPlans),
     retry: false,
   });
   const action = useMutation({
@@ -2653,23 +2555,6 @@ export default function ProvidersPage() {
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
   });
-  const savePlans = useMutation({
-    mutationFn: ({
-      provider,
-      allowedPlans,
-    }: {
-      provider: ProviderRecord;
-      allowedPlans: string[];
-    }) =>
-      adminFetch(
-        `/admin/api/providers/${encodeURIComponent(provider.id)}/allowed-plans`,
-        {
-          method: "PUT",
-          body: { allowed_plans: allowedPlans },
-        },
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
-  });
   const saveGlobalCaps = useMutation({
     mutationFn: ({ daily, monthly }: { daily: string; monthly: string }) =>
       adminFetch("/admin/api/providers/-/global-caps", {
@@ -2690,7 +2575,6 @@ export default function ProvidersPage() {
     action.isPending ||
     saveModels.isPending ||
     saveCaps.isPending ||
-    savePlans.isPending ||
     saveGlobalCaps.isPending;
 
   // Only the most recently submitted action may show a failure, and only on
@@ -2700,7 +2584,6 @@ export default function ProvidersPage() {
     { mutation: action, fallback: "The provider could not be updated. Try again." },
     { mutation: saveModels, fallback: "The models could not be saved. Try again." },
     { mutation: saveCaps, fallback: "The caps could not be saved. Try again." },
-    { mutation: savePlans, fallback: "The access plans could not be saved. Try again." },
     { mutation: saveGlobalCaps, fallback: "The global cap could not be saved. Try again." },
   ];
   const latest = pageMutations
@@ -2725,6 +2608,7 @@ export default function ProvidersPage() {
       busy={busy}
       error={errorProviderId === null ? latestError : null}
       onEdit={clearErrors}
+      readOnly={readOnly}
       onSave={(daily, monthly) =>
         saveGlobalCaps.mutate({ daily, monthly })
       }
@@ -2737,15 +2621,22 @@ export default function ProvidersPage() {
         answer="Paid models run with providers."
         tight
         actions={
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus aria-hidden="true" /> Add provider
-          </Button>
+          readOnly ? undefined : (
+            <Button onClick={() => setAddOpen(true)}>
+              <Plus aria-hidden="true" /> Add provider
+            </Button>
+          )
         }
       >
         {/* PageHeader shows only one of answer and description. */}
         <p className="text-muted-foreground text-meta max-w-2xl">
           A request uses a provider only when its model names one.
         </p>
+        {readOnly && (
+          <p className="text-muted-foreground text-meta mt-1">
+            Only the owner can change this.
+          </p>
+        )}
       </PageHeader>
       <div className="max-w-(--content-max) pb-20 sm:pb-0">
         {loading ? (
@@ -2780,7 +2671,7 @@ export default function ProvidersPage() {
             </Button>
           </div>
         ) : records.length === 0 && !globalState.needsReconciliation ? (
-          <ProviderEmptyState onAdd={() => setAddOpen(true)} />
+          <ProviderEmptyState onAdd={() => setAddOpen(true)} readOnly={readOnly} />
         ) : (
           <div className="space-y-(--space-section)">
             {records.length !== 1 && globalCaps}
@@ -2791,6 +2682,7 @@ export default function ProvidersPage() {
                   provider={provider}
                   featured={records.length === 1}
                   plans={planRows}
+                  readOnly={readOnly}
                   busy={busy}
                   error={
                     errorProviderId === provider.id ? latestError : null
@@ -2805,9 +2697,6 @@ export default function ProvidersPage() {
                       daily,
                       monthly,
                     })
-                  }
-                  onSavePlans={(providerRecord, allowedPlans) =>
-                    savePlans.mutate({ provider: providerRecord, allowedPlans })
                   }
                   onAction={(name, providerRecord) =>
                     name === "reconcile"
@@ -2835,7 +2724,6 @@ export default function ProvidersPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         catalog={catalogRows}
-        plans={planRows}
         metadataLoading={catalogIsPending || plansIsPending}
         metadataError={catalogError ?? plansError}
         onRetry={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
@@ -2846,7 +2734,6 @@ export default function ProvidersPage() {
       />
       <ReconciliationDialog
         provider={reconcileTarget}
-        plans={planRows}
         open={reconcileTarget !== null}
         onOpenChange={(open) => !open && setReconcileTarget(null)}
       />

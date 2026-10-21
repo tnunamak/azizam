@@ -1,36 +1,74 @@
 #!/usr/bin/env bash
 # Run every CI job on an exact commit and retain per-step receipts.
-# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--shards N] [--skip-compose]
-# Independent jobs and browser fixtures run in isolated detached worktrees.
+# Usage: scripts/ci-local [--force] [--order-seed N] [--port N] [--browser-workers N] [--browser-servers N] [--py-workers N] [--skip-compose]
+#        scripts/ci-local --force --signoff --target BRANCH [--closes-nightly-red N] [...]
+# Independent jobs run in isolated detached worktrees; browser tests share one build.
+# Test order follows a seed, random unless given and always printed.
 # A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
+[[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
-signoff=0 force=0 port=18640 shards=4 skip_compose=0
+signoff=0 force=0 port=18640 browser_workers=10 browser_servers=2 py_workers=12 skip_compose=0
+seed=$(((RANDOM * 32768 + RANDOM) % 1000000000)) target= closes_nightly_red=
 while (($#)); do
   case $1 in
     --signoff) signoff=1 ;;
     --force) force=1 ;;
-    --port|--shards)
-      (($# >= 2)) || { echo "$1 requires a number" >&2; exit 2; }
-      if [[ $1 == --port ]]; then port=$2; else shards=$2; fi
+    --port|--browser-workers|--browser-servers|--py-workers|--order-seed|--target|--closes-nightly-red)
+      (($# >= 2)) || { echo "$1 requires a value" >&2; exit 2; }
+      case $1 in
+        --port) port=$2 ;; --browser-workers) browser_workers=$2 ;; --browser-servers) browser_servers=$2 ;; --py-workers) py_workers=$2 ;;
+        --order-seed) seed=$2 ;; --target) target=$2 ;; *) closes_nightly_red=$2 ;;
+      esac
       shift ;;
     --skip-compose) skip_compose=1 ;;
-    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
-# Each ten-port lane owns gateway +0, engine +1, strict probes +2..+9.
-# Bound inputs before arithmetic, including the two additional fixture lanes.
-if [[ ! $port =~ ^18[0-9]{3}$ || ! $shards =~ ^[1-9][0-9]?$ ]]; then
-  echo "--port must be 18000-18998 and --shards a positive integer <= 99" >&2
+# Each fixture gateway owns ten ports: gateway +0, engine +1, strict probes
+# +2..+9. Up to eight gateways: the parallel pool (1-3 servers), the two global-state
+# servers, the fresh first-run server, live-data and household. Bound inputs before arithmetic.
+if [[ ! $port =~ ^18[0-9]{3}$ || ! $browser_workers =~ ^([1-9]|1[0-6])$ || ! $browser_servers =~ ^[1-3]$ || ! $py_workers =~ ^[1-9][0-9]?$ ]]; then
+  echo "--port must be 18000-18998, --browser-workers 1-16, --browser-servers 1-3 and --py-workers a positive integer <= 99" >&2
   exit 2
 fi
-if ((port + 10 * (shards + 2) + 9 > 18998)); then
-  echo "shards, live-data and household lanes must fit within 18000-18998" >&2
+if ((port + 89 > 18998)); then
+  echo "the browser fixture gateways must fit within 18000-18998" >&2
+  exit 2
+fi
+if [[ ! $seed =~ ^[0-9]{1,9}$ ]]; then
+  echo "--order-seed must be an integer from 0 to 999999999" >&2
+  exit 2
+fi
+step_limit_s=${AZIZAM_CI_STEP_TIMEOUT_S:-1200}
+if [[ ! $step_limit_s =~ ^([0-9]{1,9})(\.([0-9]{1,6}))?$ ]]; then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be a positive number of seconds" >&2
+  exit 2
+fi
+whole_seconds=${BASH_REMATCH[1]}
+fraction_us=${BASH_REMATCH[3]:-}000000
+step_limit_us=$((10#$whole_seconds * 1000000 + 10#${fraction_us:0:6}))
+if ((step_limit_us == 0)); then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be greater than zero" >&2
+  exit 2
+fi
+if ((step_limit_us > 3600000000)); then
+  step_limit_s=3600
+  step_limit_us=3600000000
+fi
+if [[ -n $closes_nightly_red && ! $closes_nightly_red =~ ^[1-9][0-9]*$ ]]; then
+  echo "--closes-nightly-red must be an issue number" >&2
+  exit 2
+fi
+if ((!signoff)) && [[ -n $closes_nightly_red ]]; then
+  echo "--closes-nightly-red applies only with --signoff" >&2
   exit 2
 fi
 command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
+command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
+command -v timeout >/dev/null || { echo "ci-local requires GNU timeout" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -42,34 +80,119 @@ sha=$(git rev-parse HEAD)
 tree=$(git rev-parse 'HEAD^{tree}')
 receipts_root=${AZIZAM_CI_RECEIPTS:-$HOME/.tmp/azizam-ci-receipts}
 receipts=$receipts_root/$tree
-sign() {
-  ((signoff)) || return 0
-  gh signoff create
-  echo "signoff posted for $sha"
+
+# A signoff attests that this invocation ran every required step on the exact
+# merge candidate (docs/design/TEST_STRATEGY.md 1.2). Each rule that does not
+# hold refuses with exit 3, posts nothing and writes no signoff receipt.
+refuse() { echo "signoff refused: $*" >&2; exit 3; }
+remote_tip() { git ls-remote --exit-code origin "refs/heads/$target" | cut -f1; }
+check_nightly_red() {
+  local open number
+  open=$(gh issue list --label nightly-red --state open --json number --jq '.[].number') ||
+    refuse "cannot list open nightly-red issues"
+  for number in $open; do
+    [[ $number == "$closes_nightly_red" ]] ||
+      refuse "open nightly-red issue #$number blocks signoff; pass --closes-nightly-red $number only if this change closes it"
+    # The same keywords GitHub uses to close an issue when the commit lands.
+    git log --format=%B "$target_tip..$sha" |
+      grep -qiE "\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #$number\b" ||
+      refuse "no commit in $target_tip..$sha says it closes nightly-red issue #$number (e.g. \"Fixes #$number\")"
+  done
 }
+if ((signoff)); then
+  ((force)) || refuse "--signoff needs --force: a signoff never comes from the tree cache"
+  [[ -n $target ]] || refuse "--signoff needs --target BRANCH"
+  ((!skip_compose)) || refuse "--skip-compose skips a required step"
+  target_tip=$(remote_tip) || refuse "cannot read refs/heads/$target from origin"
+  parent=$(git rev-parse -q --verify 'HEAD^1') || parent=none
+  [[ $parent == "$target_tip" ]] ||
+    refuse "HEAD^1 is $parent, not the origin/$target tip $target_tip; run on the merge candidate (the $target tip with the change merged)"
+  # The status is posted to the SHA by name, and GitHub rejects a commit it has
+  # not received: push the candidate to a branch first, not after a 10-minute run.
+  gh api "repos/{owner}/{repo}/commits/$sha" --silent 2>/dev/null ||
+    refuse "GitHub has no commit $sha; push the merge candidate to a branch (not $target) first"
+  check_nightly_red
+fi
+
+# Non-signoff comparisons still enforce the target branch's budget ratchets.
+if ((!signoff)) && [[ -n $target ]]; then
+  target_tip=$(git rev-parse --verify "refs/remotes/origin/$target") || exit 2
+fi
+
+# Two gates on one host would share 24 cores and the 18000-18998 ports.
+# Every job inherits the lock descriptor, so if ci-local itself is killed,
+# its surviving jobs keep the host locked until they end.
+lock=$HOME/.tmp/azizam-ci.lock
+mkdir -p "${lock%/*}"
+exec 9>>"$lock"
+if ! flock -n 9; then
+  # A scheduled run (scripts/test-scheduled) starts no new task while this file
+  # exists, so this gate waits for at most the task that is running now.
+  gate_waiting=${AZIZAM_CI_GATE_WAITING:-$HOME/.tmp/azizam-ci.gate-waiting}
+  printf 'pid %s since %s\n' "$$" "$(date -u +%FT%TZ)" > "$gate_waiting"
+  trap 'rm -f "$gate_waiting"' EXIT
+  echo "waiting for the host CI lock $lock (last recorded holder: $(cat "$lock"); current holders: fuser -v $lock)"
+  flock 9
+  rm -f "$gate_waiting"
+fi
+printf 'pid %s sha %s since %s\n' "$$" "$sha" "$(date -u +%FT%TZ)" > "$lock"
+
 if [[ -f $receipts/PASS && $force == 0 ]]; then
   echo "tree $tree already passed (receipts: $receipts)"
-  sign
   exit 0
 fi
+echo "order seed: $seed (reproduce with --order-seed $seed)"
 
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
 receipts=$(cd "$receipts" && pwd)
-rm -f "$receipts/PASS" "$receipts/steps.tsv"
-rm -rf "$receipts/steps" "$receipts/test-results"
-mkdir -p "$receipts/steps"
+rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/cost.json" "$receipts/signoff-$sha.tsv"
+rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
+mkdir -p "$receipts/steps" "$receipts/raw"
+# Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
+python3 "$repo/scripts/ci/prune_receipts.py" "$receipts_root" --keep "$receipts" || true
+# Only receipts/logs survive a run, including failures. With the host lock
+# held, marked scratch directories are abandoned and can be removed.
+# Do not follow the legacy .kept file: sweep only our marked children.
+remove_run_dir() { rm -rf -- "$1"; git -C "$repo" worktree prune; }
+for directory in "$scratch"/azizam-ci-local.*/; do
+  directory=${directory%/}
+  if [[ -d $directory && ! -L $directory && -O $directory && -f $directory/.ci-local-run ]]; then
+    remove_run_dir "$directory"
+  fi
+done
 run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
 run=$(cd "$run" && pwd)
+: > "$run/.ci-local-run"
 work=$run/web-build
 worktrees=()
 pids=()
-lane_pids=()
+step_groups=$run/step-groups
+mkdir -p "$step_groups"
+stop_step_group() {
+  local pgid=$1 deadline=$((SECONDS + 3))
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  while kill -0 -- "-$pgid" 2>/dev/null && ((SECONDS < deadline)); do sleep .1; done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+stop_recorded_groups() {
+  local file pgid
+  for file in "$step_groups"/$1; do
+    [[ -f $file ]] || continue
+    read -r pgid < "$file" || pgid=
+    if [[ $pgid =~ ^[1-9][0-9]*$ && $pgid != 1 ]]; then stop_step_group "$pgid"; fi
+    rm -f -- "$file"
+  done
+}
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
+  # Stop supervisors first: a live multi-step job could start another timeout
+  # group after the recorded-group sweep has already expanded its file list.
   # Every background job has its own session: never kill the caller's group.
   for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  # timeout uses a second process group. Its descendants need not mention $run.
+  stop_recorded_groups '*'
   for pid in "${pids[@]}"; do
     while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
     kill -KILL -- "-$pid" 2>/dev/null || true
@@ -81,11 +204,12 @@ cleanup() {
   deadline=$((SECONDS + 10))
   while pgrep -f -- "$run/" >/dev/null 2>&1 && ((SECONDS < deadline)); do sleep .2; done
   pkill -KILL -f -- "$run/" 2>/dev/null || true
+  rm -f "$receipts/signoff-$sha.tsv.partial"
   cd "$repo"
   for directory in "${worktrees[@]}"; do
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
   done
-  rm -rf "$run"
+  remove_run_dir "$run"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -97,33 +221,92 @@ add_worktree() {
 add_worktree "$work"
 add_worktree "$run/python"
 add_worktree "$run/fresh"
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\nshards\t%s\nbase_port\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" "$shards" "$port" > "$receipts/run.tsv"
+started=$(date -u +%FT%TZ)
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$browser_workers" "$py_workers" "$port" > "$receipts/run.tsv"
 
+# Cost per step (scripts/ci/gate_cost.py reports it): GNU time when present, else wait4.
+gate_time=${AZIZAM_CI_TIME:-/usr/bin/time}
+cost_mode=wait4
+if [[ -x $gate_time ]]; then cost_mode=gnu-time; fi
 failed=0
 step() {
   local name=$1; shift
-  local start=$SECONDS rc=0
+  local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
-  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 &
+  ( measure_step "$name" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
+  elapsed_us=$(( ${EPOCHREALTIME/./} - start_us ))
   # One writer per file; aggregation happens only after every job is reaped.
-  printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
-  if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
+  printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
+  if ((rc)); then
+    failed=1
+    if ((rc == 124 || (rc == 137 && elapsed_us >= step_limit_us))); then
+      echo "   FAILED: $name exceeded the ${step_limit_s}-second step limit: $receipts/logs/$name.log"
+    elif ((rc == 137)); then
+      echo "   FAILED: $name was killed by SIGKILL (possibly OOM): $receipts/logs/$name.log"
+    else
+      echo "   FAILED (exit $rc): $receipts/logs/$name.log"
+    fi
+  fi
   return 0
 }
-export receipts work skip_compose
-export -f step
+# GNU time writes "wall user system max_rss_kb" with -o; -q keeps its "exited with
+# status" message out of the step's log. Without GNU time, wait4 measures the step.
+# Both return the step's own exit status.
+measure_step() {
+  local name=$1; shift
+  local cost=$receipts/steps/$name.cost
+  local group_file=$step_groups/${CI_JOB_PID:-main}.$name deadline_pid rc=0
+  if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+      "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@" &
+  else
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+      python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@" &
+  fi
+  deadline_pid=$!
+  printf '%s\n' "$deadline_pid" > "$group_file"
+  wait "$deadline_pid" || rc=$?
+  # GNU timeout is the leader of its own group. A step may leave children
+  # after timeout itself exits; reap that group before dropping its record.
+  if kill -0 -- "-$deadline_pid" 2>/dev/null; then stop_step_group "$deadline_pid"; fi
+  rm -f "$group_file"
+  return "$rc"
+}
+# The steps.tsv columns after the name, exit code and whole seconds: wall, CPU
+# (user plus system) and peak RSS kB. A step with no measurement reports "-".
+cost_columns() {
+  local file=$receipts/steps/$1.cost wall user sys_time peak
+  if [[ -s $file ]] && read -r wall user sys_time peak < "$file" && [[ $peak =~ ^[0-9]+$ ]]; then
+    awk -v w="$wall" -v u="$user" -v s="$sys_time" -v p="$peak" 'BEGIN { printf "%s\t%.2f\t%s", w, u + s, p }'
+  else
+    printf '%s\t%s\t%s' - - -
+  fi
+}
+# npm, uv and Playwright retain their shared download caches across runs.
+# Keep installed environments private; fresh-venv uses copy-on-write clones
+# instead of forced copies. Other installers retain their existing link mode.
+cleanup_step() {
+  local name=$1; shift
+  # Only private, finished installs may go; all diagnostic logs live in receipts.
+  if [[ $(cut -f2 "$receipts/steps/$name.tsv") == 0 ]]; then
+    rm -rf -- "$@"
+  fi
+}
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups step_limit_s step_limit_us
+export -f step cleanup_step measure_step cost_columns stop_step_group
 start_job() {
   local directory=$1; shift
-  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
+  setsid bash -c 'CI_JOB_PID=$BASHPID; export CI_JOB_PID; cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
   last_pid=$!
   pids+=("$last_pid")
 }
 wait_job() {
-  local pid=$1 index deadline
-  if ! wait "$pid"; then failed=1; fi
+  local pid=$1 index deadline job_failed=0
+  if ! wait "$pid"; then failed=1; job_failed=1; fi
+  if ((job_failed)); then stop_recorded_groups "$pid.*"; fi
   # A failed supervisor must not leave fixture grandchildren running.
   if kill -0 -- "-$pid" 2>/dev/null; then
     failed=1
@@ -141,113 +324,192 @@ wait_job() {
 # These jobs never share their venv, generated files or node_modules.
 start_job "$run/python" bash -c '
   failed=0
-  step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx
+  step python-hermetic scripts/run-hermetic-pytest.sh --junit-xml-out "$receipts/raw/pytest.xml" -q -rsx -n "$py_workers" --dist worksteal --order-seed "$seed"
   exit "$failed"
 '
+# The Compose journey creates and removes a Docker bridge network. Chromium
+# aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
+# so Compose must never overlap the browser tests: it runs here, alongside web
+# preparation, and the browser tests start only after it finishes. The native journey
+# runs later, beside the browser tests: it needs no Docker network, and running it
+# after Compose keeps the two from racing for the same free ports.
 start_job "$run/fresh" bash -c '
   failed=0
-  step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
-  step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+  step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode clone --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
+  if ((skip_compose)); then
+    printf "fresh-compose\tskipped\t0\t-\t-\t-\n" > "$receipts/steps/fresh-compose.tsv"
+    failed=1
+    echo "== fresh-compose SKIPPED: the run cannot pass without it"
+  else
+    # Bring-up time (pull, build, up until healthy): journey-clock adds it to the browser journey.
+    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" FRESH_INSTANCE_TIMING_OUT="$receipts/raw/compose-bringup.json" scripts/e2e/fresh_instance.sh --compose
+  fi
   exit "$failed"
 '
 fresh_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
-  step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
-  step web-check bash -c "cd web && npm run check"
-  step web-unit bash -c "cd web && npx vitest run"
-  step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
-  step e2e-browser bash -c "cd web && npx playwright install chromium"
+  step web-npm-ci bash -c "cd web && python3 ../scripts/ci/install_cached.py node node_modules"
+  # Unit tests run beside the build, not beside the browser tests: there, CPU
+  # contention pushed tests past the 5 s vitest limit. They finish before the
+  # browser tests start.
+  ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
+  unit_pid=$!
+  # Build the export before browsers; static checks move to the native slot.
+  ( step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --require-hashes --python venv/bin/python tests/requirements-hermetic.lock"; exit "$failed" ) &
+  venv_pid=$!
+  ( step e2e-browser bash -c "cd web && npx playwright install chromium"; exit "$failed" ) &
+  browser_pid=$!
+  step web-build bash -c "cd web && npm run build"
+  wait "$unit_pid" || failed=1
+  wait "$venv_pid" || failed=1
+  wait "$browser_pid" || failed=1
   exit "$failed"
 '
-wait_job "$last_pid"
+web_pid=$last_pid
+# The Node tests that run offline: probe-gates.test.mjs proves the opted-out
+# live probes start no provider work. The live probes themselves stay with the
+# scheduled tier (tests/suites.toml). Each package has its own install, which
+# keeps them out of web/. The Pi unit tests run
+# here too, and a missing Node fails the step; it never skips.
+start_job "$work" bash -c '
+  failed=0
+  step compat-node env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" bash -c "cd tests/compat/node && npm ci --no-audit --no-fund && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=\"\$1\" --test-reporter-destination=stderr probe-gates.test.mjs" _ "$PWD/scripts/ci/node-case-receipts.mjs"
+  cleanup_step compat-node tests/compat/node/node_modules
+  step pi-unit env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" scripts/ci/pi-unit "$PWD/scripts/ci/node-case-receipts.mjs"
+  cleanup_step pi-unit integrations/pi/node_modules
+  # The official MCP conformance suite (pinned in tests/conformance) against
+  # the production MCP router and authorization server on a loopback port.
+  step mcp-conformance scripts/ci/mcp-conformance "$receipts/raw/mcp-conformance"
+  cleanup_step mcp-conformance tests/conformance/node_modules .ci-conformance-venv
+  exit "$failed"
+'
+compat_pid=$last_pid
+wait_job "$web_pid"
+wait_job "$fresh_pid"
+wait_job "$compat_pid"
 
-# Browser lanes test the built export with the e2e venv and browser. Without
-# them every journey fails with misleading 401/404s, so skip the lanes and
+# The browser tests use the built export with the e2e venv and browser.
+# Without them every journey fails with misleading 401/404s, so skip them and
 # let the failed prerequisite be the reported cause.
-lanes=$((shards + 2))  # browser shards, live-data and household
+browser_steps=4  # e2e-main, e2e-live-data, e2e-household, e2e-tree-unchanged
 browser_ready=1
-for prerequisite in web-npm-ci web-check e2e-venv e2e-browser; do
+for prerequisite in web-npm-ci web-build e2e-venv e2e-browser; do
   rc=$(cut -f2 "$receipts/steps/$prerequisite.tsv" 2>/dev/null || echo missing)
   if [[ $rc != 0 ]]; then browser_ready=0; fi
 done
 if ((!browser_ready)); then
   failed=1
-  echo "== browser lanes skipped: a web build prerequisite failed (see above)"
-  lanes=0
+  echo "== browser tests skipped: a web build prerequisite failed (see above)"
+  browser_steps=0
 fi
 
-# Copy the completed web tree, including dependencies and build output, only
-# after all writers stop. Reflinks save space where supported; ordinary copies
-# still isolate writable caches and legacy fixed screenshot/auth filenames.
-for ((i=1; i<=lanes; i++)); do
-  lane_port=$((port + 10 * i))
-  lane=$run/browser-$lane_port
-  add_worktree "$lane"
-  # node_modules is read-only during the journeys: hard-link it (no disk cost)
-  # and copy everything else so writable caches and results stay per lane.
-  step "e2e-copy-$lane_port" bash -c 'shopt -s dotglob; for entry in "$1"/web/*; do
-    if [[ $(basename "$entry") == node_modules ]]; then cp -al "$entry" "$2/web/"; else cp -a --reflink=auto "$entry" "$2/web/"; fi
-  done' _ "$work" "$lane"
-  ln -s "$work/venv" "$lane/venv"
-done
-for ((i=1; i<=lanes; i++)); do
-  lane_port=$((port + 10 * i))
-  lane=$run/browser-$lane_port
-  config=playwright.config.ts
-  args=()
-  name=e2e-shard-$i-of-$shards
-  if ((i <= shards)); then
-    args+=("--shard=$i/$shards")
-  elif ((i == shards + 1)); then
-    config=playwright.live-data.config.ts; name=e2e-live-data
-  else
-    config=playwright.household.config.ts; name=e2e-household
-  fi
-  start_job "$lane/web" bash -c '
-    failed=0
-    name=$1; shift
-    step "$name" "$@"
-    exit "$failed"
-  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
-  lane_pids+=("$last_pid")
-done
-# The Compose journey creates and removes a Docker bridge network. Chromium
-# aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
-# so Compose must never overlap the browser lanes: run it after they finish,
-# while the Python suite (the longest job) is still running.
-for pid in "${lane_pids[@]}" "$fresh_pid"; do wait_job "$pid"; done
-if ((skip_compose)); then
-  printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
-  failed=1
-  echo "== fresh-compose SKIPPED: the run cannot pass without it"
-else
-  start_job "$run/fresh" bash -c '
-    failed=0
-    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
-    exit "$failed"
-  '
+# Isolation comes from data, not copies (TEST_STRATEGY.md 3.4.7): every
+# Playwright invocation runs from the one build tree, which no test writes.
+# Runner and spec output goes to web/test-results, a link to a directory
+# outside the tree; e2e-tree-unchanged fails if anything else in web/ changes.
+# Ports: the main pool +10 and its global-state server +20 (one invocation
+# with --browser-workers workers over --browser-servers servers; extra pool
+# servers at +50 and +60), live-data +30, household +40.
+browser_names=(e2e-main e2e-live-data e2e-household)
+browser_configs=(playwright.config.ts playwright.live-data.config.ts playwright.household.config.ts)
+browser_ports=($((port + 10)) $((port + 30)) $((port + 40)))
+if ((browser_ready)); then
+  mkdir -p "$run/browser-results" "$run/state"
+  rm -rf "$work/web/test-results"  # nothing before this point writes there
+  ln -s "$run/browser-results" "$work/web/test-results"
+  # The static checks (lint and react-doctor) run beside the browsers and keep
+  # tool caches under web/. Route those two cache directories to scratch
+  # outside the tree first, so e2e-tree-unchanged still proves that nothing
+  # else, and no browser test, writes into the shared build tree.
+  for cache in .next/cache/eslint node_modules/.cache; do
+    cache_dir="$run/static-cache/${cache//\//_}"
+    mkdir -p "$cache_dir" "$(dirname "$work/web/$cache")"
+    if [[ -e $work/web/$cache && ! -L $work/web/$cache ]]; then
+      cp -a "$work/web/$cache/." "$cache_dir/" && rm -rf "$work/web/$cache"
+    fi
+    ln -sfn "$cache_dir" "$work/web/$cache"
+  done
+  touch "$run/browser-start"
+  for i in 0 1 2; do
+    start_job "$work/web" bash -c '
+      failed=0
+      name=$1; shift
+      step "$name" "$@"
+      exit "$failed"
+    ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" UI_E2E_GLOBAL=2 \
+      UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
+      CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
+      ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
+  done
 fi
+start_job "$run/fresh" bash -c '
+  failed=0
+  # Reuse the native slot, rather than adding a heavy job beside the browsers.
+  # Disable caches: the browser tier checks that the shared build stays unchanged.
+  step web-check bash -c "cd \"\$work/web\" && npx tsc --noEmit --incremental false && npm run lint -- --no-cache && npm run doctor"
+  step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+  exit "$failed"
+'
 for pid in "${pids[@]}"; do wait_job "$pid"; done
+if ((browser_ready)); then
+  step e2e-tree-unchanged bash -c 'changed=$(find "$1/web" -path "$1/web/test-results" -prune -o -newer "$2" -print)
+    [[ -z $changed ]] || { echo "browser tests wrote into the shared build tree:"; echo "$changed"; exit 1; }' _ "$work" "$run/browser-start"
+fi
+
+# The native journey was the last fresh-tree consumer. Capture signoff
+# metadata before removing its venv and checkout.
+if ((signoff && !failed)); then
+  python_fresh=$("$run/fresh/.ci-fresh-venv/bin/python" --version)
+fi
+git worktree remove --force "$run/fresh"
+
+# Case receipts: one cases.jsonl from every framework's report, then the
+# test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
+merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
+if [[ -f $receipts/raw/compat-node.cases.jsonl ]]; then
+  merge_args+=(--receipts "$receipts/raw/compat-node.cases.jsonl" "$work")
+fi
+for name in "${browser_names[@]}"; do
+  # An invocation that wrote no receipts leaves its files unrun, which policy reports.
+  if [[ -f $receipts/raw/$name.cases.jsonl ]]; then
+    merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$work")
+  fi
+done
+# The ten-minute bar: Compose bring-up plus the browser journey, strictly under 600 s.
+step journey-clock "$run/python/scripts/ci/journey_clock.py" --compose "$receipts/raw/compose-bringup.json" \
+  --first-run "$receipts/raw/first-run-ui.json" --out "$receipts/cost.json"
+step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
+# Ratchets may only fall: compare with the target branch's budgets when it has them.
+policy_args=()
+if [[ -n ${target_tip:-} ]] && git cat-file -e "$target_tip:tests/budgets.toml" 2>/dev/null; then
+  git show "$target_tip:tests/budgets.toml" > "$receipts/base-budgets.toml"
+  policy_args=(--base-budgets "$receipts/base-budgets.toml")
+fi
+step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl" "${policy_args[@]}"
+
+# Aggregation and policy need the Python sources; the shared web tree must
+# survive the unchanged-tree check. Release both at their last consumer.
+if ((signoff && !failed)); then
+  python_e2e=$("$work/venv/bin/python" --version)
+  chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chromium.executablePath())')
+  chromium_version=$("$chromium" --version)
+fi
+git worktree remove --force "$run/python"
+git worktree remove --force "$work"
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * lanes + 9))" '
-  NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
+if ! awk -F '\t' -v expected="$((browser_steps + 16))" '
+  NF != 6 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
-if ((failed)); then
-  # Keep each lane's complete evidence, including legacy fixed filenames.
-  for ((i=1; i<=lanes; i++)); do
-    lane_port=$((port + 10 * i))
-    if [[ -d $run/browser-$lane_port/web/test-results ]]; then
-      mkdir -p "$receipts/test-results/$lane_port"
-      cp -a "$run/browser-$lane_port/web/test-results/." "$receipts/test-results/$lane_port/"
-    fi
-  done
-fi
+# Failed runs retain textual logs and case/step receipts, not duplicate
+# browser traces, auth files, builds, environments or mutable test state.
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
-column -t "$receipts/steps.tsv"
+# The cost table and cost.json. Evidence only: the verdict does not depend on them.
+python3 "$repo/scripts/ci/gate_cost.py" report "$receipts" --measure "$cost_mode" ||
+  echo "cost report failed; steps.tsv keeps the raw costs"
 if ((failed)); then
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1
@@ -255,4 +517,37 @@ fi
 echo "$sha" > "$receipts/PASS"
 echo "ci-local PASSED for $sha; receipts: $receipts"
 cd "$repo"
-sign
+((signoff)) || exit 0
+
+# Recheck what can move during a run, post the status to the tested SHA by
+# name (not to whatever the checkout holds now), and only then finalize the
+# receipt: an interrupted or failed post leaves no signoff receipt.
+final_tip=$(remote_tip) || refuse "cannot reread refs/heads/$target from origin"
+[[ $final_tip == "$target_tip" ]] ||
+  refuse "origin/$target moved from $target_tip to $final_tip during the run; rebuild the merge candidate"
+head_now=$(git rev-parse HEAD)
+[[ $head_now == "$sha" ]] || refuse "the checkout moved from $sha to $head_now during the run"
+check_nightly_red
+user=$(git config user.name) || refuse "git user.name is not set"
+receipt=$receipts/signoff-$sha.tsv
+{
+  printf 'sha\t%s\ntree\t%s\ntarget\t%s\ntarget_tip\t%s\nseed\t%s\n' "$sha" "$tree" "$target" "$target_tip" "$seed"
+  printf 'started\t%s\nfinished\t%s\n' "$started" "$(date -u +%FT%TZ)"
+  printf 'steps\t%s\n' "$(cut -f1 "$receipts/steps.tsv" | sort | paste -sd, -)"
+  printf 'policy\t%s\n' "$(tail -n 1 "$receipts/logs/policy.log")"
+  printf 'cost\t%s\n' "$(tr -d '\n ' < "$receipts/cost.json")"
+  printf 'nightly_red_closed\t%s\n' "${closes_nightly_red:-none}"
+  printf 'python_fresh\t%s\n' "$python_fresh"
+  printf 'python_e2e\t%s\n' "$python_e2e"
+  printf 'node\t%s\n' "$(node --version)"
+  printf 'chromium\t%s\n' "$chromium_version"
+  printf 'ffmpeg\t%s\n' "$(ffmpeg -version | head -n 1)"
+} > "$receipt.partial"
+# The same status `gh signoff create` posts, bound to $sha.
+status_url=$(gh api --method POST "repos/{owner}/{repo}/statuses/$sha" -f state=success \
+  -f context=signoff -f "description=$user signed off" --jq .url) ||
+  refuse "GitHub did not accept the signoff status for $sha"
+[[ $status_url == */statuses/"$sha" ]] || refuse "GitHub recorded the status at $status_url, not on $sha"
+printf 'posted\t%s\nstatus_url\t%s\n' "$(date -u +%FT%TZ)" "$status_url" >> "$receipt.partial"
+mv "$receipt.partial" "$receipt"
+echo "signoff posted for $sha; receipt: $receipt"

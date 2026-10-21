@@ -7,7 +7,34 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
+from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
 from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
+
+
+def health_base(service: Mapping[str, Any]) -> str | None:
+    """The address a relative health path is joined against: the record's base URL, else its host and port."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    base_url = str(connection.get("base_url") or "").rstrip("/")
+    if base_url:
+        return base_url
+    host = str(connection.get("host") or "").strip()
+    if not host:
+        return None
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = connection.get("port")
+    authority = f"{host}:{port}" if port is not None else host
+    scheme = str(connection.get("scheme") or "http")
+    base_path = str(connection.get("base_path") or "").strip("/")
+    return f"{scheme}://{authority}/{base_path}".rstrip("/")
+
+
+def join_health(base: str, endpoint: str) -> str:
+    """The health address: an absolute URL as written, else the path joined to the base (a leading slash means origin-relative)."""
+    if endpoint.startswith(("http://", "https://")) or not base:
+        return endpoint
+    return urljoin(f"{base}/", endpoint)
 
 
 def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
@@ -20,20 +47,17 @@ def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
     endpoint = str(endpoint)
     if endpoint.startswith(("http://", "https://")):
         return endpoint
-    base_url = str(connection.get("base_url") or "").rstrip("/")
+    base_url = health_base(service)
     if not base_url:
-        host = str(connection.get("host") or "").strip()
-        if not host:
-            return None
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        port = connection.get("port")
-        authority = f"{host}:{port}" if port is not None else host
-        scheme = str(connection.get("scheme") or "http")
-        base_path = str(connection.get("base_path") or "").strip("/")
-        base_url = f"{scheme}://{authority}/{base_path}".rstrip("/")
-    # Leading slash means origin-relative; relative paths use the declared base.
-    return urljoin(f"{base_url}/", endpoint)
+        return None
+    return join_health(base_url, endpoint)
+
+
+def starts_on_demand(service: Mapping[str, Any]) -> bool:
+    """True when the service record declares ``residency: on_demand``."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    return str(connection.get("residency") or "").strip().lower() == "on_demand"
 
 
 def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
@@ -118,28 +142,10 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
     return "unknown"
 
 
-CAPABILITY_LABELS = {
-    "chat": "Chat", "image": "Images", "video": "Video", "speech": "Speech",
-    "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Rerank",
-}
 # Generic audio generation has no honest music/speech subtype. Its neutral
 # waveform glyph shares the sound-effects icon without changing its taxonomy.
 CAPABILITY_ICON_KEYS = {key: key for key in CAPABILITY_LABELS if key != "audio"}
 CAPABILITY_ICON_KEYS["audio"] = "sfx"
-PROTOCOL_CAPABILITIES = {
-    "llm.execution": "chat", "typesafe-systemone": "decide",
-    "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",
-    "speech": "speech", "tts": "speech", "audio.speech": "speech", "speech.synthesis": "speech",
-    "transcriptions": "transcribe", "transcription": "transcribe", "stt": "transcribe",
-    "audio.transcriptions": "transcribe", "speech.transcription": "transcribe",
-    "speech.translation": "transcribe", "images": "image", "image": "image", "generations": "image",
-    "image.generate": "image", "image.edit": "image", "videos": "video", "video": "video",
-    "video.generate": "video", "embeddings": "embed", "text.embeddings": "embed",
-    "rerank": "rerank", "text.rerank": "rerank", "decisions": "decide",
-    "decision.systemone": "decide", "music": "music", "sfx": "sfx", "audio": "audio",
-    "audio.generate": "audio",
-}
 PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
 # Product defaults are stable caller names, independent of catalog order,
 # engine identity, and current health. Operators still control their targets.
@@ -318,7 +324,7 @@ def _chat_profile_description(profile_name: str) -> str:
         return "Helps with coding tasks and technical questions."
     if normalized in {"rp", "roleplay"} or "roleplay" in normalized:
         return "Uses a roleplay-tuned chat profile."
-    return f"A separate chat profile named {profile_name}."
+    return "A chat model."
 
 
 def _strip_deployment_notes(value: str) -> str:

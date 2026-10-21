@@ -6,6 +6,7 @@ All backend I/O is a recording tripwire; this module never contacts a model.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import socket
@@ -23,7 +24,7 @@ from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
-from gateway import admin_store, category_enforcement, category_policy, media_jobs, receipt_store
+from gateway import accounts, admin_store, category_enforcement, category_policy, me_make, media_jobs, receipt_store
 from gateway.admin_oidc import (
     AdminSession, CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims,
 )
@@ -32,22 +33,47 @@ from gateway.category_store import CategoryStore
 from gateway.policy import ALLOWED, DENIED as POLICY_DENIED, PolicyRequest
 from gateway import runtime_auth
 from gateway.user_runtime import mint_user_app_key
+from tests.support.access import access_context, store_plan
 
 
 DENIED = {401, 403, 404, 405}
 INVALID_BODY = {400, 422}
-REQUEST_TIMEOUT = 3
+REQUEST_TIMEOUT = 3  # websocket handshakes: an accepted idle socket must not hang the suite
+HTTP_REQUEST_TIMEOUT = 60  # HTTP: generous, so host load never turns a slow answer into a 500
+
+# A row passes only with one of these outcomes. Refusals prove a decision;
+# non-executable contracts are route-specific answers that run nothing.
+REFUSALS = {"denied", "refused", "closed", "refused (wrapped)", "refused (queued)"}
+NON_EXECUTABLE = {"scoped-empty", "metadata (contract)", "unsupported (contract)"}
+PROVED = REFUSALS | NON_EXECUTABLE
+OUT_OF_FIXTURE = "not run (out of fixture)"
 
 
 class _BoundedApp:
-    """Keep an accidentally accepted, idle websocket from hanging the suite."""
+    """Keep an accidentally accepted, idle websocket from hanging the suite.
+
+    The bound sits outside the app's error handling, so a request that runs
+    past it comes back as an empty 500. HTTP gets a far larger bound: under
+    load, POST /me/api/make/jobs (several SQLite commits plus the worker's
+    refusal in the same event loop) took longer than 3 s.
+
+    A queued make job runs as a task on this request's event loop, and
+    TestClient closes that loop (cancelling the task) once the app returns.
+    So wait here for the jobs this request scheduled to settle; otherwise the
+    inventory reads a job that is still running.
+    """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        with anyio.fail_after(REQUEST_TIMEOUT):
+        limit = REQUEST_TIMEOUT if scope["type"] == "websocket" else HTTP_REQUEST_TIMEOUT
+        with anyio.fail_after(limit):
             await self.app(scope, receive, send)
+            loop = asyncio.get_running_loop()
+            jobs = [task for task in proxy._image_media_job_tasks if task.get_loop() is loop]
+            if jobs:
+                await asyncio.wait(jobs)
 
 
 @pytest.fixture
@@ -56,6 +82,7 @@ def gateway(monkeypatch, tmp_path, request):
     paths = {}
     for module, name in (
         (admin_store, "admin"), (receipt_store, "receipts"), (media_jobs, "media_jobs"),
+        (proxy.responses_store, "responses"),  # else stored-response routes answer 500
     ):
         path = tmp_path / f"{name}.db"
         module.init_db(path)
@@ -68,13 +95,14 @@ def gateway(monkeypatch, tmp_path, request):
     cache = tmp_path / "image-cache"
     cache.mkdir()
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
+    # The image-job payload spool defaults to <checkout>/data. The sandbox
+    # mounts the checkout read-only, so POST /me/api/make/jobs failed with a
+    # 500 there and queued (then ran) a job everywhere else.
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "image_media_jobs")
     monkeypatch.setattr(proxy, "IMAGE_SIGNED_URL_SECRET_CFG", "inventory-test-only")
     monkeypatch.setattr(proxy, "_image_url_signing_secret", None)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
-    monkeypatch.setattr(proxy, "_client_is_lan", lambda _request: False)
-    monkeypatch.setattr(proxy, "PATH_TOKENS", {})
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
 
     calls = []
@@ -88,7 +116,6 @@ def gateway(monkeypatch, tmp_path, request):
         return called
 
     monkeypatch.setattr(proxy, "check_service_health", tripwire("health", True))
-    monkeypatch.setattr(proxy, "is_model_loaded", tripwire("model-state", False))
     for name in ("send_llm_execution_request", "_forward_current_loaded_openai_request"):
         monkeypatch.setattr(proxy, name, tripwire(name, RuntimeError("backend reached")))
     # Translators (A1111, MCP) call the gateway's own routes in process through
@@ -123,17 +150,13 @@ def gateway(monkeypatch, tmp_path, request):
         "restricted-workflow" if restricted_workflow
         else "grant-everything" if category_mode or mode == "discovery" else "grant-nothing"
     )
-    # Missing allow/protocol/workflow/model/backend restrictions means
-    # unrestricted access; a wildcard allow-list is not the same profile.
-    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode or mode == "discovery"}}
     if restricted_workflow:
-        profile_body["allow"] = {"intents": ["image.edit", "image.variation"]}
-        profile_body["workflows"] = ["no-inventory-request-uses-this-workflow"]
-    elif not category_mode and mode != "discovery":
-        profile_body["allow"] = {"intents": []}
-    profile = admin_store.create_profile(
-        profile_id, profile_body, path=paths["admin"],
-    )
+        plan_kwargs = {"caps": ("image",), "workflows": ["no-inventory-request-uses-this-workflow"]}
+    elif category_mode or mode == "discovery":
+        plan_kwargs = {"engines": "all", "operations": ["*"]}
+    else:
+        plan_kwargs = {"caps": ()}
+    profile = store_plan(profile_id, path=paths["admin"], **plan_kwargs)
     user = admin_store.upsert_oidc_user(
         "https://inventory.test", "member", email="member@example.test", path=paths["admin"],
     )
@@ -141,11 +164,15 @@ def gateway(monkeypatch, tmp_path, request):
         subject=user["id"], email=user["email"], role="none",
         issued_at=1, expires_at=4_000_000_000,
     )
+    accounts.change_person(user["id"], "owner", path=paths["admin"], plan_id=profile["id"])
     app = admin_store.create_app(
         "Inventory", kind="personal", owner_user_id=user["id"],
-        default_profile_id=profile["id"], path=paths["admin"],
+        access_plan="person", path=paths["admin"],
     )
     key = mint_user_app_key(session, app["id"], path=paths["admin"])["api_key"]
+    # Session routes (/me/api/make/jobs) act as the person's keyless session
+    # App, which uses the person's plan: the same plan as this key's App.
+    session_app = admin_store.ensure_session_app_for_user(user["id"], name=me_make.APP_NAME, path=paths["admin"])
     headers = {"Authorization": f"Bearer {key}"}
     request = Request({
         "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
@@ -155,7 +182,7 @@ def gateway(monkeypatch, tmp_path, request):
     auth = proxy.authenticate_request(request, "/v1/models")
     assert isinstance(auth, proxy.AuthContext), "inventory key must authenticate"
     assert auth.identity.app_id == app["id"]
-    assert auth.identity.profile.id == profile_id
+    assert auth.identity.access.plan_ids == (profile["id"],)
     assert auth.identity.person_id == user["id"]
     if restricted_workflow:
         assert category_enforcement._GATE is None
@@ -166,7 +193,7 @@ def gateway(monkeypatch, tmp_path, request):
         )
         decision = runtime_auth.evaluate_and_apply(auth.identity, resolved)
         assert decision.decision == POLICY_DENIED
-        assert any("workflow" in reason.lower() for reason in decision.reasons)
+        assert decision.code == "not_in_access_plan"
         assert category_enforcement.SOURCE not in decision.sources
     if category_mode:
         # Prove that a valid active deny-all snapshot, rather than the ordinary
@@ -192,7 +219,8 @@ def gateway(monkeypatch, tmp_path, request):
         snapshot = category_policy.PolicyVersion(
             "inventory-rules",
             {"audience": category_policy.Category("audience", "Audience", values=("general",))},
-            {user["id"]: (plan,)}, {app["id"]: (plan,)}, {"no-such-service@r1": service},
+            {user["id"]: (plan,)}, {app["id"]: (plan,), session_app["id"]: (plan,)},
+            {"no-such-service@r1": service},
         )
         category_path = paths["admin"].parent / "categories.db"
         store = CategoryStore(category_path)
@@ -208,7 +236,7 @@ def gateway(monkeypatch, tmp_path, request):
         assert any("category rules: NO_GRANT" in reason for reason in decision.reasons)
 
     cfg = OIDCConfig(
-        enabled=True, scopes=("openid", "email"), allowed_email_domains=(), admin_emails=(),
+        enabled=True, scopes=("openid", "email"), admin_emails=(),
         issuer="https://inventory.test", client_id="inventory", client_secret="test-only",
         redirect_uri="http://testserver/callback", signing_key=b"s" * 32,
         cookie=CookieConfig(secure=False), authorization_endpoint="http://idp/auth",
@@ -236,8 +264,8 @@ def gateway(monkeypatch, tmp_path, request):
             client=client, member_client=member_client, calls=calls, paths=paths,
             headers=headers, session_headers=session_headers, category_mode=category_mode,
             connection_test_body={"api_key": key},
-            person_id=user["id"], app_id=app["id"],
-            category_path=paths["admin"].parent / "categories.db",
+            person_id=user["id"], app_id=app["id"], session_app_id=session_app["id"],
+            category_path=paths["admin"].parent / "categories.db", passes=0,
         )
     finally:
         category_enforcement.configure(None)
@@ -260,7 +288,7 @@ def _member_model_path(path, route):
 def _model_path(path, route):
     parts = [part for part in path.split("/") if part]
     if not parts or parts[0] in {
-        "health", "healthz", "admin", "account", "accounts", "auth", "ui", "static", "showcase",
+        "health", "healthz", "admin", "account", "accounts", "auth", "ui", "static",
     }:
         return False
     # Includes /v1, /openai/v1, /anthropic/v1 and any proxy namespace /.../v1.
@@ -357,6 +385,10 @@ def _request_kwargs(route, path, method, gateway=None):
     # authorization; the placeholder signature is deliberately not valid.
     if "/images/" in path or "/assets/" in path:
         params.update(exp=int(time.time()) + 300, sig="inventory-placeholder")
+    if "/assets/" in path and path.endswith("/thumbnail"):
+        # The thumbnail route reads "expires" and refuses a signature made for
+        # another mode, so the future expiry reaches signature authorization.
+        params["expires"] = 1
     for name in ("exp", "expires", "expiry", "expires_at"):
         if name in params:
             params[name] = int(time.time()) + 300
@@ -459,6 +491,11 @@ def _record_receipts(gateway, before, row):
         row["detail"] += f" dispatched receipt(s): {dispatched!r}"
 
 
+# Scalar fields that describe an empty collection; anything else could carry output.
+_EMPTY_RESPONSE_METADATA_KEYS = frozenset({"object", "schema_version", "audience", "asset_url_ttl_s",
+                                             "first_id", "last_id", "has_more"})
+
+
 def _scoped_empty(response):
     """Allow only empty member collections, never an arbitrary successful body."""
     if response.status_code != 200:
@@ -472,9 +509,11 @@ def _scoped_empty(response):
     if not isinstance(value, dict):
         return False
     lists = [item for item in value.values() if isinstance(item, list)]
+    scalars = {key for key, item in value.items() if not isinstance(item, (list, dict))}
     return (
         len(lists) == 1 and lists[0] == []
         and all(not isinstance(item, dict) for item in value.values())
+        and scalars <= _EMPTY_RESPONSE_METADATA_KEYS
     )
 
 
@@ -510,7 +549,9 @@ def _category_reasons(gateway, value, row, source):
 def _category_oracle(gateway, row):
     if not gateway.category_mode or row["outcome"] == "VIOLATION":
         return
-    if row.get("category evidence") and row["outcome"] in {"denied", "refused", "closed", "refused (wrapped)"}:
+    if row["outcome"] in NON_EXECUTABLE:
+        return  # Runs nothing, so no category refusal is expected.
+    if row.get("category evidence") and row["outcome"] in REFUSALS:
         row["rule"] = "category-rules refusal with no backend call"
         return
     previous = row["rule"]
@@ -555,6 +596,18 @@ def test_scoped_empty_accepts_empty_collections_with_scalar_metadata(body):
     {"output": "generated"},
 ])
 def test_scoped_empty_never_hides_generation_or_nested_data(body):
+    assert not _scoped_empty(httpx.Response(200, json=body))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"models": [], "output": "generated result"},
+        {"receipts": [], "image": "data:image/png;base64,fixture"},
+        {"capabilities": [], "response": "generated text"},
+    ],
+)
+def test_scoped_empty_does_not_hide_scalar_generation_output(body):
     assert not _scoped_empty(httpx.Response(200, json=body))
 
 
@@ -625,6 +678,8 @@ _METADATA_CONTRACT = {
     ("GET", "/gateway/v1/extensions"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases/resolve"): _DISCOVERY,
+    ("GET", "/api/version"): "a constant: the Ollama API version the adapter speaks",
+    ("GET", "/ollama/api/version"): "a constant: the Ollama API version the adapter speaks",
     ("GET", "/sdapi/v1/options"): _A1111_METADATA,
     ("GET", "/sdapi/v1/sd-models"): _A1111_METADATA,
     ("GET", "/sdapi/v1/samplers"): _A1111_METADATA,
@@ -637,6 +692,8 @@ _METADATA_CONTRACT = {
     ("GET", "/me/api/jobs/{job_id}"): _OWN_RECORDS,
     ("GET", "/me/api/media"): _OWN_RECORDS,
     ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
+    ("POST", "/me/api/media/remove-missing"): "removes only the caller's own entries whose files are gone; runs no model",
+    ("POST", "/me/api/media/confirm-folder"): "owner only; writes the media folder marker and removes nothing; runs no model",
 }
 
 
@@ -680,6 +737,86 @@ def _metadata_contract(method, template, response, row):
     row["outcome"] = "metadata (contract)"
     row["rule"] = reason
     row["detail"] = ""
+
+
+def _media_folder_refusal(method, template, response, row):
+    """Remove missing items answers a typed 503 when the media folder is not seen or not confirmed; no model runs."""
+    if (method, template) != ("POST", "/me/api/media/remove-missing") or response.status_code != 503:
+        return
+    code = response.json().get("error", {}).get("code")
+    if code == "media_folder_unavailable":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "no media folder was seen, so nothing was removed; runs no model"
+        row["detail"] = ""
+    elif code == "media_folder_unconfirmed":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "the media folder is not the one recorded, so nothing was removed; runs no model"
+        row["detail"] = ""
+
+
+def _media_folder_owner_refusal(method, template, response, row):
+    """Confirming the media folder is owner-only: other callers get a typed 403 before any marker is written."""
+    if (method, template) != ("POST", "/me/api/media/confirm-folder") or response.status_code != 403:
+        return
+    if response.json().get("error", {}).get("code") == "media_folder_owner_required":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "only the owner may confirm the media folder; refused before the marker is written; runs no model"
+        row["detail"] = ""
+
+
+# API families the gateway does not implement: every method answers before
+# any model or policy with the named code. Route-specific, never a status wildcard.
+_UNSUPPORTED_CONTRACT = {
+    **{f"{prefix}/v1/{family}{{rest:path}}": (400, "unsupported_operation")
+       for prefix in ("", "/openai")
+       for family in ("assistants", "files", "batches", "fine_tuning", "realtime")},
+    **{f"{prefix}/v1/responses/{operation}": (400, "unsupported_operation")
+       for prefix in ("", "/openai") for operation in ("input_tokens", "{response_id}/cancel")},
+    **{f"{prefix}/api/{operation}": (501, "unsupported operation")
+       for prefix in ("", "/ollama")
+       for operation in ("create", "copy", "pull", "push", "blobs/{digest}", "delete")},
+    **{f"/sdapi/v1/{operation}": (501, "not supported by this adapter")
+       for operation in ("img2img", "extra-single-image", "extra-batch-images", "interrogate", "png-info")},
+}
+
+
+def _unsupported_contract(method, template, response, row):
+    expected = _UNSUPPORTED_CONTRACT.get(template)
+    if expected is None or response.status_code != expected[0]:
+        return
+    if method == "HEAD":
+        body = {"detail": expected[1]}  # HEAD carries no body; the status is the whole answer.
+    else:
+        try:
+            body = response.json()
+        except ValueError:
+            return
+    error = body.get("error") if isinstance(body, dict) else None
+    texts = [error.get("code") if isinstance(error, dict) else error,
+             body.get("detail") if isinstance(body, dict) else None]
+    if any(isinstance(text, str) and expected[1] in text for text in texts):
+        row["outcome"] = "unsupported (contract)"
+        row["rule"] = f"unimplemented API answers {expected[0]} {expected[1]}; nothing runs"
+        row["detail"] = ""
+
+
+def _queued_job_contract(method, template, response, row, gateway):
+    """Home's make queue answers 202 before policy; only the worker's refusal proves it."""
+    if (method, template) != ("POST", "/me/api/make/jobs") or response.status_code != 202:
+        return
+    if gateway.calls or row.get("dispatched") != "no":
+        return  # Backend calls and dispatched receipts stay violations.
+    job_id = response.json()["job"]["job_id"]
+    job = media_jobs.get(job_id, path=gateway.paths["media_jobs"]) or {}
+    refused = "rejected/denied" in row.get("receipts", "")
+    if job.get("status") == media_jobs.STATUS_FAILED and refused:
+        row["outcome"] = "refused (queued)"
+        row["rule"] = "the worker refused the queued job; no model ran"
+        row["detail"] = ""
+    else:
+        row["outcome"] = "coverage gap"
+        row["rule"] = "a queued job is no proof until the worker refuses it"
+        row["detail"] = f"job status {job.get('status')!r}, receipts {row.get('receipts')!r}"
 
 
 def _probe_request(headers):
@@ -732,12 +869,9 @@ def _decoy_oracle(method, template, row, gateway, response):
             and set(gateway.calls) <= {"health", "model-state", "HTTP backend", "network connection"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
-    elif method == "GET" and status == 200 and not gateway.calls:
-        row["outcome"], row["rule"] = "metadata (contract)", "discovery for a member who holds grants"
-        row["detail"] = ""
-    elif (method, template) == ("POST", "/me/api/make/jobs") and status == 200 and not gateway.calls:
-        # Queued only; test_http_category_resolved_check_inventory checks the job never ran.
-        row["outcome"], row["rule"] = "metadata (contract)", "queued; the worker checks the resolved service"
+    elif method == "GET" and status == 200 and not gateway.calls and row["outcome"] not in PROVED:
+        # A blanket GET rule is no route contract, so the row stays unproved.
+        row["outcome"], row["rule"] = "metadata (no contract)", "discovery for a member who holds grants"
         row["detail"] = ""
 
 
@@ -872,19 +1006,98 @@ def test_connection_test_request_uses_owned_fixture_credential(gateway):
     assert kwargs["json"] is not gateway.connection_test_body
 
 
-def _report(rows, title):
-    gaps = [row for row in rows if row["outcome"] == "coverage gap"]
-    not_exercised = [row for row in rows if row["outcome"] == "not exercised"]
-    classified = [row for row in rows if row["outcome"] not in {"coverage gap", "not exercised"}]
-    print(f"\n{title} (passes and violations)\n{_table(classified)}")
-    print(f"\n{title}: coverage gaps (not policy proof)\n{_table(gaps)}")
-    print(f"\n{title}: not exercised (not category proof)\n{_table(not_exercised)}")
+def _load_known_gaps(path=Path(__file__).parent / "fixtures" / "route_policy_known_gaps.txt"):
+    """Parse "[pass title]" sections of "METHOD template STATUS  # note" lines."""
+    gaps, title = {}, None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            title = line[1:-1]
+            gaps[title] = set()
+        elif line:
+            method, template, status = line.split()
+            gaps[title].add(f"{method} {template} {status}")
+    return {title: frozenset(keys) for title, keys in gaps.items()}
+
+
+# Rows that prove no policy decision yet, per pass. They stay visible and can
+# only shrink: _report fails on an unproved row that is not listed, and on a
+# listed row that now proves policy. See the file's header.
+KNOWN_GAPS = _load_known_gaps()
+
+
+def _gap_key(row):
+    return f"{row['method']} {row['path']} {row['status']}"
+
+
+def _report(rows, title, known_gaps=None):
+    out_of_fixture = [row for row in rows if row["outcome"] == OUT_OF_FIXTURE]
+    unproved = [row for row in rows if row["outcome"] not in PROVED | {OUT_OF_FIXTURE}]
+    proved = [row for row in rows if row["outcome"] in PROVED]
+    print(f"\n{title} (passes)\n{_table(proved)}")
+    print(f"\n{title}: unproved (no policy proof)\n{_table(unproved)}")
+    if out_of_fixture:
+        print(f"\n{title}: out of this fixture\n{_table(out_of_fixture)}")
     violations = [row for row in rows if row["outcome"] == "VIOLATION"]
     assert not violations, f"{title}: {len(violations)} violation(s)\n{_table(violations)}"
+    known = KNOWN_GAPS.get(title, frozenset()) if known_gaps is None else known_gaps
+    new = [row for row in unproved if _gap_key(row) not in known]
+    assert not new, (
+        f"{title}: {len(new)} row(s) prove no policy decision (status, validation or missing "
+        f"category proof); make the request reach policy or add a route contract\n{_table(new)}"
+    )
+    fixed = known - {_gap_key(row) for row in unproved}
+    assert not fixed, f"{title}: listed gap(s) now prove policy; remove them from KNOWN_GAPS: {sorted(fixed)}"
+
+
+def _row(outcome, method="POST", path="/v1/x", **extra):
+    return {"method": method, "path": path, "status": 403, "outcome": outcome, "rule": "", "detail": "", **extra}
+
+
+@pytest.mark.parametrize("outcome", [
+    "coverage gap", "not exercised", "ERROR", "", "an outcome nobody defined",
+])
+def test_report_fails_on_every_unproved_outcome(outcome):
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("denied", path="/v1/ok"), _row(outcome)], "unit", known_gaps=frozenset())
+
+
+@pytest.mark.parametrize("outcome", sorted(PROVED))
+def test_report_accepts_each_proved_outcome(outcome):
+    _report([_row(outcome), _row(OUT_OF_FIXTURE, method="NOT RUN", path="paid")], "unit", known_gaps=frozenset())
+
+
+def test_report_fails_violations_first_with_their_evidence():
+    row = _row("VIOLATION", **{"backend called": "yes", "detail": "backend calls=['HTTP backend']"})
+    with pytest.raises(AssertionError, match=r"1 violation\(s\)[\s\S]*HTTP backend"):
+        _report([row], "unit", known_gaps=frozenset({"POST /v1/x 403"}))
+
+
+def test_report_tolerates_only_listed_gaps_and_only_while_they_remain():
+    listed = frozenset({"POST /v1/x 403"})
+    _report([_row("coverage gap")], "unit", known_gaps=listed)
+    with pytest.raises(AssertionError, match="now prove policy"):
+        _report([_row("denied")], "unit", known_gaps=listed)
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("coverage gap", path="/v1/new")], "unit", known_gaps=listed)
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("coverage gap", status=500)], "unit", known_gaps=listed)  # same route, new status
+
+
+def test_known_gap_file_names_every_inventory_pass_once():
+    assert set(KNOWN_GAPS) == {
+        "Ordinary access plan: model-facing HTTP route inventory",
+        "Category enforcement: model-facing HTTP route inventory",
+        "Category resolved-service check: model-facing HTTP route inventory",
+    }
 
 
 def _http_inventory(gateway, title=None, report=True):
     rows = []
+    # A fresh key per pass, so each pass submits its own make job rather than
+    # replaying the first pass's job.
+    gateway.passes += 1
+    session_headers = {**gateway.session_headers, "Idempotency-Key": f"route-policy-inventory-{gateway.passes}"}
     for route, template, converters in _routes(proxy.app.routes):
         if isinstance(route, WebSocketRoute):
             continue
@@ -899,7 +1112,7 @@ def _http_inventory(gateway, title=None, report=True):
                 path = _concrete_path(template, converters)
                 member = _member_model_path(template, route)
                 client = gateway.member_client if member else gateway.client
-                headers = gateway.session_headers if member else gateway.headers
+                headers = session_headers if member else gateway.headers
                 response = client.request(
                     method, path, headers=headers, follow_redirects=False,
                     **_request_kwargs(route, path, method, gateway),
@@ -930,6 +1143,8 @@ def _http_inventory(gateway, title=None, report=True):
                     row["outcome"] = "coverage gap"
                     row["rule"] = "server/harness failure is not policy proof"
                     row["detail"] = _validation_message(response)
+                _media_folder_refusal(method, template, response, row)
+                _media_folder_owner_refusal(method, template, response, row)
                 if member and response.status_code == 401:
                     row["outcome"] = "coverage gap"
                     row["rule"] = "member session did not reach policy"
@@ -938,8 +1153,10 @@ def _http_inventory(gateway, title=None, report=True):
                         _category_reasons(gateway, response.json(), row, "error")
                     except ValueError:
                         pass
+                _unsupported_contract(method, template, response, row)
                 _record_receipts(gateway, before, row)
                 _connection_test_contract(method, template, response, row, gateway)
+                _queued_job_contract(method, template, response, row, gateway)
             except Exception as exc:
                 row["outcome"] = "VIOLATION"
                 row["rule"] = "unexpected exception"
@@ -962,7 +1179,7 @@ def _http_inventory(gateway, title=None, report=True):
         for target in ("paid chat models", "paid decision paths"):
             rows.append({
                 "method": "NOT RUN", "path": target, "status": "not requested",
-                "backend called": "no", "outcome": "not exercised",
+                "backend called": "no", "outcome": OUT_OF_FIXTURE,
                 "rule": "covered by owner unit tests",
                 "detail": "Owner-reported coverage in 10a24fc1; outside this base and fixture.",
             })
@@ -1006,8 +1223,10 @@ def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
             reasons.append(value)
 
     collect_reasons(response.json())
-    assert any("workflow" in reason.lower() for reason in reasons), (
-        f"{path}: no workflow restriction in error reasons: {response.json()!r}"
+    error = response.json()["error"]
+    assert error["code"] == "not_in_access_plan", f"{path}: {error}"
+    assert any("flux2-klein-4b" in reason for reason in reasons), (
+        f"{path}: the refusal does not name the workflow: {reasons!r}"
     )
     assert not any("category rules:" in reason for reason in reasons), reasons
 
@@ -1037,7 +1256,8 @@ def _activate_decoy_snapshot(gateway, capabilities):
     snapshot = category_policy.PolicyVersion(
         "inventory-decoy-rules",
         {"audience": category_policy.Category("audience", "Audience", values=("general",))},
-        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, {decoy.id: decoy},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,), gateway.session_app_id: (plan,)},
+        {decoy.id: decoy},
     )
     store = CategoryStore(gateway.category_path)
     active = store.get_active()
@@ -1080,6 +1300,41 @@ def test_http_category_resolved_check_inventory(gateway, monkeypatch):
     _http_inventory(gateway, title="Category resolved-service check")
     jobs = gateway.member_client.get("/me/api/make/jobs", headers=gateway.session_headers).json()["jobs"]
     assert all(job["status"] != "succeeded" and not job.get("assets") for job in jobs), jobs
+
+
+def _after_loop_turns(turns):
+    """A future that resolves once the event loop has run ``turns`` more times."""
+    loop = asyncio.get_running_loop()
+    done = loop.create_future()
+
+    def turn(left):
+        if left:
+            loop.call_soon(turn, left - 1)
+        else:
+            done.set_result(None)
+
+    loop.call_soon(turn, turns)
+    return done
+
+
+def test_queued_make_job_is_read_after_the_worker_settles_it(gateway, monkeypatch):
+    # The worker refuses the job after the request is done (10k loop turns is
+    # far more than the request awaits after it queues the job); the
+    # inventory must judge the settled job, not one still running.
+    execute = proxy._SessionMakeRuntime.execute
+
+    async def execute_late(self, payload):
+        await _after_loop_turns(10_000)
+        return await execute(self, payload)
+
+    monkeypatch.setattr(proxy._SessionMakeRuntime, "execute", execute_late)
+    response = gateway.member_client.post(
+        "/me/api/make/jobs", headers=gateway.session_headers,
+        json={"intent": "image.generate", "model": "image", "prompt": "hi"},
+    )
+    assert response.status_code == 202, response.text
+    job = media_jobs.get(response.json()["job"]["job_id"], path=gateway.paths["media_jobs"])
+    assert job["status"] == media_jobs.STATUS_FAILED, job
 
 
 def _websocket_inventory(gateway, title=None):
@@ -1344,7 +1599,8 @@ def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway
     auth = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models")
     filtered, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], auth)
     assert filtered == []
-    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], proxy.NO_AUTH_CONTEXT)
+    # An App and person the snapshot does not list are not governed by it.
+    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], access_context())
     assert ungoverned == [entry]
 
 

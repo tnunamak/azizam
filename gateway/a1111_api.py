@@ -39,7 +39,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from gateway import category_enforcement
+from gateway.runtime_auth import discovery_allows
 from gateway.policy import PolicyRequest
 from gateway.workflow_call import BuiltRequest, CallError, build_request, effective_schema, error_from, validate_inputs
 
@@ -113,7 +113,7 @@ class Session:
 
     model: str = DEFAULT_MODEL
     tasks: set[asyncio.Future] = field(default_factory=set)
-    interrupted: bool = False
+    interrupted_tasks: set[asyncio.Future] = field(default_factory=set)
 
 
 # ------------------------------------------------------------------- catalog
@@ -381,7 +381,7 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
                 by_title.setdefault(title, entry)
         return JSONResponse([{"title": t, "model_name": t, "hash": None, "sha256": None, "filename": t, "config": None}
                              for t in model_titles(deps, entries=entries)
-                             if category_enforcement.visible(getattr(auth, "identity", None), PolicyRequest(
+                             if discovery_allows(getattr(auth, "identity", None), PolicyRequest(
                                  protocol="openai.images", intent="image.generate",
                                  model=t, workflow=by_title[t]["id"],
                              ))])
@@ -405,16 +405,17 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
         running = len(session.tasks)
         return JSONResponse({
             "progress": 0.0, "eta_relative": 0.0,
-            "state": {"skipped": False, "interrupted": session.interrupted, "stopping_generation": False, "job": "",
+            "state": {"skipped": False, "interrupted": bool(session.interrupted_tasks), "stopping_generation": False, "job": "",
                       "job_count": running, "job_timestamp": time.strftime("%Y%m%d%H%M%S"), "job_no": 0,
                       "sampling_step": 0, "sampling_steps": 0},
             "current_image": None, "textinfo": None,
         })
 
     async def interrupt(request: Request, auth: Any, session: Session) -> Response:
-        session.interrupted = bool(session.tasks)
         for task in list(session.tasks):
-            task.cancel()
+            if not task.done():
+                session.interrupted_tasks.add(task)
+                task.cancel()
         return JSONResponse(None)
 
     async def txt2img(request: Request, auth: Any, session: Session) -> Response:
@@ -430,11 +431,10 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
         built = await build_request(lambda *_: None, request, auth, entry, route, inputs, wrap_intent=None, response_format="b64_json")
         task = asyncio.ensure_future(_core_call(deps, request, built))
         session.tasks.add(task)
-        session.interrupted = False
         try:
             resp = await asyncio.wait_for(task, CORE_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
-            if session.interrupted and task.cancelled():  # /interrupt, not the client leaving
+            if task in session.interrupted_tasks and task.cancelled():  # /interrupt, not the client leaving
                 return JSONResponse({"images": [], "parameters": _echo(payload), "info": json.dumps({"interrupted": True})})
             task.cancel()
             raise
@@ -442,6 +442,7 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
             raise A1111Error(504, "the gateway did not finish the image in time") from None
         finally:
             session.tasks.discard(task)
+            session.interrupted_tasks.discard(task)
         if resp.status_code >= 400:
             raise error_from(resp)
         images = [item["b64_json"] for item in (resp.json().get("data") or []) if isinstance(item, Mapping) and item.get("b64_json")]

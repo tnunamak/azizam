@@ -1,5 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 // The Home pass-through route can still be fetching when a test ends.
 test.afterEach(async ({ page }) => {
@@ -15,8 +16,7 @@ test("member Status offers sign-in when its account snapshot expires", async ({
       ownerCalls.push(request.url());
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         apps: [],
         user: {
@@ -25,22 +25,18 @@ test("member Status offers sign-in when its account snapshot expires", async ({
           role: "member",
           email: null,
         },
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/status", (route) =>
-    route.fulfill({
-      status: 401,
-      json: { error: { code: "unauthorized", message: "Session expired" } },
-    }),
+    fulfilJson(route, { error: { code: "unauthorized", message: "Session expired" } }, { status: 401 }),
   );
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByText("Sign in to see your status", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Sign in", exact: true }),
-  ).toHaveAttribute("href", "/ui/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  ).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
   expect(ownerCalls).toEqual([]);
 });
 
@@ -62,8 +58,7 @@ for (const theme of ["light", "dark"] as const) {
             ownerCalls.push(request.url());
         });
         await page.route("**/me/api/session", (route) =>
-          route.fulfill({
-            json: {
+          fulfilJson(route, {
               authenticated: true,
               apps: [],
               user: {
@@ -72,8 +67,7 @@ for (const theme of ["light", "dark"] as const) {
                 role: "member",
                 email: null,
               },
-            },
-          }),
+            }),
         );
         // Status reads the member's capability states from their Home
         // snapshot (the shared model), so Home carries the same rows.
@@ -96,9 +90,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.route("**/me/api/home", async (route) => {
           const response = await route.fetch();
           const home = await response.json();
-          return route.fulfill({
-            response,
-            json: {
+          return fulfilJson(route, {
               ...home,
               capabilities:
                 state === "empty"
@@ -116,18 +108,13 @@ for (const theme of ["light", "dark"] as const) {
                     ],
               aliases: [],
               receipts: [],
-            },
-          });
+            }, { response });
         });
         let failed = state === "error";
         await page.route("**/me/api/status", (route) =>
           failed
-            ? route.fulfill({
-                status: 503,
-                json: { error: { message: "Unavailable" } },
-              })
-            : route.fulfill({
-                json: {
+            ? fulfilJson(route, { error: { message: "Unavailable" } }, { status: 503 })
+            : fulfilJson(route, {
                   scope: "member",
                   status: {
                     state: "unavailable",
@@ -158,17 +145,16 @@ for (const theme of ["light", "dark"] as const) {
                             status: "failed",
                             intent: "image.generate",
                             created_at: 1790870400,
-                            href: "/ui/usage/?receipt=member-status-receipt",
+                            href: "/usage/?receipt=member-status-receipt",
                           },
                         ],
                   help: "",
-                },
-              }),
+                }),
         );
         const yourCapabilities = page.getByRole("region", {
           name: "What you can use",
         });
-        await page.goto("/ui/status/");
+        await page.goto("/status/");
         if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),
@@ -221,6 +207,14 @@ for (const theme of ["light", "dark"] as const) {
           (await new AxeBuilder({ page }).analyze()).violations.filter((v) =>
             ["serious", "critical"].includes(v.impact ?? ""),
           ),
+        ).toEqual([]);
+        // WCAG 2.5.3 is an experimental axe rule, so the default run skips it.
+        expect(
+          (
+            await new AxeBuilder({ page })
+              .withRules(["label-content-name-mismatch"])
+              .analyze()
+          ).violations,
         ).toEqual([]);
         await expect(
           page.getByText(/GPU|disk|VRAM|Engines|Providers/, { exact: true }),

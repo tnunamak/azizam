@@ -17,6 +17,7 @@ from gateway import accounts, admin_store
 from gateway.admin_oidc import AdminSession, decode_session_cookie, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.oidc_jwks import JWKSCache
 from test_exposure_oidc_security import oidc_gateway, _client, _start_login
+from tests.support.signin import seed_rules
 
 
 @contextmanager
@@ -79,7 +80,7 @@ def test_sec08_legacy_owner_survives_real_oidc_callback_after_migration(oidc_gat
 
 
 def test_sec08_group_removal_revokes_oidc_grant_on_next_login(oidc_gateway, monkeypatch):
-    monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", replace(proxy.ADMIN_OIDC_CONFIG, admin_groups=frozenset({"admins"})))
+    seed_rules(oidc_gateway, domains=["example.test"], groups=["admins"])
     with browser() as client:
         user = login_claims(monkeypatch, client, subject="admin-sub", email="admin@example.test", groups=["/admins"])
         assert client.get("/admin/api/session").status_code == 200
@@ -121,16 +122,17 @@ def test_sec10_post_logout_revokes_replayed_legacy_and_registered_cookies(oidc_g
     cfg = proxy.ADMIN_OIDC_CONFIG
     user = admin_store.upsert_oidc_user(cfg.issuer, "logout-owner", path=oidc_gateway)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"], path=oidc_gateway)
-    if access_row:
+    if not access_row:
+        # Every person has an access row; the cookie must still be revoked without one.
         with accounts.connection(oidc_gateway) as conn:
-            conn.execute("INSERT INTO account_access(user_id) VALUES(?)", (user["id"],))
+            conn.execute("DELETE FROM account_access WHERE user_id = ?", (user["id"],))
     session = session_from_claims({"sub": user["id"], "email": ""}, role="owner", cookie=cfg.cookie)
     if registered:
         accounts.register_session(user["id"], session.session_id, int(session.expires_at), path=oidc_gateway)
     token = encode_session_cookie(session, signing_key=cfg.signing_key)
     with browser() as client:
         client.cookies.set(cfg.cookie.name, token)
-        assert client.post("/admin/logout").status_code == 403
+        assert client.post("/logout").status_code == 403
         assert accounts.session_allowed(user["id"], session.session_id, path=oidc_gateway)
         response = client.post("/logout", headers={"x-azizam-csrf": csrf_token_for_session(session, signing_key=cfg.signing_key)}, follow_redirects=False)
         assert response.status_code == 303

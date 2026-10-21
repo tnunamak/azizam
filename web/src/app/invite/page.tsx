@@ -1,7 +1,9 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Fish, ArrowRight, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
+import { BrandMark } from "@/components/product/brand-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,9 +14,7 @@ import {
   RelativeTime,
   SecretReveal,
 } from "@/components/product";
-import { type ProfilePolicyDocument } from "@/lib/api";
 import { authFetch, continueTo, type SignInOptions } from "../sign-in/auth-api";
-import { inviteeSummary } from "../people/people-api";
 import { accountApi } from "@/lib/account-api";
 import {
   promptMemoryKey,
@@ -22,12 +22,8 @@ import {
   welcomePromptNote,
 } from "@/lib/prompt-memory";
 interface Invitation {
-  plan: {
-    id: string;
-    name: string;
-    description: string | null;
-    profile: ProfilePolicyDocument;
-  };
+  /** The plan the invitation gives, with its one-line summary. */
+  plan: { id: string; name: string; summary: string | null } | null;
   email: string | null;
   expires_at: number;
   owner_name: string;
@@ -115,7 +111,7 @@ export default function InvitePage() {
   return (
     <section className="mx-auto w-full max-w-md py-12 sm:py-16">
       <div className="bg-card rounded-xl border p-6 sm:p-8">
-        <Fish className="text-link mb-6 size-8" aria-hidden="true" />
+        <BrandMark className="mb-6 size-8" />
         <h1 className="text-2xl font-semibold tracking-tight">
           {accept.data ? "Your account is ready" : "Accept your invitation"}
         </h1>
@@ -136,7 +132,7 @@ export default function InvitePage() {
             <SecretReveal
               secret={accept.data.credential.api_key}
               onSaved={() => {
-                const next = accept.data?.next || "/ui/";
+                const next = accept.data?.next || "/";
                 accept.reset();
                 continueTo(next);
               }}
@@ -158,7 +154,7 @@ export default function InvitePage() {
               description="Ask the owner for a new invitation, then open the complete link."
               action={
                 <Button asChild variant="outline">
-                  <a href="/ui/home/">Return to gateway home</a>
+                  <Link prefetch={false} href="/">Return to gateway home</Link>
                 </Button>
               }
             />
@@ -181,11 +177,11 @@ export default function InvitePage() {
               <div className="bg-muted my-6 rounded-lg p-4">
                 <p className="flex items-center gap-2 text-sm font-medium">
                   <ShieldCheck className="size-4" aria-hidden="true" />
-                  {inviteData.plan.name}
+                  {inviteData.plan?.name ?? "Access plan"}
                 </p>
-                {inviteeSummary(inviteData.plan.profile) ? (
+                {inviteData.plan?.summary ? (
                   <p className="text-muted-foreground mt-2 text-xs leading-5 break-words">
-                    {inviteeSummary(inviteData.plan.profile)}
+                    {inviteData.plan.summary}
                   </p>
                 ) : null}
                 <p className="text-muted-foreground mt-3 text-xs">
@@ -325,7 +321,7 @@ export default function InvitePage() {
                         onClick={() => {
                           sessionStorage.setItem("gateway-invitation", token);
                           window.location.assign(
-                            "/admin/login?return_to=/ui/invite/",
+                            "/login?return_to=/invite/",
                           );
                         }}
                       >
@@ -340,7 +336,7 @@ export default function InvitePage() {
                       description="Ask the gateway owner to enable accounts or an identity provider."
                       action={
                         <Button asChild variant="outline">
-                          <a href="/ui/">Return to gateway home</a>
+                          <Link prefetch={false} href="/">Return to gateway home</Link>
                         </Button>
                       }
                     />

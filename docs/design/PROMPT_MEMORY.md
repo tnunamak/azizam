@@ -87,9 +87,14 @@ must show this description when its frontend work ships.
 
 Member preferences live in a new `admin.db` table keyed by `users.id`:
 `remember` (explicit snapshot of the household default at rollout or user creation) and `retention` (`never`, `3_months`,
-`1_year`). The owner setting is `operator_settings.prompt_memory`, with
-`default_remember=true`, `never_keep=false`, and `retention_cap=never` by
-default. The effective expiry is the shorter of the member choice and owner
+`1_year`). The owner setting is `operator_settings.retention` (it was
+`prompt_memory` before admin schema 14; `gateway/retention_migration.py` moved it):
+`never_keep`, and for the group `prompts` a `default_keep` and a `retention_cap`.
+The settings screens and `/admin/api/settings/prompt-memory` still show it as
+`default_remember`, `never_keep` and `retention_cap`. The defaults (keep for new
+members, no cap, no kill switch, the choices and their lengths) are in
+`registry/retention.yml`, not in code, and both settings responses carry them as
+`contract` (see `docs/design/REQUEST_RETENTION.md`). The effective expiry is the shorter of the member choice and owner
 cap, measured from request time. The kill switch wins over all other choices.
 Enabling the kill switch also purges previously kept prompt records for every
 member. Turning it off later cannot restore them.
@@ -97,6 +102,9 @@ Changing a member's retention or the owner cap shortens existing deadlines;
 it does not lengthen an earlier deadline. Prompt-bearing writes recheck these
 settings under an admin database write lock, so an in-flight generation cannot
 restore a prompt after the owner switches memory off.
+If a registry update removes a stored period choice, that choice resolves to
+the current member or household default. The gateway applies the same period
+to settings display, new writes and existing prompt deadlines on restart.
 
 | Viewer | Own asset prompt/title | Another person's prompt/title | Full workflow download |
 | --- | --- | --- | --- |

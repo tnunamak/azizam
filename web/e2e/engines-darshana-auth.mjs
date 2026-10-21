@@ -55,7 +55,7 @@ export default async function login(browser) {
     registry = await api.get(`${origin}/admin/api/operator/service-registry`);
   }
   const page = await context.newPage();
-  await page.goto(`${origin}/ui/engines/`);
+  await page.goto(`${origin}/engines/`);
   await page.getByRole("heading", { name: "Engines", level: 1 }).waitFor();
   const state = path.resolve("test-results/engines-darshana-auth.json");
   await context.storageState({ path: state });

@@ -1,0 +1,500 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "transcribe, verbose_json",
+      "request": {
+        "body": {
+          "boundary": "<boundary>",
+          "epilogue": "\r\n",
+          "kind": "multipart",
+          "parts": [
+            {
+              "body": {
+                "kind": "text",
+                "text": "parakeet"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"model\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "verbose_json"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"response_format\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "segment"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"timestamp_granularities[]\""
+            },
+            {
+              "body": {
+                "kind": "binary",
+                "len": 16044,
+                "magic": "52494646a43e0000",
+                "sha256": "d6562284957991803328564d8eea3102b94635b8ca4c8863412117bb030ba73f"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav"
+            }
+          ],
+          "preamble": ""
+        },
+        "headers": {
+          "content-length": "16525",
+          "content-type": "multipart/form-data; boundary=<boundary>"
+        },
+        "method": "POST",
+        "path": "/v1/audio/transcriptions",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"task\": \"transcribe\", \"language\": \"english\", \"duration\": 0.5, \"text\": \"hello world\", \"segments\": [{\"id\": 0, \"start\": 0.0, \"end\": 0.5, \"text\": \"hello world\"}]}"
+        },
+        "headers": {
+          "content-length": "159",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "Passthrough with response_format verbose_json and a timestamp granularity",
+  "engine_requests": [
+    {
+      "body": {
+        "boundary": "<boundary>",
+        "epilogue": "\r\n",
+        "kind": "multipart",
+        "parts": [
+          {
+            "body": {
+              "kind": "text",
+              "text": "verbose_json"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"response_format\""
+          },
+          {
+            "body": {
+              "kind": "text",
+              "text": "segment"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"timestamp_granularities[]\""
+          },
+          {
+            "body": {
+              "kind": "text",
+              "text": "parakeet-tdt-0.6b-v3"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"model\""
+          },
+          {
+            "body": {
+              "kind": "binary",
+              "len": 16044,
+              "magic": "52494646a43e0000",
+              "sha256": "d6562284957991803328564d8eea3102b94635b8ca4c8863412117bb030ba73f"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav"
+          }
+        ],
+        "preamble": ""
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "16537",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "host": "127.0.0.1:5092"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/transcriptions",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:5092"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 4
+      }
+    ],
+    "retention_fact_destinations": [
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "stt",
+        "metadata_json": {
+          "address": "127.0.0.1:5092",
+          "kind": "engine",
+          "name": "parakeet-stt",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      }
+    ],
+    "retention_fact_revisions": [
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "host swap, hibernation, and crash capture settings",
+          "confidence": "documented",
+          "control": "review swap, hibernation, and crash-dump settings on the host",
+          "default": "conditional",
+          "evidence_url": "https://man7.org/linux/man-pages/man2/mlock.2.html",
+          "holds": "request bodies while a request runs",
+          "how_long": "during execution; host swap, hibernation, and crash-dump lifetimes depend on the machine",
+          "id": "gateway-temporary-copies",
+          "reach": "the machine owner and anyone with access to its files or memory image",
+          "where": "process memory and temporary workspaces"
+        },
+        "first_seen": "<time>",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a permitted crash dump handled by systemd-coredump",
+          "confidence": "documented",
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
+        },
+        "first_seen": "<time>",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "store_prompts_in_spend_logs or its environment override is enabled",
+          "confidence": "documented",
+          "control": "inspect effective UI, environment and file settings; disable content storage and delete old rows separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/ui_logs",
+          "holds": "request and response content if spend-content storage is enabled",
+          "how_long": "unknown; cleanup requires a separately configured retention period",
+          "id": "litellm-spend-content",
+          "reach": "LiteLLM administrators and anyone with access to its spend database",
+          "where": "LiteLLM spend rows"
+        },
+        "first_seen": "<time>",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
+          "confidence": "documented",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
+        },
+        "first_seen": "<time>",
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "audio.transcriptions",
+        "job_id": null,
+        "parent_request_id": null,
+        "path": "/v1/audio/transcriptions",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [
+            "file",
+            "model",
+            "response_format"
+          ],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "stt",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [
+            "ineligible_envelope"
+          ],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "audio.transcriptions",
+          "job_id": null,
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "stt": {
+              "attempts_started": 1,
+              "chunked": false,
+              "field_count": 3,
+              "file_count": 1
+            },
+            "terminal_reason": "completed"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/transcriptions",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": null,
+          "requested_workflow": null,
+          "resolved_model": null,
+          "resolved_workflow": null,
+          "resource_decision": {
+            "facts": [
+              {
+                "name": "queue_limit",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "queue",
+                "value": 2
+              },
+              {
+                "name": "queue_active",
+                "observed_at": "<time>",
+                "quality": "measured",
+                "resource_class": "queue",
+                "value": 0
+              },
+              {
+                "name": "requested_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 512
+              },
+              {
+                "name": "total_disk_mb",
+                "observed_at": "<time>",
+                "quality": "measured",
+                "resource_class": "disk",
+                "value": 10240
+              },
+              {
+                "name": "used_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 0
+              },
+              {
+                "name": "available_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 10240
+              }
+            ],
+            "outcome": "accepted",
+            "reasons": [
+              {
+                "code": "estimate_reason",
+                "effect": "info",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "resource",
+                "rule": "bounded STT upload and decoded media workspace"
+              }
+            ]
+          },
+          "retention": [],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
+            "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+          ],
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "stt_verbose_json",
+  "schema": 1
+}

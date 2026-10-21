@@ -14,21 +14,23 @@ scripts/safe-restart --skip-web-build  # skip checking and rebuilding web/out
 ```
 
 Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so a deploy waits for 5 idle minutes and never lands mid-session; 20 is enough only when nobody is using an agent; 0 = off), `--ignore-async-jobs`,
-`--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`.
+`--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`, `--public-url URL`, `--public-timeout SEC`.
+
+The public check is off by default. After a gateway restart, `--public-url https://your.host` (or `AZIZAM_PUBLIC_URL`) also waits for `/health` at that address, which confirms that your reverse proxy marks the gateway up again. Without it, the script prints `public health check skipped: set --public-url or AZIZAM_PUBLIC_URL to enable it`. An empty value also skips the check.
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Restarted and healthy (`--dry-run`: idle) |
-| 1 | Restarted, but health or the drain flag could not be confirmed |
+| 1 | Restarted, but local health, public health or the drain flag could not be confirmed; with a new web export, the new process stays running and the previous export is kept |
 | 2 | Usage error |
 | 3 | Work still in flight at the deadline, NOT restarted (`--dry-run`: busy) |
 | 4 | Drain endpoint unreachable or refused, NOT restarted (use `--force`) |
-| 5 | `systemctl restart` failed |
+| 5 | `systemctl stop`, `start` or `restart` failed |
 | 6 | Another `safe-restart` is running |
-| 7 | Web build failed; gateway was NOT drained or restarted |
-| 130 | Interrupted; drain was switched off |
+| 7 | Web build or publication failed; read the recovery message |
+| 130 | Interrupted; drain is switched off only if the interrupt came before the stop-publish-start sequence |
 
 ## Admin key
 
@@ -40,14 +42,31 @@ The key is never printed.
 
 ## How it works
 
-- Before a gateway restart, the script checks the static UI export served at
-  `/ui`. If `web/out/index.html` is missing or a web input is newer than the
+- Before a gateway restart, the script checks the static web export served at
+  `/`. If `web/out/index.html` is missing or a web input is newer than the
   last completed export, it copies the web sources into a temporary sibling
   directory and runs `npm run build` there, using the installed dependencies.
-  After a successful export, it atomically exchanges the staged `out` directory
-  with `web/out` using Linux `renameat2`. The live export stays intact during
-  compilation, including if the build fails, times out, or is interrupted.
-  A publication failure also stops the restart and leaves the live export intact.
+  The script builds the export before the drain but publishes it only after the
+  drain succeeds. A drained gateway still serves reads, so with a new export
+  the script does not use `systemctl restart`. It stops the unit, then
+  publishes, then starts the unit. The old process never serves the new
+  export. If the stop fails, nothing is published (exit 5). Publication
+  atomically exchanges the staged `out` directory with `web/out` using Linux
+  `renameat2`. The live export stays intact during compilation and the drain,
+  including if the build fails, times out, or is interrupted. If the start
+  fails or is interrupted, the script stops the unit again. It then swaps the
+  previous export back and leaves the unit stopped. If it cannot prove the
+  stop, it keeps both exports. In both cases drain stays on, and the script
+  prints the exact recovery command. If the start succeeds but a later check
+  fails (local health, public health or the drain flag; exit 1), the new process
+  keeps running with the new export. The previous export is kept for a
+  manual rollback.
+- The drain wait takes a new drain snapshot on every poll. If the drain
+  endpoint cannot be read, or the drain flag has gone off, the script
+  does not count the gateway as idle. It does not restart, and at the
+  deadline it exits 3. The page registry `gateway/ui_pages.json`
+  (page name to public, member or admin) is a web build input, so a change to it
+  triggers a rebuild.
   It ignores `node_modules`, `.next`, `out`, and generated TypeScript files.
   The completion marker records the source paths, so removing an input also
   triggers a rebuild. An older export without this marker is rebuilt once

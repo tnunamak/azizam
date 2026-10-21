@@ -69,7 +69,27 @@ class _ThreadedServer:
         self.thread.join(timeout=5)
 
 
-def _handler_for(scorer):
+class _CountingSemaphore(threading.BoundedSemaphore):
+    """Reports when `target` admissions are held, so a test can wait on that fact."""
+
+    def __init__(self, value: int, target: int) -> None:
+        super().__init__(value)
+        self.target = target
+        self.at_target = threading.Event()
+        self._held = 0
+        self._count_lock = threading.Lock()
+
+    def acquire(self, blocking=True, timeout=None):
+        got = super().acquire(blocking, timeout)
+        if got:
+            with self._count_lock:
+                self._held += 1
+                if self._held >= self.target:
+                    self.at_target.set()
+        return got
+
+
+def _handler_for(scorer, admission=None):
     class TestHandler(server.Handler):
         pass
 
@@ -79,7 +99,7 @@ def _handler_for(scorer):
     TestHandler.placement = "cpu"
     TestHandler.residency = "on_demand"
     TestHandler.request_lock = threading.Lock()
-    TestHandler.admission = threading.BoundedSemaphore(5)
+    TestHandler.admission = admission or threading.BoundedSemaphore(5)
     return TestHandler
 
 
@@ -106,11 +126,13 @@ class BlockingScorer:
 
 def test_handler_admits_five_requests_and_rejects_sixth_when_queue_full():
     scorer = BlockingScorer()
-    with _ThreadedServer(_handler_for(scorer)) as base_url:
+    admission = _CountingSemaphore(5, target=5)
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
         with ThreadPoolExecutor(max_workers=6) as pool:
             pending = [pool.submit(_post_json, base_url, "/v1/systemone", _systemone_body(str(i))) for i in range(5)]
             assert scorer.entered.wait(timeout=5)
-            time.sleep(0.2)
+            # The sixth request may only overflow once all five hold a slot.
+            assert admission.at_target.wait(timeout=5)
 
             status, headers, body = _post_json(base_url, "/v1/systemone", _systemone_body("overflow"))
             assert status == 529
@@ -368,7 +390,14 @@ def test_prepare_request_validates_all_contexts_before_prime_post(monkeypatch, t
     assert len(build_calls) == 2
 
 
-def _post_json_with_headers(base_url: str, path: str, body: dict, *, headers: dict[str, str], timeout: float = 1.0) -> tuple[int, dict, dict]:
+# Client-side socket timeout only: it turns a hung server into a failure. The
+# oracle is the server's own response (504 deadline_exceeded, 503 unhealthy);
+# a client timeout shorter than a scheduler stall would replace it with a
+# URLError on a correct run.
+_TRANSPORT_WATCHDOG_S = 30.0
+
+
+def _post_json_with_headers(base_url: str, path: str, body: dict, *, headers: dict[str, str], timeout: float = _TRANSPORT_WATCHDOG_S) -> tuple[int, dict, dict]:
     request_headers = {"content-type": "application/json", **headers}
     req = urllib.request.Request(
         f"{base_url}{path}",
@@ -394,7 +423,6 @@ def test_deadline_expires_while_waiting_for_request_lock_without_scoring():
                 "/v1/systemone",
                 _systemone_body("deadline"),
                 headers={"x-decision-deadline-ms": "50"},
-                timeout=1,
             )
         finally:
             handler.request_lock.release()
@@ -413,7 +441,7 @@ def test_health_reports_unhealthy_when_owned_child_has_exited():
 
     with _ThreadedServer(handler) as base_url:
         try:
-            with urllib.request.urlopen(f"{base_url}/health", timeout=1) as resp:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=_TRANSPORT_WATCHDOG_S) as resp:
                 status = resp.status
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
@@ -544,20 +572,37 @@ def test_disconnect_during_first_row_stops_later_rows():
     assert scorer.calls == [0]
 
 
-def test_expired_budget_during_multirow_stops_before_second_row():
+class _SteppedClock:
+    """A monotonic clock that moves only when the test advances it."""
+
+    def __init__(self) -> None:
+        self.now = time.monotonic()
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+def test_expired_budget_during_multirow_stops_before_second_row(monkeypatch):
+    clock = _SteppedClock()
+    monkeypatch.setattr(server, "time", clock)
+    monkeypatch.setattr(decision_engine, "time", clock)
     scorer = MultiRowBlockingScorer()
     handler = _handler_for(scorer)
     with _ThreadedServer(handler) as base_url:
         worker = threading.Thread(
             target=_post_json_with_headers,
             args=(base_url, "/v1/systemone", _multirow_body()),
-            kwargs={"headers": {"x-decision-deadline-ms": "50"}, "timeout": 1},
+            kwargs={"headers": {"x-decision-deadline-ms": "50"}, "timeout": 5},
         )
         worker.start()
-        assert scorer.first_entered.wait(timeout=2)
-        time.sleep(0.08)
+        assert scorer.first_entered.wait(timeout=5)
+        clock.now += 1.0  # the 50 ms budget ends while the first row is scoring
         scorer.release_first.set()
-        worker.join(timeout=2)
+        worker.join(timeout=5)
+        assert not worker.is_alive()
 
     assert scorer.calls == [0]
 
@@ -573,7 +618,6 @@ def test_invalid_or_nonfinite_deadline_header_does_not_disable_default_cap():
                 "/v1/systemone",
                 _systemone_body("bad_deadline"),
                 headers={"x-decision-deadline-ms": "NaN"},
-                timeout=1,
             )
         finally:
             handler.request_lock.release()
@@ -624,7 +668,9 @@ def test_post_timeout_uses_remaining_budget_for_prime_rows_and_retry(monkeypatch
         return {"completion_probabilities": [{"top_logprobs": [{"id": 101, "logprob": -1.0}]}]}
 
     client._post = fake_post
-    deadline = time.monotonic() + 1.0
+    clock = _SteppedClock()  # the 1 s budget cannot be spent by scheduler delay
+    monkeypatch.setattr(server, "time", clock)
+    deadline = clock.now + 1.0
     ctx = decision_engine.ScoreContext(state="x", question="q", options=("no", "yes"), kind="noul", index=0)
 
     client.prepare_request([ctx, ctx], deadline=deadline)
@@ -696,7 +742,10 @@ def test_wait_health_requires_expected_model_identity(monkeypatch):
 
     monkeypatch.setattr(server.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
-    assert server.wait_health(18024, 0.2, expected_model="decider-test") is True
+    # The scripted responses end the poll, not the clock: the budget is only a
+    # watchdog and must not be a scheduler-speed limit between the two replies.
+    assert server.wait_health(18024, 30, expected_model="decider-test") is True
+    assert next(responses, None) is None, "the wrong-model reply was skipped, not examined"
 
 
 def test_cancellable_post_decodes_chunked_json_response():
@@ -855,7 +904,6 @@ def test_cancellable_post_closes_close_response_socket_during_drip_body():
     listener.listen()
     thread = threading.Thread(target=serve, args=(listener,), daemon=True)
     thread.start()
-    started = time.perf_counter()
     try:
         port = listener.getsockname()[1]
         with pytest.raises(server.DecisionCancelled):
@@ -872,14 +920,46 @@ def test_cancellable_post_closes_close_response_socket_during_drip_body():
 
     assert sent_headers.is_set()
     assert got_eof.is_set()
-    assert time.perf_counter() - started < 0.5
 
 
-def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body():
+def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body(monkeypatch):
+    clock = _SteppedClock()
+    monkeypatch.setattr(server, "time", clock)
     got_eof = threading.Event()
+    body_started = threading.Event()
+    connections: list[socket.socket] = []
+
+    class DeadlineResponse(server.http.client.HTTPResponse):
+        def __init__(self, sock, *args, **kwargs):
+            # Only the stepped deadline should end this real socket read.
+            sock.settimeout(None)
+            super().__init__(sock, *args, **kwargs)
+
+        def read(self, amt=None):
+            if body_started.is_set() or amt == 0:
+                return super().read(amt)
+            first = super().read(1)
+            assert first == b" "
+            # Receiving a body byte proves headers have been consumed and the
+            # Connection: close response owns the socket, unlike peer sendall.
+            clock.now += 1000
+            body_started.set()
+            remaining = amt if amt is None or amt < 0 else amt - 1
+            return first + super().read(remaining)
+
+    class DeadlineConnection(server.http.client.HTTPConnection):
+        response_class = DeadlineResponse
+
+        def __init__(self, *args, **kwargs):
+            # A frozen logical 50 ms budget is not a real-time socket timeout.
+            kwargs["timeout"] = None
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(server.http.client, "HTTPConnection", DeadlineConnection)
 
     def serve(listener):
         conn, _addr = listener.accept()
+        connections.append(conn)
         with conn:
             conn.recv(4096)
             conn.sendall(
@@ -889,18 +969,15 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
                 b"Content-Type: application/json\r\n"
                 b"\r\n"
             )
-            conn.settimeout(2)
             try:
+                conn.sendall(b" ")
                 while True:
-                    conn.sendall(b" ")
-                    try:
-                        data = conn.recv(4096)
-                    except socket.timeout:
-                        return
+                    # Stay open until the client closes; a peer-side timeout
+                    # must not manufacture EOF before the deadline is observed.
+                    data = conn.recv(4096)
                     if data == b"":
                         got_eof.set()
                         return
-                    time.sleep(0.02)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 got_eof.set()
 
@@ -909,23 +986,43 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     listener.listen()
     thread = threading.Thread(target=serve, args=(listener,), daemon=True)
     thread.start()
-    started = time.perf_counter()
-    try:
-        port = listener.getsockname()[1]
-        with pytest.raises(server.DecisionDeadlineExceeded):
+    outcome: list = []
+
+    def call():
+        try:
             server._post_json_cancellable(
-                f"http://127.0.0.1:{port}",
+                f"http://127.0.0.1:{listener.getsockname()[1]}",
                 "/completion",
                 {},
-                deadline=time.monotonic() + 0.05,
+                deadline=clock.now + 0.05,
                 cancel_check=None,
             )
+        except BaseException as exc:  # noqa: BLE001 - the test inspects the type
+            outcome.append(exc)
+
+    caller = threading.Thread(target=call, daemon=True)
+    try:
+        caller.start()
+        # These are failure watchdogs, not events that cause the deadline.
+        assert body_started.wait(timeout=5)
+        caller.join(timeout=5)
+        assert not caller.is_alive()
+        assert len(outcome) == 1 and isinstance(outcome[0], server.DecisionDeadlineExceeded), outcome
+        assert got_eof.wait(timeout=2)
     finally:
         listener.close()
+        # Clean up even if the deadline watchdog fails. Assertions above must
+        # observe client-initiated EOF, never EOF manufactured by this teardown.
+        for conn in connections:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            conn.close()
         thread.join(timeout=2)
+        caller.join(timeout=5)
 
-    assert got_eof.is_set()
-    assert time.perf_counter() - started < 0.5
+    assert not thread.is_alive()
 
 
 def test_decision_http_server_uses_daemon_request_threads() -> None:

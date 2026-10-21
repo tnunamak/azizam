@@ -1,0 +1,253 @@
+// The only place a browser test answers a request itself (scripts/ci/policy.py
+// counts `.fulfill(` anywhere else). A JSON stub goes through `fulfilJson`,
+// which names the endpoint it stands in for (intercept-registry.ts), asks the
+// real gateway of the same fixture server what that endpoint returns, and
+// fails the test when the stub's structure differs: a key the server never
+// sends, a key the server always sends but the stub left out, or another type.
+import {
+  request,
+  test,
+  type APIRequestContext,
+  type APIResponse,
+  type Route,
+} from "@playwright/test";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  absentPaths,
+  check,
+  derive,
+  merge,
+  type Shape,
+} from "./intercept-shape";
+import type { OracleFile } from "./oracle";
+import {
+  REGISTRY,
+  errorSamples,
+  lookup,
+  type Endpoint,
+} from "./intercept-registry";
+
+interface Options {
+  status?: number;
+  headers?: Record<string, string>;
+  // The real response fetched with route.fetch(); its headers and status carry over.
+  response?: APIResponse;
+  // For a stub that is deliberately NOT what the server sends (a resilience
+  // test of a malformed response). The reason is mandatory and counted by
+  // scripts/ci/policy.py; a stub that only drifted is fixed, not marked.
+  malformed?: string;
+}
+
+// Discovery (INTERCEPT_DISCOVER=file): log each stub's key paths and each probe's, for
+// choosing an endpoint's `required` list. The check itself is skipped.
+function keyPaths(
+  value: unknown,
+  at = "",
+  into = new Set<string>(),
+): Set<string> {
+  if (Array.isArray(value))
+    value.forEach((item) => keyPaths(item, `${at}/[]`, into));
+  else if (value && typeof value === "object")
+    for (const [key, item] of Object.entries(value)) {
+      into.add(`${at}/${key}`);
+      keyPaths(item, `${at}/${key}`, into);
+    }
+  return into;
+}
+
+// Every identifier and quoted word in the gateway's Python source: the field
+// names the server can send (also those of a dataclass or model, not quoted). A stub key the seed's response lacks must be one of them.
+const SKIP_DIRS = new Set([
+  "venv",
+  "node_modules",
+  "tests",
+  "e2e",
+  "bench",
+  "web",
+  "data",
+  "docs",
+  ".git",
+  "__pycache__",
+  "scripts",
+]);
+let sourceKeys: Set<string> | undefined;
+function gatewayKeys(): Set<string> {
+  if (sourceKeys) return sourceKeys;
+  const keys = new Set<string>();
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith("."))
+          walk(path.join(dir, entry.name));
+      } else if (entry.name.endsWith(".py"))
+        for (const match of readFileSync(
+          path.join(dir, entry.name),
+          "utf8",
+        ).matchAll(/[A-Za-z_]\w*/g))
+          keys.add(match[0]);
+    }
+  };
+  walk(path.resolve(__dirname, "../../.."));
+  return (sourceKeys = keys);
+}
+
+const probes = new Map<string, Promise<Shape | null>>();
+const apis = new Map<string, Promise<APIRequestContext>>();
+
+function api(origin: string): Promise<APIRequestContext> {
+  let found = apis.get(origin);
+  if (!found) {
+    // The project's own server uses the project's session file. The main
+    // config's pooled servers each have their own, auth-<port>.json
+    // (playwright.config.ts), so a pooled origin picks it by port.
+    const project = test.info().project.use;
+    const projectState = project.storageState;
+    const ownOrigin = project.baseURL ? new URL(project.baseURL).origin : undefined;
+    const storageState =
+      typeof projectState !== "string"
+        ? undefined
+        : origin === ownOrigin
+          ? projectState
+          : path.join(path.dirname(projectState), `auth-${new URL(origin).port}.json`);
+    found = request.newContext({
+      baseURL: origin,
+      ...(typeof storageState === "string" ? { storageState } : {}),
+    });
+    apis.set(origin, found);
+  }
+  return found;
+}
+
+// The bodies oracle.ts wrote at the start of the run (global-setup.ts).
+let oracleBodies: Record<string, unknown> | undefined;
+function oracleBody(id: string): unknown {
+  const file = process.env.INTERCEPT_ORACLE_FILE;
+  if (!file)
+    throw new Error(
+      `fulfilJson: ${id} takes its structure from the oracle gateway, but no oracle file exists; run this spec through a config whose global setup builds it`,
+    );
+  oracleBodies ??= (JSON.parse(readFileSync(file, "utf8")) as OracleFile).bodies;
+  if (!(id in oracleBodies))
+    throw new Error(`fulfilJson: the oracle file has no body for ${id}; add its call to e2e/fixtures/oracle.ts`);
+  return oracleBodies[id];
+}
+
+async function realShape(
+  origin: string,
+  endpoint: Endpoint,
+): Promise<Shape | null> {
+  const key = `${origin} ${endpoint.id}`;
+  let found = probes.get(key);
+  if (!found) {
+    found = (async () => {
+      if (!endpoint.probe && !endpoint.oracle) return null;
+      const body = endpoint.oracle
+        ? oracleBody(endpoint.id)
+        : await endpoint.probe!(await api(origin));
+      const options = {
+        open: endpoint.open,
+        free: endpoint.free,
+        required: endpoint.required,
+      };
+      const shape = derive(body, options);
+      const gone = absentPaths(shape, endpoint.required ?? []);
+      if (gone.length)
+        throw new Error(
+          `fulfilJson: ${endpoint.id} lists required keys the real gateway no longer sends: ${gone.join(", ")}`,
+        );
+      return shape;
+    })();
+    probes.set(key, found);
+  }
+  return found;
+}
+
+async function errorShape(origin: string): Promise<Shape | null> {
+  const key = `${origin} error`;
+  let found = probes.get(key);
+  if (!found) {
+    found = errorSamples(await api(origin)).then((bodies) =>
+      bodies
+        .map((body) => derive(body, { open: ["/error/details"] }))
+        .reduce(merge),
+    );
+    probes.set(key, found);
+  }
+  return found;
+}
+
+export async function fulfilJson(
+  route: Route,
+  body: unknown,
+  options: Options = {},
+) {
+  const status = options.status ?? options.response?.status() ?? 200;
+  const url = new URL(route.request().url());
+  const method = route.request().method();
+  if (!options.malformed) {
+    const endpoint = lookup(method, url.pathname);
+    const discovery = process.env.INTERCEPT_DISCOVER;
+    if (discovery) {
+      const real =
+        status >= 400
+          ? null
+          : endpoint?.oracle
+            ? oracleBody(endpoint.id)
+            : endpoint?.probe
+              ? await endpoint.probe(await api(url.origin)).catch(() => null)
+              : null;
+      appendFileSync(
+        discovery,
+        `${JSON.stringify({ method, path: url.pathname, status, id: endpoint?.id ?? null, stub: [...keyPaths(body)], real: real && [...keyPaths(real)] })}\n`,
+      );
+      return void (await route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      }));
+    }
+    if (!endpoint)
+      throw new Error(
+        `fulfilJson: ${method} ${url.pathname} is not in e2e/fixtures/intercept-registry.ts; add the endpoint with a real probe`,
+      );
+    const shape =
+      status >= 400
+        ? await errorShape(url.origin)
+        : await realShape(url.origin, endpoint);
+    if (!shape) {
+      if (!endpoint.unprobed)
+        throw new Error(
+          `fulfilJson: ${endpoint.id} has no probe and no stated reason`,
+        );
+    } else {
+      const report = check(shape, body, gatewayKeys());
+      if (report.problems.length)
+        throw new Error(
+          `fulfilJson: the stub for ${method} ${url.pathname} (${endpoint.id}, status ${status}) differs from the real gateway:\n  ${report.problems.join("\n  ")}`,
+        );
+    }
+  }
+  await route.fulfill({
+    ...(options.response ? { response: options.response } : { status }),
+    contentType: "application/json",
+    ...(options.headers ? { headers: options.headers } : {}),
+    body: JSON.stringify(body),
+  });
+}
+
+/** A stub that is not JSON from the gateway: media bytes, text, an SVG. */
+export async function fulfilBytes(
+  route: Route,
+  options: {
+    status?: number;
+    contentType?: string;
+    headers?: Record<string, string>;
+    body?: string | Buffer;
+    path?: string;
+  },
+) {
+  await route.fulfill(options);
+}
+
+export { REGISTRY };

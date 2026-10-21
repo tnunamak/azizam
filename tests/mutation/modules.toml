@@ -1,0 +1,53 @@
+# Core modules for scripts/mutate (docs/design/TEST_STRATEGY.md 4.5).
+# path: the mutated file.  functions: optional scope, top-level functions or
+# classes whose bodies are mutated (everything else is not).  own_tests:
+# regexes over test node IDs that form the narrow selection (default
+# ^tests/test_<name>\b); every other test that executes the line forms the
+# wide re-run of survivors.
+
+[module.category_policy]
+path = "gateway/category_policy.py"
+
+[module.category_enforcement]
+path = "gateway/category_enforcement.py"
+
+[module.policy]
+path = "gateway/policy.py"
+own_tests = ['^tests/test_policy\b', '^tests/test_policy_properties\b']
+
+[module.public_failure]
+path = "gateway/public_failure.py"
+
+[module.speech_voices]
+path = "gateway/speech_voices.py"
+own_tests = ['^tests/test_speech_voice_choices\b', '^tests/test_custom_voice_speech\b']
+
+[module.transforms]
+path = "gateway/transforms.py"
+own_tests = ['^tests/test_transforms_']
+
+[module.media_jobs]
+path = "gateway/media_jobs.py"
+
+[module.receipt_store]
+path = "gateway/receipt_store.py"
+
+[module.admin_store]
+path = "gateway/admin_store.py"
+scope = "auth paths: credentials, local passwords, owner claim, admin roles, OIDC users, runtime access rows, trusted addresses"
+functions = [
+  "runtime_auth_connection", "_revoke_unbound_try_keys",
+  "upsert_oidc_user", "find_user_by_email", "replace_user_identity_claims",
+  "set_local_password_verifier", "claim_first_local_owner", "get_local_password_verifier",
+  "delete_local_password_verifier",
+  "create_credential_hash", "revoke_credential", "revoke_older_session_credentials",
+  "touch_credential_last_used", "get_credential", "find_credential_by_hash",
+  "find_runtime_credential_by_hash", "list_active_credentials", "_credential_row_to_dict",
+  "assign_admin_role", "reconcile_oidc_admin_roles", "revoke_admin_role", "list_admin_roles",
+  "runtime_access_row", "runtime_access_rows", "list_active_credentials_for_apps", "list_credentials",
+  "list_trusted_addresses", "add_trusted_address", "delete_trusted_address",
+]
+own_tests = ['^tests/test_admin_store\b', '^tests/test_admin_oidc\b', '^tests/test_admin_runtime\b', '^tests/test_trusted_addresses\b']
+
+[module.runtime_auth]
+path = "gateway/runtime_auth.py"

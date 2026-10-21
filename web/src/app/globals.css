@@ -28,6 +28,37 @@
   textarea {
     -webkit-tap-highlight-color: transparent;
   }
+  /* One cursor policy for native and ARIA controls. Keep it in base, with
+     priority over utility defaults from shared primitives. This is visual
+     feedback only; existing disabled activation guards remain unchanged. */
+  :is(
+    button,
+    [role="button"],
+    a[href],
+    summary,
+    label[for],
+    [role="tab"],
+    [role="menuitem"],
+    select,
+    input[type="checkbox"],
+    input[type="radio"]
+  ) {
+    cursor: pointer !important;
+  }
+  :is(
+    button,
+    [role="button"],
+    a[href],
+    summary,
+    label[for],
+    [role="tab"],
+    [role="menuitem"],
+    select,
+    input[type="checkbox"],
+    input[type="radio"]
+  ):is(:disabled, [disabled], [aria-disabled="true"], [data-disabled]) {
+    cursor: not-allowed !important;
+  }
   button,
   input,
   textarea {
@@ -159,11 +190,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Cancel motion rather than accelerating infinite animations. Shorthands
+     also reset delays; include pseudo-elements and portal-mounted UI. */
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition: none !important;
     scroll-behavior: auto !important;
   }
 }

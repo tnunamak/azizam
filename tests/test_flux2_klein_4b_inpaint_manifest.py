@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -23,7 +24,7 @@ WORKFLOW_PATH = ROOT / "workflows/images/flux2-klein-4b-inpaint.json"
 class TestFlux2KleinInpaintManifest(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = load_workflow_manifest(MANIFEST_PATH)
-        self.workflow = proxy.load_comfy_workflow("flux2-klein-4b-inpaint")
+        self.workflow = proxy.load_graph_workflow("flux2-klein-4b-inpaint")
 
     def test_workflow_file_loads(self) -> None:
         self.assertTrue(WORKFLOW_PATH.exists())
@@ -35,7 +36,15 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
 
     def test_mask_and_inpaint_controls_bind_to_comfy_nodes(self) -> None:
         assert self.workflow is not None
-        workflow = {k: v for k, v in self.workflow.items() if k != "_meta"}
+        workflow = copy.deepcopy({k: v for k, v in self.workflow.items() if k != "_meta"})
+        original = copy.deepcopy(workflow)
+        original_links = {
+            (node_id, key): copy.deepcopy(value)
+            for node_id, node in original.items()
+            if isinstance(node, dict)
+            for key, value in node.get("inputs", {}).items()
+            if isinstance(value, list)
+        }
 
         result = bind_backend_request(
             self.manifest,
@@ -70,9 +79,20 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
         self.assertEqual(bound["19"]["inputs"]["left"], 12)
         self.assertEqual(bound["19"]["inputs"]["right"], 12)
 
+        self.assertEqual(workflow, original, "flux2-klein-4b-inpaint: source workflow mutated")
+        bound_links = {
+            (node_id, key): value
+            for node_id, node in bound.items()
+            if isinstance(node, dict)
+            for key, value in node.get("inputs", {}).items()
+            if isinstance(value, list)
+        }
+        self.assertEqual(bound_links, original_links, "flux2-klein-4b-inpaint: graph edge regression")
+
     def test_route_managed_size_uses_manifest_bindings(self) -> None:
         assert self.workflow is not None
-        workflow = {k: v for k, v in self.workflow.items() if k != "_meta"}
+        workflow = copy.deepcopy({k: v for k, v in self.workflow.items() if k != "_meta"})
+        original = copy.deepcopy(workflow)
 
         bound = proxy._apply_manifest_route_inputs(
             self.manifest,
@@ -86,6 +106,12 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
         self.assertEqual(bound["14"]["inputs"]["height"], 448)
         self.assertEqual(bound["48"]["inputs"]["width"], 640)
         self.assertEqual(bound["48"]["inputs"]["height"], 448)
+
+        expected = copy.deepcopy(original)
+        for node_id in ("11", "14", "48"):
+            expected[node_id]["inputs"].update(width=640, height=448)
+        self.assertEqual(bound, expected, "flux2-klein-4b-inpaint route size: unrelated graph mutation")
+        self.assertEqual(workflow, original, "flux2-klein-4b-inpaint route size: source mutated")
 
     def test_masked_flux_edit_prefers_committed_inpaint_workflow(self) -> None:
         self.assertEqual(

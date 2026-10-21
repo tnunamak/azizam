@@ -241,8 +241,7 @@ Not implemented:
 - Provider-native passthrough is implemented only under
   `/gateway/v1/providers/{provider}/{path...}` and remains policy-gated by App
   profile. Provider-native discovery is implemented at `/gateway/v1/providers`
-  and `/gateway/v1/providers/{provider}`. There is no root catch-all or legacy
-  root Tabby shim.
+  and `/gateway/v1/providers/{provider}`. There is no root catch-all.
 - Gateway media assets are exposed through `/gateway/v1/assets/{asset_id}` for
   metadata and `/gateway/v1/assets/{asset_id}/content` for signed,
   bearer-auth-gated content. The content-addressed cache still has a TTL; it is
@@ -1124,7 +1123,6 @@ Passthrough requirements:
 - allowed only when the App profile includes the `provider-native` protocol
 - logged in route receipts
 - never accidentally exposed by a root catch-all
-- no legacy root Tabby shim
 - redacts credentials
 - clearly labeled as native/non-portable
 

@@ -78,7 +78,19 @@ def test_history_floor_never_retreats_after_retention_increase(tmp_path, monkeyp
         assert receipt_store.history_floor(path) == now - 30 * 86400
 
 
+def _short_busy_timeout(monkeypatch):
+    """A checkpoint that finds a reader waits for ``busy_timeout`` (5 s) and then reports it; 50 ms reaches the same report."""
+    real = receipt_store._apply_pragmas
+
+    def pragmas(conn):
+        real(conn)
+        conn.execute("PRAGMA busy_timeout=50;")
+
+    monkeypatch.setattr(receipt_store, "_apply_pragmas", pragmas)
+
+
 def test_compaction_busy_reader_reports_pending_and_physical_bytes(tmp_path, monkeypatch):
+    _short_busy_timeout(monkeypatch)
     monkeypatch.setattr(receipt_store.time, "time", lambda: 1_800_000_000)
     path = tmp_path / "receipts.db"
     receipt_store.init_db(path)
@@ -128,7 +140,12 @@ def test_compaction_cli_exits_nonzero_until_reader_is_idle(tmp_path):
     receipt_store.init_db(path)
     receipt_store.record({"request_id": "kept"}, path=path)
     script = Path(__file__).resolve().parents[1] / "scripts/compact-receipts"
-    cmd = [sys.executable, str(script), "--db", str(path)]
+    # The real script in a real process, with the same 50 ms busy wait the in-process test uses.
+    launch = ("import pathlib, runpy, sys; sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent.parent)); "
+              "from gateway import receipt_store as r; real = r._apply_pragmas; "
+              "r._apply_pragmas = lambda c: (real(c), c.execute('PRAGMA busy_timeout=50'))[0]; "
+              "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+    cmd = [sys.executable, "-c", launch, str(script), "--db", str(path)]
     reader = sqlite3.connect(path)
     try:
         reader.execute("BEGIN")
@@ -317,7 +334,7 @@ def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path, monkeyp
 def test_saved_setting_retries_after_deletion_failure(history, monkeypatch):
     client, admin_path, path, _ = history
     original = receipt_store.save_retention
-    def fail_after_save(days, preview, save_setting, *, path):
+    def fail_after_save(days, preview, save_setting, *, path, fact_store_path, on_cleanup_failure):
         save_setting()
         raise sqlite3.OperationalError("receipt database busy")
     monkeypatch.setattr(receipt_store, "save_retention", fail_after_save)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -41,13 +42,9 @@ def people(monkeypatch, tmp_path):
         paths[name] = path
 
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", paths["admin"])
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "_client_is_lan", lambda _request: False)
     monkeypatch.setattr(proxy, "_gateway_audience_resolver", lambda _request: "client")
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "assets")
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"people-isolation-test")
-    monkeypatch.setattr(proxy, "_user_self_service_enabled", lambda: True)
-    monkeypatch.setattr(proxy, "_default_profile_id_for_session", lambda _session: None)
     monkeypatch.setattr(proxy, "_csrf_token_for_oidc_session", lambda _session: "fixture-csrf")
     # Policy is exercised by its own suite. This gate checks ownership even
     # when both members have exactly the same permissions.
@@ -61,11 +58,11 @@ def people(monkeypatch, tmp_path):
         )
         session = AdminSession(
             subject=user["id"], email=user["email"], role="none",
-            issued_at=1, expires_at=4_000_000_000,
+            issued_at=1, expires_at=4_000_000_000, authenticated_at=time.time(),   # signed in a moment ago
         )
         # Matching App names and plans are intentional: neither is an owner id.
         app = admin_store.create_app(
-            "Phone", kind="personal", owner_user_id=user["id"], path=paths["admin"]
+            "Phone", kind="personal", owner_user_id=user["id"], access_plan="person", path=paths["admin"]
         )
         key = mint_user_app_key(session, app["id"], path=paths["admin"])
         bearer = {"Authorization": f"Bearer {key['api_key']}"}

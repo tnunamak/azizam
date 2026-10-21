@@ -8,6 +8,7 @@ import threading
 import time
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_jobs, media_metadata, prompt_memory
 from gateway import prompt_metadata_migration as pmm
 from gateway.admin_oidc import AdminSession
@@ -41,8 +43,9 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     robin = admin_store.upsert_oidc_user("issuer", "robin", email="robin@example.test", path=admin)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], access_plan="person", path=admin)
     (tmp_path / "cache").mkdir()
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, robin=robin, app=app)
 
@@ -133,22 +136,71 @@ def test_maintenance_ignores_stale_kill_switch_reading(hh, monkeypatch):
 
 # --- P2-20: rows now, files queued ----------------------------------------
 
+class _WatchedScanLock:
+    """The migration scan lock, reporting a blocked acquire by any other thread.
+
+    The route under test may take the lock on a thread of its own (the ASGI
+    portal), so the spy watches every thread but the owner, not one thread.
+    """
+
+    def __init__(self, real, settled):
+        self._real = real
+        self._settled = settled
+        self._owner = threading.get_ident()
+        self.blocked = False
+
+    def acquire(self, blocking=True, timeout=-1):
+        if blocking and threading.get_ident() != self._owner:
+            if self._real.acquire(False):
+                return True
+            self.blocked = True
+            self._settled.set()
+        return self._real.acquire(blocking, timeout)
+
+    def release(self):
+        self._real.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc):
+        self.release()
+
+
 def _run_with_scan_lock_held(fn):
+    """Run fn on a thread while the scan lock is held; report whether it returned.
+
+    Success is the thread finishing BEFORE the lock is released; a failure is
+    its blocking on the lock. The waits only bound a hang; they are not the oracle.
+    """
+    settled = threading.Event()
     done = threading.Event()
     out = {}
+    lock = _WatchedScanLock(pmm._SCAN_LOCK, settled)
 
     def run():
-        out["result"] = fn()
-        done.set()
+        try:
+            out["result"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the test thread
+            out["error"] = exc
+        finally:
+            done.set()
+            settled.set()
 
-    assert pmm._SCAN_LOCK.acquire(timeout=5)
-    try:
-        threading.Thread(target=run, daemon=True).start()
-        finished = done.wait(3.0)
-    finally:
-        pmm._SCAN_LOCK.release()
-    if not finished:
-        done.wait(30)
+    with patch.object(pmm, "_SCAN_LOCK", lock):
+        assert lock.acquire(timeout=5)
+        worker = threading.Thread(target=run, daemon=True)
+        try:
+            worker.start()
+            settled.wait(3.0)
+            finished = done.is_set() and not lock.blocked
+        finally:
+            lock.release()
+        worker.join(30)
+        assert not worker.is_alive(), "the worker never finished after the lock was released"
+    if "error" in out:
+        raise out["error"]
     return finished, out.get("result")
 
 
@@ -273,13 +325,9 @@ def test_settings_api_reports_queued_file_cleanup_until_it_finishes(hh):
     client = _me_client(hh)
     assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
 
-    assert pmm._SCAN_LOCK.acquire(timeout=5)
-    try:
-        started = time.monotonic()
-        deleted = client.delete("/me/api/prompt-memory/prompts")
-        assert time.monotonic() - started < 3
-    finally:
-        pmm._SCAN_LOCK.release()
+    finished, deleted = _run_with_scan_lock_held(
+        lambda: client.delete("/me/api/prompt-memory/prompts"))
+    assert finished, "the delete route waited for the migration scan lock"
     assert deleted.status_code == 202
     assert deleted.json()["deleted_prompts"] == 1
     assert deleted.json()["prompt_purge"]["retry_scheduled"] is True
@@ -298,7 +346,7 @@ def test_settings_api_reports_queued_file_cleanup_until_it_finishes(hh):
 
 def _spool(hh, job_id: str, created_at: int):
     import json
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = proxy.AuthContext(identity=auth_identity(
         name="Try", key_hash="sha256:robin", app_id=hh.app["id"], person_id=hh.robin["id"]))
     request = SimpleNamespace(headers={"host": "testserver"}, url=SimpleNamespace(scheme="http", netloc="testserver"))
     # An active job, so the orphan sweep keeps the spool.
@@ -350,7 +398,7 @@ def test_maintenance_retries_kill_switch_cleanup_once_per_switch_on(hh, monkeypa
     spool = _spool(hh, "mj_old", turned_on - 10)
     with sqlite3.connect(hh.admin) as conn:
         conn.execute("INSERT OR REPLACE INTO operator_settings(key, value_json, updated_at, updated_by) "
-                     "VALUES ('prompt_memory', ?, ?, NULL)", (json.dumps({"never_keep": True}), turned_on))
+                     "VALUES ('retention', ?, ?, NULL)", (json.dumps({"never_keep": True}), turned_on))
     proxy._maintain_prompt_memory()
     assert prompt_memory.get("img_" + "a" * 64, person) is None
     assert not spool.exists()
@@ -388,6 +436,8 @@ def test_simultaneous_first_queue_writes_upgrade_schema_once(hh, legacy_schema):
         thread.start()
     for thread in threads:
         thread.join(30)
+    # A live worker would outlast the restored paths of this test.
+    assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     expected = set(people) | ({"usr_legacy"} if legacy_schema else set())
     assert set(proxy._pending_prompt_purges()) == expected

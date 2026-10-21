@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import litellm_substrate
 
 
@@ -211,7 +212,7 @@ class ProviderRoutingTests(unittest.TestCase):
             service_id="litellm",
         )
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=_registry()),
             patch.object(proxy, "_litellm_runtime_config", return_value=self.runtime),
             patch.object(proxy, "_service_availability_response", return_value=None),
@@ -472,6 +473,34 @@ class ProviderRoutingTests(unittest.TestCase):
         self.assertEqual(receipt.requested_model, "assistant")
         self.assertEqual(receipt.resolved_model, "paid-chat")
         self.assertIn("free->paid (http_503)", receipt.fallback_reasons)
+
+    def test_receipt_keeps_the_name_the_caller_sent_when_it_points_at_a_model(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+
+        body = {"model": "local-chat", "messages": [{"role": "user", "content": "hi"}]}
+        request = _request(body)
+        request.state.provider_requested_model = "fast"  # the route resolved `fast` to `local-chat`
+
+        class _Client:
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                return _Response(body=b'{"ok":true}')
+
+            async def aclose(self) -> None:
+                pass
+
+        receipts = []
+        with patch.object(llm_execution_module.httpx, "AsyncClient", lambda **kwargs: _Client()), \
+             patch.object(proxy.receipt_store, "begin", side_effect=lambda receipt: receipts.append(receipt)), \
+             patch.object(proxy.receipt_store, "finalize", return_value=True):
+            asyncio.run(proxy._forward_litellm_proxy_request(
+                request, request_path="/v1/chat/completions", auth_context=proxy.NO_AUTH_CONTEXT,
+                body_json=body, runtime_config=self.runtime))
+
+        assert (receipts[0].requested_model, receipts[0].resolved_model) == ("fast", "local-chat")
+        assert not receipts[0].fallback_reasons
 
     def test_proxy_wrapper_passes_paid_fallback_flag_to_executor(self) -> None:
         execute = AsyncMock(

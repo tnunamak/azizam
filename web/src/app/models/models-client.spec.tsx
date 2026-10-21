@@ -8,9 +8,11 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ModelsClient, { snippetsFor } from "./models-client";
+import ModelsClient, { appSnippetsFor, modelDescription, snippetsFor } from "./models-client";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
+import { accountApi } from "@/lib/account-api";
 import {
   productApi,
   type CatalogRow,
@@ -27,6 +29,16 @@ vi.mock("@/lib/product-api", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("@/lib/account-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/account-api")>();
+  return {
+    ...actual,
+    accountApi: { ...actual.accountApi, discovery: vi.fn() },
+  };
+});
+
+const GATEWAY = "https://gateway.example.test/openai/v1";
 
 const owner: Viewer = {
   authenticated: true,
@@ -95,6 +107,25 @@ function row(overrides: Partial<CatalogRow> = {}): CatalogRow {
   };
 }
 
+/** An exact model, not an alias. */
+function exact(id: string, overrides: Partial<CatalogRow> = {}): CatalogRow {
+  return row({ id, alias: false, object: "model_catalog.model", ...overrides });
+}
+
+/** A row of another task, classified the way the server does. */
+function task(
+  id: string,
+  capability: string,
+  overrides: Partial<CatalogRow> = {},
+): CatalogRow {
+  return row({
+    id,
+    capability,
+    capabilities: [{ ...row().capabilities[0], capability }],
+    ...overrides,
+  });
+}
+
 function catalog(
   aliases: CatalogRow[],
   models: CatalogRow[] = [],
@@ -129,1659 +160,941 @@ function renderModels(snapshot: ModelsCatalog, viewer: Viewer = member) {
   return client;
 }
 
+/** The button that opens a model's Details; its name is the model id. */
+const nameButton = (id: string) => screen.getByRole("button", { name: id });
+const rowOf = (id: string) => nameButton(id).closest("li") as HTMLElement;
+const copyButton = (id: string) =>
+  screen.getByRole("button", { name: `Copy model name ${id}` });
+/** The section for one task: its heading reads "<Label><count>". */
+const sectionOf = (label: string) =>
+  screen.getByRole("region", { name: new RegExp(`^${label}\\s*\\d+$`) });
+const search = () => screen.getByRole("searchbox");
+const dialog = () => within(screen.getByRole("dialog"));
+/** A Details fact: the label and its value, as text. */
+function fact(label: string): string | undefined {
+  return [...screen.getByRole("dialog").querySelectorAll("dt")]
+    .find((dt) => dt.textContent === label)
+    ?.nextElementSibling?.textContent ?? undefined;
+}
+/** True when the row shows the text anywhere (a phone line repeats facts). */
+const rowHas = (id: string, text: string) =>
+  within(rowOf(id)).queryAllByText(text).length > 0;
+
 beforeEach(() => {
   vi.mocked(productApi.models).mockReset();
+  vi.mocked(accountApi.discovery).mockReset();
+  vi.mocked(accountApi.discovery).mockResolvedValue({
+    recipes: { openai: { canonical_base_url: GATEWAY } },
+  });
+  // jsdom lacks what Radix Select calls.
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
 });
 
 afterEach(() => {
   cleanup();
 });
 
-describe("models catalog refresh", () => {
-  it.each([true, false])(
-    "refreshes the open detail by id (alias: %s)",
-    async (alias) => {
-      const original = row({
-        id: "refresh-model",
-        alias,
-        object: alias ? "model_catalog.alias" : "model_catalog.model",
-        title: "Original title",
-        description: "Original purpose.",
-        locality: "remote",
-        cost: { kind: "paid", price: "$1" },
-      });
-      const snapshot = (entry: CatalogRow) =>
-        alias ? catalog([entry]) : catalog([], [entry]);
-      const client = renderModels(snapshot(original));
-      if (!alias) {
-        fireEvent.click(await screen.findByRole("button", { name: "All models" }));
-      }
-      const copy = await screen.findByRole("button", {
-        name: "Copy model name refresh-model",
-      });
-      fireEvent.click(
-        within(copy.closest("tr")!).getByRole("button", {
-          name: "Details",
-        }),
-      );
-      expect(within(screen.getByRole("dialog")).getByText("Original purpose.")).toBeVisible();
-      vi.mocked(productApi.models).mockResolvedValue(snapshot({
-        ...original,
-        title: "Updated title",
-        description: "Updated purpose.",
-        engine_label: "Updated engine",
-        resolves_to: { chat: "updated-target" },
-        cost: { kind: "paid", price: "$2" },
-        availability: {
-          ...original.availability,
-          available: false,
-          status: "unavailable",
-        },
-      }));
-      await act(async () => {
-        await client.refetchQueries({ queryKey: ["models", "catalog"] });
-      });
-      await waitFor(() => {
-        const detail = within(screen.getByRole("dialog"));
-        expect(detail.getByRole("heading", { name: "Updated title" })).toBeVisible();
-        expect(detail.getByText("Updated purpose.")).toBeVisible();
-        expect(detail.getByText("Updated engine")).toBeVisible();
-        expect(detail.queryByText("chat: updated-target")).toBeNull();
-        expect(detail.getByText("Paid · $2")).toBeVisible();
-        expect(detail.getByText("Unavailable")).toBeVisible();
-        expect(detail.queryByText("Original purpose.")).toBeNull();
-      });
-    },
-  );
-
-  it.each([true, false])(
-    "closes a removed model with a note and does not reopen it (alias: %s)",
-    async (alias) => {
-      const original = row({
-        id: "removed-model",
-        alias,
-        object: alias ? "model_catalog.alias" : "model_catalog.model",
-      });
-      const snapshot = alias ? catalog([original]) : catalog([], [original]);
-      const client = renderModels(snapshot);
-      if (!alias) {
-        fireEvent.click(await screen.findByRole("button", { name: "All models" }));
-      }
-      const copy = await screen.findByRole("button", {
-        name: "Copy model name removed-model",
-      });
-      fireEvent.click(
-        within(copy.closest("tr")!).getByRole("button", {
-          name: "Details",
-        }),
-      );
-      expect(screen.getByRole("dialog")).toBeVisible();
-      vi.mocked(productApi.models).mockResolvedValue(catalog([]));
-      await act(async () => {
-        await client.refetchQueries({ queryKey: ["models", "catalog"] });
-      });
-      await waitFor(() => {
-        expect(screen.queryByRole("dialog")).toBeNull();
-        expect(screen.getByRole("status")).toHaveTextContent(
-          "This model is no longer in the catalog.",
-        );
-      });
-      vi.mocked(productApi.models).mockResolvedValue(snapshot);
-      await act(async () => {
-        await client.refetchQueries({ queryKey: ["models", "catalog"] });
-      });
-      const restoredCopy = await screen.findByRole("button", {
-        name: "Copy model name removed-model",
-      });
-      expect(screen.queryByRole("dialog")).toBeNull();
-      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
-      fireEvent.click(
-        within(restoredCopy.closest("tr")!).getByRole("button", {
-          name: "Details",
-        }),
-      );
-      expect(screen.getByRole("dialog")).toBeVisible();
-      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
-    },
-  );
-});
-
-describe("models visible-text search", () => {
-  it.each([
-    ["title", "LANTERN"],
-    ["purpose", "gentle explanations"],
-    ["capability", "CONVERSATION"],
-    ["id", "opaque-17"],
-  ])("matches visible %s text and retains id search", async (_field, query) => {
-    renderModels(catalog([
-      row({ id: "default" }),
-      row({
-        id: "opaque-17",
-        title: "Lantern",
-        description: "Offers gentle explanations.",
-        capability_title: "Conversation",
-      }),
-    ]));
-    await screen.findByRole("button", { name: "Copy model name default" });
-    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    expect(screen.getByRole("heading", { name: "Lantern" })).toBeVisible();
-    expect(screen.getByText("Offers gentle explanations.")).toBeVisible();
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: query },
-    });
-    expect(screen.getByRole("heading", { name: "Lantern" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Chat", level: 2 })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Copy model name opaque-17" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Copy model name default" })).toBeNull();
+describe("the list of model names", () => {
+  it("names the page with exactly one level-one heading", async () => {
+    renderModels(catalog([]));
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Models" })).toBeVisible();
   });
 
-  it("finds an exact model by its visible title", async () => {
-    renderModels(catalog([], [
-      row({
-        id: "opaque-exact",
-        alias: false,
-        object: "model_catalog.model",
-        title: "Firefly",
-      }),
-    ]));
-    fireEvent.click(await screen.findByRole("button", { name: "All models" }));
-    expect(within(screen.getByRole("table", { name: "All models" })).getByText("Firefly")).toBeVisible();
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: "FIREFLY" },
-    });
-    expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", {
-      name: "Copy model name opaque-exact",
-    })).toBeVisible();
-  });
-});
-
-describe("models catalog contract distinctions", () => {
-  it("uses the catalog recommendation even when coding and roleplay come first", async () => {
-    renderModels(
-      catalog([
-        row({ id: "coder", title: "Coder", recommended: false }),
-        row({
-          id: "rp",
-          title: "Roleplay",
-          secondary_profile: true,
-          recommended: false,
-        }),
-        row({ id: "default", title: "Default", recommended: true }),
-      ]),
-    );
-    expect(
-      await screen.findByRole("button", { name: "Copy model name default" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Copy model name coder" }),
-    ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
-    for (const id of ["coder", "rp"]) {
-      expect(
-        screen.getByRole("button", { name: `Copy model name ${id}` }),
-      ).toBeVisible();
-    }
-    expect(
-      screen.queryByRole("button", { name: /More chat profiles/ }),
-    ).toBeNull();
-  });
-
-  it("offers capability chips for exact models as well as list sections", async () => {
-    renderModels(
-      catalog(
-        [row()],
-        [
-          row({
-            id: "generic-audio",
-            alias: false,
-            object: "model_catalog.model",
-            capabilities: [
-              {
-                ...row().capabilities[0],
-                capability: "audio",
-                intent: "audio.generate",
-                label: "Audio",
-              },
-            ],
-          }),
-        ],
-      ),
-    );
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(
-      screen.getByRole("button", { name: /^Chat$/ }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: /^Audio$/ }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /^Audio$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name generic-audio" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Copy model name chat" })).toBeNull();
-  });
-
-  it("copies unavailable names from recommendations, alternatives, profiles and exact models", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    const unavailableRow = (id: string, overrides: Partial<CatalogRow> = {}) =>
-      row({
-        id,
-        availability: {
-          ...row().availability,
-          available: false,
-          status: "unavailable",
-        },
-        ...overrides,
-      });
+  it("shows every model name under its task, with counts, and nothing to expand", async () => {
     renderModels(
       catalog(
         [
-          unavailableRow("default", {
-            examples: [
-              {
-                kind: "chat.completions",
-                body: { model: "default", messages: [] },
-              },
-            ],
-          }),
-          unavailableRow("fast"),
-          unavailableRow("profile", { secondary_profile: true }),
+          row({ id: "fast" }),
+          row({ id: "coder" }),
+          row({ id: "rp", secondary_profile: true }),
+          row({ id: "default", recommended: true }),
+          task("draw", "image"),
         ],
-        [
-          unavailableRow("exact", {
-            alias: false,
-            object: "model_catalog.model",
-          }),
-        ],
+        // "default" is listed as an alias and as a model: one row.
+        [exact("exact-chat"), exact("default")],
       ),
     );
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name default",
-    });
-    fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    for (const id of ["default", "fast", "profile", "exact"]) {
-      fireEvent.click(
-        screen.getByRole("button", { name: `Copy model name ${id}` }),
-      );
-      expect(writeText).toHaveBeenCalledWith(id);
+    await screen.findByRole("button", { name: "fast" });
+    expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeVisible();
+    expect(screen.getByText("Names your apps put in the model field.")).toBeVisible();
+    // The header band names the columns; each task is its own section.
+    const list = screen.getByRole("region", { name: "Model names by task" });
+    for (const label of ["Model name", "Price", "Status"]) {
+      expect(within(list).getByText(label)).toBeInTheDocument();
     }
-    expect(screen.queryByRole("link", { name: "Check status" })).toBeNull();
-    expect(screen.queryByText(/\d+ shown/)).toBeNull();
-    expect(document.querySelectorAll('[data-variant="default"]')).toHaveLength(
-      0,
-    );
-    fireEvent.click(
-      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
-    );
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText("Example request")).toBeVisible();
-    expect(dialog.getByRole("link", { name: "Check status" })).toBeVisible();
-    expect(dialog.getByText(/curl 'http/)).toBeInTheDocument();
+    expect(
+      within(list).getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
+    ).toEqual(["Chat5", "Images1"]);
+    expect(within(sectionOf("Chat")).getByText(/Answers, writing and code/)).toBeVisible();
+    // Aliases first, recommended first, secondary profiles after, then exact.
+    const order = (label: string) =>
+      [...sectionOf(label).querySelectorAll("li")].map((li) => li.dataset.model);
+    expect(order("Chat")).toEqual(["default", "fast", "coder", "rp", "exact-chat"]);
+    expect(order("Images")).toEqual(["draw"]);
+    expect(screen.getAllByRole("button", { name: "default" })).toHaveLength(1);
+    expect(within(rowOf("default")).getByText("Recommended")).toBeVisible();
+    // Nothing is hidden behind a control.
+    expect(screen.queryByText(/\d+ more/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /All models|more/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^(Chat|Images)$/ })).toBeNull();
+    expect(screen.getByText(/^6 model names/)).toBeVisible();
   });
 
-  it("keeps explicit server capability authoritative over a legacy intent", async () => {
+  it("sorts rows into the server's task, not the one the legacy intent suggests", async () => {
+    const audio = task("operator-audio", "audio");
+    audio.capabilities = [
+      { ...audio.capabilities[0], intent: "speech.synthesis", label: "Audio" },
+    ];
     renderModels(
       catalog([
-        row({
-          id: "operator-audio",
-          capabilities: [
-            {
-              ...row().capabilities[0],
-              intent: "speech.synthesis",
-              capability: "audio",
-              label: "Audio",
-            },
-          ],
-        }),
+        row({ id: "chat" }),
+        // The first serving capability is a chat endpoint; the type decides.
+        task("draw", "image"),
+        task("pick", "decide"),
+        task("embed", "embed"),
+        task("transcribe", "transcribe"),
+        task("voice", "speech"),
+        audio,
+        task("future", "future-task"),
       ]),
     );
-    expect(
-      await screen.findByRole("heading", { name: "Make music or sounds", level: 2 }),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Speech" })).toBeNull();
+    await screen.findByRole("button", { name: "chat" });
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+    expect(headings).toEqual([
+      // "future-task" has no section of its own, so it stays under Chat.
+      "Chat2",
+      "Images1",
+      "Speech1",
+      "Audio1",
+      "Transcription1",
+      "Choose an option1",
+      "Turn text into numbers1",
+    ]);
+    expect(within(sectionOf("Chat")).getByRole("button", { name: "future" })).toBeVisible();
+    expect(within(sectionOf("Audio")).getByRole("button", { name: "operator-audio" })).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Make a picture/);
   });
 
-  it("keeps free remote placement honest and price filters quiet in the capability row", async () => {
-    renderModels(catalog([row({ locality: "remote" })]));
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.queryByText("Remote", { exact: true })).toBeNull();
-    expect(screen.queryByText(/Local/)).toBeNull();
-    const price = screen.getByRole("group", {
-      name: "Price filters (choose any)",
-    });
-    expect(price.parentElement).toContainElement(
-      screen.getByRole("button", { name: /^All$/ }),
-    );
-    const free = within(price).getByRole("button", {
-      name: "No provider charge",
-    });
-    expect(free).toHaveAttribute("aria-pressed", "true");
-    expect(free).not.toHaveAttribute("data-slot", "button");
-    fireEvent.click(free);
-    expect(free).toHaveAttribute("aria-pressed", "false");
-    expect(
-      screen.queryByRole("button", { name: "Copy model name chat" }),
-    ).toBeNull();
-  });
-
-  it("names embeddings by what they do, never 'Embeddings' or 'embedding'", async () => {
+  it("shows a description once per task, not on rows that share it", async () => {
+    const custom = 'The alias resolves to upstream/backend-v1; see https://example.test/backend and copy "alias".';
+    expect(modelDescription(custom)).toBe(custom);
+    expect(modelDescription(null)).toBeNull();
     renderModels(
       catalog([
-        row({ id: "chat", capability: "chat", capability_title: "Chat" }),
-        row({
-          id: "embed",
-          title: "Embed",
-          display_name: "Embed",
-          capability: "embed",
-          capability_title: "Embeddings",
-          architecture: { input_modalities: ["text"], output_modalities: ["embedding"] },
-          capabilities: [{ ...row().capabilities[0], capability: "embed", label: "Embeddings" }],
-        }),
+        row({ id: "alpha", description: "Shared by two rows." }),
+        row({ id: "beta", description: "Shared by two rows." }),
+        row({ id: "gamma", description: "Speech synthesis when a backend is configured." }),
+        task("draw", "image", { description: "The only image name." }),
       ]),
     );
-    await screen.findByRole("button", { name: "Copy model name embed" });
-    expect(
-      screen.getByRole("heading", { name: "Turn text into numbers", level: 2 }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Turn text into numbers" })).toBeVisible();
-    const facts = screen.getAllByRole("list", { name: "Model facts" });
-    expect(facts.map((list) => list.textContent).join(" ")).toMatch(/text.*numbers/);
-    expect(document.body.textContent).not.toMatch(/Embeddings|\bembedding\b/i);
+    await screen.findByRole("button", { name: "alpha" });
+    expect(screen.queryByText("Shared by two rows.")).toBeNull();
+    // On one line of facts a sentence drops its full stop.
+    expect(rowHas("gamma", "Read text aloud when a speech engine or provider is connected")).toBe(true);
+    // A task's only name needs no description beside the task's own sentence.
+    expect(screen.queryByText("The only image name.")).toBeNull();
+    // Details still carries the description.
+    fireEvent.click(nameButton("alpha"));
+    expect(dialog().getByText("Shared by two rows.")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.change(search(), { target: { value: "speech engine or provider" } });
+    expect(nameButton("gamma")).toBeVisible();
+    fireEvent.click(nameButton("gamma"));
+    expect(dialog().getByText("Read text aloud when a speech engine or provider is connected.")).toBeVisible();
+    expect(dialog().queryByText(/backend/)).toBeNull();
   });
 
-  it("groups rows by the server classification, not by intent", async () => {
-    const classified = (id: string, capability: string, label: string) =>
-      row({
-        id,
-        capability,
-        capability_title: label,
-        // The row's capability comes from its /v1/models type. It decides
-        // even where the first serving capability is a chat endpoint.
-        capabilities: [{ ...row().capabilities[0], label }],
-      });
+  it("adds a model's own name or provider to the second line only when it adds something", async () => {
     renderModels(
       catalog([
-        classified("chat", "chat", "Chat"),
-        classified("fast", "chat", "Chat"),
-        classified("image", "image", "Images"),
-        classified("decide", "decide", "Decisions"),
-        classified("tts", "speech", "Speech"),
-      ]),
-    );
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    const chatGroup = screen
-      .getByRole("heading", { name: "Chat", level: 2 })
-      .closest("tbody")!;
-    expect(
-      within(chatGroup).getByRole("button", { name: "1 more Chat models" }),
-    ).toBeInTheDocument();
-    expect(within(chatGroup).queryByText("image", { exact: true })).toBeNull();
-    // Decisions read as the task they do, the name Try uses.
-    for (const label of ["Make a picture", "Choose an option", "Read text aloud"]) {
-      expect(
-        screen.getByRole("heading", { name: label, level: 2 }),
-      ).toBeVisible();
-    }
-    fireEvent.click(screen.getByRole("button", { name: "Images" }));
-    expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Copy model name chat" }),
-    ).toBeNull();
-  });
-
-  it("shows input and output modalities and capability tags on each row", async () => {
-    renderModels(
-      catalog(
-        [
-          row({
-            type: "language",
-            architecture: {
-              input_modalities: ["text", "image"],
-              output_modalities: ["text"],
-            },
-            tags: ["tool-use", "reasoning", "vision"],
-          }),
-        ],
-        [
-          row({
-            id: "plain-chat",
-            alias: false,
-            object: "model_catalog.model",
-            type: "language",
-            architecture: {
-              input_modalities: ["text"],
-              output_modalities: ["text"],
-            },
-          }),
-        ],
-      ),
-    );
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    const facts = within(
-      within(copy.closest("tr")!).getByRole("list", {
-        name: "Model facts",
-      }),
-    );
-    expect(facts.getByText("Reasoning")).toBeVisible();
-    expect(facts.getByText("Tool use")).toBeVisible();
-    expect(facts.getByText("Vision")).toBeVisible();
-    expect(facts.getAllByRole("listitem")[0]).toHaveTextContent(
-      "text, image→totext",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    const tableRow = screen
-      .getByRole("button", { name: "Copy model name plain-chat" })
-      .closest("tr")!;
-    const tableFacts = within(tableRow).getByRole("list", {
-      name: "Model facts",
-    });
-    expect(within(tableFacts).getAllByRole("listitem")).toHaveLength(1);
-    expect(tableFacts).toHaveTextContent("text→totext");
-  });
-
-  it("shows no facts for a row /v1/models does not type", async () => {
-    renderModels(catalog([row()]));
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    expect(
-      within(copy.closest("tr")!).queryByRole("list", {
-        name: "Model facts",
-      }),
-    ).toBeNull();
-  });
-
-  it("keeps ready status quiet and puts description in Details", async () => {
-    renderModels(catalog([row()]));
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    const card = within(copy.closest("tr")!);
-
-    expect(copy).toBeVisible();
-    fireEvent.click(card.getByRole("button", { name: "Details" }));
-    expect(productApi.models).toHaveBeenCalledOnce();
-    expect(
-      within(screen.getByRole("dialog")).getByText(
-        "Chat through your configured model.",
-      ),
-    ).toBeVisible();
-    expect(card.queryByText("Ready")).toBeNull();
-    expect(card.queryByText("Recent request succeeded.")).toBeNull();
-    expect(card.queryByText("Allowed by your access")).toBeNull();
-    expect(card.queryByText("Observed:")).toBeNull();
-    expect(card.queryByText("Not measured yet")).toBeNull();
-    expect(card.queryByRole("button", { name: "Use" })).toBeNull();
-    expect(copy).toBeVisible();
-  });
-
-  it("uses authored row descriptions before alias fallback", async () => {
-    renderModels(
-      catalog([
+        row({ id: "default", description: "D1." }),
+        // Repeats the id once punctuation is ignored.
+        row({ id: "coder-q5", title: "Coder Q5", description: "D2." }),
+        row({ id: "words", title: "Conversation", capability_title: "Conversation", description: "D3." }),
+        row({ id: "opaque-4", title: "Lantern", description: "D4.", tags: ["tool-use", "reasoning", "vision"] }),
+        row({ id: "recommended-only", recommended_model: "Qwen 3", description: "D5." }),
         row({
-          id: "fast",
-          description: "Use this when you want short replies.",
-        }),
-      ]),
-    );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name fast",
-    });
-    const card = within(copy.closest("tr")!);
-
-    fireEvent.click(card.getByRole("button", { name: "Details" }));
-    expect(
-      within(screen.getByRole("dialog")).getByText(
-        "Use this when you want short replies.",
-      ),
-    ).toBeVisible();
-    expect(
-      card.queryByText("Fast chat alias for lower-latency replies."),
-    ).toBeNull();
-  });
-
-  it("renders the description from the presentation contract", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "chat",
-          description: "Thinks through questions before answering.",
-        }),
-      ]),
-    );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    const card = within(copy.closest("tr")!);
-
-    fireEvent.click(card.getByRole("button", { name: "Details" }));
-    expect(
-      within(screen.getByRole("dialog")).getByText(
-        "Thinks through questions before answering.",
-      ),
-    ).toBeVisible();
-  });
-
-  it("uses authored row descriptions even when they contain backend words", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "fast",
-          description: "Local server tuned for short replies.",
-        }),
-      ]),
-    );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name fast",
-    });
-    const card = within(copy.closest("tr")!);
-
-    fireEvent.click(card.getByRole("button", { name: "Details" }));
-    expect(
-      within(screen.getByRole("dialog")).getByText(
-        "Local server tuned for short replies.",
-      ),
-    ).toBeVisible();
-    expect(
-      card.queryByText("Fast chat alias for lower-latency replies."),
-    ).toBeNull();
-  });
-
-  it("keeps technical descriptions out of member cards and details", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "fast",
-          title: "Fast",
-          description: "Answers quickly for everyday prompts.",
-          technical_description: "Served via local llama.cpp on :5051.",
-        }),
-      ]),
-    );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name fast",
-    });
-    const card = within(copy.closest("tr")!);
-    expect(
-      card.queryByText("Answers quickly for everyday prompts."),
-    ).toBeNull();
-    expect(
-      card.queryByText("Served via local llama.cpp on :5051."),
-    ).not.toBeInTheDocument();
-    fireEvent.click(card.getByRole("button", { name: "Details" }));
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.queryByText("Technical description")).toBeNull();
-    expect(
-      dialog.queryByText("Served via local llama.cpp on :5051."),
-    ).toBeNull();
-  });
-
-  it("renders the human engine label independently of profile description", async () => {
-    renderModels(
-      catalog([
-        row({
-          title: "Default",
-          description: "Thinks through questions before answering.",
-          engine_label: "llama.cpp (chat)",
-        }),
-      ]),
-    );
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    const card = within(copy.closest("tr")!);
-    expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
-    expect(card.queryByText("llama.cpp (chat)")).toBeNull();
-    fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("llama.cpp (chat)")).toBeVisible();
-    expect(card.queryByText(/rollback|official/i)).toBeNull();
-  });
-
-  it("keeps provider provenance for remote summaries", async () => {
-    renderModels(
-      catalog([
-        row({
+          id: "remote-one",
+          title: "Firefly",
           locality: "remote",
           provider: "provider-internal-id",
-          engine_label: "OpenRouter",
+          engine_label: "provider-a",
+          description: "D6.",
         }),
+        task("tts", "speech", { title: "Speech", description: "D7." }),
+        task("tts-two", "speech", { title: "Supertonic", description: "D8." }),
       ]),
     );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    const card = within(copy.closest("tr")!);
-
-    expect(card.queryByText("OpenRouter")).toBeNull();
-    fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("OpenRouter")).toBeVisible();
+    await screen.findByRole("button", { name: "default" });
+    const second = (id: string) =>
+      rowOf(id).querySelector<HTMLElement>("p[title]")?.title;
+    expect(second("default")).toBe("D1");
+    expect(second("coder-q5")).toBe("D2");
+    expect(second("words")).toBe("D3");
+    // The chat tags end the line, in words.
+    expect(second("opaque-4")).toBe("Lantern · D4 · Uses tools, Thinks through questions, Understands images");
+    expect(second("recommended-only")).toBe("Qwen 3 · D5");
+    // A remote row names its provider (the label, not the internal id).
+    expect(second("remote-one")).toBe("Firefly · via provider-a · D6");
+    expect(second("tts")).toBe("D7");
+    expect(second("tts-two")).toBe("Supertonic · D8");
+    // A local row never shows its engine or service id.
+    expect(rowOf("default")).not.toHaveTextContent(/Household chat|via /);
+    expect(document.body.textContent).not.toContain("provider-internal-id");
   });
 
-  it("groups explicit music and speech capabilities separately with server labels", async () => {
+  it("folds a phone row's facts into one line", async () => {
     renderModels(
       catalog([
+        row({ id: "home" }),
         row({
-          id: "music",
-          display_name: "ACE-Step music",
-          name: "ace-step-xl",
-          description: "Generate music from a prompt.",
-          engine_label: "Music (ACE-Step XL Turbo)",
-          capabilities: [
-            {
-              capability: "music",
-              intent: "audio.generate",
-              label: "Music",
-              input_modalities: ["text"],
-              output_modalities: ["audio"],
-              streaming: false,
-              available: true,
-            } as CatalogRow["capabilities"][number],
-          ],
-        }),
-        row({
-          id: "speech",
-          display_name: "Chatterbox speech",
-          name: "chatterbox",
-          description: "Read text aloud.",
-          engine_label: "Chatterbox (speech)",
-          capabilities: [
-            {
-              capability: "speech",
-              intent: "speech.synthesis",
-              label: "Speech",
-              input_modalities: ["text"],
-              output_modalities: ["audio"],
-              streaming: false,
-              available: true,
-            } as CatalogRow["capabilities"][number],
-          ],
-        }),
-      ]),
-    );
-
-    expect(await screen.findByRole("heading", { name: "Make music" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Read text aloud" })).toBeVisible();
-    expect(screen.queryByText("Music (ACE-Step XL Turbo)")).toBeNull();
-    expect(screen.queryByText("Chatterbox (speech)")).toBeNull();
-  });
-
-  it("uses the server audio taxonomy instead of the operation intent", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "legacy-audio",
-          icon_key: "sfx",
-          capability_title: "Audio",
-          display_name: "Legacy audio",
-          name: "legacy-audio",
-          capabilities: [
-            {
-              intent: "audio.generate",
-              capability: "audio",
-              label: "Audio",
-              input_modalities: ["text"],
-              output_modalities: ["audio"],
-              streaming: false,
-              available: true,
-            },
-          ],
-        }),
-      ]),
-    );
-
-    expect(await screen.findByRole("heading", { name: "Make music or sounds" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Speech" })).toBeNull();
-  });
-
-  it("renders the server rerank capability label", async () => {
-    renderModels(
-      catalog(
-        [],
-        [
-          row({
-            id: "rerank-model",
-            alias: false,
-            object: "model_catalog.model",
-            display_name: "Reranker",
-            name: "reranker",
-            capabilities: [
-              {
-                capability: "rerank",
-                intent: "text.rerank",
-                label: "Rerank",
-                input_modalities: ["text"],
-                output_modalities: ["text"],
-                streaming: false,
-                available: true,
-              } as CatalogRow["capabilities"][number],
-            ],
-          }),
-        ],
-      ),
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-    const table = within(screen.getByRole("table", { name: "All models" }));
-
-    expect(table.getByText("Rerank")).toBeVisible();
-  });
-
-  it("shows local no-provider-charge cost even when backend cost is unknown", async () => {
-    renderModels(
-      catalog([
-        row({
-          cost: { kind: "unknown", price: null },
-          locality: "local",
-        }),
-      ]),
-    );
-
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.getByText("Local · no provider charge")).toBeVisible();
-    expect(screen.queryByText("Price not provided")).toBeNull();
-  });
-
-  it("filters local unknown-cost rows with the no-provider-charge toggle", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "local-unknown-cost",
-          cost: { kind: "unknown", price: null },
-          locality: "local",
-        }),
-      ]),
-    );
-
-    expect(
-      await screen.findByRole("button", {
-        name: "Copy model name local-unknown-cost",
-      }),
-    ).toBeVisible();
-
-    fireEvent.click(screen.getByRole("button", { name: "No provider charge" }));
-
-    expect(
-      screen.queryByRole("button", {
-        name: "Copy model name local-unknown-cost",
-      }),
-    ).toBeNull();
-    expect(screen.getByText("No models match these filters")).toBeVisible();
-  });
-
-  it("keeps local unknown-cost rows outside the remote unknown category", async () => {
-    renderModels(catalog([
-      row({
-        id: "local-unknown",
-        locality: "local",
-        cost: { kind: "unknown", price: null },
-      }),
-      row({
-        id: "remote-unknown",
-        locality: "remote",
-        cost: { kind: "unknown", price: null },
-      }),
-    ]));
-    const localCopy = await screen.findByRole("button", {
-      name: "Copy model name local-unknown",
-    });
-    expect(within(localCopy.closest("tr")!).queryByText("Cost not recorded")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cost not recorded" }));
-    expect(localCopy).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Copy model name remote-unknown" })).toBeNull();
-  });
-
-  it(
-    "labels unknown remote costs in primary rows, alternatives, details, and tables",
-    async () => {
-      const unknown = row({
-        locality: "remote",
-        cost: { kind: "unknown", price: null },
-      });
-      renderModels(catalog(
-        [unknown, { ...unknown, id: "unknown-alternative" }],
-        [{
-          ...unknown,
-          id: "unknown-exact",
-          alias: false,
-          object: "model_catalog.model",
-        }],
-      ));
-      const copy = await screen.findByRole("button", {
-        name: "Copy model name chat",
-      });
-      const card = within(copy.closest("tr")!);
-      expect(card.getByText("Cost not recorded")).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-      const alternative = screen.getByRole("button", {
-        name: "Copy model name unknown-alternative",
-      }).closest("tr")!;
-      expect(within(alternative).getByText("Cost not recorded")).toBeVisible();
-      fireEvent.click(card.getByRole("button", { name: "Details" }));
-      expect(within(screen.getByRole("dialog")).getByText("Cost not recorded")).toBeVisible();
-      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Close",
-      }));
-      fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      const tableRow = screen.getByRole("button", {
-        name: "Copy model name unknown-exact",
-      }).closest("tr")!;
-      expect(within(tableRow).getByText("Cost not recorded")).toBeVisible();
-    },
-  );
-
-  it(
-    "filters unknown remote costs independently and restores them with Clear filters",
-    async () => {
-      const unknown = row({
-        id: "unknown-cost",
-        locality: "remote",
-        cost: { kind: "unknown", price: null },
-      });
-      renderModels(catalog(
-        [
-          unknown,
-          row({ id: "free", locality: "remote" }),
-          row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
-        ],
-        [{
-          ...unknown,
-          id: "unknown-exact",
-          alias: false,
-          object: "model_catalog.model",
-        }],
-      ));
-      await screen.findByRole("button", { name: "Copy model name unknown-cost" });
-      fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      const priceFilters = within(screen.getByRole("group", {
-        name: "Price filters (choose any)",
-      }));
-      const unknownFilter = priceFilters.getByRole("button", {
-        name: "Cost not recorded",
-      });
-      expect(unknownFilter).toHaveAttribute("aria-pressed", "true");
-      fireEvent.click(priceFilters.getByRole("button", { name: "No provider charge" }));
-      fireEvent.click(priceFilters.getByRole("button", { name: "Paid" }));
-      for (const id of ["unknown-cost", "unknown-exact"]) {
-        expect(screen.getByRole("button", { name: `Copy model name ${id}` })).toBeVisible();
-      }
-      fireEvent.click(unknownFilter);
-      expect(unknownFilter).toHaveAttribute("aria-pressed", "false");
-      for (const id of ["unknown-cost", "unknown-exact"]) {
-        expect(screen.queryByRole("button", { name: `Copy model name ${id}` })).toBeNull();
-      }
-      expect(screen.getByText("No models match these filters")).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-      expect(unknownFilter).toHaveAttribute("aria-pressed", "true");
-      fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
-      for (const id of ["unknown-cost", "unknown-exact", "free", "paid"]) {
-        expect(screen.getByRole("button", { name: `Copy model name ${id}` })).toBeVisible();
-      }
-    },
-  );
-
-  it("keeps local rows when paid filter is off even if backend cost is inconsistent", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "local-paid-cost",
-          cost: { kind: "paid", price: "$9" },
-          locality: "local",
-        }),
-      ]),
-    );
-
-    expect(
-      await screen.findByRole("button", {
-        name: "Copy model name local-paid-cost",
-      }),
-    ).toBeVisible();
-
-    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
-
-    expect(
-      screen.getByRole("button", { name: "Copy model name local-paid-cost" }),
-    ).toBeVisible();
-    expect(screen.queryByText("Local · no provider charge")).toBeNull();
-  });
-
-  it("uses the friendly alias title from the server", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "coder",
-          title: "Coder",
-          display_name: "Chat",
-          name: "coder",
-          description: "Chat model visible to your access plan.",
-        }),
-      ]),
-    );
-
-    expect(await screen.findByText("Coder")).toBeVisible();
-  });
-
-  it("merges primary and secondary profiles into one Chat alternative list", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "default",
-          title: "Default",
-          description: "Reasoning profile for considered answers.",
-        }),
-        row({
-          id: "fast",
-          title: "Fast",
-          description: "Direct answers with thinking disabled.",
-        }),
-        row({
-          id: "coder",
-          title: "Coder",
-          description: "Coding profile for technical work.",
-        }),
-        row({
-          id: "coder-q5",
-          title: "Coder Q5",
-          secondary_profile: true,
-          description: "Coding profile with Q5 weights.",
-        }),
-        row({
-          id: "rp",
-          title: "Roleplay",
-          secondary_profile: true,
-          description: "Chat profile for roleplay.",
-        }),
-      ]),
-    );
-    expect(
-      await screen.findByRole("heading", { name: "Default" }),
-    ).toBeVisible();
-    const more = screen.getByRole("button", { name: "4 more Chat models" });
-    expect(more).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("heading", { name: "Coder Q5" })).toBeNull();
-    fireEvent.click(more);
-    expect(screen.getByText("fast")).toBeVisible();
-    expect(screen.getByText("coder")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Coder Q5" })).toBeVisible();
-    expect(screen.getByText("Coding profile with Q5 weights.")).toBeVisible();
-    expect(screen.getByText("Chat profile for roleplay.")).toBeVisible();
-    expect(
-      screen.queryByText("Chat model visible to your access plan."),
-    ).toBeNull();
-  });
-
-  it("shows direct secondary profiles once in Chat without repeating them in All models", async () => {
-    renderModels(
-      catalog(
-        [],
-        [
-          row({
-            id: "coder-q8",
-            alias: false,
-            object: "model_catalog.model",
-            title: "Coder Q8",
-            secondary_profile: true,
-            description: "Coding profile with Q8 weights.",
-          }),
-        ],
-      ),
-    );
-    await screen.findByRole("button", { name: "Copy model name coder-q8" });
-    expect(
-      screen.getByRole("heading", { name: "Chat", level: 2 }),
-    ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
-    // Its only model is already shown above, so All models has nothing to add.
-    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Copy model name coder-q8" })).toHaveLength(1);
-    expect(screen.queryByText("No models match these filters.")).toBeNull();
-    fireEvent.click(
-      within(screen.getByRole("table", { name: "Available model names" })).getByRole("button", {
-        name: "Details",
-      }),
-    );
-    expect(
-      within(screen.getByRole("dialog")).getByRole("heading", {
-        name: "Coder Q8",
-      }),
-    ).toBeVisible();
-  });
-
-  it("finds collapsed profiles and alternative use names through search", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "coder-q8",
-          title: "Coder Q8",
-          secondary_profile: true,
-          description: "Coding profile with Q8 weights.",
-          use_names: ["coder-q8", "coding-heavy"],
-        }),
-      ]),
-    );
-    await screen.findByRole("button", { name: "Copy model name coder-q8" });
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: "coding-heavy" },
-    });
-    expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
-    expect(screen.queryByText("No models match these filters")).toBeNull();
-  });
-
-  it("uses music and sound-effect icons from server metadata and lists usable names in details", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "music",
-          title: "Music",
-          icon_key: "music",
-          capability_title: "Music",
-          use_names: ["music", "song", "ace-step"],
-          capabilities: [
-            {
-              capability: "music",
-              intent: "audio.generate",
-              label: "Music",
-              input_modalities: ["text"],
-              output_modalities: ["audio"],
-              streaming: false,
-              available: true,
-            },
-          ],
-        }),
-        row({
-          id: "sfx",
-          title: "Sound effects",
-          icon_key: "sfx",
-          capability_title: "Sound effects",
-          capabilities: [
-            {
-              capability: "sfx",
-              intent: "audio.generate",
-              label: "Sound effects",
-              input_modalities: ["text"],
-              output_modalities: ["audio"],
-              streaming: false,
-              available: true,
-            },
-          ],
-        }),
-      ]),
-    );
-    const music = within(
-      (
-        await screen.findByRole("button", { name: "Copy model name music" })
-      ).closest("tr")!,
-    );
-    const sfx = within(
-      screen
-        .getByRole("button", { name: "Copy model name sfx" })
-        .closest("tr")!,
-    );
-    expect(
-      music
-        .getByRole("img", { name: "Music" })
-        .querySelector(".lucide-music-2"),
-    ).not.toBeNull();
-    expect(
-      sfx
-        .getByRole("img", { name: "Sound effects" })
-        .querySelector(".lucide-waves"),
-    ).not.toBeNull();
-    fireEvent.click(music.getByRole("button", { name: "Details" }));
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText("Names you can use")).toBeVisible();
-    expect(dialog.getByText("song")).toBeVisible();
-    expect(dialog.getByText("ace-step")).toBeVisible();
-  });
-
-  it("treats only explicit configured false as catalog-only and gives owners an engine action", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "catalog-chat",
-          display_name: "Catalog chat",
-          name: "Catalog chat",
-          availability: {
-            available: false,
-            status: "unavailable",
-            reason: "The service is not configured.",
-            measured: true,
-            enabled: true,
-            configured: false,
-            up: false,
-            idle_startable: false,
-            evidence: { source: "registry", kind: "unconfigured" },
-          },
-        }),
-      ]),
-      owner,
-    );
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name catalog-chat",
-    });
-    expect(
-      screen.queryByRole("link", { name: "Connect an engine" }),
-    ).toBeNull();
-    expect(screen.getByText("Unavailable")).toBeVisible();
-    expect(screen.queryByText("The service is not configured.")).toBeNull();
-    expect(screen.queryByText("Catalog only")).toBeNull();
-    fireEvent.click(
-      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
-    );
-    const action = screen.getByRole("link", { name: "Connect an engine" });
-    expect(action).toHaveAttribute("href", "/ui/engines/");
-    expect(
-      within(screen.getByRole("dialog")).getByText("Catalog only"),
-    ).toBeVisible();
-  });
-
-  it("keeps copying available for busy rows and sends remote catalog-only owners to providers from Details", async () => {
-    renderModels(
-      catalog([
-        row({
-          id: "busy-image",
-          display_name: "Busy image",
-          name: "Busy image",
-          capabilities: [
-            {
-              capability: "image",
-              intent: "image.generate",
-              label: "Images",
-              input_modalities: ["text"],
-              output_modalities: ["image"],
-              streaming: false,
-              available: false,
-            },
-          ],
-          availability: {
-            available: false,
-            status: "busy",
-            reason: "A request is running.",
-            measured: true,
-            enabled: true,
-            configured: true,
-            up: true,
-            idle_startable: false,
-            evidence: { source: "health", observed_at_s: 1700000000 },
-          },
-        }),
-        row({
-          id: "remote-catalog",
-          display_name: "Remote catalog",
-          name: "Remote catalog",
+          id: "paid-busy",
           locality: "remote",
-          provider: "Example provider",
           engine_label: "Example provider",
-          availability: {
-            available: false,
-            status: "unavailable",
-            reason: "The provider is not configured.",
-            measured: true,
-            enabled: true,
-            configured: false,
-            up: false,
-            idle_startable: false,
-            evidence: { source: "registry", kind: "unconfigured" },
-          },
+          cost: { kind: "paid", price: "$1 per request" },
+          availability: { ...row().availability, status: "busy" },
         }),
       ]),
-      owner,
     );
-
-    const busyCopy = await screen.findByRole("button", {
-      name: "Copy model name busy-image",
-    });
-    const busyCard = within(busyCopy.closest("tr")!);
-    expect(
-      busyCard.getByRole("button", { name: "Copy model name busy-image" }),
-    ).toBeVisible();
-    expect(busyCard.queryByRole("link", { name: "Check status" })).toBeNull();
-
-    expect(
-      screen.queryByRole("link", { name: "Connect a provider" }),
-    ).toBeNull();
-    const remoteCopy = screen.getByRole("button", {
-      name: "Copy model name remote-catalog",
-    });
-    fireEvent.click(
-      within(remoteCopy.closest("tr")!).getByRole("button", {
-        name: "Details",
-      }),
-    );
-    const providerAction = screen.getByRole("link", {
-      name: "Connect a provider",
-    });
-    expect(providerAction).toHaveAttribute("href", "/ui/providers/");
-  });
-
-  it("keeps omitted configuration fields as not reported and gives members a status action", async () => {
-    const availability = {
-      available: false,
-      status: "unknown" as const,
-      reason: "Not measured yet.",
-      measured: false,
-      evidence: {},
-    };
-    renderModels(catalog([row({ availability })]), member);
-
-    const copy = await screen.findByRole("button", {
-      name: "Copy model name chat",
-    });
-    expect(screen.getByRole("link", { name: "Check status" })).toBeVisible();
-    expect(screen.queryByText("Unknown")).toBeNull();
-    expect(screen.queryByText("Configuration not reported")).toBeNull();
-    expect(screen.queryByText("Observation time not reported")).toBeNull();
-    expect(screen.queryByText("Catalog only")).toBeNull();
-    fireEvent.click(
-      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
-    );
-    expect(within(screen.getByRole("dialog")).getByRole("link", { name: "Check status" })).toHaveAttribute(
-      "href",
-      "/ui/status/",
-    );
-  });
-
-  it("shows distinctions and one role action for unavailable direct model rows", async () => {
-    renderModels(
-      catalog(
-        [],
-        [
-          row({
-            id: "remote-model",
-            object: "model_catalog.model",
-            display_name: "Remote model",
-            name: "Remote model",
-            alias: false,
-            locality: "remote",
-            provider: "Example provider",
-            engine_label: "Example provider",
-            cost: { kind: "paid", price: "$0.10 per 1M tokens" },
-            availability: {
-              available: false,
-              status: "unavailable",
-              reason: "The provider is disabled.",
-              measured: true,
-              enabled: false,
-              configured: true,
-              up: false,
-              idle_startable: false,
-              evidence: { source: "registry", observed_at_s: 1700000000 },
-            },
-          }),
-        ],
-      ),
-      owner,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-    const table = within(screen.getByRole("table", { name: "All models" }));
-
-    expect(table.getByText("Unavailable")).toBeVisible();
-    expect(table.queryByText("From configuration")).toBeNull();
-    expect(table.queryByText("Disabled")).toBeNull();
-    expect(table.queryByText("Observed:")).toBeNull();
-    expect(table.queryByRole("link", { name: "Review provider" })).toBeNull();
-    expect(
-      table.getByRole("button", { name: "Copy model name remote-model" }),
-    ).toBeVisible();
-    fireEvent.click(table.getByRole("button", { name: "Details" }));
-    expect(
-      screen.getByRole("link", { name: "Review provider" }),
-    ).toHaveAttribute("href", "/ui/providers/");
+    await screen.findByRole("button", { name: "home" });
+    const phone = (id: string) =>
+      rowOf(id).querySelector<HTMLElement>(".sm\\:hidden")?.textContent;
+    expect(phone("paid-busy")).toBe("Busy · via Example provider · $1 per request");
+    // The usual local price and a ready state are left out of a phone line,
+    // which falls back to the price when nothing else is left to say.
+    expect(phone("home")).toBe("Local · no provider charge");
   });
 });
 
-describe("model cost and clipboard recovery", () => {
-  it.each([
-    { price: null, label: "Paid · price unavailable" },
-    { price: 0, label: "Paid · 0" },
-  ])(
-    "preserves paid classification for price $price across cards, details, and tables",
-    async ({ price, label }) => {
-      renderModels(
-        catalog(
-          [row({ locality: "remote", cost: { kind: "paid", price } })],
-          [
-            row({
-              id: "paid-exact",
-              alias: false,
-              object: "model_catalog.model",
-              locality: "remote",
-              cost: { kind: "paid", price },
-            }),
-          ],
-        ),
-      );
-      const copy = await screen.findByRole("button", {
-        name: "Copy model name chat",
-      });
-      const card = within(copy.closest("tr")!);
-      expect(card.getByText(label)).toBeVisible();
-      fireEvent.click(card.getByRole("button", { name: "Details" }));
-      expect(within(screen.getByRole("dialog")).getByText(label)).toBeVisible();
-      fireEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", {
-          name: "Close",
-        }),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      expect(within(screen.getByRole("table", { name: "All models" })).getByText(label)).toBeVisible();
-    },
-  );
+describe("price and status", () => {
+  const cases: [string, Partial<CatalogRow>, string][] = [
+    ["a local row with an unknown cost", { cost: { kind: "unknown", price: null } }, "Local · no provider charge"],
+    ["a local free row", {}, "Local · no provider charge"],
+    ["a remote free row", { locality: "remote" }, "No provider charge"],
+    ["a remote paid row", { locality: "remote", cost: { kind: "paid", price: "$0.04 per image" } }, "$0.04 per image"],
+    ["a remote paid row with no price", { locality: "remote", cost: { kind: "paid", price: null } }, "Paid · price not recorded"],
+    ["a remote row with an unknown cost", { locality: "remote", cost: { kind: "unknown", price: null } }, "Cost not recorded"],
+  ];
 
-  it("announces rejected clipboard access and exposes the full name for manual copy", async () => {
+  it.each(cases)("never leaves the price blank: %s", async (_name, overrides, label) => {
+    renderModels(catalog([row({ id: "priced", ...overrides })]));
+    await screen.findByRole("button", { name: "priced" });
+    expect(rowHas("priced", label)).toBe(true);
+    fireEvent.click(nameButton("priced"));
+    expect(fact("Price")).toBe(label);
+  });
+
+  it("filters by the Price select, offering only the price kinds the catalog has", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "home" }),
+        row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
+        row({ id: "mystery", locality: "remote", cost: { kind: "unknown", price: null } }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Any price (3)", "No provider charge (1)", "Paid (1)", "Cost not recorded (1)"]);
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "paid" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "home" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "mystery" })).toBeNull();
+    expect(screen.getByText(/^1 of 3 model names/)).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Cost not recorded \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "mystery" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "paid" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Any price \(\d+\)$/ }));
+    expect(screen.getAllByRole("listitem", { hidden: false }).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(/^3 model names/)).toBeVisible();
+  });
+
+  it("counts a local row as paid when its own cost says paid, and hides the Price select with one kind", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "local-paid", cost: { kind: "paid", price: "$9" } }),
+        row({ id: "home" }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "local-paid" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "home" })).toBeNull();
+    cleanup();
+    renderModels(catalog([row({ id: "one" }), row({ id: "two" })]));
+    await screen.findByRole("button", { name: "one" });
+    expect(screen.queryByRole("combobox", { name: "Price" })).toBeNull();
+  });
+
+  const states: [string, Partial<CatalogRow["availability"]>, string][] = [
+    ["ready", { status: "ready" }, "Ready"],
+    ["idle_startable", { status: "idle_startable" as never }, "Ready to start"],
+    ["idle", { status: "idle" }, "Ready to start"],
+    ["starting", { status: "starting", available: false }, "Starting"],
+    ["busy", { status: "busy", available: false }, "Busy"],
+    ["degraded", { status: "degraded" }, "Degraded"],
+    ["unavailable", { status: "unavailable", available: false }, "Unavailable"],
+    ["not checked", { status: "unknown", measured: false, available: false }, "Not checked yet"],
+    ["failed check", { status: "unknown", measured: true }, "Couldn't check"],
+  ];
+
+  it.each(states)("shows the quiet status for %s", async (_name, availability, label) => {
+    renderModels(catalog([row({ availability: { ...row().availability, ...availability } })]));
+    await screen.findByRole("button", { name: "chat" });
+    expect(rowHas("chat", label)).toBe(true);
+    // The reason sentence stays out of the row.
+    expect(screen.queryByText("Recent request succeeded.")).toBeNull();
+    expect(screen.queryByText("Unknown", { exact: true })).toBeNull();
+  });
+});
+
+describe("task filter", () => {
+  it("narrows the list to one task, offering only the tasks the catalog has", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([row({ id: "alpha" }), task("draw", "image"), task("vec", "embed")]),
+    );
+    await screen.findByRole("button", { name: "alpha" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "All tasks (3)",
+      "Chat (1)",
+      "Images (1)",
+      "Turn text into numbers (1)",
+    ]);
+    await user.click(screen.getByRole("option", { name: "Turn text into numbers (1)" }));
+    expect(screen.getByRole("button", { name: "vec" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(screen.getByText(/^1 of 3 model names/)).toBeVisible();
+    cleanup();
+    renderModels(catalog([row({ id: "one" }), row({ id: "two" })]));
+    await screen.findByRole("button", { name: "one" });
+    expect(screen.queryByRole("combobox", { name: "Task" })).toBeNull();
+  });
+});
+
+describe("search", () => {
+  it("finds a name by its id, title, description, use name, provider or target", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "default" }),
+        row({
+          id: "opaque-17",
+          title: "Lantern",
+          description: "Offers gentle explanations.",
+          use_names: ["opaque-17", "glow-name"],
+          locality: "remote",
+          engine_label: "Acme Cloud",
+          resolves_to: { chat: "hidden-target" },
+        }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "default" });
+    expect(search()).toHaveAttribute("placeholder", "Search models, tasks or providers");
+    for (const query of ["LANTERN", "gentle explanations", "glow-name", "acme cloud", "opaque-17", "hidden-target"]) {
+      await user.clear(search());
+      await user.type(search(), query);
+      expect(screen.getByRole("button", { name: "opaque-17" })).toBeVisible();
+      expect(screen.queryByRole("button", { name: "default" })).toBeNull();
+    }
+    expect(screen.getByText(/^1 of 2 model names/)).toBeVisible();
+  });
+
+  it("matches the task name and never a local row's engine label", async () => {
+    renderModels(catalog([row({ id: "alpha" }), task("draw", "image")]));
+    await screen.findByRole("button", { name: "alpha" });
+    fireEvent.change(search(), { target: { value: "images" } });
+    expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
+    fireEvent.change(search(), { target: { value: "household chat" } });
+    expect(screen.getByText("No models match")).toBeVisible();
+  });
+
+  it("explains an empty result and clears the search and the price", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "home" }),
+        row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    fireEvent.change(search(), { target: { value: "unmatched" } });
+    expect(screen.getByText("No models match")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Model names by task" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(search()).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price");
+    expect(screen.getByRole("button", { name: "home" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "paid" })).toBeVisible();
+  });
+});
+
+describe("copying", () => {
+  it("copies a model name, whatever its status", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const down = { ...row().availability, available: false, status: "unavailable" as const };
+    renderModels(
+      catalog([row({ id: "up" }), row({ id: "down", availability: down })], [exact("exact", { availability: down })]),
+    );
+    await screen.findByRole("button", { name: "up" });
+    for (const id of ["up", "down", "exact"]) {
+      fireEvent.click(copyButton(id));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(id));
+    }
+    expect(await screen.findByText("exact copied")).toBeInTheDocument();
+  });
+
+  it("announces a refused clipboard and exposes the full name to copy by hand", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
     const id = "provider/a-long-model-name-that-needs-manual-copy";
     renderModels(catalog([row({ id })]));
-    fireEvent.click(
-      await screen.findByRole("button", { name: `Copy model name ${id}` }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: `Copy model name ${id}` }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Copy failed. Select the model name and copy it manually.",
+      "Copy failed. Select the model name and copy it yourself.",
     );
-    expect(
-      screen.getByRole("textbox", { name: "Model name for manual copy" }),
-    ).toHaveValue(id);
+    expect(screen.getByRole("textbox", { name: "Model name for manual copy" })).toHaveValue(id);
     expect(writeText).toHaveBeenCalledWith(id);
+    const panel = screen.getByRole("alert").parentElement!;
+    expect(panel.parentElement).toBe(rowOf(id));
+    expect(panel).not.toHaveClass("absolute");
+    expect(panel).toHaveClass("w-full", "min-w-0");
+    expect(rowOf(id)).toHaveClass("flex-wrap");
+  });
+
+  it("shows the gateway address from discovery, or this origin, and copies it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row()]));
+    expect(await screen.findByText(GATEWAY)).toBeVisible();
+    expect(screen.getByText("Gateway address")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Copy gateway address" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(GATEWAY));
+    cleanup();
+    vi.mocked(accountApi.discovery).mockRejectedValue(new Error("offline"));
+    renderModels(catalog([row()]));
+    expect(await screen.findByText(`${window.location.origin}/openai/v1`)).toBeVisible();
   });
 });
 
-describe("models query-string deep links", () => {
-  let previousUrl: string;
+describe("Details mutation regressions", () => {
+  it("shows distinct Points to targets once without aliasing Same model as", async () => {
+    renderModels(catalog([row({ id: "route", resolves_to: { chat: "target-a", image: "target-a", audio: "target-b" }, same_model_as: ["sibling"] })], [exact("target-a"), exact("target-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "route" }));
+    expect(fact("Points to")).toBe("target-a, target-b");
+    expect(fact("Same model as")).toBe("sibling");
+  });
 
+  it("shows Same model as for an exact model without inventing Points to", async () => {
+    renderModels(catalog([], [exact("concrete", { resolves_to: { chat: "internal" }, same_model_as: ["nickname-a", "nickname-b"] })]));
+    fireEvent.click(await screen.findByRole("button", { name: "concrete" }));
+    expect(fact("Same model as")).toBe("nickname-a, nickname-b");
+    expect(fact("Points to")).toBeUndefined();
+  });
+
+  it("copies the selected name after closing Details, never its display title or target", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row({ id: "provider/name+v2", display_name: "Pretty title", resolves_to: { chat: "different-target" } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "provider/name+v2" }));
+    expect(dialog().getByRole("heading", { name: "provider/name+v2" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(copyButton("provider/name+v2"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith("provider/name+v2"));
+    expect(await screen.findByText("provider/name+v2 copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the local no-provider-charge price in Details for unrecorded costs", async () => {
+    renderModels(catalog([row({ id: "local-price", locality: "local", cost: { kind: "unknown", price: null } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "local-price" }));
+    expect(fact("Price")).toBe("Local · no provider charge");
+  });
+
+  it("keeps the paid numeric price in Details even on local equipment", async () => {
+    renderModels(catalog([row({ id: "paid-price", locality: "local", cost: { kind: "paid", price: 0.25 } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "paid-price" }));
+    expect(fact("Price")).toBe("Paid · 0.25");
+  });
+
+  it("opens a category-hidden model by deep link without changing the category", async () => {
+    const previousUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", "?capability=image&model=hidden-chat");
+      renderModels(catalog([row({ id: "hidden-chat", same_model_as: ["draw"] }), task("draw", "image")]));
+      expect(await screen.findByRole("heading", { name: "hidden-chat" })).toBeVisible();
+      expect(fact("Task")).toBe("Chat");
+      expect(fact("Same model as")).toBe("draw");
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+      expect(screen.queryByRole("button", { name: "hidden-chat" })).toBeNull();
+      expect(nameButton("draw")).toBeVisible();
+      expect(screen.getByText("1 of 2 model names.")).toBeVisible();
+    } finally {
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+});
+
+
+describe("Use it from an app", () => {
+  it("uses the current origin, public name and placeholder in every language without examples", () => {
+    const entry = row({
+      id: "provider/public-model",
+      name: "private-name",
+      display_name: "Pretty title",
+      resolves_to: { chat: "private-target" },
+      examples: [],
+    });
+    const snippets = appSnippetsFor(entry, "https://current.example:8443");
+    expect(snippets.map(({ language }) => language)).toEqual(["curl", "Python", "JavaScript"]);
+    for (const { code } of snippets) {
+      expect(code).toContain("https://current.example:8443/openai/v1");
+      expect(code).toContain("provider/public-model");
+      expect(code).toContain("YOUR_KEY");
+      expect(code).not.toMatch(/private-name|private-target|Pretty title|AZIZAM_API_KEY/);
+    }
+  });
+
+  it("never copies catalog-supplied example credentials into app configuration", () => {
+    const entry = row({
+      examples: [{ kind: "chat.completions", body: { model: "internal", api_key: "fixture-secret-not-a-key" } }],
+    });
+    for (const { code } of appSnippetsFor(entry, "https://current.example")) {
+      expect(code).not.toMatch(/fixture-secret|internal/);
+      expect(code).toContain("YOUR_KEY");
+    }
+  });
+
+  it("quotes model identifiers for shell, Python and JavaScript", () => {
+    const id = "vendor/model's \"quoted\"\\name";
+    const snippets = appSnippetsFor(row({ id }), "http://localhost:3000/");
+    expect(snippets[0].code).toContain(id.replaceAll("'", "'\"'\"'"));
+    expect(snippets[1].code).toContain(`model = ${JSON.stringify(id)}`);
+    expect(snippets[2].code).toContain(`const model = ${JSON.stringify(id)};`);
+    expect(snippets[0].code).not.toContain("//openai");
+  });
+
+  it("copies each selected tab using the browser origin rather than discovery", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const entry = row({ id: "app-model" });
+    renderModels(catalog([entry]));
+    await user.click(await screen.findByRole("button", { name: "app-model" }));
+    const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+    for (const snippet of appSnippetsFor(entry, window.location.origin)) {
+      await user.click(section.getByRole("tab", { name: snippet.language }));
+      await user.click(section.getByRole("button", { name: `Copy ${snippet.language} code` }));
+      expect(write).toHaveBeenLastCalledWith(snippet.code);
+      expect(snippet.code).not.toContain("gateway.example.test");
+    }
+  });
+
+  it("copies the configured Next base path with the browser origin in every language", async () => {
+    vi.stubEnv("__NEXT_ROUTER_BASEPATH", "/gateway/team");
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, "", "/gateway/team/models/?source=catalog");
+    try {
+      const user = userEvent.setup();
+      const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      renderModels(catalog([row({ id: "app-model" })]));
+      await user.click(await screen.findByRole("button", { name: "app-model" }));
+      const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+      for (const language of ["curl", "Python", "JavaScript"]) {
+        await user.click(section.getByRole("tab", { name: language }));
+        await user.click(section.getByRole("button", { name: `Copy ${language} code` }));
+        const copied = write.mock.lastCall?.[0];
+        expect(copied).toContain(`${window.location.origin}/gateway/team/openai/v1`);
+        expect(copied).toContain("app-model");
+        expect(copied).toContain("YOUR_KEY");
+        expect(copied).not.toMatch(/gateway\.example\.test|\/models\/|source=catalog/);
+      }
+    } finally {
+      cleanup();
+      vi.unstubAllEnvs();
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+
+  it("copies the new public name after closing and opening another model", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderModels(catalog([row({ id: "first-model" }), row({ id: "second-model" })]));
+    await user.click(await screen.findByRole("button", { name: "first-model" }));
+    await user.click(dialog().getByRole("tab", { name: "Python" }));
+    await user.keyboard("{Escape}");
+    await user.click(nameButton("second-model"));
+    await user.click(dialog().getByRole("button", { name: "Copy curl code" }));
+    expect(write).toHaveBeenLastCalledWith(appSnippetsFor(row({ id: "second-model" }), window.location.origin)[0].code);
+    expect(write.mock.lastCall?.[0]).not.toContain("first-model");
+  });
+});
+describe("Details", () => {
+  it("lists the facts a person needs, and omits the ones the catalog does not report", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "rich",
+          title: "Lantern",
+          description: "Offers gentle explanations.",
+          use_names: ["rich", "also-rich"],
+          same_model_as: ["also-rich"],
+          locality: "remote",
+          engine_label: "Acme Cloud",
+          cost: { kind: "paid", price: "$2 per 1M tokens" },
+          timing: { typical_seconds: 0.151, source: "receipts" },
+          tags: ["tool-use", "vision"],
+          io: { input: ["text", "image"], output: ["text"] },
+          examples: [{ kind: "chat.completions", body: { model: "rich", messages: [] } }],
+          recent_receipts: [{ request_id: "req 1", status: "succeeded", latency_ms: 820 }],
+        }),
+        row({ id: "bare", io: { input: [], output: [] } }),
+      ]),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "rich" }));
+    expect(dialog().getByRole("heading", { name: "rich" })).toBeVisible();
+    expect(dialog().getByText("Lantern. Offers gentle explanations.")).toBeVisible();
+    expect(fact("Task")).toBe("Chat");
+    expect(fact("Same model as")).toBe("also-rich");
+    expect(fact("Runs on")).toBe("Acme Cloud");
+    expect(fact("Price")).toBe("$2 per 1M tokens");
+    expect(fact("Time per request")).toBe("About 151 ms, measured");
+    expect(fact("Can also")).toBe("Uses tools, Understands images");
+    expect(fact("What you send and receive")).toBe("text, image to text");
+    expect(dialog().getByText("Example for app setup")).toBeVisible();
+    expect(dialog().getByText(/curl 'http/)).toBeInTheDocument();
+    expect(dialog().getByText("Recent activity")).toBeVisible();
+    expect(dialog().getByRole("link", { name: "View request details" })).toHaveAttribute(
+      "href",
+      "/usage/?receipt=req%201",
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(nameButton("bare"));
+    expect(fact("Runs on")).toBe("On your equipment");
+    for (const label of ["Points to", "Same model as", "Time per request", "Can also", "What you send and receive"]) {
+      expect(fact(label)).toBeUndefined();
+    }
+    expect(dialog().getByText("No recent requests were reported. Use this model in an app, then check Usage for results.")).toBeVisible();
+  });
+
+  it("says what a name points at and which other names reach the same model", async () => {
+    renderModels(
+      catalog(
+        [
+          row({ id: "decide", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decider-2b", "jev-latest"] }),
+          row({ id: "jev-latest", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decide", "decider-2b"] }),
+        ],
+        [exact("decider-2b", { same_model_as: ["decide", "jev-latest"] })],
+      ),
+    );
+    // Every name is its own row, the alias and the model it points at alike.
+    await screen.findByRole("button", { name: "decide" });
+    for (const id of ["decide", "jev-latest", "decider-2b"]) expect(nameButton(id)).toBeVisible();
+    fireEvent.click(nameButton("jev-latest"));
+    expect(fact("Points to")).toBe("decider-2b");
+    expect(fact("Same model as")).toBe("decide, decider-2b");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(nameButton("decider-2b"));
+    expect(fact("Points to")).toBeUndefined(); // an exact model points at nothing
+    expect(fact("Same model as")).toBe("decide, jev-latest");
+  });
+
+  it("lists each visible Points to target once and omits hidden targets", async () => {
+    renderModels(catalog([
+      row({
+        id: "multi-name",
+        resolves_to: { chat: "visible-a", completion: "visible-a", image: "visible-b", private: "hidden-target" },
+        same_model_as: ["visible-a", "visible-b"],
+      }),
+    ], [exact("visible-a"), exact("visible-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "multi-name" }));
+    expect(fact("Points to")).toBe("visible-a, visible-b");
+    expect(fact("Same model as")).toBe("visible-a, visible-b");
+    expect(dialog().queryByText(/hidden-target/)).toBeNull();
+  });
+
+  it("keeps catalog relationships when search hides the related rows", async () => {
+    renderModels(catalog([
+      row({ id: "nickname", resolves_to: { chat: "exact-name" }, same_model_as: ["other-name", "exact-name"] }),
+      row({ id: "other-name", resolves_to: { chat: "exact-name" } }),
+    ], [exact("exact-name")]));
+    await screen.findByRole("button", { name: "nickname" });
+    fireEvent.change(search(), { target: { value: "nickname" } });
+    expect(screen.queryByRole("button", { name: "exact-name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "other-name" })).toBeNull();
+    fireEvent.click(nameButton("nickname"));
+    expect(fact("Points to")).toBe("exact-name");
+    expect(fact("Same model as")).toBe("other-name, exact-name");
+  });
+
+  it("shows a member only targets that are names they can use; the owner sees them all", async () => {
+    const hidden = row({ id: "fast", resolves_to: { chat: "internal-slot" } });
+    renderModels(catalog([hidden]), member);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBeUndefined();
+    cleanup();
+    renderModels(catalog([hidden]), owner);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBe("internal-slot");
+  });
+
+  it.each([
+    [{ typical_seconds: 8, source: "configured" }, "About 8.0 s, typical"],
+    [{ typical_seconds: 12, source: null }, "About 12 s"],
+    [{ typical_seconds: -1, source: "receipts" }, undefined],
+    [{ typical_seconds: null, source: null }, undefined],
+  ] as const)("reports time per request for %j", async (timing, expected) => {
+    renderModels(catalog([row({ timing })]));
+    fireEvent.click(await screen.findByRole("button", { name: "chat" }));
+    expect(fact("Time per request")).toBe(expected);
+    expect(screen.queryByText(/Not measured yet|-1000 ms/)).toBeNull();
+  });
+
+  it.each([member, owner])("keeps technical details for the owner only ($role)", async (viewer) => {
+    renderModels(
+      catalog([
+        row({
+          provider: "svc-internal-id",
+          resolves_to: { "chat.completions": "private-target" },
+          technical_description: "Private engine configuration.",
+        }),
+      ]),
+      viewer,
+    );
+    await screen.findByRole("button", { name: "chat" });
+    // Never on a row, for anyone.
+    expect(screen.queryByText(/private-target|Private engine configuration|svc-internal-id/)).toBeNull();
+    fireEvent.click(nameButton("chat"));
+    const sheet = dialog();
+    expect(sheet.getByText("Chat through your configured model.")).toBeVisible();
+    for (const value of ["Technical details", "Engine or provider", "Sends requests to", "How this model runs", "chat.completions: private-target", "Private engine configuration."]) {
+      if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
+      else expect(sheet.queryByText(value)).toBeNull();
+    }
+    if (viewer.admin) expect(fact("Engine or provider")).toBe("Household chat");
+    expect(screen.queryByText(/svc-internal-id/)).toBeNull();
+  });
+
+  it("says when the engine or provider is not specified", async () => {
+    renderModels(
+      catalog([row({ engine_label: null, provider: null, technical_description: "Notes." })]),
+      owner,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "chat" }));
+    expect(fact("Engine or provider")).toBe("Engine or provider not specified");
+  });
+
+  const unconfigured = { available: false, status: "unavailable" as const, configured: false };
+  const disabled = { available: false, status: "unavailable" as const, enabled: false };
+  const actions: [string, Viewer, "local" | "remote", Partial<CatalogRow["availability"]>, string | null, string][] = [
+    ["owner, local engine not connected", owner, "local", unconfigured, "Connect an engine", "/engines/"],
+    ["owner, provider not connected", owner, "remote", unconfigured, "Connect a provider", "/providers/"],
+    ["owner, local engine disabled", owner, "local", disabled, "Review engine", "/engines/"],
+    ["owner, provider disabled", owner, "remote", disabled, "Review provider", "/providers/"],
+    ["owner, unavailable but configured", owner, "local", { available: false, status: "unavailable" }, "Check status", "/status/"],
+    ["member, not connected", member, "local", unconfigured, "Check status", "/status/"],
+    ["member, not checked yet", member, "local", { status: "unknown", measured: false, available: false }, "Check status", "/status/"],
+    ["anyone, ready", owner, "local", {}, null, ""],
+    ["anyone, busy", member, "local", { status: "busy", available: false }, null, ""],
+  ];
+
+  it.each(actions)("offers the right action: %s", async (_name, viewer, locality, availability, label, href) => {
+    renderModels(
+      catalog([row({ locality, availability: { ...row().availability, ...availability } })]),
+      viewer,
+    );
+    await screen.findByRole("button", { name: "chat" });
+    // The action is in Details, not on the row.
+    expect(within(rowOf("chat")).queryByRole("link")).toBeNull();
+    fireEvent.click(nameButton("chat"));
+    const links = dialog().queryAllByRole("link").filter((link) => !/receipt/i.test(link.textContent ?? ""));
+    if (label === null) {
+      expect(links).toHaveLength(0);
+    } else {
+      expect(links).toHaveLength(1);
+      expect(links[0]).toHaveTextContent(label);
+      expect(links[0]).toHaveAttribute("href", href);
+    }
+  });
+
+  it("refreshes the open Details by id when the catalog reloads", async () => {
+    const original = row({
+      id: "refresh-model",
+      title: "Original title",
+      description: "Original purpose.",
+      locality: "remote",
+      engine_label: "Original engine",
+      cost: { kind: "paid", price: "$1" },
+    });
+    const client = renderModels(catalog([original]), owner);
+    fireEvent.click(await screen.findByRole("button", { name: "refresh-model" }));
+    expect(dialog().getByText("Original title. Original purpose.")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(
+      catalog([
+        {
+          ...original,
+          title: "Updated title",
+          description: "Updated purpose.",
+          engine_label: "Updated engine",
+          resolves_to: { chat: "updated-target" },
+          cost: { kind: "paid", price: "$2" },
+          availability: { ...original.availability, available: false, status: "unavailable" },
+        },
+      ]),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    await waitFor(() => {
+      expect(dialog().getByText("Updated title. Updated purpose.")).toBeVisible();
+      expect(fact("Price")).toBe("$2");
+      expect(fact("Engine or provider")).toBe("Updated engine");
+      expect(fact("Sends requests to")).toBe("chat: updated-target");
+      expect(dialog().getByText("Unavailable")).toBeVisible();
+    });
+    expect(dialog().queryByText(/Original/)).toBeNull();
+  });
+
+  it("closes a removed model with a note, lets the person dismiss it, and does not reopen it", async () => {
+    const client = renderModels(catalog([row({ id: "removed-model" })]));
+    fireEvent.click(await screen.findByRole("button", { name: "removed-model" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([row({ id: "other" })]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+    // The model comes back: the note goes and Details stays closed.
+    fireEvent.click(nameButton("other"));
+    expect(dialog().getByRole("heading", { name: "other" })).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([row({ id: "other" })]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    await screen.findByRole("button", { name: "other" });
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("deep links", () => {
+  let previousUrl: string;
   beforeEach(() => {
     previousUrl = window.location.href;
   });
-
   afterEach(() => {
     window.history.replaceState(null, "", previousUrl);
   });
 
-  it("applies a capability on load and falls back for an unknown capability", async () => {
-    const snapshot = catalog([
-      row(),
-      row({
-        id: "image",
-        capabilities: [
-          { ...row().capabilities[0], capability: "image", label: "Images" },
-        ],
-      }),
-    ]);
-    window.history.replaceState(null, "", "?capability=image&model=unknown");
-    renderModels(snapshot);
-    expect(
-      await screen.findByRole("button", { name: "Images", pressed: true }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Copy model name chat" }),
-    ).toBeNull();
-    cleanup();
-    window.history.replaceState(null, "", "?capability=unknown");
-    renderModels(snapshot);
-    expect(
-      await screen.findByRole("button", { name: "All", pressed: true }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Copy model name chat" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-  });
-
-  it("applies an alias model on load and falls back for an unknown model", async () => {
-    const snapshot = catalog([row(), row({ id: "special" })]);
-    window.history.replaceState(null, "", "?model=special&capability=unknown");
-    renderModels(snapshot);
-    expect(
-      await screen.findByRole("button", { name: "Copy model name special" }),
-    ).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue("special");
-    expect(
-      screen.queryByRole("button", { name: "Copy model name chat" }),
-    ).toBeNull();
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: "" },
-    });
-    expect(
-      screen.getByRole("button", { name: "Copy model name chat" }),
-    ).toBeVisible();
-    cleanup();
-    window.history.replaceState(null, "", "?model=unknown");
-    renderModels(snapshot);
-    expect(
-      await screen.findByRole("button", { name: "Copy model name chat" }),
-    ).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue("");
-    // The catalog has no exact models beyond the names above.
-    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
-  });
-
-  it("decodes an exact model deep link and opens its filtered table", async () => {
+  it("opens Details for ?model= and filters to the task in ?capability=", async () => {
     const id = "provider/model+v2";
-    window.history.replaceState(null, "", `?model=${encodeURIComponent(id)}`);
-    renderModels(catalog([row()], [
-      row({ id, alias: false, object: "model_catalog.model" }),
-      row({ id: "other-model", alias: false, object: "model_catalog.model" }),
-    ]));
-    const table = within(await screen.findByRole("table", { name: "All models" }));
-    expect(
-      table.getByRole("button", { name: `Copy model name ${id}` }),
-    ).toBeVisible();
-    expect(
-      table.queryByRole("button", { name: "Copy model name other-model" }),
-    ).toBeNull();
-    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue(id);
-    expect(screen.getByRole("button", { name: "All models" })).toHaveAttribute(
-      "aria-expanded", "true",
-    );
-  });
-});
-
-
-describe("task-first catalog rows", () => {
-  it("hides wholly empty cost and status columns and explains local cost once", async () => {
-    renderModels(catalog([row(), row({ id: "fast" })]));
-    const table = within(await screen.findByRole("table", { name: "Available model names" }));
-    expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
-    expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
-    expect(table.queryByRole("columnheader", { name: "Use" })).toBeNull();
-    expect(table.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
-    expect(screen.getAllByText("Local · no provider charge")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    expect(screen.getAllByText("Local · no provider charge")).toHaveLength(1);
-    expect(table.getAllByRole("button", { name: "Details" })).toHaveLength(2);
+    window.history.replaceState(null, "", `?capability=image&model=${encodeURIComponent(id)}`);
+    renderModels(catalog([row(), task("draw", "image")], [exact(id, { capability: "image" })]));
+    expect(await screen.findByRole("heading", { name: id })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+    expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "chat" })).toBeNull();
+    expect(search()).toHaveValue("");
+    expect(screen.getByText(/^2 of 3 model names/)).toBeVisible();
+    // Clear filters shows every task again.
+    fireEvent.change(search(), { target: { value: "unmatched" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
+    expect(screen.getByRole("button", { name: "chat" })).toBeVisible();
   });
 
-  it("keeps mixed cost and status columns aligned and removes them after filtering", async () => {
-    renderModels(catalog([
-      row(),
-      row({
-        id: "remote-paid",
-        locality: "remote",
-        cost: { kind: "paid", price: "$1" },
-        availability: { ...row().availability, status: "busy" },
-      }),
-    ]));
-    const table = within(await screen.findByRole("table", { name: "Available model names" }));
-    expect(table.getByRole("columnheader", { name: "Cost" })).toBeInTheDocument();
-    expect(table.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    const rows = table.getAllByRole("row");
-    expect(within(rows[1]).getAllByRole("cell")).toHaveLength(6);
-    expect(within(rows[2]).getAllByRole("cell")).toHaveLength(6);
-    expect(within(rows[2]).getByText("Paid · $1")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
-    expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
-    expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
-  });
-
-  it.each(["unknown", "not_measured"] as const)(
-    "shows unmeasured %s summary status in aliases and exact models without claiming local cost",
-    async (status) => {
-      const remote = row({
-        locality: "remote",
-        availability: { ...row().availability, measured: false, status: status as CatalogRow["availability"]["status"] },
-      });
-      renderModels(catalog([remote], [{ ...remote, id: "exact", alias: false, object: "model_catalog.model" }]));
-      await screen.findByRole("button", { name: "Copy model name chat" });
-      fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      for (const name of ["Available model names", "All models"]) {
-        const table = within(screen.getByRole("table", { name }));
-        expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
-        expect(table.getByRole("columnheader", { name: "Status" })).toBeVisible();
-        expect(table.getByText("Not checked yet")).toBeVisible();
-        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
-      }
-      expect(screen.queryByText("Local · no provider charge")).toBeNull();
+  it.each(["?model=unknown&capability=unknown", "?capability=video"])(
+    "ignores an unknown model or a task with no models (%s)",
+    async (query) => {
+      window.history.replaceState(null, "", query);
+      renderModels(catalog([row(), task("draw", "image")]));
+      await screen.findByRole("button", { name: "chat" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
+      expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
     },
   );
-
-  it("leads primary, alternative and exact rows with shared task names above the alias", async () => {
-    const speech = row({
-      id: "voice",
-      title: "Voice",
-      capability: "speech",
-      capability_title: "Speech",
-    });
-    renderModels(catalog([speech, { ...speech, id: "voice-fast" }], [
-      { ...speech, id: "voice-exact", alias: false, object: "model_catalog.model" },
-    ]));
-    await screen.findByRole("button", { name: "Copy model name voice" });
-    fireEvent.click(screen.getByRole("button", { name: "1 more Speech models" }));
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    for (const id of ["voice", "voice-fast", "voice-exact"]) {
-      const copy = screen.getByRole("button", { name: `Copy model name ${id}` });
-      const firstCell = copy.closest("tr")!.querySelector("td")!;
-      expect(firstCell).toContainElement(copy);
-      expect(firstCell).toHaveTextContent("Read text aloud");
-      expect(firstCell).toHaveTextContent(id);
-    }
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: "Read text aloud" },
-    });
-    expect(screen.getByRole("button", { name: "Copy model name voice" })).toBeVisible();
-  });
-
-  it("uses two phone lines with inline cost and status in every catalog row", async () => {
-    const paid = row({
-      locality: "remote",
-      cost: { kind: "paid", price: "$1" },
-      availability: { ...row().availability, status: "busy" },
-    });
-    renderModels(catalog([paid, { ...paid, id: "alternative" }], [
-      { ...paid, id: "exact", alias: false, object: "model_catalog.model" },
-    ]));
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    for (const id of ["chat", "alternative", "exact"]) {
-      const copy = screen.getByRole("button", { name: `Copy model name ${id}` });
-      const modelRow = copy.closest("tr")!;
-      expect(modelRow).toHaveClass("max-sm:grid", "max-sm:grid-rows-2", "max-sm:h-(--row-phone-2)");
-      expect(copy.closest("td")).toHaveClass("max-sm:contents");
-      expect(copy.parentElement).toHaveClass("max-sm:row-start-2");
-      expect(within(modelRow).getByText("Paid · $1")).toHaveClass("max-sm:row-start-2");
-      const cells = within(modelRow).getAllByRole("cell");
-      expect(cells[cells.length - 2]).toHaveClass("max-sm:row-start-2");
-      expect(within(modelRow).getByRole("button", { name: "Details" })).toBeInTheDocument();
-    }
-  });
 });
 
-describe("member copy boundaries", () => {
-  it.each([member, owner])("COPY-02 model details for $role", async (viewer) => {
-    renderModels(catalog([row({
-      resolves_to: { "chat.completions": "private-target" },
-      technical_description: "Private engine configuration.",
-    })]), viewer);
-    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
-    const sheet = within(screen.getByRole("dialog"));
-    for (const value of ["Technical details", "Resolves to", "chat.completions: private-target", "Technical description", "Private engine configuration."]) {
-      if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
-      else expect(sheet.queryByText(value)).toBeNull();
-    }
-    expect(sheet.getByText("Chat through your configured model.")).toBeVisible();
+describe("loading, errors and an empty catalog", () => {
+  const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  it("announces loading, then shows the models", async () => {
+    let release!: (value: ModelsCatalog) => void;
+    vi.mocked(productApi.models).mockReturnValue(
+      new Promise<ModelsCatalog>((resolve) => {
+        release = resolve;
+      }),
+    );
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={client()}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(screen.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByText("No models are available yet")).toBeNull();
+    await act(async () => release(catalog([row()])));
+    expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull();
   });
 
-  it("COPY-03 model names and task", async () => {
-    renderModels(catalog([row()], [row({ id: "exact", alias: false, object: "model_catalog.model" })]));
-    expect(await screen.findByRole("table", { name: "Available model names" })).toBeVisible();
-    expect(screen.queryByRole("table", { name: "Available model aliases" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    const table = within(screen.getByRole("table", { name: "All models" }));
-    expect(table.getByRole("columnheader", { name: "Task" })).toBeInTheDocument();
-    expect(table.queryByRole("columnheader", { name: "Capability" })).toBeNull();
+  it("retries a failed load from the error state", async () => {
+    vi.mocked(productApi.models)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(catalog([row()]));
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={client()}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(await screen.findByText("We couldn't load the models. Try again.")).toBeVisible();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
+    expect(screen.queryByText("We couldn't load the models. Try again.")).toBeNull();
   });
 
   it.each([
-    ["transcribe", "Transcribe a recording"],
-    ["rerank", "Sort search results"],
-  ])("COPY-15 shared model task %s", async (capability, label) => {
-    renderModels(catalog([row({
-      id: "task-model",
-      capability,
-      capabilities: [{ ...row().capabilities[0], capability }],
-    })]));
-    const copy = await screen.findByRole("button", { name: "Copy model name task-model" });
-    expect(within(copy.closest("tr")!).getByText(label)).toBeVisible();
-  });
-});
-
-describe("catalog state regressions", () => {
-  it("does not repeat secondary profiles in All models and omits empty IO headings", async () => {
-    const profile = row({ id: "profile", alias: false, object: "model_catalog.model", secondary_profile: true, io: { input: [], output: [] } });
-    renderModels(catalog([], [profile]));
-    const copy = await screen.findByRole("button", { name: "Copy model name profile" });
-    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Copy model name profile" })).toHaveLength(1);
-    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
-    expect(within(screen.getByRole("dialog")).queryByText("Inputs and outputs")).toBeNull();
-  });
-
-  it("says when filters hide every model in All models and clears them", async () => {
-    renderModels(catalog([row()], [row({
-      id: "exact-model", alias: false, object: "model_catalog.model",
-      capabilities: [{ ...row().capabilities[0], capability: "image", label: "Images" }],
-    })]));
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.click(screen.getByRole("button", { name: "Chat", pressed: false }));
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    expect(screen.getByText("No models match these filters.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(screen.getByRole("button", { name: "Copy model name exact-model" })).toBeVisible();
-  });
-
-  it("reports missing engine metadata honestly in one-tap details", async () => {
-    renderModels(catalog([row({ engine_label: null, provider: null })]));
-    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
-    expect(within(screen.getByRole("dialog")).getByText("Engine or provider not specified")).toBeVisible();
-    expect(within(screen.getByRole("dialog")).getByText("Chat through your configured model.")).toBeVisible();
+    [owner, "Connect an engine", "/engines", "Connect an engine to run models on your equipment, or connect an online provider."],
+    [member, "Review setup", "/", "Ask the owner to connect an engine or online provider and give you access to a model."],
+  ])("points an empty catalog at the next step for $role", async (viewer, label, href, description) => {
+    renderModels(catalog([]), viewer);
+    expect(await screen.findByText("No models are available yet")).toBeVisible();
+    expect(screen.getByText(description)).toBeVisible();
+    expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", href);
+    expect(screen.queryByRole("searchbox")).toBeNull();
   });
 });
 
@@ -1798,29 +1111,119 @@ describe("multipart example parity", () => {
   });
 });
 
-describe("model availability and removal recovery", () => {
-  it("distinguishes a failed observation from a model not checked yet", async () => {
-    renderModels(catalog([row({ availability: { ...row().availability, status: "unknown", measured: true } })]));
-    expect(await screen.findByText("Couldn't check")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
-    expect(screen.queryByText("Ready")).toBeNull();
-  });
-
-  it("lets the member dismiss a removed-model notice", async () => {
-    const client = renderModels(catalog([row()]));
-    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
-    vi.mocked(productApi.models).mockResolvedValue(catalog([]));
-    await act(async () => { await client.refetchQueries({ queryKey: ["models", "catalog"] }); });
-    expect(await screen.findByText("This model is no longer in the catalog.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
+it("offers a full gateway address in flow when clipboard access fails", async () => {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
+  renderModels(catalog([row()]));
+  await screen.findByText(GATEWAY);
+  fireEvent.click(screen.getByRole("button", { name: "Copy gateway address" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Could not copy. Select the address below and copy it yourself.");
+  const input = screen.getByRole("textbox", { name: "Gateway address for manual copy" }) as HTMLInputElement;
+  expect(input).toBeVisible();
+  expect(input).toHaveValue(GATEWAY);
+  expect(input).toHaveAttribute("readonly");
+  fireEvent.focus(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(GATEWAY.length);
+  expect(alert.parentElement).not.toHaveClass("absolute");
 });
 
-it("keeps a secondary profile in All models when its server capability has no section", async () => {
-  renderModels(catalog([], [row({ id: "future-model", alias: false, object: "model_catalog.model", secondary_profile: true, capability: "future-task", capability_title: "Future task", capabilities: [] })]));
-  fireEvent.click(await screen.findByRole("button", { name: "All models" }));
-  expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name future-model" })).toBeVisible();
+it("announces persistent result counts for search, task, price and zero matches", async () => {
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id: "home" }), task("draw", "image"), row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } })]));
+  await screen.findByRole("button", { name: "home" });
+  const count = screen.getByText("3 model names.");
+  expect(count).toHaveAttribute("role", "status");
+  expect(count).toHaveAttribute("aria-live", "polite");
+  expect(count).toHaveAttribute("aria-atomic", "true");
+  expect(count).not.toHaveTextContent("How to connect");
+  fireEvent.change(search(), { target: { value: "home" } });
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "" } });
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "Images (1)" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "All tasks (3)" }));
+  await user.click(screen.getByRole("combobox", { name: "Price" }));
+  await user.click(screen.getByRole("option", { name: "Paid (1)" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "nothing-matches" } });
+  expect(count).toHaveTextContent("No models match. 0 of 3 model names.");
+  expect(screen.getAllByRole("status")).toContain(count);
+});
+
+it("wraps an unbroken 100-character model title in its detail sheet", async () => {
+  const id = "x".repeat(100);
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id })]));
+  await user.click(await screen.findByRole("button", { name: id }));
+  expect(dialog().getByRole("heading", { name: id })).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+});
+
+describe("filter option counts", () => {
+  function countedCatalog() {
+    return catalog([
+      row({ id: "local", cost: { kind: "unknown", price: null } }),
+      row({ id: "remote-free", locality: "remote" }),
+      task("draw", "image", { locality: "remote", cost: { kind: "paid", price: "$1" } }),
+      task("vec", "embed", { locality: "remote", cost: { kind: "unknown", price: null } }),
+    ], [exact("local"), exact("draw")]);
+  }
+
+  const optionNames = () => screen.getAllByRole("option").map((option) => option.textContent);
+
+  it("counts deduplicated names with the same task and cost rules as the list", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (4)", "Chat (2)", "Images (1)", "Turn text into numbers (1)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (4)", "No provider charge (2)", "Paid (1)", "Cost not recorded (1)"]);
+    expect(screen.getByRole("option", { name: "No provider charge (2)" })).toBeVisible();
+  });
+
+  it("updates each facet for search and the other selection while retaining zero-count alternatives", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    await user.click(screen.getByRole("option", { name: "Images (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (1)", "No provider charge (0)", "Paid (1)", "Cost not recorded (0)"]);
+    await user.click(screen.getByRole("option", { name: "Paid (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (1)", "Chat (0)", "Images (1)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    fireEvent.change(search(), { target: { value: "  unmatched  " } });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (0)", "Chat (0)", "Images (0)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (0)", "No provider charge (0)", "Paid (0)", "Cost not recorded (0)"]);
+  });
+
+  it("recovers repeatedly from empty filters with and without a search by clearing every selection", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    for (const query of ["", "unmatched"]) {
+      await user.click(screen.getByRole("combobox", { name: "Task" }));
+      await user.click(screen.getByRole("option", { name: "Images (1)" }));
+      await user.click(screen.getByRole("combobox", { name: "Price" }));
+      await user.click(screen.getByRole("option", { name: "No provider charge (0)" }));
+      fireEvent.change(search(), { target: { value: query } });
+      expect(screen.getByText("No models match")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(search()).toHaveValue("");
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks (4)");
+      expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price (4)");
+      expect(screen.getByText("4 model names.")).toBeVisible();
+      for (const id of ["local", "remote-free", "draw", "vec"]) expect(nameButton(id)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    }
+  });
 });

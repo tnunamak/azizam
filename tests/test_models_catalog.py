@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities, build_local_capabilities  # noqa: E402
 from gateway.models_catalog import (  # noqa: E402
@@ -20,6 +21,57 @@ from gateway.models_catalog import (  # noqa: E402
     HealthProbeNoResponse,
     probe_service_health,
 )
+
+
+class ModelsCatalogSeedLabelsTests(unittest.TestCase):
+    def test_structured_seed_records_have_readable_display_names(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        records = list(seed["backends"].values())
+        records.extend(seed["roles"].values())
+        records.extend(seed["models"])
+        for service in seed["backends"].values():
+            records.extend(service.get("models", []))
+        for operation in seed["model_aliases"].values():
+            records.extend(operation.get("engines", {}).values())
+        self.assertTrue(records)
+        for index, record in enumerate(records):
+            with self.subTest(record=index):
+                title = record.get("display_name")
+                self.assertIsInstance(title, str)
+                self.assertTrue(title.strip())
+                self.assertNotIn("\n", title)
+
+    def test_service_member_descriptions_omit_runtime_details(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        records = list(seed["backends"].values())
+        for service in seed["backends"].values():
+            records.extend(service.get("models", []))
+        # Existing role/engine descriptions contain operator facts. They must
+        # remain unchanged until the member/operator fields are separated.
+        internals = (
+            r"(?i)(?:\b(?:gpu\d*|cpu|vram|cuda|systemd|localhost|"
+            r"backend|gateway|activation|gguf|q[458]_\w*|kv[-_ ]?cache)\b"
+            r"|\.service\b|https?://|/v1/|/media/|:[0-9]{2,5}\b)"
+        )
+        for index, record in enumerate(records):
+            with self.subTest(record=index):
+                description = record.get("description")
+                self.assertIsInstance(description, str)
+                self.assertTrue(description.strip())
+                self.assertNotIn("\n", description)
+                self.assertNotRegex(description, internals)
+
+    def test_unused_legacy_service_key_is_absent(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        for section in seed.values():
+            if isinstance(section, dict):
+                self.assertNotIn("kobold_service_legacy", section)
 
 
 class ModelsCatalogBuildTests(unittest.TestCase):
@@ -402,7 +454,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(fast["cost"], {"kind": "free", "price": None})
         self.assertEqual(fast["timing"]["typical_seconds"], 2.0)
         self.assertEqual(fast["timing"]["source"], "receipts")
-        self.assertEqual(fast["recent_receipts"][0]["href"], "/r/req_1")
+        self.assertEqual(fast["recent_receipts"][0]["href"], "/usage/?receipt=req_1")
         self.assertFalse(fast["availability"]["available"])
         self.assertEqual(fast["availability"]["status"], "unknown")
         self.assertFalse(fast["availability"]["measured"])
@@ -595,35 +647,28 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         )
 
         self.assertEqual([row["id"] for row in catalog["aliases"]], ["image"])
-        self.assertEqual(catalog["models"], [])
+        # The public name an alias points at stays a row of its own, linked both ways.
+        self.assertEqual([row["id"] for row in catalog["models"]], ["poster"])
+        self.assertEqual(catalog["models"][0]["same_model_as"], ["image"])
+        self.assertEqual(catalog["aliases"][0]["same_model_as"], ["poster"])
         self.assertEqual(catalog["aliases"][0]["resolves_to"], {"images": "poster"})
         self.assertEqual(catalog["aliases"][0]["description"], "Generate or edit images from your prompts.")
         self.assertEqual(catalog["aliases"][0]["technical_description"], "Public poster workflow")
 
-    def test_default_profile_fallback_is_only_for_fresh_or_default_apps(self) -> None:
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": []},
-            default_profile_id="default-local",
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "default-local"}, "default-local")])
+    def test_person_access_is_used_only_when_the_person_has_no_enabled_app(self) -> None:
+        person = access(plan_for("plan_person"))
+        family = access(plan_for("plan_person"), plan_for("plan_family"))
 
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "missing-profile"}]},
-            default_profile_id="default-local",
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "missing-profile"}, "missing-profile")])
+        def contexts(apps, apps_access):
+            return auth_contexts_from_user_snapshot(
+                {"apps": apps}, access_for_app=apps_access.get, person_access=person,
+                context_for_access=lambda effective: effective.plan_ids,
+            )
 
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "default-local"}]},
-            default_profile_id=None,
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "default-local"}, "default-local")])
+        self.assertEqual(contexts([], {}), [("plan_person",)])
+        self.assertEqual(contexts([{"id": "app"}], {"app": family}), [("plan_person", "plan_family")])
+        self.assertEqual(contexts([{"id": "a"}, {"id": "b"}], {"a": family, "b": family}),
+                         [("plan_person", "plan_family")])
 
     def test_receipt_timing_deduplicates_keys_and_uses_successful_calls(self) -> None:
         catalog = build_models_catalog(
@@ -779,30 +824,15 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertTrue(row["availability"]["measured"])
         self.assertEqual(row["availability"]["evidence"]["source"], "health")
 
-    def test_auth_contexts_from_user_snapshot_fail_closed_on_missing_profile(self) -> None:
+    def test_auth_contexts_from_user_snapshot_fail_closed_without_plans(self) -> None:
         contexts = auth_contexts_from_user_snapshot(
-            {
-                "apps": [
-                    {"id": "disabled", "effective_profile_id": "family", "self_service_enabled": False},
-                    {"id": "missing", "effective_profile_id": "missing"},
-                ]
-            },
-            default_profile_id=None,
-            profile_loader=lambda _profile_id: None,
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
+            {"apps": [{"id": "disabled", "disabled_at": 1}, {"id": "missing"}, {"id": "no-app-plan"}]},
+            access_for_app={"no-app-plan": access(plan_for("plan_person"), None)}.get,
+            person_access=access(plan_for("plan_person")),
+            context_for_access=lambda effective: effective.plan_ids,
         )
 
         self.assertEqual(contexts, [])
-
-    def test_auth_contexts_from_user_snapshot_uses_existing_app_profile(self) -> None:
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "family"}]},
-            default_profile_id=None,
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-
-        self.assertEqual(contexts, [({"id": "family"}, "family")])
 
     def test_service_health_probe_uses_declared_endpoint(self) -> None:
         async def run():

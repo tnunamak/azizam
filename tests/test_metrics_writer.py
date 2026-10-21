@@ -110,13 +110,21 @@ class MetricsWriterTests(unittest.TestCase):
             self.assertTrue(writer.record_sample(1, "first", 1))
             self.assertTrue(entered.wait(2))
             self.assertTrue(writer.record_sample(2, "second", 2))
-            before = time.monotonic()
-            self.assertFalse(writer.record_samples([(3, "drop", "", 3), (3, "drop", "", 4)]))
-            self.assertFalse(writer.maintain("minute", 60))
-            self.assertLess(time.monotonic() - before, 0.1)
+            # Nonblocking means these return while the writer gate stays closed;
+            # a blocking put would stay stuck here until the watchdog expires.
+            results = []
+            overflow = threading.Thread(target=lambda: results.extend([
+                writer.record_samples([(3, "drop", "", 3), (3, "drop", "", 4)]),
+                writer.maintain("minute", 60),
+            ]))
+            overflow.start()
+            overflow.join(2)
+            self.assertFalse(overflow.is_alive())
+            self.assertEqual(results, [False, False])
             self.assertEqual(writer.stats["dropped_samples"], 2)
             self.assertEqual(writer.stats["dropped_commands"], 2)
             release.set()
+            overflow.join()
             writer.close()
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT metric FROM samples ORDER BY ts").fetchall(),
@@ -276,7 +284,8 @@ class MetricsWriterTests(unittest.TestCase):
                     writer.record_sample(2, "newer", 2)
                     release.set()
                     self.assertTrue(newer_entered.wait(2))
-                    self.assertTrue(flushed.wait(0.1))
+                    # newer_release stays closed: only the snapshot may be awaited.
+                    self.assertTrue(flushed.wait(2))
                 finally:
                     release.set()
                     newer_release.set()
@@ -324,37 +333,41 @@ class MetricsWriterTests(unittest.TestCase):
 
 
 class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
-    async def test_real_health_request_answers_while_write_sleeps_one_second(self):
+    async def test_real_health_request_answers_while_metrics_write_is_in_flight(self):
         import proxy
 
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "metrics.db"
             entered = threading.Event()
+            release = threading.Event()
+            finished = threading.Event()
             original = metrics_store.record_samples
 
-            def slow(conn, rows):
+            def blocked(conn, rows):
                 entered.set()
-                time.sleep(1.0)
+                release.wait(5)  # watchdog only; the test releases explicitly
                 original(conn, rows)
+                finished.set()
 
             writer = metrics_writer.MetricsWriter(db)
             await asyncio.to_thread(writer.wait_ready)
             try:
-                with patch.object(metrics_store, "record_samples", slow), patch.object(metrics_writer, "_writer", writer):
+                with patch.object(metrics_store, "record_samples", blocked), patch.object(metrics_writer, "_writer", writer):
                     metrics_sampler.record_request("request", 1, key=None, path="/health", status=200)
                     deadline = time.monotonic() + 2
                     while not entered.is_set() and time.monotonic() < deadline:
                         await asyncio.sleep(0.001)
                     self.assertTrue(entered.is_set())
-                    started = time.monotonic()
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=proxy.app), base_url="http://test") as client:
-                        response = await asyncio.wait_for(client.get("/health"), timeout=0.1)
-                    elapsed = time.monotonic() - started
+                        # Finite only so a hang fails; the oracle is the gated write below.
+                        response = await asyncio.wait_for(client.get("/health"), timeout=5)
                     self.assertEqual(response.status_code, 200)
-                    self.assertLess(elapsed, 0.1)
-                    print(f"health during 1s metrics write: {elapsed * 1000:.3f} ms")
+                    # The write was still gated when the route answered.
+                    self.assertFalse(finished.is_set())
+                    release.set()
                     await asyncio.to_thread(writer.close)
             finally:
+                release.set()
                 await asyncio.to_thread(writer.close)
 
     async def test_sampler_probes_and_disk_check_run_off_loop(self):
@@ -372,15 +385,18 @@ class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                 return
             raise asyncio.CancelledError
 
+        entered = threading.Event()
+        release = threading.Event()
+
         def disk(_path):
             seen.append(("disk", threading.get_ident()))
-            time.sleep(0.05)
+            entered.set()
+            release.wait(2)  # watchdog only; the test releases explicitly
             return 10_000_000_000
 
         def probe(kind):
             def run(_writer, _now, *_config):
                 seen.append((kind, threading.get_ident()))
-                time.sleep(0.05)
             return run
 
         writer = unittest.mock.Mock()
@@ -396,10 +412,12 @@ class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             patch.dict(metrics_sampler._state, {"last_minute_rolled": 0, "last_hour_rolled": 0, "last_prune_day": 0}),
         ):
             task = asyncio.create_task(metrics_sampler.sampler_loop())
-            before = time.monotonic()
-            await original_sleep(0.01)
-            self.assertLess(time.monotonic() - before, 0.1)
-            self.assertFalse(task.done())
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                # The disk probe is held closed, yet the loop still runs: it is off-loop.
+                self.assertFalse(task.done())
+            finally:
+                release.set()
             with self.assertRaises(asyncio.CancelledError):
                 await task
         self.assertEqual({name for name, _ in seen}, {"disk", "fast", "slow"})

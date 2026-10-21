@@ -4,6 +4,7 @@
 import { chromium } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { quiet } from "./capture-settle.mjs";
 
 const base = process.env.D1_BASE ?? "http://127.0.0.1:18431";
 const manifest = JSON.parse(await readFile(process.env.D1_MANIFEST ?? `${process.env.HOME}/.tmp/azizam-redesign/d1-work/manifest-18431.json`, "utf8"));
@@ -27,7 +28,7 @@ async function contextFor(role, width, theme) {
     return context;
   } catch {}
   const page = await context.newPage();
-  await page.goto(`${base}/ui/sign-in/`);
+  await page.goto(`${base}/sign-in/`);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(manifest.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -44,20 +45,18 @@ for (const spec of specs) {
   const page = await context.newPage();
   const errors = [];
   page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
-  await page.goto(`${base}/ui${route}`);
-  await page.waitForLoadState("networkidle");
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(500);
+  await page.goto(`${base}${route}`);
+  await quiet(page);
   if (action) {
     for (const step of action.split(",")) {
       const [kind, ...rest] = step.split("=");
       const arg = rest.join("=");
       if (kind === "click") await page.getByRole("button", { name: new RegExp(arg) }).first().click();
       if (kind === "clicklink") await page.getByRole("link", { name: new RegExp(arg) }).first().click();
-      if (kind === "wait") await page.waitForTimeout(Number(arg));
+      if (kind === "wait") await page.waitForSelector(arg, { state: "visible" });
       if (kind === "press") await page.keyboard.press(arg);
     }
-    await page.waitForTimeout(600);
+    await quiet(page);
   }
   const file = path.join(outdir, `${name ?? `${role}${route.replaceAll("/", "_")}`}-${width}-${theme}.png`);
   await page.screenshot({ path: file, fullPage: process.env.D1_FULL === "1" });

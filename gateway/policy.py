@@ -1,35 +1,65 @@
-"""App profile policy evaluator.
+"""Access-plan evaluator (design v4, docs/design/ACCESS_PLANS.md §2.5-§2.7).
 
-Pure decision logic. Given an :class:`AppProfile` and a :class:`PolicyRequest`,
-return a :class:`PolicyDecision` describing whether the requested action is
-allowed and why. Decisions are receipt-compatible: ``decision``, ``sources``,
-and ``reasons`` map directly onto :mod:`gateway.receipts` fields.
+Pure decision logic. A request runs only if both the accountable person's
+plan and the app's plan allow it. A missing plan on either side denies; there
+is no built-in default plan. Decisions are receipt-compatible: ``decision``,
+``sources`` and ``reasons`` map onto :mod:`gateway.receipts` fields, and
+``code``/``side`` carry the data-plane error of design §3.3.
 
-This module has no dependencies on live auth, request handlers, or
-``proxy.py``. It does not read configuration from disk. Callers wire an
-:class:`AppProfile` in and consume the :class:`PolicyDecision` out.
+This module has no dependencies on live auth, request handlers or
+``proxy.py``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from decimal import Decimal
+from dataclasses import dataclass
 from typing import Iterable
 
+from gateway.access_plans import (
+    DIRECT_ENGINE_INTENT,
+    DISCOVERY_INTENTS,
+    MEDIA_METADATA_LEVELS,
+    UNSUPPORTED_INTENTS,
+    RECEIPT_DETAIL_LEVELS,
+    AccessPlan,
+    capability_for_intent,
+)
+from gateway.capability_ids import CAPABILITY_LABELS
 from gateway.outbound_request import canonical_native_path
 
 
 ALLOWED = "allowed"
 DENIED = "denied"
-NOT_EVALUATED = "not_evaluated"
 
-VISIBILITY_LEVELS = ("none", "basic", "standard", "full")
-TARGET_VISIBILITY_MODES = ("catalog", "available")
-TARGET_ACTIVATION_MODES = ("may_activate", "existing_only")
-MODEL_ACCESS_MODES = ("catalog", "current_loaded")
-MEDIA_METADATA_MODES = ("full", "none")
+PERSON_SIDE = "person"
+APP_SIDE = "app"
 
-DEFAULT_PROFILE_ID = "default-local"
+NO_ACCESS_PLAN = "no_access_plan"
+NOT_IN_ACCESS_PLAN = "not_in_access_plan"
+CANNOT_START_MODEL = "cannot_start_model"
+
+# Rule codes: which rule decided a request. They are stable names for scripts and
+# the UI to branch on (never on a sentence), and they never reach a data-plane
+# caller: the wire keeps its one generic sentence.
+RULE_NO_PLAN = "plan.none"
+RULE_CAPABILITY_NOT_GRANTED = "plan.capability_not_granted"
+RULE_ITEM_NOT_LISTED = "plan.item_not_listed"
+RULE_DIRECT_ENGINE = "plan.direct_engine_not_granted"
+RULE_PROVIDER = "plan.provider_not_granted"
+RULE_FALLBACK = "plan.fallback_not_granted"
+RULE_ALLOWS_ALL = "plan.allows_all"
+RULE_LISTS_ITEM = "plan.lists_item"
+RULE_ALLOWS = "plan.allows"
+# The owner's category rules (gateway/category_enforcement.py).
+RULE_CATEGORY_HIDDEN = "category.hidden"
+RULE_CATEGORY_NO_GRANT = "category.no_grant"
+RULE_CATEGORY_NOT_ALLOWED = "category.not_allowed"
+RULE_CATEGORY_UNAVAILABLE = "category.rules_unavailable"
+# No plan decided: the provider the item runs on could not be read.
+RULE_PROVIDER_UNAVAILABLE = "provider.config_unavailable"
+# The answer depends on something Check access could not read. Enforcement refuses
+# these too (fail closed), so "not allowed" is true; the cause is what the owner must fix.
+CANNOT_TELL_RULES = frozenset({RULE_CATEGORY_UNAVAILABLE, RULE_PROVIDER_UNAVAILABLE})
 
 
 def _canonical_provider_id(value: object) -> str:
@@ -38,191 +68,23 @@ def _canonical_provider_id(value: object) -> str:
     return canonical_provider_id(value)
 
 
-def default_profile_id() -> str:
-    """Return the one runtime authority for the built-in fallback identity."""
-    return DEFAULT_PROFILE_ID
-
-
-def is_default_profile_id(profile_id: object) -> bool:
-    """Whether ``profile_id`` denotes the built-in fallback profile."""
-    return str(profile_id or "").strip() == default_profile_id()
-
-
-@dataclass(frozen=True)
-class CapabilitySelector:
-    """Category selectors used to keep profiles from becoming ID lists.
-
-    ``None`` means "no opinion" and an empty set means "deny all", matching
-    the existing profile allow-list semantics.
-    """
-
-    intents: frozenset[str] | None = None
-    exposure: frozenset[str] | None = None
-    trust_tiers: frozenset[str] | None = None
-    resource_tiers: frozenset[str] | None = None
-    tags: frozenset[str] | None = None
-
-
-@dataclass(frozen=True)
-class FallbackPolicy:
-    cloud_allowed: bool = False
-
-
-@dataclass(frozen=True)
-class RemoteProviderPolicy:
-    providers: frozenset[str] = field(default_factory=frozenset)
-    max_usd_per_request: Decimal | None = None
-    budget_usd_per_day: Decimal | None = None
-    budget_usd_per_month: Decimal | None = None
-    allow_paid_fallback: bool = False
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "providers",
-            frozenset(
-                provider
-                for provider in (
-                    _canonical_provider_id(item) for item in self.providers
-                )
-                if provider
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class NativePassthroughPolicy:
-    enabled: bool = False
-    allowed_backends: frozenset[str] = field(default_factory=frozenset)
-    allowed_operations: frozenset[str] = field(default_factory=frozenset)
-    audit: bool = True
-
-
-@dataclass(frozen=True)
-class StatusVisibilityPolicy:
-    level: str = "basic"
-
-    def __post_init__(self) -> None:
-        if self.level not in VISIBILITY_LEVELS:
-            raise ValueError(
-                f"status visibility level must be one of {VISIBILITY_LEVELS}"
-            )
-
-
-@dataclass(frozen=True)
-class TargetPolicy:
-    """Runtime target discovery and activation behavior.
-
-    ``visibility`` controls whether clients see configured targets or only
-    targets currently available under the live runtime. ``activation`` controls
-    whether a request may load/switch/queue a target, or must use an existing
-    running/resident/selected target. The runtime interprets these axes for
-    each target family; policy.py only carries the operator's intent.
-    """
-
-    visibility: str = "catalog"
-    activation: str = "may_activate"
-
-    def __post_init__(self) -> None:
-        if self.visibility not in TARGET_VISIBILITY_MODES:
-            raise ValueError(
-                f"target visibility must be one of {TARGET_VISIBILITY_MODES}"
-            )
-        if self.activation not in TARGET_ACTIVATION_MODES:
-            raise ValueError(
-                f"target activation must be one of {TARGET_ACTIVATION_MODES}"
-            )
-
-
-@dataclass(frozen=True)
-class ModelAccessPolicy:
-    """Backward-compatible alias for older LLM-only profile configs."""
-
-    mode: str = "catalog"
-
-    def __post_init__(self) -> None:
-        if self.mode not in MODEL_ACCESS_MODES:
-            raise ValueError(
-                f"model access mode must be one of {MODEL_ACCESS_MODES}"
-            )
-
-
-@dataclass(frozen=True)
-class MediaMetadataPolicy:
-    """Default for the metadata embedded in generated media bytes at delivery.
-
-    ``full`` delivers the stored copy untouched (ComfyUI ``prompt``/``workflow``
-    plus the gateway provenance record). ``none`` strips every metadata block
-    from the delivered bytes. A request can override this per call with
-    ``extensions["com.azizam.workflow"].metadata``. ``none`` is the safe
-    default: only profiles that opt in deliver workflow data.
-    """
-
-    default: str = "none"
-
-    def __post_init__(self) -> None:
-        if self.default not in MEDIA_METADATA_MODES:
-            raise ValueError(
-                f"media metadata default must be one of {MEDIA_METADATA_MODES}"
-            )
-
-
-def target_policy_from_model_access(model_access: ModelAccessPolicy) -> TargetPolicy:
-    if model_access.mode == "current_loaded":
-        return TargetPolicy(visibility="available", activation="existing_only")
-    return TargetPolicy()
-
-
-@dataclass(frozen=True)
-class AppProfile:
-    """Named policy bundle attached to an API key or client identity.
-
-    ``None`` allow-lists mean "no opinion": a profile that does not enumerate
-    workflows allows any workflow unless another rule denies it. An empty
-    frozenset means "deny all" for that dimension.
-    """
-
-    id: str = DEFAULT_PROFILE_ID
-    protocols: frozenset[str] | None = None
-    workflows: frozenset[str] | None = None
-    models: frozenset[str] | None = None
-    backends: frozenset[str] | None = None
-    allow: CapabilitySelector = field(default_factory=CapabilitySelector)
-    fallback: FallbackPolicy = field(default_factory=FallbackPolicy)
-    native_passthrough: NativePassthroughPolicy = field(
-        default_factory=NativePassthroughPolicy
-    )
-    remote: RemoteProviderPolicy = field(default_factory=RemoteProviderPolicy)
-    status_visibility: StatusVisibilityPolicy = field(
-        default_factory=StatusVisibilityPolicy
-    )
-    target_policy: TargetPolicy = field(default_factory=TargetPolicy)
-    model_access: ModelAccessPolicy = field(default_factory=ModelAccessPolicy)
-    media_metadata: MediaMetadataPolicy = field(default_factory=MediaMetadataPolicy)
-
-    def __post_init__(self) -> None:
-        if (
-            self.target_policy == TargetPolicy()
-            and self.model_access.mode == "current_loaded"
-        ):
-            object.__setattr__(
-                self,
-                "target_policy",
-                target_policy_from_model_access(self.model_access),
-            )
-
-    def with_overrides(self, **changes: object) -> "AppProfile":
-        return replace(self, **changes)
-
-
 @dataclass(frozen=True)
 class PolicyRequest:
-    """Inputs the policy evaluator reasons about for a single request."""
+    """Inputs the evaluator reasons about for a single request.
+
+    ``intent`` decides the capability. ``workflow`` or ``model`` names the
+    item once the route has resolved it. The capability metadata fields are
+    request facts kept for receipts; plans do not restrict by them.
+    """
 
     protocol: str | None = None
     intent: str | None = None
     workflow: str | None = None
     model: str | None = None
+    # The name the client sent, when ``model`` is the model that name resolved
+    # to. A plan grant on either name allows the request; owner category rules
+    # follow the model, and a restricted category hides both names.
+    requested_model: str | None = None
     backend: str | None = None
     capability_exposure: str | None = None
     capability_trust_tier: str | None = None
@@ -247,13 +109,37 @@ class PolicyRequest:
 
 
 @dataclass(frozen=True)
+class DecidingRule:
+    """The rule that made a decision, for the owner's Check access view.
+
+    ``code`` is one of the stable ``RULE_*`` or ``category.*`` / ``provider.*``
+    codes. ``kind`` says where the rule is edited (``plan``, ``category`` or
+    ``provider``). ``id`` is that plan's or category's id when the rule has one.
+    ``side`` is ``person`` or ``app`` for a plan rule. ``subject`` is what the
+    rule talks about: a capability id, an item name, a provider or an engine.
+    """
+
+    code: str
+    kind: str
+    id: str | None = None
+    side: str | None = None
+    subject: str | None = None
+
+
+@dataclass(frozen=True)
 class PolicyDecision:
-    """Receipt-compatible policy decision."""
+    """Receipt-compatible decision. ``code`` and ``side`` name a denial.
+
+    ``rule`` names the deciding rule, allow or deny. It is not a receipt field.
+    """
 
     decision: str
     sources: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     visibility_level: str = "basic"
+    code: str | None = None
+    side: str | None = None
+    rule: DecidingRule | None = None
 
     @property
     def allowed(self) -> bool:
@@ -264,11 +150,6 @@ class PolicyDecision:
         return self.decision == DENIED
 
     def receipt_fields(self) -> dict[str, object]:
-        """Return a kwargs dict suitable for :meth:`RouteReceipt.set_policy_decision`-like usage.
-
-        The caller decides whether to fold ``visibility_level`` into the
-        receipt's ``visibility`` field; this module does not import receipts.
-        """
         return {
             "decision": self.decision,
             "sources": list(self.sources),
@@ -277,317 +158,234 @@ class PolicyDecision:
         }
 
 
-DEFAULT_PROFILE = AppProfile()
+def _lower(levels: Iterable[str], order: tuple[str, ...]) -> str:
+    return min(levels, key=order.index)
 
 
-def _profile_source(profile: AppProfile) -> str:
-    return f"profile:{profile.id}"
+@dataclass(frozen=True)
+class EffectiveAccess:
+    """The two plans a request runs under (design §2.4, §2.6).
+
+    ``person_plan`` is the accountable person's plan; ``app_plan`` is the
+    app's assignment, already resolved ("Same as its person" is the person's
+    plan). Either may be None, which denies every request.
+    """
+
+    person_plan: AccessPlan | None
+    app_plan: AccessPlan | None
+
+    @property
+    def complete(self) -> bool:
+        return self.person_plan is not None and self.app_plan is not None
+
+    def _plans(self) -> tuple[AccessPlan, ...]:
+        return tuple(plan for plan in (self.person_plan, self.app_plan) if plan is not None)
+
+    @property
+    def receipt_detail(self) -> str:
+        """The lower of the two plans; ``basic`` without a full assignment."""
+        if not self.complete:
+            return "basic"
+        return _lower((plan.receipt_detail for plan in self._plans()), RECEIPT_DETAIL_LEVELS)
+
+    @property
+    def media_metadata(self) -> str:
+        """A bound: the lower of the two plans (design §2.6, N5)."""
+        if not self.complete:
+            return "none"
+        return _lower((plan.media_metadata for plan in self._plans()), MEDIA_METADATA_LEVELS)
+
+    @property
+    def can_load_models(self) -> bool:
+        return self.complete and all(plan.can_load_models for plan in self._plans())
+
+    @property
+    def paid_providers(self) -> frozenset[str]:
+        if not self.complete:
+            return frozenset()
+        return self.person_plan.paid_providers & self.app_plan.paid_providers  # type: ignore[union-attr]
+
+    @property
+    def provider_fallback(self) -> bool:
+        return self.complete and all(plan.provider_fallback for plan in self._plans())
+
+    @property
+    def lists_items(self) -> bool:
+        """True when a plan grants a capability by listed models or workflows."""
+        return any(not grant.all_items for plan in self._plans() for grant in plan.can_use.values())
+
+    @property
+    def plan_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(plan.id for plan in self._plans()))
 
 
-def _denied(
-    profile: AppProfile,
+NO_ACCESS = EffectiveAccess(person_plan=None, app_plan=None)
+
+
+def _decision(
+    access: EffectiveAccess,
+    outcome: str,
     reasons: Iterable[str],
     *,
-    extra_sources: Iterable[str] = (),
+    code: str | None = None,
+    side: str | None = None,
+    rule: DecidingRule | None = None,
 ) -> PolicyDecision:
-    sources = (_profile_source(profile), *extra_sources)
     return PolicyDecision(
-        decision=DENIED,
-        sources=sources,
+        decision=outcome,
+        sources=tuple(f"access_plan:{plan_id}" for plan_id in access.plan_ids),
         reasons=tuple(reasons),
-        visibility_level=profile.status_visibility.level,
+        visibility_level=access.receipt_detail,
+        code=code,
+        side=side,
+        rule=rule,
     )
 
 
-def _allowed(
-    profile: AppProfile,
-    reasons: Iterable[str],
-    *,
-    extra_sources: Iterable[str] = (),
-) -> PolicyDecision:
-    sources = (_profile_source(profile), *extra_sources)
-    return PolicyDecision(
-        decision=ALLOWED,
-        sources=sources,
-        reasons=tuple(reasons),
-        visibility_level=profile.status_visibility.level,
-    )
+def matches_operation(value: str, allowed: frozenset[str]) -> bool:
+    """Match a direct engine operation ``"METHOD /path"`` against scopes.
 
-
-def _matches_scope(value: str, allowed: frozenset[str]) -> bool:
-    """Return True when ``value`` matches an exact or family allow-list item."""
-    return value in allowed or any(value.startswith(f"{item}.") for item in allowed)
-
-
-def _matches_any(value: str, allowed: frozenset[str]) -> bool:
-    return value in allowed
-
-
-def _matches_native_operation(value: str, allowed: frozenset[str]) -> bool:
-    """Match native passthrough operations.
-
-    Native operation scopes are intentionally small: exact strings, ``*``,
-    method-wide scopes such as ``GET *``, and prefix scopes ending in ``*``.
-    Path-only legacy scopes (``/v1/models`` or ``v1/models``) also match a
-    method-qualified request such as ``GET /v1/models``.
+    Scopes: exact strings, ``*``, ``"METHOD *"``, a path for any method, and
+    prefixes ending in ``*``. An empty scope set matches nothing.
     """
     method: str | None = None
     path = value
     if " " in value:
         method, path = value.split(" ", 1)
         method = method.upper()
-
     try:
         canonical_native_path(path)
     except ValueError:
         return False
-
-    if not allowed or "*" in allowed or value in allowed:
+    if not allowed:
+        return False
+    if "*" in allowed or value in allowed:
         return True
-    if method is not None:
-        if f"{method} *" in allowed:
-            return True
-
+    if method is not None and f"{method} *" in allowed:
+        return True
     path_variants = {path, path.lstrip("/"), f"/{path.lstrip('/')}"}
     if path_variants & allowed:
         return True
-
     for scope in allowed:
         if not scope.endswith("*"):
             continue
         prefix = scope[:-1]
         if value.startswith(prefix):
             return True
-        for variant in path_variants:
-            if variant.startswith(prefix):
-                return True
-            if variant.startswith(prefix.lstrip("/")):
-                return True
+        if any(variant.startswith(prefix) or variant.startswith(prefix.lstrip("/")) for variant in path_variants):
+            return True
     return False
 
 
-def _matches_any_tag(tags: frozenset[str], allowed: frozenset[str]) -> bool:
-    return bool(tags & allowed)
+def _item_label(request: PolicyRequest, capability: str | None) -> str:
+    if request.workflow:
+        return request.workflow
+    if request.requested_model or request.model:
+        return request.requested_model or request.model
+    if capability:
+        return CAPABILITY_LABELS.get(capability, capability)
+    return "This request"
 
 
-def evaluate(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
-    """Evaluate a request against a profile.
+def _not_in_plan(side: str, what: str) -> str:
+    if side == PERSON_SIDE:
+        return f"{what} isn't in your access plan."
+    return (
+        f"Your access plan allows {what}, but this app's access plan doesn't. "
+        "Ask the gateway owner to change the app's access plan."
+    )
 
-    Conservative order:
 
-    1. Protocol allow-list
-    2. Workflow allow-list (when configured)
-    3. Model allow-list (when configured)
-    4. Backend allow-list (when configured)
-    5. Capability metadata selectors (when configured and supplied)
-    6. Cloud fallback
-    7. Remote paid provider access
-    8. Native passthrough (enabled + allowed backend + allowed operation)
+def _check_plan(
+    plan: AccessPlan, request: PolicyRequest, side: str,
+) -> tuple[str, str, DecidingRule] | None:
+    """Return (code, reason, rule) for the first rule ``plan`` fails, else None."""
+    intent = request.intent
 
-    The first denial wins. An allow-list of ``None`` means "no opinion";
-    an empty frozenset means "deny all".
-    """
-    reasons: list[str] = []
+    def refuse(rule_code: str, what: str, subject: str | None) -> tuple[str, str, DecidingRule]:
+        return NOT_IN_ACCESS_PLAN, _not_in_plan(side, what), DecidingRule(rule_code, "plan", plan.id, side, subject)
 
-    if profile.protocols is not None and request.protocol is not None:
-        if not _matches_scope(request.protocol, profile.protocols):
-            return _denied(
-                profile,
-                [f"protocol {request.protocol!r} not permitted by profile"],
-            )
-        reasons.append(f"protocol {request.protocol!r} permitted")
-
-    if profile.workflows is not None and request.workflow is not None:
-        if request.workflow not in profile.workflows:
-            return _denied(
-                profile,
-                [f"workflow {request.workflow!r} not permitted by profile"],
-            )
-        reasons.append(f"workflow {request.workflow!r} permitted")
-
-    if profile.models is not None and request.model is not None:
-        if request.model not in profile.models:
-            return _denied(
-                profile,
-                [f"model {request.model!r} not permitted by profile"],
-            )
-        reasons.append(f"model {request.model!r} permitted")
-
-    if profile.backends is not None and request.backend is not None:
-        if request.backend not in profile.backends:
-            return _denied(
-                profile,
-                [f"backend {request.backend!r} not permitted by profile"],
-            )
-        reasons.append(f"backend {request.backend!r} permitted")
-
-    selector_decision = _evaluate_allow_selectors(profile, request)
-    if selector_decision.denied:
-        return selector_decision
-    reasons.extend(selector_decision.reasons)
-
-    if request.requires_cloud_fallback and not profile.fallback.cloud_allowed:
-        return _denied(
-            profile,
-            ["cloud fallback disabled by profile"],
-            extra_sources=("policy:local-only",),
-        )
-
+    if request.native_passthrough or intent == DIRECT_ENGINE_INTENT:
+        direct = plan.direct_engine_access
+        engine = request.native_backend or request.backend
+        if not direct.allows_engine(engine) or not direct.granted:
+            return refuse(RULE_DIRECT_ENGINE, f"Direct engine access to {engine or 'this engine'}", engine)
+        if request.native_operation is not None and not matches_operation(request.native_operation, direct.operations):
+            return refuse(RULE_DIRECT_ENGINE, f"{request.native_operation} on {engine or 'this engine'}", engine)
+    elif intent is not None and intent not in DISCOVERY_INTENTS and intent not in UNSUPPORTED_INTENTS:
+        capability = capability_for_intent(intent)
+        grant = plan.can_use.get(capability) if capability else None
+        if grant is None:
+            return refuse(RULE_CAPABILITY_NOT_GRANTED, _item_label(request, capability), capability)
+        if not grant.allows(model=request.model, workflow=request.workflow, requested=request.requested_model):
+            return refuse(RULE_ITEM_NOT_LISTED, _item_label(request, capability),
+                          request.workflow or request.requested_model or request.model)
     if request.remote_provider is not None:
-        remote_decision = _evaluate_remote(profile, request)
-        if remote_decision.denied:
-            return remote_decision
-        reasons.extend(remote_decision.reasons)
-
-    if request.native_passthrough:
-        native_decision = _evaluate_native(profile, request)
-        if native_decision.denied:
-            return native_decision
-        reasons.extend(native_decision.reasons)
-
-    if not reasons:
-        reasons.append("no restrictions configured")
-    return _allowed(profile, reasons)
+        provider = _canonical_provider_id(request.remote_provider)
+        if provider not in plan.paid_providers:
+            return refuse(RULE_PROVIDER, f"The paid provider {provider}", provider)
+    if (request.requires_cloud_fallback or request.remote_paid_fallback) and not plan.provider_fallback:
+        return refuse(RULE_FALLBACK, "Using a paid provider when the engine is unavailable", None)
+    return None
 
 
-def _evaluate_allow_selectors(
-    profile: AppProfile, request: PolicyRequest
-) -> PolicyDecision:
-    allow = profile.allow
-    reasons: list[str] = []
-
-    if allow.intents is not None and request.intent is not None:
-        if not _matches_scope(request.intent, allow.intents):
-            return _denied(
-                profile,
-                [f"intent {request.intent!r} not permitted by profile"],
-                extra_sources=("policy:capability-selectors",),
-            )
-        reasons.append(f"intent {request.intent!r} permitted")
-
-    if allow.exposure is not None and request.capability_exposure is not None:
-        exposure = request.capability_exposure
-        if not _matches_any(exposure, allow.exposure):
-            return _denied(
-                profile,
-                [f"exposure {exposure!r} not permitted by profile"],
-                extra_sources=("policy:capability-selectors",),
-            )
-        reasons.append(f"exposure {exposure!r} permitted")
-
-    if allow.trust_tiers is not None and request.capability_trust_tier is not None:
-        trust_tier = request.capability_trust_tier
-        if not _matches_any(trust_tier, allow.trust_tiers):
-            return _denied(
-                profile,
-                [f"trust tier {trust_tier!r} not permitted by profile"],
-                extra_sources=("policy:capability-selectors",),
-            )
-        reasons.append(f"trust tier {trust_tier!r} permitted")
-
-    if (
-        allow.resource_tiers is not None
-        and request.capability_resource_tier is not None
-    ):
-        resource_tier = request.capability_resource_tier
-        if not _matches_any(resource_tier, allow.resource_tiers):
-            return _denied(
-                profile,
-                [f"resource tier {resource_tier!r} not permitted by profile"],
-                extra_sources=("policy:capability-selectors",),
-            )
-        reasons.append(f"resource tier {resource_tier!r} permitted")
-
-    if allow.tags is not None and request.capability_tags is not None:
-        if not _matches_any_tag(request.capability_tags, allow.tags):
-            return _denied(
-                profile,
-                ["capability tags not permitted by profile"],
-                extra_sources=("policy:capability-selectors",),
-            )
-        reasons.append("capability tag permitted")
-
-    return _allowed(
-        profile,
-        reasons,
-        extra_sources=("policy:capability-selectors",) if reasons else (),
-    )
+def _allowing_rule(plan: AccessPlan, request: PolicyRequest, side: str) -> DecidingRule:
+    """Which grant of ``plan`` lets a request that ``_check_plan`` passed through."""
+    intent = request.intent
+    capability = capability_for_intent(intent)
+    grant = plan.can_use.get(capability) if capability else None
+    direct = request.native_passthrough or intent == DIRECT_ENGINE_INTENT
+    if grant is None or direct or intent in DISCOVERY_INTENTS or intent in UNSUPPORTED_INTENTS:
+        return DecidingRule(RULE_ALLOWS, "plan", plan.id, side)
+    if grant.all_items:
+        return DecidingRule(RULE_ALLOWS_ALL, "plan", plan.id, side, capability)
+    return DecidingRule(RULE_LISTS_ITEM, "plan", plan.id, side, grant.listed_name(
+        model=request.model, workflow=request.workflow, requested=request.requested_model))
 
 
-def _evaluate_remote(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
-    remote = profile.remote
-    provider = request.remote_provider
-    if provider is None:
-        return _allowed(profile, ())
-    provider = _canonical_provider_id(provider)
-    if provider not in remote.providers:
-        return _denied(
-            profile,
-            [f"remote provider {provider!r} not permitted by profile"],
-            extra_sources=("policy:remote-provider",),
-        )
-    if request.remote_paid_fallback and not remote.allow_paid_fallback:
-        return _denied(
-            profile,
-            ["paid fallback disabled by profile"],
-            extra_sources=("policy:remote-provider",),
-        )
-    return _allowed(
-        profile,
-        [f"remote provider {provider!r} permitted"],
-        extra_sources=("policy:remote-provider",),
-    )
+def evaluate(access: EffectiveAccess, request: PolicyRequest) -> PolicyDecision:
+    """Decide a request (design §2.5 steps 3 and 5).
+
+    Step 3: the person has a plan and the app has an assignment. Step 5: the
+    person's plan, then the app's plan. When both sides hold the same plan it
+    is evaluated once and the explanation says "your access plan".
+    """
+    if access.person_plan is None:
+        return _decision(access, DENIED, [
+            "You don't have an access plan yet. Ask the gateway owner to choose one.",
+        ], code=NO_ACCESS_PLAN, side=PERSON_SIDE, rule=DecidingRule(RULE_NO_PLAN, "plan", None, PERSON_SIDE))
+    if access.app_plan is None:
+        return _decision(access, DENIED, [
+            "This app has no access plan. Ask the gateway owner to choose one.",
+        ], code=NO_ACCESS_PLAN, side=APP_SIDE, rule=DecidingRule(RULE_NO_PLAN, "plan", None, APP_SIDE))
+    sides = [(PERSON_SIDE, access.person_plan)]
+    if access.app_plan.id != access.person_plan.id:
+        sides.append((APP_SIDE, access.app_plan))
+    for side, plan in sides:
+        failure = _check_plan(plan, request, side)
+        if failure is not None:
+            code, reason, rule = failure
+            return _decision(access, DENIED, [reason], code=code, side=side, rule=rule)
+    # Both plans allow it; name the grant of the plan checked last (the app's, when it differs).
+    side, plan = sides[-1]
+    return _decision(access, ALLOWED, ["allowed by your access plan"], rule=_allowing_rule(plan, request, side))
 
 
-def _evaluate_native(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
-    np = profile.native_passthrough
-    if not np.enabled:
-        return _denied(
-            profile,
-            ["native passthrough disabled by profile"],
-            extra_sources=("policy:native-passthrough",),
-        )
-    backend = request.native_backend or request.backend
-    if backend is not None and np.allowed_backends and backend not in np.allowed_backends:
-        return _denied(
-            profile,
-            [f"native passthrough backend {backend!r} not in allow-list"],
-            extra_sources=("policy:native-passthrough",),
-        )
-    if (
-        request.native_operation is not None
-        and np.allowed_operations
-        and not _matches_native_operation(
-            request.native_operation, np.allowed_operations
-        )
-    ):
-        return _denied(
-            profile,
-            [
-                f"native passthrough operation {request.native_operation!r} "
-                "not in allow-list"
-            ],
-            extra_sources=("policy:native-passthrough",),
-        )
-    return _allowed(
-        profile,
-        ["native passthrough permitted"],
-        extra_sources=("policy:native-passthrough",),
-    )
+def cannot_start_model(access: EffectiveAccess, item: str) -> PolicyDecision:
+    """The ``load`` effect was refused: a plan may not start models."""
+    return _decision(access, DENIED, [
+        f"{item} isn't running, and your access plan can't start it. "
+        "Try again when it's running, or ask the gateway owner.",
+    ], code=CANNOT_START_MODEL, side=PERSON_SIDE if not (access.person_plan and access.person_plan.can_load_models) else APP_SIDE)
 
 
-def visibility_for(profile: AppProfile) -> str:
-    """Return the receipt visibility level (basic/standard/full/none) for a profile."""
-    return profile.status_visibility.level
+def visibility_for(access: EffectiveAccess) -> str:
+    """Return the receipt detail level (none/basic/standard/full)."""
+    return access.receipt_detail
 
 
 def apply_to_receipt(decision: PolicyDecision, receipt: object) -> None:
-    """Apply a decision to a receipt-like object without importing receipts.
-
-    Uses duck typing so this module stays decoupled. Calls
-    ``receipt.set_policy_decision(decision, reason=..., source=...)`` once per
-    reason/source pair, mirroring how a caller would record the decision today.
-    """
+    """Apply a decision to a receipt-like object without importing receipts."""
     set_decision = getattr(receipt, "set_policy_decision", None)
     if not callable(set_decision):
         raise TypeError("receipt must expose set_policy_decision(decision, ...)")

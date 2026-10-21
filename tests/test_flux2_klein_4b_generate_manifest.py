@@ -131,6 +131,14 @@ class TestManifestBindsToCommittedWorkflow(unittest.TestCase):
         # FluxGuidance (node 35) carries guidance.
         self.assertEqual(mutated["35"]["inputs"]["guidance"], 4.0)
 
+        # Test-owned destinations: do not build the oracle from the manifest map.
+        expected = copy.deepcopy(original)
+        expected["6"]["inputs"]["text"] = "a luminous geode under desert moonlight"
+        expected["27"]["inputs"].update(width=896, height=1152, batch_size=2)
+        expected["31"]["inputs"].update(steps=6, seed=12345)
+        expected["35"]["inputs"]["guidance"] = 4.0
+        self.assertEqual(mutated, expected, "flux2-klein-4b: graph changed outside binding destinations")
+
     def test_prompt_is_required(self) -> None:
         result = validate_inputs(self.manifest, {"width": 512, "height": 512})
         self.assertFalse(result.ok)
@@ -189,6 +197,8 @@ class TestExtensionContractGeneralizesToGeneration(unittest.TestCase):
         self.assertFalse(result.ok)
 
     def test_namespaced_inputs_bind_to_expected_nodes(self) -> None:
+        workflow = _load_workflow()
+        original = copy.deepcopy(workflow)
         body = {
             "prompt": "neon koi school in shallow river",
             "model": "image.generate.flux2-klein-4b",
@@ -207,7 +217,7 @@ class TestExtensionContractGeneralizesToGeneration(unittest.TestCase):
             body,
             self.manifest,
             "comfyui",
-            _load_workflow(),
+            workflow,
             supported_names=EXTENSION_INPUTS,
             standard_fields=STANDARD_IMAGE_GENERATE_FIELDS,
         )
@@ -222,6 +232,13 @@ class TestExtensionContractGeneralizesToGeneration(unittest.TestCase):
         self.assertEqual(result.request["31"]["inputs"]["steps"], 4)
         # Guidance landed on FluxGuidance (node 35).
         self.assertEqual(result.request["35"]["inputs"]["guidance"], 3.5)
+
+        self.assertEqual(workflow, original, "flux2-klein-4b extension binding: source mutated")
+        expected = copy.deepcopy(original)
+        expected["27"]["inputs"].update(width=768, height=1024, batch_size=1)
+        expected["31"]["inputs"].update(seed=99, steps=4)
+        expected["35"]["inputs"]["guidance"] = 3.5
+        self.assertEqual(result.request, expected, "flux2-klein-4b extension binding: untouched graph differs")
 
     def test_unknown_extension_input_is_rejected_with_reason(self) -> None:
         # ``denoise`` is meaningful for img2img but not exposed by the

@@ -45,6 +45,9 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from gateway import egress
+from gateway import media_jobs as _media_jobs
+from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
 from gateway.extension_catalog import (
@@ -56,6 +59,7 @@ AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Iterable[Capability] | Awaitable[Iterable[Capability]]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
+ReceiptViewerResolver = Callable[[Request], str | None]
 ResourceLister = Callable[..., list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
@@ -65,6 +69,7 @@ MediaJobEventAppender = Callable[..., int | Mapping[str, Any]]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
 RecordAuthorizer = Callable[[Request, str, Mapping[str, Any]], bool]
+LedgerProvider = Callable[[Request, str | None], dict[str, Any] | None]
 
 DEFAULT_AUDIENCE = "client"
 
@@ -109,6 +114,21 @@ def _resolve_request_audience(
         return DEFAULT_AUDIENCE
 
 
+# One response serializer per resource. ``internal`` is the operator tier: it adds
+# the raw ``metadata`` bag to the admin shape, nothing else. Owner and input
+# identifiers are never in an API body, whatever the audience.
+def _job_body(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata"}}
+
+
+def _receipt_body(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k in _receipts.OPERATOR_VISIBLE_FIELDS}
+
+
+def _record_body(kind: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    return _receipt_body(row) if kind == "receipt" else _job_body(row)
+
+
 def _internal_error(audience: str, exc: BaseException) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -139,15 +159,23 @@ def _build_receipt_providers(
     store_path = Path(receipt_store_path)
 
     def store_getter(
-        request_id: str, *, audience: str
+        request_id: str, *, audience: str, viewer_person_id: str | None = None,
     ) -> dict[str, Any] | None:
         return _receipt_store.get(
-            request_id, audience=audience, path=store_path
+            request_id, audience=audience, viewer_person_id=viewer_person_id, path=store_path
         )
+
+    def store_many(ids: Iterable[str], *, audience: str, viewer_person_id: str | None = None) -> dict[str, dict[str, Any]]:
+        return _receipt_store.get_many(
+            ids, audience=audience, viewer_person_id=viewer_person_id, path=store_path,
+        )
+
+    store_getter.many = store_many  # type: ignore[attr-defined]
 
     def store_lister(
         *,
         audience: str,
+        viewer_person_id: str | None = None,
         limit: int,
         app_profile: str | None = None,
         app_ids: list[str] | None = None,
@@ -157,6 +185,7 @@ def _build_receipt_providers(
         return _receipt_store.recent(
             limit=limit,
             audience=audience,
+            viewer_person_id=viewer_person_id,
             app_profile=app_profile,
             app_ids=app_ids,
             owner_key_hashes=owner_key_hashes,
@@ -200,7 +229,6 @@ def _build_media_job_providers(
             media_job_canceler,
         )
 
-    from gateway import media_jobs as _media_jobs
 
     store_path = Path(media_job_store_path)
 
@@ -218,6 +246,11 @@ def _build_media_job_providers(
 
     def store_getter(job_id: str, *, audience: str) -> dict[str, Any] | None:
         return _media_jobs.get(job_id, audience=audience, path=store_path)
+
+    def store_many(ids: Iterable[str], *, audience: str) -> dict[str, dict[str, Any]]:
+        return _media_jobs.get_many(ids, audience=audience, path=store_path)
+
+    store_getter.many = store_many  # type: ignore[attr-defined]
 
     def store_lister(
         *,
@@ -292,6 +325,7 @@ def create_gateway_router(
     receipt_getter: ReceiptGetter | None = None,
     receipt_lister: ReceiptLister | None = None,
     receipt_store_path: str | Path | None = None,
+    receipt_viewer_resolver: ReceiptViewerResolver | None = None,
     resource_lister: ResourceLister | None = None,
     asset_url_ttl_s: int | None = None,
     media_job_creator: MediaJobCreator | None = None,
@@ -325,6 +359,9 @@ def create_gateway_router(
       :mod:`gateway.receipt_store` backend automatically. When neither is
       provided, the receipt endpoints return empty lists / protocol-shaped
       404s.
+    * ``receipt_viewer_resolver`` — authenticated person behind the caller's
+      credential or session. Without it, non-internal receipt reads hide
+      retention reasons and deadlines.
 
     Callers wiring real auth must also pass ``record_authorizer``. Audience
     filtering controls field disclosure, not ownership. The authorizer sees
@@ -372,7 +409,9 @@ def create_gateway_router(
             internal = getter(record_id, audience="internal")
             if internal is None or not record_authorizer(request, kind, internal):
                 return None
-        return getter(record_id, audience=audience)
+        viewer = receipt_viewer_resolver(request) if kind == "receipt" and receipt_viewer_resolver else None
+        row = getter(record_id, audience=audience, viewer_person_id=viewer) if kind == "receipt" else getter(record_id, audience=audience)
+        return None if row is None else _record_body(kind, row)
 
     def scoped_rows(
         rows: list[dict[str, Any]],
@@ -382,8 +421,17 @@ def create_gateway_router(
         audience: str,
     ) -> list[dict[str, Any]]:
         if record_authorizer is None:
-            return rows
+            return [_record_body(kind, row) for row in rows]
         id_field = "request_id" if kind == "receipt" else "job_id"
+        many = getattr(getter, "many", None)
+        if many is not None:
+            # The store reads every authorized row at the caller's audience in one
+            # query. The rows were listed at the internal audience and checked here,
+            # so the per-record re-check of an unchanged record is not repeated.
+            authorized = [str(row[id_field]) for row in rows if record_authorizer(request, kind, row)]
+            viewer = receipt_viewer_resolver(request) if kind == "receipt" and receipt_viewer_resolver else None
+            visible_rows = many(authorized, audience=audience, viewer_person_id=viewer) if kind == "receipt" else many(authorized, audience=audience)
+            return [_record_body(kind, visible_rows[record_id]) for record_id in authorized if record_id in visible_rows]
         allowed: list[dict[str, Any]] = []
         for row in rows:
             if not record_authorizer(request, kind, row):
@@ -419,7 +467,8 @@ def create_gateway_router(
             summary = registry.summarize_workflow(workflow_id, audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
-        if summary is None:
+        # A workflow the caller cannot see is as absent as one that does not exist.
+        if summary is None or (entry_visible is not None and not entry_visible(request, summary)):
             return JSONResponse(
                 status_code=status.HTTP_404_NOT_FOUND,
                 content=_error_payload(
@@ -528,6 +577,7 @@ def create_gateway_router(
                 rows = list(
                     receipt_lister(
                         audience="internal" if record_authorizer else audience,
+                        viewer_person_id=receipt_viewer_resolver(request) if receipt_viewer_resolver else None,
                         limit=limit,
                         app_profile=app_profile,
                         since_s=since_s,
@@ -643,7 +693,7 @@ def create_gateway_router(
             )
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content=created)
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=_job_body(created))
 
     @router.get("/media/jobs")
     def list_media_jobs(
@@ -888,6 +938,39 @@ def create_gateway_router(
                     f"media job {job_id!r} not found",
                 ),
             )
-        return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=updated)
+        return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=_job_body(updated))
+
+    return router
+
+
+def create_request_retention_router(*, ledger_provider: LedgerProvider) -> APIRouter:
+    """Expose dated facts through management auth, outside runtime App-key auth.
+
+    The injected provider uses the same owner/admin guard as other ledger reads
+    and masks receipt retention fields for the authenticated viewer.
+    """
+    router = APIRouter(prefix="/admin/api", route_class=egress.ManagementRoute)
+
+    @router.get("/me/retention/ledger")
+    def current_retention_ledger(request: Request) -> JSONResponse:
+        try:
+            view = ledger_provider(request, None)
+        except PermissionError:
+            return egress.safe_error_response(403, "admin_forbidden", "An owner or administrator is required")
+        if view is None:
+            return egress.safe_error_response(404, "ledger_not_found", "Ledger not found")
+        return egress.plain_json_response({"ledger": view}, response_class="retention_ledger",
+                                          headers={"Cache-Control": "no-store"})
+
+    @router.get("/requests/{request_id}/retention/ledger")
+    def request_retention_ledger(request_id: str, request: Request) -> JSONResponse:
+        try:
+            view = ledger_provider(request, request_id)
+        except PermissionError:
+            return egress.safe_error_response(403, "admin_forbidden", "An owner or administrator is required")
+        if view is None:
+            return egress.safe_error_response(404, "ledger_not_found", "Ledger not found")
+        return egress.plain_json_response({"ledger": view}, response_class="retention_ledger",
+                                          headers={"Cache-Control": "no-store"})
 
     return router

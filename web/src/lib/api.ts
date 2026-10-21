@@ -7,10 +7,13 @@
  *   x-azizam-admin-action: 1
  *   x-azizam-csrf: <token from GET /admin/api/session>
  * The CSRF token is fetched lazily, cached, and refreshed once on a
- * 403 admin_csrf_required (rolled session). No secret values are ever
+ * 403 admin_csrf_required (rolled session). A risky action from a stale
+ * session answers 401 reauth_required; adminFetch then opens the shared
+ * confirm prompt (lib/reauth.ts) and retries once. No secret values are ever
  * logged by this module. */
 
 import { networkFetch } from "./network-error";
+import { parseReauth, requestReauth } from "./reauth";
 import { QueryClient } from "@tanstack/react-query";
 
 const SERVICE_REGISTRY_PATH = "/admin/api/operator/service-registry";
@@ -27,7 +30,13 @@ function isServiceRegistryMutation(path: string, method: string): boolean {
   }
   if (
     method === "POST" &&
-    /^\/admin\/api\/operator\/services\/[^/]+\/enabled$/.test(path)
+    /^\/admin\/api\/operator\/services\/[^/]+\/(enabled|secret-entries)$/.test(path)
+  ) {
+    return true;
+  }
+  if (
+    (method === "PUT" || method === "DELETE") &&
+    /^\/admin\/api\/operator\/service-registry\/excluded\/[^/]+\/[^/]+$/.test(path)
   ) {
     return true;
   }
@@ -59,7 +68,6 @@ export interface Credential {
   subject_kind: CredentialSubjectKind;
   subject_id: string;
   app_id: string | null;
-  profile_id: string | null;
   /** First 18 chars of the full key — render via <SecretMask> only. */
   prefix: string;
   display_name: string;
@@ -89,12 +97,15 @@ export interface ApiErrorEnvelope {
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
+  /** The whole error body, for routes that answer with more than code and message. */
+  readonly payload?: unknown;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -128,14 +139,16 @@ export interface App {
   id: string;
   kind: "service" | "personal";
   name: string;
-  owner_user_id: string | null;
-  owner_service_account_id: string | null;
-  default_profile_id: string | null;
+  /** The accountable person: their plan bounds the app (design §2.4). */
+  owner_user_id: string;
+  accountable_person: { id: string; name: string | null } | null;
+  /** An access plan id, "person" (same as its person), or null: no plan, denies. */
+  access_plan: string | null;
+  same_as_person: boolean;
+  access_plan_name: string | null;
+  effective_access_plan_id: string | null;
   created_at: number;
   disabled_at: number | null;
-  effective_profile_id: string;
-  effective_profile_name: string;
-  effective_profile_source: "app_default" | "fallback";
 }
 
 export interface User {
@@ -150,47 +163,48 @@ export interface User {
   roles: string[];
 }
 
-export interface Profile {
-  id: string;
-  name: string;
-  description: string | null;
-  created_at: number;
-  profile: ProfilePolicyDocument;
-  protocols: string[];
-  workflows: string[];
-  status_visibility: string;
+export type CapabilityId =
+  | "chat" | "image" | "video" | "speech" | "transcribe" | "music"
+  | "sfx" | "audio" | "decide" | "embed" | "rerank";
+
+export type PlanItem = { model: string } | { workflow: string };
+
+export interface PlanCaps {
+  usd_per_request: string | null;
+  usd_per_day: string | null;
+  usd_per_month: string | null;
 }
 
-export interface ProfilePolicyDocument {
+/** An access plan document (design §3.1). Every field is required. */
+export interface AccessPlanDocument {
   id?: string;
-  protocols?: string[];
-  workflows?: string[];
-  models?: string[];
-  backends?: string[];
-  allow?: {
-    intents?: string[];
-    exposure?: string[];
-    trust_tiers?: string[];
-    resource_tiers?: string[];
-    tags?: string[];
-  };
-  fallback?: { cloud_allowed?: boolean };
-  remote?: {
-    providers?: string[];
-    max_usd_per_request?: string | number | null;
-    budget_usd_per_day?: string | number | null;
-    budget_usd_per_month?: string | number | null;
-    allow_paid_fallback?: boolean;
-  };
-  native_passthrough?: {
-    enabled?: boolean;
-    allowed_backends?: string[];
-    allowed_operations?: string[];
-    audit?: boolean;
-  };
-  status_visibility?: { level?: string };
-  target_policy?: { visibility?: string; activation?: string };
-  model_access?: { mode?: string };
+  name: string;
+  can_use: Partial<Record<CapabilityId, { items: "all" | PlanItem[] }>>;
+  direct_engine_access: { engines: "all" | string[]; operations: string[] };
+  paid_providers: string[];
+  provider_fallback: boolean;
+  /** US dollars as decimal strings; null means no cap for that period. */
+  caps: PlanCaps;
+  can_load_models: boolean;
+  receipt_detail: "none" | "basic" | "standard" | "full";
+  media_metadata: "none" | "full";
+}
+
+export interface AccessPlan {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  plan: AccessPlanDocument;
+  summary: string | null;
+  used_by?: { people: string[]; apps: string[]; invites: number };
+}
+
+/** A plan as pickers show it. */
+export interface AccessPlanChoice {
+  id: string;
+  name: string;
+  summary: string | null;
 }
 
 export interface PolicyEditorChoice {
@@ -198,44 +212,20 @@ export interface PolicyEditorChoice {
   label: string;
   description: string | null;
   available?: boolean;
-  /** Other saved spellings that mean this choice (capabilities only). */
-  aliases?: string[];
 }
 
-export interface PolicyEditorContract {
-  schema_version: 1;
-  profile: {
-    create: { profile: ProfilePolicyDocument };
-    set_semantics: { omitted: "no_opinion"; empty: "deny_all" };
-    choices: {
-      protocols: PolicyEditorChoice[];
-      intents: PolicyEditorChoice[];
-      workflows: PolicyEditorChoice[];
-      models: PolicyEditorChoice[];
-      exposure: PolicyEditorChoice[];
-      trust_tiers: PolicyEditorChoice[];
-      resource_tiers: PolicyEditorChoice[];
-      tags: PolicyEditorChoice[];
-      status_visibility: PolicyEditorChoice[];
-      target_visibility: PolicyEditorChoice[];
-      target_activation: PolicyEditorChoice[];
-    };
-  };
-  runtime_mappings: {
-    source_kinds: Array<{
-      id: string;
-      label: string;
-      description: string | null;
-      value_mode: "required" | "fixed";
-      fixed_value?: string;
-    }>;
-    fallback_profile: {
-      id: string;
-      label: string;
-      description: string | null;
-      assignable: boolean;
-    };
-  };
+export interface AccessPlanEditorContract {
+  schema_version: 2;
+  capabilities: {
+    id: CapabilityId;
+    label: string;
+    items: { kind: "model" | "workflow"; id: string; available: boolean }[];
+  }[];
+  engines: { id: string; label: string; available: boolean }[];
+  paid_providers: { id: string; label: string; available: boolean }[];
+  receipt_detail: PolicyEditorChoice[];
+  media_metadata: PolicyEditorChoice[];
+  new_plan: AccessPlanDocument;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,91 +284,108 @@ export interface Service {
   secret_refs?: Record<string, string>;
 }
 
+/**
+ * A stored record the gateway leaves out because it does not validate. `record` is the record as the gateway
+ * can read it: a secret is an entry with an id and a `configured` flag, never a value. It is absent when the record
+ * cannot be read into its type (`parsed: false`); then `failed_fields` names the fields that could not be read and
+ * `secret_slots` the secret entries the record holds.
+ */
+export interface LeftOutRecord {
+  section: string;
+  id: string;
+  error: string;
+  parsed: boolean;
+  secret_slots: string[];
+  failed_fields?: string[];
+  record?: unknown;
+}
+
 export interface ServiceRegistry {
   schema_version: number;
   services: Record<string, Service>;
   protocol_frontends?: Record<string, unknown>;
   workflows?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  /** The records left out of the registry above; carried here so one query serves the page. */
+  excluded?: LeftOutRecord[];
 }
 
 export interface ServiceRegistryResponse {
   service_registry: ServiceRegistry;
+  excluded?: LeftOutRecord[];
 }
 
-export interface ProviderPreset {
-  id: string;
-  label: string;
-  base_path: string;
-  default_port: number | null;
-  protocol: string | null;
-  capabilities: string[];
-  native_passthrough: boolean;
-}
-
-export interface CapabilityChoice {
-  id: string;
-  label: string;
-}
-
-export interface PresetsResponse {
-  presets: ProviderPreset[];
-  /** Canonical capability choices supplied by the server. */
-  capabilities?: CapabilityChoice[];
+/** The registry, carrying the left-out records only when there are any: every other page reads the plain registry. */
+function withLeftOut(response: ServiceRegistryResponse): ServiceRegistry {
+  const excluded = response.excluded ?? [];
+  return excluded.length > 0
+    ? { ...response.service_registry, excluded }
+    : response.service_registry;
 }
 
 // ---------------------------------------------------------------------------
-// Profiles (full CRUD types)
+// Check access
 
-export interface CreateProfileInput {
+/**
+ * The rule that decided a row, allowed or not. `code` is stable (branch on it,
+ * never on the sentence). `id` and `name` say what to edit: a plan, or a category
+ * (an administrator is not given a category's id or name).
+ */
+export interface AccessRule {
+  code: string;
+  kind: "plan" | "category" | "provider";
+  id: string | null;
+  name: string | null;
+  /** The rule in plain English; never an internal id. */
+  plain_reason: string;
+}
+
+/** One kind of work (Chat, Images) an entry offers, and whether the plan allows it. */
+export interface AccessPreviewKind {
+  kind: string;
+  label: string;
+  allowed: boolean;
+  /** "unknown" means the answer depends on something that could not be read. */
+  state: "allowed" | "blocked" | "unknown";
+  reason: string | null;
+  rule: AccessRule | null;
+}
+
+/** One Models page entry (a model, an alias or a workflow) and what the plan decides for it. */
+export interface AccessPreviewEntry {
+  id: string;
   name: string;
-  description?: string;
-  profile: ProfilePolicyDocument;
+  alias: boolean;
+  group: string;
+  group_label: string;
+  /** "unknown" is a cannot-tell: enforcement refuses it, and the reason says what could not be read. */
+  state: "allowed" | "partial" | "blocked" | "unknown";
+  /** The sentence for a blocked or cannot-tell row; null when nothing is blocked. */
+  reason: string | null;
+  /** The deciding rule: why it is blocked, or why it is allowed. */
+  rule: AccessRule | null;
+  /** The model an alias reaches; empty for anything else. */
+  points_to: { id: string; name: string }[];
+  /** Set only when the entry is allowed for some kinds of work and not others, or the kinds differ. */
+  kinds: AccessPreviewKind[];
 }
 
-export interface UpdateProfileInput {
-  name?: string;
-  description?: string;
-  profile?: ProfilePolicyDocument;
+export interface AccessPreviewCounts {
+  total: number;
+  usable: number;
+  blocked: number;
+  unknown: number;
 }
 
-export interface SimulateRequest {
-  profile: string;
-  request: {
-    protocol?: string | null;
-    intent?: string | null;
-    model?: string | null;
-    workflow?: string | null;
-    backend?: string | null;
-    capability_exposure?: string;
-    capability_trust_tier?: string;
-    capability_resource_tier?: string;
-    capability_tags?: string[];
-    requires_cloud_fallback?: boolean;
-    native_passthrough?: boolean;
-    native_operation?: string | null;
-    native_backend?: string | null;
-  };
-}
-
-export interface SimulateResult {
-  profile_id: string;
-  decision: {
-    decision: "allowed" | "denied";
-    allowed: boolean;
-    sources: string[];
-    reasons: string[];
-    visibility_level: string;
-  };
+export interface AccessPreview {
+  plan_ids: string[];
+  summary: AccessPreviewCounts;
+  groups: ({ group: string; label: string } & AccessPreviewCounts)[];
+  entries: AccessPreviewEntry[];
 }
 
 // ---------------------------------------------------------------------------
 // Users surface
-
-export interface UserAccessDefaults {
-  self_service_apps: boolean;
-  auto_create_personal_app: boolean;
-}
 
 export interface AuditEntry {
   id: string;
@@ -391,56 +398,6 @@ export interface AuditEntry {
   target_kind: string | null;
   target_id: string | null;
   metadata: Record<string, unknown> | null;
-}
-
-export interface OidcConfigProvenance {
-  summary: "bootstrap" | "database" | "merged" | "runtime_default";
-  fields: Record<string, "bootstrap" | "database" | "runtime_default">;
-}
-
-/** Effective, redacted OIDC configuration returned by GET /admin/api/oidc-config. */
-export interface EffectiveOidcConfig {
-  display_name: string;
-  enabled: boolean;
-  issuer: string;
-  client_id: string;
-  client_secret: "<redacted>" | "";
-  client_secret_set: boolean;
-  redirect_uri: string;
-  scopes: string[];
-  allowed_email_domains: string[];
-  admin_emails: string[];
-  admin_groups: string[];
-  admin_roles: string[];
-  authorization_endpoint: string;
-  token_endpoint: string;
-  jwks_uri: string;
-  clock_skew_seconds: number;
-  groups_claim: string;
-  updated_at: number | null;
-  source: OidcConfigProvenance["summary"];
-  apply_mode: "live";
-  provenance: OidcConfigProvenance;
-}
-
-/** Write-only PUT shape; it deliberately cannot carry response provenance. */
-export interface OidcConfigUpdate {
-  display_name?: string | null;
-  enabled?: boolean;
-  issuer?: string | null;
-  client_id?: string | null;
-  client_secret?: string | null;
-  redirect_uri?: string | null;
-  scopes?: string[];
-  allowed_email_domains?: string[];
-  admin_emails?: string[];
-  admin_groups?: string[];
-  admin_roles?: string[];
-  authorization_endpoint?: string | null;
-  token_endpoint?: string | null;
-  jwks_uri?: string | null;
-  clock_skew_seconds?: number;
-  groups_claim?: string | null;
 }
 
 /** Response shape for GET /admin/api/audit (keyset-paginated). */
@@ -552,6 +509,8 @@ export interface CurrentHealthService {
   capability_labels?: string[];
   icon_key?: import("./product-api-types").CapabilityIconKey;
   in_use?: boolean | null;
+  /** The service record says it starts when needed. */
+  starts_on_demand?: boolean;
   usage_label?: string | null;
   service_id: string;
   name: string;
@@ -600,6 +559,27 @@ export interface StatusResponse {
   status: StatusPayload;
 }
 
+/** One item of the overview's attention list; the registry problem has kind "registry". */
+export interface OverviewAttentionItem {
+  kind: string;
+  severity: string;
+  title: string;
+  detail?: string;
+}
+
+/** The part of GET /admin/api/overview the web app reads: why the running
+ * config is not the stored registry, and the stored records left out. */
+export interface OverviewPayload {
+  attention: OverviewAttentionItem[];
+  registry_apply: {
+    mode: "partial" | "empty" | "stale";
+    error: string;
+    left_out: Record<string, string>;
+    served: number;
+  } | null;
+  registry_excluded: Array<{ section: string; id: string; error: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // CSRF session bootstrap
 
@@ -620,6 +600,7 @@ async function requestSession(): Promise<Session> {
         payload.error.code,
         payload.error.message,
         response.status,
+        payload,
       );
     }
     throw new ApiError(
@@ -637,15 +618,16 @@ export async function fetchSession(options?: {
 }): Promise<Session> {
   if (!options?.force && cachedSession) return cachedSession;
   if (!options?.force && sessionInFlight) return sessionInFlight;
-  sessionInFlight = requestSession()
+  const request: Promise<Session> = requestSession()
     .then((session) => {
-      cachedSession = session;
+      if (sessionInFlight === request) cachedSession = session;
       return session;
     })
     .finally(() => {
-      sessionInFlight = null;
+      if (sessionInFlight === request) sessionInFlight = null;
     });
-  return sessionInFlight;
+  sessionInFlight = request;
+  return request;
 }
 
 /** Drop the cached session (sign-out, tests). */
@@ -690,16 +672,112 @@ async function rawFetch(
   });
 }
 
+interface Answer {
+  response: Response;
+  payload: unknown;
+}
+
+/** One request with its CSRF token. On a 403 `admin_csrf_required` the session
+ * is refetched and the write sent again (the session rolled underneath us). */
+async function send(
+  path: string,
+  init: AdminFetchInit,
+  freshSession: boolean,
+  parse: boolean,
+): Promise<Answer> {
+  const isWrite = (init.method ?? "GET") !== "GET";
+  let csrfToken: string | null = null;
+  if (isWrite) {
+    csrfToken =
+      (await fetchSession(freshSession ? { force: true } : undefined)).actor
+        .csrf_token || null;
+  }
+
+  const read = async (response: Response): Promise<Answer> => ({
+    response,
+    // A download keeps its body for the caller unless the server refused it.
+    payload:
+      response.status === 204 || (!parse && response.ok)
+        ? undefined
+        : await response.json().catch(() => null),
+  });
+
+  let answer = await read(await rawFetch(path, init, csrfToken));
+  if (
+    !answer.response.ok &&
+    answer.response.status === 403 &&
+    isWrite &&
+    isErrorEnvelope(answer.payload) &&
+    answer.payload.error.code === CSRF_REQUIRED_CODE
+  ) {
+    const fresh = await fetchSession({ force: true });
+    answer = await read(
+      await rawFetch(path, init, fresh.actor.csrf_token || null),
+    );
+  }
+  return answer;
+}
+
+function isLoginRequired({ response, payload }: Answer): boolean {
+  return (
+    response.status === 401 &&
+    isErrorEnvelope(payload) &&
+    payload.error.code === "login_required"
+  );
+}
+
+/** Send the request; when the gateway asks the person to confirm it is them
+ * (`401 reauth_required`), wait for the one shared prompt and send it once
+ * more. A cancelled prompt leaves the first answer, so callers see the
+ * original `reauth_required` ApiError. */
+async function sendWithReauth(
+  path: string,
+  init: AdminFetchInit,
+  parse: boolean,
+): Promise<Answer> {
+  let first = await send(path, init, false, parse);
+  // A write answered `login_required` wrote nothing (decision D41), so it is safe to send again. The session may
+  // simply have renewed while the request was in flight (its old id was in the 60 s grace window, or the
+  // response carrying the new one was lost); the second try carries the cookie the browser holds now.
+  if (isLoginRequired(first) && (init.method ?? "GET") !== "GET") {
+    first = await send(path, init, true, parse);
+  }
+  const reauth =
+    first.response.status === 401 ? parseReauth(first.payload) : null;
+  if (!reauth || !(await requestReauth(reauth))) return first;
+  // Confirming re-issues the session cookie, so the CSRF token may differ.
+  return send(path, init, true, parse);
+}
+
+function toApiError(
+  { response, payload }: Answer,
+  method: string,
+  path: string,
+): ApiError {
+  if (isErrorEnvelope(payload)) {
+    return new ApiError(
+      payload.error.code,
+      payload.error.message,
+      response.status,
+      payload,
+    );
+  }
+  return new ApiError(
+    "unexpected_response",
+    `${method} ${path} failed (${response.status})`,
+    response.status,
+  );
+}
+
 /** The one fetch wrapper every admin call goes through. Reads need only the
- * cookie; writes get the action + CSRF headers injected. On a 403
- * `admin_csrf_required` the session is refetched and the write retried once
- * (the session rolled underneath us). Throws `ApiError` on any non-2xx. */
+ * cookie; writes get the action + CSRF headers injected. A risky action from a
+ * stale session opens the shared confirm-it's-you prompt and is retried once.
+ * Throws `ApiError` on any non-2xx. */
 export async function adminFetch<T>(
   path: string,
   init: AdminFetchInit = {},
 ): Promise<T> {
   const method = init.method ?? "GET";
-  const isWrite = method !== "GET";
   const isRegistryMutation = isServiceRegistryMutation(path, method);
   let requestInit = init;
   if (isRegistryMutation && !hasHeader(init.headers, "If-Match")) {
@@ -716,55 +794,88 @@ export async function adminFetch<T>(
     };
   }
 
-  let csrfToken: string | null = null;
-  if (isWrite) {
-    csrfToken = (await fetchSession()).actor.csrf_token || null;
-  }
-
-  let response = await rawFetch(path, requestInit, csrfToken);
-  let payload: unknown =
-    response.status === 204
-      ? undefined
-      : await response.json().catch(() => null);
-
-  if (
-    !response.ok &&
-    response.status === 403 &&
-    isWrite &&
-    isErrorEnvelope(payload) &&
-    payload.error.code === CSRF_REQUIRED_CODE
-  ) {
-    const fresh = await fetchSession({ force: true });
-    response = await rawFetch(
-      path,
-      requestInit,
-      fresh.actor.csrf_token || null,
-    );
-    payload =
-      response.status === 204
-        ? undefined
-        : await response.json().catch(() => null);
-  }
-
-  if (!response.ok) {
-    if (isErrorEnvelope(payload)) {
-      throw new ApiError(
-        payload.error.code,
-        payload.error.message,
-        response.status,
-      );
-    }
-    throw new ApiError(
-      "unexpected_response",
-      `${method} ${path} failed (${response.status})`,
-      response.status,
-    );
-  }
+  const answer = await sendWithReauth(path, requestInit, true);
+  if (!answer.response.ok) throw toApiError(answer, method, path);
   if (isServiceRegistryResponse(path, method)) {
-    const etag = response.headers.get("etag");
+    const etag = answer.response.headers.get("etag");
     if (etag) serviceRegistryEtag = etag;
   }
-  return payload as T;
+  return answer.payload as T;
+}
+
+/** Save a file the gateway serves behind a sign-in check (an export). A plain
+ * link would show the raw JSON of a `reauth_required` answer; this asks for
+ * the confirm prompt, retries, then saves the bytes. */
+export async function adminDownload(
+  path: string,
+  fallbackName: string,
+): Promise<void> {
+  const answer = await sendWithReauth(path, {}, false);
+  if (!answer.response.ok) throw toApiError(answer, "GET", path);
+  const disposition = answer.response.headers.get("content-disposition") ?? "";
+  const name =
+    /filename="?([^";]+)"?/i.exec(disposition)?.[1]?.trim() || fallbackName;
+  const url = URL.createObjectURL(await answer.response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // The browser has the bytes once the click returns; free the blob after.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** The CSRF token of the person's own sign-in. Any signed-in person has one
+ * on `/me/api/session`; `/admin/api/session` refuses members and is the
+ * fallback for an owner whose snapshot has none. Read fresh each time: these
+ * routes are rare, and confirming a password re-issues the cookie. */
+async function personCsrf(): Promise<string> {
+  const response = await networkFetch("/me/api/session", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const snapshot = (await response.json().catch(() => null)) as {
+    csrf_token?: unknown;
+  } | null;
+  if (typeof snapshot?.csrf_token === "string" && snapshot.csrf_token)
+    return snapshot.csrf_token;
+  return (await fetchSession({ force: true })).actor.csrf_token;
+}
+
+/** POST to a /auth/api/ route that acts on the caller's own session. These
+ * routes take the CSRF header only. */
+async function authPost(path: string, body?: unknown): Promise<unknown> {
+  const response = await networkFetch(path, {
+    method: "POST",
+    headers: {
+      "x-azizam-csrf": await personCsrf(),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    credentials: "same-origin",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw toApiError({ response, payload }, "POST", path);
+  return payload;
+}
+
+/** Prove the signed-in person's password to the step-up prompt. The gateway
+ * re-issues the session cookie, so the cached CSRF token is dropped. A wrong
+ * password is `invalid_password` (401). */
+export async function confirmWithPassword(password: string): Promise<void> {
+  await authPost("/auth/api/reauth", { password });
+  resetSessionCache();
+}
+
+/** End every sign-in this person has, on every device including this one.
+ * Resolves with the page to open next (the sign-in page). */
+export async function signOutEverywhere(): Promise<string> {
+  const payload = await authPost("/auth/api/sign-out-everywhere");
+  const next = (payload as { next?: unknown } | null)?.next;
+  // Only a path on this site; anything else goes to the sign-in page.
+  return typeof next === "string" && /^\/(?!\/)/.test(next) ? next : "/sign-in/";
 }
 
 /** Run a registry mutation against the latest known snapshot ETag. */
@@ -798,105 +909,89 @@ export const api = {
   apps: {
     list: () =>
       adminFetch<{ apps: App[] }>("/admin/api/apps").then((r) => r.apps),
+    /** Owner only: an access plan id, or "person" for the app's person's plan. */
+    setAccessPlan: (appId: string, accessPlan: string) =>
+      adminFetch<{ app: App }>(`/admin/api/apps/${encodeURIComponent(appId)}`, {
+        method: "PATCH",
+        body: { access_plan: accessPlan },
+      }).then((r) => r.app),
   },
   users: {
     list: () =>
       adminFetch<{ users: User[] }>("/admin/api/users").then((r) => r.users),
   },
 
-  profiles: {
+  accessPlans: {
     list: () =>
-      adminFetch<{ profiles: Profile[] }>("/admin/api/profiles").then(
-        (r) => r.profiles,
+      adminFetch<{ access_plans: AccessPlan[] }>("/admin/api/access-plans").then(
+        (r) => r.access_plans,
       ),
-    create: (input: CreateProfileInput) =>
-      adminFetch<{ profile: Profile }>("/admin/api/profiles", {
+    create: (input: AccessPlanDocument) =>
+      adminFetch<{ access_plan: AccessPlan }>("/admin/api/access-plans", {
         method: "POST",
         body: input,
-      }).then((r) => r.profile),
-    update: (profileId: string, input: UpdateProfileInput) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "PATCH",
-        body: input,
-      }).then((r) => r.profile),
-    delete: (profileId: string) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "DELETE",
-      }).then((r) => r.profile),
-  },
-
-  policyEditor: {
-    get: () => adminFetch<PolicyEditorContract>("/admin/api/policy/editor"),
-  },
-
-  policy: {
-    simulate: (input: SimulateRequest) =>
-      adminFetch<SimulateResult>("/admin/api/policy/simulate", {
-        method: "POST",
-        body: input,
-      }),
-  },
-
-  userAccessDefaults: {
-    get: () =>
-      adminFetch<{ overrides: { user_access_defaults: UserAccessDefaults } }>(
-        "/admin/api/operator/overrides",
-      ).then((r) => r.overrides.user_access_defaults),
-    update: (input: Partial<UserAccessDefaults>) =>
-      adminFetch<{ user_access_defaults: UserAccessDefaults }>(
-        "/admin/api/operator/user-access-defaults",
+      }).then((r) => r.access_plan),
+    update: (planId: string, input: AccessPlanDocument) =>
+      adminFetch<{ access_plan: AccessPlan }>(
+        `/admin/api/access-plans/${encodeURIComponent(planId)}`,
         { method: "PUT", body: input },
-      ).then((r) => r.user_access_defaults),
+      ).then((r) => r.access_plan),
+    delete: (planId: string) =>
+      adminFetch<{ access_plan: AccessPlan }>(
+        `/admin/api/access-plans/${encodeURIComponent(planId)}`,
+        { method: "DELETE" },
+      ).then((r) => r.access_plan),
+    editor: () =>
+      adminFetch<AccessPlanEditorContract>("/admin/api/access-plans/editor"),
+    /** Everything the plan can and cannot use. Makes no model request. */
+    preview: (planId: string) =>
+      adminFetch<AccessPreview>("/admin/api/access/preview", {
+        method: "POST",
+        body: { plan: planId },
+      }),
   },
 
   services: {
     registry: () =>
       adminFetch<ServiceRegistryResponse>(
         "/admin/api/operator/service-registry",
-      ).then((r) => r.service_registry),
-    presets: () =>
-      adminFetch<PresetsResponse>("/admin/api/operator/service-presets"),
-    add: (input: Record<string, unknown>) =>
-      adminRegistryMutation<ServiceRegistryResponse>(
-        "/admin/api/operator/services",
-        {
-          method: "POST",
-          body: input,
-        },
-      ).then((r) => r.service_registry),
+      ).then(withLeftOut),
     edit: (serviceId: string, input: Record<string, unknown>) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "PATCH", body: input },
-      ).then((r) => r.service_registry),
+      ).then(withLeftOut),
     remove: (serviceId: string) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
-      ).then((r) => r.service_registry),
-    testConnection: (input: Record<string, unknown>) =>
-      adminFetch<{
-        probe: {
-          ok: boolean;
-          status: number | null;
-          error: string;
-          url: string;
-        };
-      }>("/admin/api/operator/services/test", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.probe),
-    detectModels: (input: Record<string, unknown>) =>
-      adminFetch<{
-        detected: { ok: boolean; models: string[]; error: string };
-      }>("/admin/api/operator/services/detect-models", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.detected),
+      ).then(withLeftOut),
+    /** Save an edited copy of a left-out record. */
+    fixLeftOut: (section: string, id: string, record: unknown) =>
+      adminRegistryMutation<ServiceRegistryResponse>(
+        `/admin/api/operator/service-registry/excluded/${encodeURIComponent(section)}/${encodeURIComponent(id)}`,
+        { method: "PUT", body: { record } },
+      ).then(withLeftOut),
+    /** Drop a left-out record from the store. */
+    removeLeftOut: (section: string, id: string) =>
+      adminRegistryMutation<ServiceRegistryResponse>(
+        `/admin/api/operator/service-registry/excluded/${encodeURIComponent(section)}/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ).then(withLeftOut),
   },
 
   status: () =>
     adminFetch<StatusResponse>("/admin/api/status").then((r) => r.status),
+
+  overview: () => adminFetch<OverviewPayload>("/admin/api/overview"),
+
+  config: {
+    /** Apply the stored registry to the running gateway again. */
+    reload: () =>
+      adminFetch<{ reloaded: boolean }>("/admin/api/config/reload", {
+        method: "POST",
+      }),
+  },
 
   audit: {
     /** Paginated fetch. Returns {records, next_cursor}. */
@@ -925,7 +1020,7 @@ export const queryKeys = {
   apps: ["apps"] as const,
   users: ["users"] as const,
   credentials: ["credentials"] as const,
-  profiles: ["profiles"] as const,
+  accessPlans: ["access-plans"] as const,
   overview: ["overview"] as const,
   /** Recent audit teaser (3 rows on the overview). */
   auditRecent: ["audit", "recent"] as const,
@@ -936,12 +1031,11 @@ export const queryKeys = {
     ["audit", params] as const,
   auditEvent: (eventId: string | null) => ["audit", "event", eventId] as const,
   serviceRegistry: ["serviceRegistry"] as const,
-  servicePresets: ["servicePresets"] as const,
   status: ["status"] as const,
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,
-  runtimeProfileMappings: ["runtime-profile-mappings"] as const,
-  policyEditor: ["policy-editor"] as const,
+  accessPlanEditor: ["access-plan-editor"] as const,
+  accessPreview: (planId: string) => ["access-preview", planId] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic

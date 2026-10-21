@@ -14,7 +14,7 @@ Verifies:
 
 Design notes / audit conclusions reproduced here (see task description):
 - Zero stale-capture read sites found: every function reads module globals at
-  call time, no default-arg captures, no cross-module "from proxy import TABBY_HOST".
+  call time, no default-arg captures, no cross-module "from proxy import KOBOLD_HOST".
 - config.clear()/config.update() is asyncio-safe: no await between them.
 - status_endpoint.py uses `import proxy as proxy_module` inside a function,
   so it resolves module attributes at call time — reload-safe.
@@ -29,6 +29,8 @@ import unittest
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -45,7 +47,7 @@ def _make_effective_config(backends: dict[str, Any]) -> dict[str, Any]:
     return {**copy.deepcopy(dict(proxy._bootstrap_config)), "backends": backends}
 
 
-def _tabby_backend(
+def _vision_backend(
     *,
     host: str = "127.0.0.1",
     port: int = 5050,
@@ -119,7 +121,7 @@ def _snapshot_reload_derived_state() -> dict[str, Any]:
     """Snapshot every module global reload_runtime_config() may reassign.
 
     reload_runtime_config() atomically swaps `config` plus every name in
-    _derive_backend_constants()'s return (TABBY_HOST, LLM_BACKEND_HOSTS, ...).
+    _derive_backend_constants()'s return (KOBOLD_HOST, LLM_BACKEND_HOSTS, ...).
     Any test that calls it (directly or via _call_reload_with_config) must
     restore all of these, not a hand-picked subset, or it leaks derived
     globals (e.g. TTS_HOST, LLM_BACKEND_HOSTS) into unrelated tests.
@@ -161,7 +163,6 @@ class TestGoldenParity(unittest.TestCase):
         compare the derived HOST constants rather than the raw backends dict.
         """
         # Snapshot the derived HOST constants before reload.
-        before_tabby = proxy.TABBY_HOST
         before_kobold = proxy.KOBOLD_HOST
         before_tts = proxy.TTS_HOST
         before_stt = proxy.STT_HOST
@@ -172,7 +173,6 @@ class TestGoldenParity(unittest.TestCase):
         # Use the REAL _load_effective_runtime_config — hits the live DB.
         proxy.reload_runtime_config()
 
-        self.assertEqual(proxy.TABBY_HOST, before_tabby, "TABBY_HOST changed on no-op reload")
         self.assertEqual(proxy.KOBOLD_HOST, before_kobold, "KOBOLD_HOST changed on no-op reload")
         self.assertEqual(proxy.TTS_HOST, before_tts, "TTS_HOST changed on no-op reload")
         self.assertEqual(proxy.STT_HOST, before_stt, "STT_HOST changed on no-op reload")
@@ -185,12 +185,9 @@ class TestGoldenParity(unittest.TestCase):
         # These are the values observed from the live admin.db + proxy_config.yml.
         # If they change, the registry or config has changed intentionally — update the
         # pinned values in the test (and update this comment).
-        self.assertEqual(proxy.TABBY_HOST, "http://127.0.0.1:5050")
         self.assertEqual(proxy.KOBOLD_HOST, "http://127.0.0.1:5051")
         self.assertIn("kobold", proxy.LLM_BACKEND_HOSTS)
-        self.assertIn("tabby", proxy.LLM_BACKEND_HOSTS)
         self.assertEqual(proxy.LLM_BACKEND_HOSTS["kobold"], "http://127.0.0.1:5051")
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS["tabby"], "http://127.0.0.1:5050")
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +206,7 @@ class TestLiveAdd(unittest.TestCase):
     def test_new_backend_appears_in_llm_backend_hosts(self):
         """After reload with new backend, LLM_BACKEND_HOSTS contains the new entry."""
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
             "mynewllm": _llm_backend(host="192.168.1.99", port=9999, priority=50),
         }
@@ -234,7 +231,7 @@ class TestLiveAdd(unittest.TestCase):
         held reference (global `proxy` at top of this test module) sees the update.
         """
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
             "extra": _llm_backend(host="10.0.0.5", port=11434, priority=20),
         }
@@ -249,7 +246,7 @@ class TestLiveAdd(unittest.TestCase):
     def test_config_backends_updated(self):
         """config['backends'] is updated so config.get() reads return the new backend."""
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
             "bolt": _llm_backend(host="127.0.0.1", port=7777, priority=5),
         }
@@ -274,27 +271,27 @@ class TestLiveRemoveDisable(unittest.TestCase):
 
     def test_disabled_backend_removed_from_llm_backend_hosts(self):
         """Setting enabled=False removes a backend from LLM_BACKEND_HOSTS."""
-        # Start with tabby disabled.
+        # Start with the vision backend disabled.
         new_backends = {
-            "tabby": _tabby_backend(enabled=False),
+            "vision-llm": _vision_backend(enabled=False),
             "kobold": _kobold_backend(),
         }
         updates = _call_reload_with_config(_make_effective_config(new_backends))
 
-        self.assertNotIn("tabby", updates["LLM_BACKEND_HOSTS"])
-        self.assertNotIn("tabby", proxy.LLM_BACKEND_HOSTS)
+        self.assertNotIn("vision-llm", updates["LLM_BACKEND_HOSTS"])
+        self.assertNotIn("vision-llm", proxy.LLM_BACKEND_HOSTS)
         self.assertIn("kobold", proxy.LLM_BACKEND_HOSTS)
 
     def test_removed_backend_absent_from_llm_backend_hosts(self):
         """Removing a backend from config entirely removes it from LLM_BACKEND_HOSTS."""
         new_backends = {
             "kobold": _kobold_backend(),
-            # tabby is entirely absent
+            # the vision backend is entirely absent
         }
         updates = _call_reload_with_config(_make_effective_config(new_backends))
 
-        self.assertNotIn("tabby", updates["LLM_BACKEND_HOSTS"])
-        self.assertNotIn("tabby", proxy.LLM_BACKEND_HOSTS)
+        self.assertNotIn("vision-llm", updates["LLM_BACKEND_HOSTS"])
+        self.assertNotIn("vision-llm", proxy.LLM_BACKEND_HOSTS)
 
     def test_host_constant_unchanged_when_backend_disabled(self):
         """Disabling kobold doesn't change KOBOLD_HOST (it keeps the last known value).
@@ -305,13 +302,13 @@ class TestLiveRemoveDisable(unittest.TestCase):
         """
         orig_kobold_host = proxy.KOBOLD_HOST
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(enabled=False),
         }
         updates = _call_reload_with_config(_make_effective_config(new_backends))
         # LLM_BACKEND_HOSTS no longer contains kobold
         self.assertNotIn("kobold", updates["LLM_BACKEND_HOSTS"])
-        # KOBOLD_HOST still holds the configured URL (used for direct Tabby routing)
+        # KOBOLD_HOST still holds the configured URL (used for direct routing)
         self.assertEqual(proxy.KOBOLD_HOST, orig_kobold_host)
 
 
@@ -334,10 +331,10 @@ class TestReadSiteLiveness(unittest.TestCase):
 
     def test_highest_priority_chat_backend_sees_new_config(self):
         """_highest_priority_chat_backend() uses the new priority ordering after reload."""
-        # Before: tabby=100, kobold=100 (original)
+        # Before: vision-llm=100, kobold=100 (original)
         # After reload: a new backend with priority=1 wins.
         new_backends = {
-            "tabby": _tabby_backend(priority=100),
+            "vision-llm": _vision_backend(priority=100),
             "kobold": _kobold_backend(priority=100),
             "priority-winner": _llm_backend(host="10.0.0.1", port=9100, priority=1),
         }
@@ -350,9 +347,9 @@ class TestReadSiteLiveness(unittest.TestCase):
 
     def test_vision_capable_backends_updated_after_reload(self):
         """vision_capable_llm_backends() reflects the new registry after reload."""
-        # Remove vision from tabby, keep kobold without vision.
+        # Remove vision from vision-llm, keep kobold without vision.
         new_backends = {
-            "tabby": _tabby_backend(capabilities=["chat", "completions"]),  # no vision
+            "vision-llm": _vision_backend(capabilities=["chat", "completions"]),  # no vision
             "kobold": _kobold_backend(),
             "visionbot": _llm_backend(
                 host="10.0.0.2", port=9200, priority=5,
@@ -364,26 +361,26 @@ class TestReadSiteLiveness(unittest.TestCase):
         vision_backends = proxy.vision_capable_llm_backends()
         self.assertIn("visionbot", vision_backends,
                       "vision_capable_llm_backends() does not include new vision backend")
-        self.assertNotIn("tabby", vision_backends,
-                         "vision_capable_llm_backends() still includes tabby (vision stripped)")
+        self.assertNotIn("vision-llm", vision_backends,
+                         "vision_capable_llm_backends() still includes vision-llm (vision stripped)")
 
-    def test_tabby_host_module_global_updated(self):
-        """TABBY_HOST module global is updated to the new URL after reload."""
+    def test_llm_backend_hosts_global_updated_for_any_backend_id(self):
+        """LLM_BACKEND_HOSTS is rebuilt from the registry for any backend id."""
         new_port = 5099
         new_backends = {
-            "tabby": _tabby_backend(host="192.168.1.1", port=new_port),
+            "vision-llm": _vision_backend(host="192.168.1.1", port=new_port),
             "kobold": _kobold_backend(),
         }
         _call_reload_with_config(_make_effective_config(new_backends))
 
-        self.assertEqual(proxy.TABBY_HOST, f"http://192.168.1.1:{new_port}",
-                         "TABBY_HOST module global was not updated by reload")
+        self.assertEqual(proxy.LLM_BACKEND_HOSTS["vision-llm"], f"http://192.168.1.1:{new_port}",
+                         "LLM_BACKEND_HOSTS was not updated by reload")
 
     def test_kobold_host_module_global_updated(self):
         """KOBOLD_HOST module global is updated to the new URL after reload."""
         new_port = 5099
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(host="192.168.1.2", port=new_port),
         }
         _call_reload_with_config(_make_effective_config(new_backends))
@@ -394,7 +391,7 @@ class TestReadSiteLiveness(unittest.TestCase):
     def test_tts_host_updated(self):
         """TTS_HOST is updated after a reload that changes the TTS backend port."""
         new_cfg = _make_effective_config({
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
             "tts": {
                 "enabled": True,
@@ -411,7 +408,7 @@ class TestReadSiteLiveness(unittest.TestCase):
     def test_comfy_host_updated(self):
         """COMFY_HOST is updated after a reload that changes the ComfyUI backend port."""
         new_cfg = _make_effective_config({
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
             "comfyui": {
                 "enabled": True,
@@ -448,7 +445,7 @@ class TestAtomicity(unittest.TestCase):
     def test_config_not_empty_after_reload(self):
         """config is non-empty after a successful reload."""
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
         }
         _call_reload_with_config(_make_effective_config(new_backends))
@@ -484,13 +481,13 @@ class TestAtomicity(unittest.TestCase):
     def test_reload_returns_updates_dict(self):
         """reload_runtime_config() returns a dict with all expected keys."""
         new_backends = {
-            "tabby": _tabby_backend(),
+            "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
         }
         updates = _call_reload_with_config(_make_effective_config(new_backends))
 
         required_keys = {
-            "TABBY_HOST", "KOBOLD_HOST", "TTS_HOST", "STT_HOST",
+            "KOBOLD_HOST", "TTS_HOST", "STT_HOST",
             "EMBEDDINGS_HOST", "COMFY_HOST", "LLM_BACKEND_HOSTS",
             "TTS_ENABLED", "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED",
         }
@@ -511,21 +508,6 @@ class TestMutationHook(unittest.TestCase):
     def tearDown(self):
         _restore_reload_derived_state(self._before)
 
-    def test_hook_is_wired(self):
-        """ADMIN_STORE.on_service_registry_changed is set to reload_runtime_config."""
-        self.assertIs(
-            proxy.ADMIN_STORE.on_service_registry_changed,
-            proxy.reload_runtime_config,
-            "ADMIN_STORE.on_service_registry_changed is not wired to reload_runtime_config",
-        )
-
-    def test_hook_is_not_none(self):
-        """The callback is not None (otherwise admin mutations won't trigger reload)."""
-        self.assertIsNotNone(
-            proxy.ADMIN_STORE.on_service_registry_changed,
-            "ADMIN_STORE.on_service_registry_changed is None — mutations won't hot-reload",
-        )
-
     def test_hook_invocation_triggers_reload(self):
         """Calling the hook directly (as admin_runtime does) invokes reload_runtime_config.
 
@@ -544,16 +526,16 @@ class TestMutationHook(unittest.TestCase):
         # Calling the hook must actually perform a reload (updates module globals).
         # We inject a specific config so we can verify the globals changed.
         new_backends = {
-            "tabby": _tabby_backend(port=6666),
-            "kobold": _kobold_backend(),
+            "vision-llm": _vision_backend(),
+            "kobold": _kobold_backend(port=6666),
         }
         with patch.object(proxy, "_load_effective_runtime_config",
                           return_value=_make_effective_config(new_backends)):
             cb()  # invoke the hook as admin_runtime._fire_registry_changed() does
 
-        # If the hook called reload_runtime_config, TABBY_HOST must have updated.
-        self.assertEqual(proxy.TABBY_HOST, "http://127.0.0.1:6666",
-                         "Invoking the hook did not update TABBY_HOST — hook may not "
+        # If the hook called reload_runtime_config, KOBOLD_HOST must have updated.
+        self.assertEqual(proxy.KOBOLD_HOST, "http://127.0.0.1:6666",
+                         "Invoking the hook did not update KOBOLD_HOST — hook may not "
                          "be calling reload_runtime_config")
 
 
@@ -567,7 +549,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
     def test_standard_backends_produce_correct_hosts(self):
         cfg = {
             "backends": {
-                "tabby": _tabby_backend(host="10.1.0.1", port=5050),
+                "vision-llm": _vision_backend(host="10.1.0.1", port=5050),
                 "kobold": _kobold_backend(host="10.1.0.2", port=5051),
                 "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880},
                 "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321},
@@ -577,37 +559,36 @@ class TestDeriveBackendConstants(unittest.TestCase):
         }
         result = proxy._derive_backend_constants(cfg)
 
-        self.assertEqual(result["TABBY_HOST"], "http://10.1.0.1:5050")
         self.assertEqual(result["KOBOLD_HOST"], "http://10.1.0.2:5051")
         self.assertEqual(result["TTS_HOST"], "http://10.1.0.3:8880")
         self.assertEqual(result["STT_HOST"], "http://10.1.0.4:5092")
         self.assertEqual(result["STT_TIMEOUT"], 321)
         self.assertEqual(result["EMBEDDINGS_HOST"], "http://10.1.0.5:5061")
         self.assertEqual(result["COMFY_HOST"], "http://10.1.0.6:7890")
-        self.assertIn("tabby", result["LLM_BACKEND_HOSTS"])
+        self.assertIn("vision-llm", result["LLM_BACKEND_HOSTS"])
         self.assertIn("kobold", result["LLM_BACKEND_HOSTS"])
 
     def test_disabled_backend_excluded_from_llm_backend_hosts(self):
         cfg = {
             "backends": {
-                "tabby": _tabby_backend(enabled=False),
+                "vision-llm": _vision_backend(enabled=False),
                 "kobold": _kobold_backend(),
             }
         }
         result = proxy._derive_backend_constants(cfg)
-        self.assertNotIn("tabby", result["LLM_BACKEND_HOSTS"])
+        self.assertNotIn("vision-llm", result["LLM_BACKEND_HOSTS"])
         self.assertIn("kobold", result["LLM_BACKEND_HOSTS"])
 
     def test_does_not_mutate_global_state(self):
         """_derive_backend_constants() is side-effect-free."""
-        original_tabby = proxy.TABBY_HOST
+        original_kobold = proxy.KOBOLD_HOST
         original_llm = dict(proxy.LLM_BACKEND_HOSTS)
 
-        cfg = {"backends": {"tabby": _tabby_backend(port=9999), "kobold": _kobold_backend()}}
+        cfg = {"backends": {"vision-llm": _vision_backend(port=9999), "kobold": _kobold_backend(port=9998)}}
         proxy._derive_backend_constants(cfg)
 
         # Module globals must be untouched.
-        self.assertEqual(proxy.TABBY_HOST, original_tabby)
+        self.assertEqual(proxy.KOBOLD_HOST, original_kobold)
         self.assertEqual(proxy.LLM_BACKEND_HOSTS, original_llm)
 
     def test_empty_backends_produces_empty_llm_hosts(self):
@@ -632,6 +613,84 @@ class TestDeriveBackendConstants(unittest.TestCase):
         }
         result = proxy._derive_backend_constants(cfg)
         self.assertTrue(result["COMFY_ENABLED"])
+
+
+def _pin_reload_state(monkeypatch) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Install a private copy of config and derived globals; monkeypatch undoes it."""
+    snapshot = _snapshot_reload_derived_state()
+    old_config = copy.deepcopy(snapshot["config"])
+    monkeypatch.setattr(proxy, "config", old_config)
+    for name, value in snapshot.items():
+        if name != "config":
+            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
+    return snapshot, old_config
+
+
+def _assert_reload_state_unchanged(snapshot: dict[str, Any], old_config: dict[str, Any]) -> None:
+    assert proxy.config is old_config
+    assert proxy.config == snapshot["config"]
+    for name, value in snapshot.items():
+        if name != "config":
+            assert getattr(proxy, name) == value, name
+
+
+def test_load_failure_preserves_exact_config_and_constants(monkeypatch):
+    snapshot, old_config = _pin_reload_state(monkeypatch)
+
+    def fail_load(_bootstrap):
+        raise RuntimeError("fixture load failure")
+
+    monkeypatch.setattr(proxy, "_load_effective_runtime_config", fail_load)
+    with pytest.raises(RuntimeError, match="fixture load failure"):
+        proxy.reload_runtime_config()
+
+    _assert_reload_state_unchanged(snapshot, old_config)
+
+
+def test_reload_replaces_mapping_without_mutating_captured_snapshot(monkeypatch):
+    snapshot, old_config = _pin_reload_state(monkeypatch)
+    new_config = _make_effective_config(
+        {"kobold": _kobold_backend(host="127.0.0.1", port=18091)}
+    )
+    monkeypatch.setattr(
+        proxy, "_load_effective_runtime_config", lambda _bootstrap: new_config
+    )
+
+    updates = proxy.reload_runtime_config()
+
+    assert proxy.config is not old_config
+    assert old_config == snapshot["config"]
+    assert proxy.config == new_config
+    assert proxy.KOBOLD_HOST == "http://127.0.0.1:18091"
+    assert updates["KOBOLD_HOST"] == "http://127.0.0.1:18091"
+
+
+def test_derivation_failure_does_not_publish_a_partial_reload(monkeypatch):
+    """A candidate config whose derivation fails must not go live; the old one keeps serving."""
+    import pytest
+
+    snapshot = _snapshot_reload_derived_state()
+    old_config = copy.deepcopy(snapshot["config"])
+    monkeypatch.setattr(proxy, "config", old_config)
+    for name, value in snapshot.items():
+        if name != "config":
+            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
+    candidate = _make_effective_config({"kobold": _kobold_backend(host="127.0.0.1", port=18092)})
+    monkeypatch.setattr(proxy, "_load_effective_runtime_config", lambda _bootstrap: candidate)
+
+    def fail_derivation(config):
+        assert config is candidate
+        raise RuntimeError("fixture derivation failure")
+
+    monkeypatch.setattr(proxy, "_derive_backend_constants", fail_derivation)
+    with pytest.raises(RuntimeError, match="fixture derivation failure"):
+        proxy.reload_runtime_config()
+
+    assert proxy.config is old_config
+    assert proxy.config == snapshot["config"]
+    for name, value in snapshot.items():
+        if name != "config":
+            assert getattr(proxy, name) == value, name
 
 
 if __name__ == "__main__":

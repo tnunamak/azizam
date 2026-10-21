@@ -27,10 +27,12 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
 import json
+import re
 import hashlib
 import os
 import sqlite3
@@ -55,10 +57,18 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
+# Typed facts about a failure, beside the plain ``error`` sentence. The category
+# says who refused: the gateway (authorization, invalid_input, capacity) or the
+# work itself (upstream, timeout, safety); ``internal`` is the gateway's own bug. ``upstream_http_status`` is set only
+# for an upstream failure. None means not recorded (older or unclassified jobs).
+ERROR_FIELDS = ("error_code", "error_category", "retryable", "upstream_http_status")
+ERROR_CATEGORIES = frozenset({"authorization", "invalid_input", "upstream", "capacity", "timeout", "safety",
+                              "internal"})
+_ERROR_CODE_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
 
 # Status values. Mirrors the minimum lifecycle in CORE_CONTRACTS.md.
@@ -119,6 +129,7 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         "updated_at",
         "parent_request_id",
         *PHASE_FIELDS,
+        *ERROR_FIELDS,
         "attempt_number",
         "previous_attempts",
         "cancel_requested",
@@ -141,7 +152,7 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash"})
+INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id"})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -156,6 +167,11 @@ def new_job_id() -> str:
 
 def _now() -> int:
     return int(time.time())
+
+
+# The admin shape is an allowlist too: a new column stays out of every response
+# until someone adds it here on purpose.
+ADMIN_VISIBLE_FIELDS = CLIENT_VISIBLE_FIELDS | ADMIN_ONLY_FIELDS
 
 
 @dataclass
@@ -197,6 +213,12 @@ class MediaJob:
     finished_at: int | None = None
     attempt_number: int | None = None
     previous_attempts: list[dict[str, Any]] = field(default_factory=list)
+    # Durable provenance, independent of the reusable request/idempotency key.
+    creating_receipt_id: str | None = None
+    error_code: str | None = None
+    error_category: str | None = None
+    retryable: bool | None = None
+    upstream_http_status: int | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -237,12 +259,14 @@ class MediaJob:
             "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
+            "creating_receipt_id": self.creating_receipt_id,
             "metadata": dict(self.metadata),
             "owner_scope": self.owner_scope,
             "input_hash": self.input_hash,
             "attempt_number": self.attempt_number,
             "previous_attempts": [dict(attempt) for attempt in self.previous_attempts],
             **{name: getattr(self, name) for name in PHASE_FIELDS},
+            **{name: getattr(self, name) for name in ERROR_FIELDS},
         }
         return _filter_for_audience(data, audience)
 
@@ -274,7 +298,7 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
-    data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
+    data = {**dict.fromkeys((*PHASE_FIELDS, *ERROR_FIELDS, "attempt_number")), **data}
     data.setdefault("previous_attempts", [])
     data["cancel_requested"] = (
         holds_resources(data.get("status", STATUS_QUEUED))
@@ -283,7 +307,7 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
     if audience == "internal":
         return dict(data)
     if audience == "admin":
-        return {k: v for k, v in data.items() if k not in INTERNAL_ONLY_FIELDS}
+        return {k: data[k] for k in ADMIN_VISIBLE_FIELDS if k in data}
     return {k: data[k] for k in CLIENT_VISIBLE_FIELDS if k in data}
 
 
@@ -333,7 +357,38 @@ CREATE TABLE IF NOT EXISTS media_job_prompt_erasure_cutoffs (
   cutoff_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS media_hidden_assets (
+  person_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, asset_id, job_id)
+);
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
+
+-- Facts are immutable metadata. References can outlive receipts when a kept record survives.
+CREATE TABLE IF NOT EXISTS retention_fact_revisions (
+  revision TEXT PRIMARY KEY,
+  fact_json TEXT NOT NULL,
+  first_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retention_fact_references (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  revision TEXT NOT NULL REFERENCES retention_fact_revisions(revision),
+  PRIMARY KEY(source_kind, source_id, destination_id, revision)
+);
+CREATE INDEX IF NOT EXISTS retention_fact_references_revision
+  ON retention_fact_references(revision);
+CREATE TABLE IF NOT EXISTS retention_fact_destinations (
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('receipt', 'kept_record')),
+  source_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(source_kind, source_id, destination_id)
+);
 """
 
 
@@ -354,7 +409,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, SCHEMA_VERSION):
+    elif int(row[0]) not in (1, 2, 3, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -369,6 +424,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
     if "attempt_number" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
+    destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
+    if "created_at" not in destination_columns:
+        conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
     _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     # Baseline writers omit sequence. SQLite serializes this with their insert,
@@ -413,13 +471,23 @@ def init_db(path: Path = DB_PATH) -> None:
 
 
 @contextmanager
-def _conn(path: Path = DB_PATH):
-    conn = connect(path, timeout=5.0)
-    try:
-        _apply_pragmas(conn)
+def _conn(path: Path = DB_PATH, *, timeout: float = 5.0):
+    def open_connection() -> sqlite3.Connection:
+        scoped = request_connections.active()
+        conn = connect(path, timeout=timeout, check_same_thread=not scoped)
+        if scoped:
+            conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
+        try:
+            _apply_pragmas(conn)
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(timeout * 1000))}")
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    namespace = "media_jobs" if timeout == 5.0 else "media_jobs_nowait"
+    with request_connections.scoped(namespace, path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _coerce_to_job(job_or_dict: Any) -> MediaJob:
@@ -444,12 +512,14 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             owner_key_hash=data.get("owner_key_hash"),
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
+            creating_receipt_id=data.get("creating_receipt_id"),
             metadata=dict(data.get("metadata") or {}),
             owner_scope=data.get("owner_scope"),
             input_hash=data.get("input_hash"),
             attempt_number=data.get("attempt_number"),
             previous_attempts=list(data.get("previous_attempts") or []),
             **{name: data.get(name) for name in PHASE_FIELDS},
+            **{name: data.get(name) for name in ERROR_FIELDS},
         )
     raise TypeError(f"job must be MediaJob or mapping, got {type(job_or_dict).__name__}")
 
@@ -514,6 +584,19 @@ def _input_hash(job: MediaJob, input_data: Mapping[str, Any] | None = None) -> s
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _receipt_link_candidate(data: Mapping[str, Any]) -> str | None:
+    """Keep an explicit receipt or parent before falling back to a legacy key.
+
+    A fallback is only a lookup candidate: projections must load a real receipt.
+    Seeded dedupe fingerprints are never receipts and must remain erasable.
+    """
+    for name in ("creating_receipt_id", "parent_request_id", "request_id"):
+        value = data.get(name)
+        if isinstance(value, str) and value and not value.startswith("imgjob_seeded_"):
+            return value
+    return None
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
@@ -552,9 +635,12 @@ def create(
                 (record.request_id,),
             ).fetchone()
             if existing and not _replays(existing[1], existing[2]):
+                retained = json.loads(existing[0])
+                retained["creating_receipt_id"] = _receipt_link_candidate(retained)
+                retained["request_id"] = ""
                 conn.execute(
-                    "UPDATE media_jobs SET request_id = NULL, job_json = json_set(job_json, '$.request_id', '') "
-                    "WHERE job_id = ?", (existing[3],),
+                    "UPDATE media_jobs SET request_id = NULL, job_json = ? WHERE job_id = ?",
+                    (json.dumps(retained, ensure_ascii=False, sort_keys=True), existing[3]),
                 )
                 existing = None
             if existing:
@@ -605,6 +691,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
     previous = conn.execute("SELECT job_json, request_id FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
+    job.creating_receipt_id = _receipt_link_candidate(
+        json.loads(previous[0]) if previous else job.to_dict("internal")
+    )
     if previous:
         # A stored request ID only changes by being cleared (replay release or
         # erasure). A stale caller copy must not restore or re-point it.
@@ -661,6 +750,99 @@ def _clear_prompt_derivatives(job: MediaJob) -> None:
         job.request_id = ""
     if (job.parent_request_id or "").startswith("imgjob_seeded_"):
         job.parent_request_id = None
+
+
+def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int:
+    """Delete finished jobs and their events inside the caller's transaction; receipts are not touched.
+
+    A job that has not succeeded stays, whatever the ids say. Returns how many jobs were deleted.
+    """
+    ids = sorted({job_id for job_id in job_ids if job_id})
+    deleted = 0
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        done = [row[0] for row in conn.execute(
+            f"SELECT job_id FROM media_jobs WHERE status=? AND job_id IN ({marks})",
+            [STATUS_SUCCEEDED, *chunk],
+        )]
+        if not done:
+            continue
+        marks = ",".join("?" for _ in done)
+        conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", done)
+        conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", done)
+        deleted += len(done)
+    return deleted
+
+
+def delete_succeeded(job_ids: Iterable[str], *, path: Path = DB_PATH) -> int:
+    """``delete_succeeded_in`` in its own transaction."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            deleted = delete_succeeded_in(conn, job_ids)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return deleted
+
+
+HIDDEN_ASSETS_DDL = """CREATE TABLE IF NOT EXISTS media_hidden_assets (
+  person_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, asset_id, job_id)
+)"""
+
+
+def hide_assets_in(conn: sqlite3.Connection, person_id: str, pairs: Iterable[tuple[str, str]]) -> None:
+    """Hide ``(asset_id, job_id)`` from one person's Library, inside the caller's transaction.
+
+    The hide belongs to the asset as that job made it. The same bytes made again by another
+    job are a new item and are not hidden.
+    """
+    conn.execute(HIDDEN_ASSETS_DDL)
+    conn.executemany(
+        "INSERT OR IGNORE INTO media_hidden_assets(person_id, asset_id, job_id, hidden_at) VALUES (?,?,?,?)",
+        [(person_id, asset_id, job_id, _now()) for asset_id, job_id in pairs],
+    )
+
+
+def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
+    """Delete one person's Library hides inside the caller's transaction; a database older than the table has none."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_hidden_assets'").fetchone() is None:
+        return 0
+    return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
+
+
+# The connection already waits ``busy_timeout`` for a lock; these are the retries after that.
+_HIDDEN_READ_RETRY_PAUSES_S = (0.05, 0.1, 0.2)
+
+
+def hidden_assets(person_ids: Iterable[str], *, path: Path = DB_PATH) -> set[tuple[str, str]]:
+    """The ``(asset_id, job_id)`` pairs these people hid."""
+    ids = sorted(set(person_ids))
+    if not ids:
+        return set()
+    marks = ",".join("?" for _ in ids)
+    # A read that fails must fail the request: an empty answer would show hidden items again.
+    with _conn(path) as conn:
+        for pause in (*_HIDDEN_READ_RETRY_PAUSES_S, None):
+            try:
+                rows = conn.execute(
+                    f"SELECT asset_id, job_id FROM media_hidden_assets WHERE person_id IN ({marks})", ids,
+                ).fetchall()
+                break
+            except sqlite3.OperationalError as exc:
+                message = str(exc)
+                if "no such table: media_hidden_assets" in message:  # a database older than this table
+                    return set()
+                if pause is None or ("locked" not in message and "busy" not in message):
+                    raise
+                time.sleep(pause)
+    return {(row[0], row[1]) for row in rows}
 
 
 def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = DB_PATH) -> int:
@@ -748,6 +930,31 @@ def get(
     if not isinstance(data, Mapping):
         return None
     return _filter_for_audience(data, audience)
+
+
+def get_many(
+    job_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{job_id: job}`` as ``get`` would, in one query per 500 ids."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    ids = sorted({value for value in job_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                f"SELECT job_id, job_json FROM media_jobs WHERE job_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for job_id, raw in rows:
+                data = _safe_loads(raw)
+                if isinstance(data, Mapping):
+                    out[job_id] = _filter_for_audience(data, audience)
+    return out
 
 
 def get_by_request_id(
@@ -848,12 +1055,39 @@ def list_jobs(*args, **kwargs):
     return recent(*args, **kwargs)
 
 
+def validate_error_info(info: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the typed failure facts, or raise ValueError.
+
+    Only known fields; a known category; a plain code token, never free text
+    (which could carry a prompt); an HTTP status only for an upstream failure.
+    """
+    unknown = set(info) - set(ERROR_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown error fields: {sorted(unknown)}")
+    category = info.get("error_category")
+    if category not in ERROR_CATEGORIES:
+        raise ValueError(f"error_category must be one of {sorted(ERROR_CATEGORIES)}")
+    code = info.get("error_code")
+    if not isinstance(code, str) or not _ERROR_CODE_RE.fullmatch(code):
+        raise ValueError("error_code must be a short lowercase token")
+    retryable = info.get("retryable")
+    if not isinstance(retryable, bool):
+        raise ValueError("retryable must be a boolean")
+    upstream = info.get("upstream_http_status")
+    if upstream is not None and (category != "upstream" or type(upstream) is not int
+                                 or not 100 <= upstream <= 599):
+        raise ValueError("upstream_http_status must be an HTTP status of an upstream failure")
+    return {"error_code": code, "error_category": category, "retryable": retryable,
+            "upstream_http_status": upstream}
+
+
 def update_status(
     job_id: str,
     status: str,
     *,
     progress: int | None = None,
     error: str | None = None,
+    error_info: Mapping[str, Any] | None = None,
     add_assets: Iterable[Mapping[str, Any]] | None = None,
     metadata_patch: Mapping[str, Any] | None = None,
     expected_status: str | None = None,
@@ -861,6 +1095,9 @@ def update_status(
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
+
+    ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
+    with ``error``; ``validate_error_info`` checks them.
 
     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
     are accepted so progress updates during ``running`` are idempotent. With
@@ -873,6 +1110,7 @@ def update_status(
         progress = _clamp_progress(progress)
     if metadata_patch is not None:
         _assert_safe_mapping("metadata_patch", metadata_patch)
+    error_facts = validate_error_info(error_info) if error_info is not None else None
     assets_list: list[dict[str, Any]] = []
     if add_assets is not None:
         for asset in add_assets:
@@ -913,6 +1151,8 @@ def update_status(
             current["progress"] = 100
         if error is not None:
             current["error"] = error
+        if error_facts is not None:
+            current.update(error_facts)
         if assets_list:
             existing_assets = list(current.get("assets") or [])
             existing_assets.extend(assets_list)
@@ -1174,6 +1414,185 @@ def count(path: Path = DB_PATH) -> int:
         return int(row[0]) if row else 0
 
 
+def save_fact_revisions(
+    facts: list[dict[str, Any]], *, source_kind: str, source_id: str, destination_id: str,
+    path: Path = DB_PATH, now: int | None = None,
+    destination: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Append exact fact versions and link them to a receipt or kept record."""
+    from gateway.retention_facts import validate_facts
+
+    checked = [validate_facts([fact])[0] for fact in facts]
+    return save_fact_snapshot(
+        [{**(destination or {}), "id": destination_id, "facts": checked}],
+        source_kind=source_kind, source_id=source_id, path=path, now=now,
+    )
+
+
+@dataclass(frozen=True)
+class PreparedFactSnapshot:
+    """Validated, hashed, serialized evidence reusable for one captured generation."""
+
+    entries: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...]
+    hashes: tuple[str, ...]
+
+
+def prepare_fact_snapshot(destinations: list[Mapping[str, Any]]) -> PreparedFactSnapshot:
+    from gateway.retention_facts import revision, validate_facts
+
+    entries = []
+    hashes = []
+    for destination in destinations:
+        destination_id = destination.get("id")
+        if not isinstance(destination_id, str) or not destination_id or len(destination_id) > 128:
+            raise ValueError("invalid fact revision reference")
+        facts = destination.get("facts", [])
+        if not isinstance(facts, list) or any(not isinstance(fact, Mapping) for fact in facts):
+            raise ValueError("retention facts must be a list of mappings")
+        checked = validate_facts([
+            {key: value for key, value in fact.items()
+             if key not in {"revision", "stale", "stale_label", "source"}}
+            for fact in facts
+        ])
+        revisions = [revision(fact) for fact in checked]
+        metadata = {key: destination[key] for key in ("name", "kind", "address", "reach")
+                    if key in destination}
+        if any(not isinstance(value, str) or len(value) > 500 for value in metadata.values()):
+            raise ValueError("invalid retention destination metadata")
+        if "facts_unavailable" in destination:
+            if type(destination["facts_unavailable"]) is not bool:
+                raise ValueError("invalid retention destination availability")
+            metadata["facts_unavailable"] = destination["facts_unavailable"]
+        entries.append((destination_id, json.dumps(metadata, ensure_ascii=False, sort_keys=True), tuple(
+            (digest, json.dumps(fact, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            for digest, fact in zip(revisions, checked)
+        )))
+        hashes.extend(revisions)
+    return PreparedFactSnapshot(tuple(entries), tuple(dict.fromkeys(hashes)))
+
+
+def save_fact_snapshot(
+    destinations: list[Mapping[str, Any]] | PreparedFactSnapshot, *, source_kind: str, source_id: str,
+    path: Path = DB_PATH, now: int | None = None, timeout: float = 5.0,
+) -> list[str]:
+    """Save exact captured evidence atomically; request writers can decline a busy store."""
+    if source_kind not in {"receipt", "kept_record"} or not source_id or len(source_id) > 128:
+        raise ValueError("invalid fact revision reference")
+    prepared = destinations if isinstance(destinations, PreparedFactSnapshot) else prepare_fact_snapshot(destinations)
+    timestamp = int(time.time()) if now is None else now
+    with _conn(path, timeout=timeout) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for destination_id, metadata_json, facts in prepared.entries:
+                conn.execute(
+                    "INSERT OR IGNORE INTO retention_fact_destinations(source_kind,source_id,destination_id,metadata_json,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (source_kind, source_id, destination_id, metadata_json, timestamp),
+                )
+                for digest, encoded in facts:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_revisions(revision,fact_json,first_seen) VALUES(?,?,?)",
+                        (digest, encoded, timestamp),
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO retention_fact_references(source_kind,source_id,destination_id,revision) VALUES(?,?,?,?)",
+                        (source_kind, source_id, destination_id, digest),
+                    )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return list(prepared.hashes)
+
+
+def fact_revisions(hashes: list[str], *, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Read stored versions in receipt order; an unknown hash is an error, not today's fact."""
+    if not hashes:
+        return []
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT revision,fact_json FROM retention_fact_revisions WHERE revision IN (" +
+            ",".join("?" for _ in hashes) + ")", tuple(hashes),
+        ).fetchall()
+    found = {row[0]: json.loads(row[1]) for row in rows}
+    if any(digest not in found for digest in hashes):
+        raise KeyError("a stored retention fact revision is missing")
+    return [{**found[digest], "revision": digest} for digest in hashes]
+
+
+def fact_revisions_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """Restore each saved fact to the destination it described at write time."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT r.destination_id, r.revision, f.fact_json FROM retention_fact_references r "
+            "JOIN retention_fact_revisions f ON f.revision=r.revision "
+            "WHERE r.source_kind=? AND r.source_id=? ORDER BY r.destination_id, r.rowid",
+            (source_kind, source_id),
+        ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for destination_id, digest, encoded in rows:
+        result.setdefault(destination_id, []).append({**json.loads(encoded), "revision": digest})
+    return result
+
+
+def fact_destinations_for_source(
+    source_kind: str, source_id: str, *, path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return the public destination labels and reach captured with a request."""
+    if source_kind not in {"receipt", "kept_record"}:
+        raise ValueError("invalid fact revision reference")
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT destination_id,metadata_json FROM retention_fact_destinations "
+            "WHERE source_kind=? AND source_id=?",
+            (source_kind, source_id),
+        ).fetchall()
+    return {destination_id: json.loads(metadata) for destination_id, metadata in rows}
+
+
+def receipt_fact_source_ids(*, after: str = "", limit: int = 500,
+                            older_than: int | None = None, path: Path = DB_PATH) -> list[str]:
+    """Page receipt sources, allowing a grace period for a pending receipt write."""
+    with _conn(path) as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT source_id FROM ("
+            "SELECT source_id FROM retention_fact_references WHERE source_kind='receipt' "
+            "UNION SELECT source_id FROM retention_fact_destinations WHERE source_kind='receipt') AS sources "
+            "WHERE source_id > ? AND (? IS NULL OR NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_destinations d WHERE d.source_kind='receipt' "
+            "AND d.source_id=sources.source_id AND d.created_at > ?)) "
+            "ORDER BY source_id LIMIT ?", (after, older_than, older_than, limit),
+        )]
+
+
+def release_fact_references(source_kind: str, source_id: str, *, path: Path = DB_PATH) -> int:
+    """Release one source and prune only versions with no remaining references."""
+    return release_fact_reference_batch(source_kind, [source_id], path=path)
+
+
+def release_fact_reference_batch(source_kind: str, source_ids: list[str], *, path: Path = DB_PATH) -> int:
+    """Release a bounded batch in one transaction, retaining shared versions."""
+    if source_kind not in {"receipt", "kept_record"} or len(source_ids) > 500:
+        raise ValueError("invalid fact revision reference batch")
+    if not source_ids:
+        return 0
+    placeholders = ",".join("?" for _ in source_ids)
+    with _conn(path) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for table in ("retention_fact_references", "retention_fact_destinations"):
+            conn.execute(f"DELETE FROM {table} WHERE source_kind=? AND source_id IN ({placeholders})",
+                         (source_kind, *source_ids))
+        removed = conn.execute(
+            "DELETE FROM retention_fact_revisions WHERE NOT EXISTS ("
+            "SELECT 1 FROM retention_fact_references r WHERE r.revision=retention_fact_revisions.revision)"
+        ).rowcount
+    return removed
+
+
 def schema_version(path: Path = DB_PATH) -> int | None:
     with _conn(path) as conn:
         row = conn.execute(
@@ -1202,6 +1621,9 @@ __all__ = [
     "TERMINAL_STATUSES",
     "JobStatus",
     "PHASE_FIELDS",
+    "ERROR_FIELDS",
+    "ERROR_CATEGORIES",
+    "validate_error_info",
     "is_terminal",
     "holds_resources",
     "IdempotencyConflict",
@@ -1224,5 +1646,11 @@ __all__ = [
     "validate_client_event",
     "events",
     "count",
+    "save_fact_revisions",
+    "save_fact_snapshot",
+    "fact_revisions",
+    "fact_revisions_for_source",
+    "fact_destinations_for_source",
+    "release_fact_references",
     "schema_version",
 ]

@@ -1,6 +1,9 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import type { CatalogService, Snapshot } from "../src/app/categories/editor";
+import { fulfilJson } from "./fixtures/intercept";
+import { openAdvanced } from "./fixtures/categories-advanced";
 
 const root = "/admin/api/categories";
 const widths = [1440, 390] as const;
@@ -220,7 +223,7 @@ async function closeAndRead(page: Page, revision: number) {
   return current;
 }
 
-test("empty rules reach an activated person and app grant through the real fixture catalog", async ({ page, request }) => {
+test("empty rules reach an activated person and app grant through the real fixture catalog", { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
   test.setTimeout(180_000);
   await surface(page, 390);
   const post = await writer(request);
@@ -249,7 +252,8 @@ test("empty rules reach an activated person and app grant through the real fixtu
   const personName = person.display_name || person.name || person.email || person.id;
   const serviceId = service.stem + "@r1";
   const sent = writes(page);
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
+  await openAdvanced(page);
   await openEditor(page);
   const form = editor(page);
   await expect(form.getByText("No models or workflows are saved in these rules yet. Add one below.", { exact: true })).toBeVisible();
@@ -309,16 +313,14 @@ test.describe("Categories editor real fixture journeys", () => {
     test.setTimeout(180_000);
     await page.route("**/admin/api/categories/active", (route) => {
       if (route.request().method() !== "GET") return route.continue();
-      return route.fulfill({
-        status: 409,
-        json: { error: { code: "no_active_snapshot", message: "No policy snapshot has been activated." } },
-      });
+      return fulfilJson(route, { error: { code: "no_active_snapshot", message: "No policy snapshot has been activated." } }, { status: 409 });
     });
     const sent = writes(page);
     for (const width of widths) {
       await surface(page, width);
-      await page.goto("/ui/categories/");
-      await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
+      await page.goto("/categories/");
+      await openAdvanced(page);
+      await expect(page.getByText("No access rules yet", { exact: true })).toBeVisible();
       await accessible(page, width);
       await openEditor(page);
       const form = editor(page);
@@ -351,12 +353,13 @@ test.describe("Categories editor real fixture journeys", () => {
   });
 
   for (const width of widths) {
-    test(`service values, new plans, blocked removal, rewrite and gains at ${width}px`, async ({ page, request }) => {
+    test(`service values, new plans, blocked removal, rewrite and gains at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
       test.setTimeout(180_000);
       await surface(page, width);
       const base = await seed(request, "editor-plans-" + width, "embed");
       const serviceId = Object.keys(base.snapshot.services)[0];
-            await page.goto("/ui/categories/");
+            await page.goto("/categories/");
+            await openAdvanced(page);
       await openEditor(page);
       const form = editor(page);
       const sent = writes(page);
@@ -440,11 +443,12 @@ test.describe("Categories editor real fixture journeys", () => {
     });
 
     for (const stage of ["preview", "activation"] as const) {
-      test(`stale ${stage} rebuild preserves both owners' changes at ${width}px`, async ({ page, request }) => {
+      test(`stale ${stage} rebuild preserves both owners' changes at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
         test.setTimeout(180_000);
         await surface(page, width);
         const base = await seed(request, "editor-base-" + stage + "-" + width, "embed");
-        await page.goto("/ui/categories/");
+        await page.goto("/categories/");
+        await openAdvanced(page);
         await openEditor(page);
         const form = editor(page);
         await form.getByLabel("Label for Data location", { exact: true }).fill("Reviewed data location");
@@ -502,16 +506,17 @@ test("catalog service can be added, granted and previewed with category APIs stu
   const sent = writes(page);
   await page.route("**/admin/api/categories/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === root + "/active") return route.fulfill({ json: { revision: 2, snapshot: selected, reason: "Fixture", author: "owner", created_at: "2026-10-10T00:00:00Z" } });
-    if (path === root + "/history") return route.fulfill({ json: { history: [] } });
-    if (path === root + "/services") return route.fulfill({ json: { services: [{ stem: "workflow:paint", label: "Paint workflow", kind: "workflow", capabilities: ["image.generate", "image.edit"] }] } });
+    if (path === root + "/active") return fulfilJson(route, { revision: 2, snapshot: selected, reason: "Fixture", author: "owner", created_at: "2026-10-10T00:00:00Z" });
+    if (path === root + "/history") return fulfilJson(route, { history: [] });
+    if (path === root + "/services") return fulfilJson(route, { services: [{ stem: "workflow:paint", label: "Paint workflow", kind: "workflow", capabilities: ["image.generate", "image.edit"] }] });
     if (path === root + "/candidates" && route.request().method() === "POST") {
       const body = route.request().postDataJSON();
-      return route.fulfill({ json: { revision: 3, snapshot: body.snapshot, preview_base_revision: 2, preview: { gains: [], losses: [], reason_changes: [], scope: [] } } });
+      return fulfilJson(route, { revision: 3, snapshot: body.snapshot, preview_base_revision: 2, preview: { gains: [], losses: [], reason_changes: [], scope: [] } });
     }
     throw new Error("Unexpected category API: " + path);
   });
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
+  await openAdvanced(page);
   await openEditor(page);
   const form = editor(page);
   await pick(page, form, "Model or workflow to add", "Paint workflow");
@@ -540,15 +545,16 @@ test("category labels, dual limits and safe draft dismissal at 390 px", async ({
   plan.grants[0] = { ...plan.grants[0], release: "local-model@r1", workflow: "paint@r1" };
   plan.require[0] = { ...plan.require[0], op: "in", values: ["local"] };
   plan.deny = [{ id: "blocked-remote", category: "location", op: "in", values: ["remote"] }];
-  await page.route(`**${root}/active`, (route) => route.fulfill({ json: { revision: 1, snapshot: data } }));
-  await page.route(`**${root}/history`, (route) => route.fulfill({ json: { history: [] } }));
-  await page.route(`**${root}/services`, (route) => route.fulfill({ json: { services: [
+  await page.route(`**${root}/active`, (route) => fulfilJson(route, { revision: 1, snapshot: data }));
+  await page.route(`**${root}/history`, (route) => fulfilJson(route, { history: [] }));
+  await page.route(`**${root}/services`, (route) => fulfilJson(route, { services: [
     { stem: "local-service", label: "Local model", kind: "model", capabilities: ["chat"] },
     { stem: "local-model", label: "Reviewed model", kind: "model", capabilities: ["chat"] },
     { stem: "paint", label: "Paint workflow", kind: "workflow", capabilities: ["chat"] },
-  ] } }));
+  ] }));
   const sent = writes(page);
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
+  await openAdvanced(page);
   await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
   await expect(page.getByText(/Nothing is enforced|enforcement comes later/)).toHaveCount(0);
   await expect(page.locator('details:has(> section[aria-labelledby="current-rules"])')).not.toHaveAttribute("open");

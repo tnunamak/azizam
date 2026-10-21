@@ -14,19 +14,14 @@ existing "server-rendered pure renderer" contract intact.
 from __future__ import annotations
 
 import html
-import json
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 from .brand_css import BRAND_COMPONENTS_CSS, BRAND_TOKENS_CSS
 
 __all__ = [
     "SHELL_CSS",
     "esc",
-    "json_for_script",
     "render_shell_header",
-    "render_bottom_tabs",
-    "can_admin",
-    "user_role",
 ]
 
 
@@ -400,27 +395,6 @@ def esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def json_for_script(value: Any) -> str:
-    return (
-        json.dumps(value)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
-
-
-def user_role(account: Mapping[str, Any] | None) -> str:
-    if not account or not account.get("authenticated"):
-        return "none"
-    user_value = account.get("user")
-    user = user_value if isinstance(user_value, Mapping) else {}
-    return str(user.get("role") or "none")
-
-
-def can_admin(account: Mapping[str, Any] | None) -> bool:
-    return user_role(account) in {"owner", "admin", "superadmin"}
-
-
 def _nav_link(href: str, label: str, *, active: bool) -> str:
     current = ' aria-current="page"' if active else ""
     return f'<a class="shell-nav-section" href="{esc(href)}"{current}>{esc(label)}</a>'
@@ -433,7 +407,6 @@ def render_shell_header(
     wordmark: tuple[str, str] | None = None,
     current: str = "",
     show_account: bool = True,
-    show_admin: bool = False,
     show_status: bool = False,
     actor_label: str | None = None,
     logout_url: str | None = None,
@@ -448,7 +421,7 @@ def render_shell_header(
     default so a generic install shows only the neutral product mark — the
     deployment brand is data, not baked into product code.
 
-    ``current`` is one of ``"account"``, ``"admin"``, ``"status"`` and marks the
+    ``current`` is one of ``"account"``, ``"status"`` and marks the
     active nav link. ``actor_label`` adds a "Signed in as ..." pill and, when
     ``logout_url`` is set, a Sign out link. The brand always links to ``/``.
     """
@@ -456,10 +429,8 @@ def render_shell_header(
     links: list[str] = []
     if show_account:
         links.append(_nav_link("/", "Home", active=current == "account"))
-    if show_admin:
-        links.append(_nav_link("/admin", "Admin", active=current == "admin"))
     if show_status:
-        links.append(_nav_link("/status", "Status", active=current == "status"))
+        links.append(_nav_link("/status/", "Status", active=current == "status"))
 
     for href, label in extra_pills:
         links.append(_nav_link(href, label, active=False))
@@ -506,65 +477,4 @@ def render_shell_header(
         + nav_block
         + "</div>"
         "</header>"
-    )
-
-
-# Bottom-tab icons (24-grid, single stroke), matching the design's icon set.
-_TAB_ICONS: dict[str, str] = {
-    "home": '<path d="M3 11l9-7 9 7v9a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2z"/>',
-    "key": '<circle cx="8" cy="12" r="3"/><path d="M11 12h10v3M16 12v3"/>',
-    "capability": (
-        '<circle cx="12" cy="12" r="2"/>'
-        '<path d="M12 4v3M12 17v3M4 12h3M17 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2"/>'
-    ),
-    "signal": '<path d="M4 19h2v-5H4zM10 19h2v-9h-2zM16 19h2V5h-2z"/>',
-    "user": '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/>',
-    "shield": '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
-}
-
-
-def _tab_icon(name: str) -> str:
-    body = _TAB_ICONS.get(name, "")
-    return (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
-        'width="22" height="22" aria-hidden="true">' + body + "</svg>"
-    )
-
-
-def render_bottom_tabs(
-    *,
-    active: str = "home",
-    admin: bool = False,
-    tabs: Iterable[tuple[str, str, str, str]] | None = None,
-) -> str:
-    """Mobile bottom-tab navigation (hidden on desktop, where the header serves).
-
-    Each tab is ``(id, label, href, icon_name)``. The default set lists ONLY
-    destinations that actually exist — a tab that scrolls nowhere is nav that
-    lies, and costs the user trust every time they tap it. The design's
-    Keys/What-works/Activity tabs are added back, one at a time, in the commit
-    that ships each target section (Phase 2). On desktop this bar is
-    ``display:none`` and the header nav serves.
-    """
-    if tabs is not None:
-        items = list(tabs)
-    else:
-        items = [("home", "Home", "/", "home")]
-        if admin:
-            items.append(("me", "Admin", "/admin", "shield"))
-    links = "".join(
-        f'<a class="tabbar-item{" is-active" if tid == active else ""}" '
-        f'href="{esc(href)}"'
-        f'{" aria-current=\"page\"" if tid == active else ""}>'
-        f'<span class="tabbar-icon">{_tab_icon(icon)}</span>'
-        f'<span class="tabbar-label">{esc(label)}</span>'
-        "</a>"
-        for tid, label, href, icon in items
-    )
-    return (
-        '<nav class="tabbar" aria-label="Primary" '
-        f'style="--tabbar-count:{len(items)}">'
-        + links
-        + "</nav>"
     )

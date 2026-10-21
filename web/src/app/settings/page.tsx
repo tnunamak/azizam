@@ -7,18 +7,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
+  adminDownload,
   adminFetch,
   ApiError,
   adminRegistryMutation,
   api,
-  type EffectiveOidcConfig,
-  type OidcConfigUpdate,
-  type UserAccessDefaults,
 } from "@/lib/api";
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { ReceiptsSection } from "./receipts";
+import { RetentionLedgerPanel } from "@/components/product/retention-ledger";
+import { SessionsSection } from "./sessions";
 import { HouseholdPromptsSection } from "./household-prompts";
+import { SignInSection } from "./sign-in/sign-in-section";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
@@ -70,24 +71,14 @@ interface ExtensionReview {
   object_counts: Record<string, number>;
 }
 interface DefaultsResponse {
-  defaults: { profile_id: string | null };
+  defaults: { invite_access_plan: string | null };
   aliases: Record<string, unknown>;
-}
-type SignInMode = "built-in" | "oidc" | "both";
-interface SignInOptions {
-  revision: string;
-  mode: SignInMode;
-  built_in: boolean;
-  oidc: boolean;
-  oidc_label: string;
 }
 const keys = {
   instance: ["settings", "instance"],
-  oidc: ["settings", "oidc"],
-  signIn: ["settings", "sign-in"],
   defaults: ["settings", "defaults"],
-  accessDefaults: ["settings", "access-defaults"],
   media: ["settings", "media"],
+  hostCommands: ["settings", "host-commands"],
   extensions: ["settings", "extensions"],
   effective: ["settings", "effective"],
 };
@@ -96,9 +87,6 @@ const split = (value: string) =>
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-const LEGACY_ACCESS_PLAN_NAMES = new Set(["legacy simon", "legacy daisy"]);
-const isLegacyAccessPlan = (name: string) =>
-  LEGACY_ACCESS_PLAN_NAMES.has(name.trim().toLowerCase());
 
 function useDraft<T>(initial: T) {
   const source = JSON.stringify(initial);
@@ -244,12 +232,12 @@ function Field({
     </div>
   );
 }
-function Save({ pending, label }: { pending: boolean; label: string }) {
+function Save({ pending, label, disabled = false }: { pending: boolean; label: string; disabled?: boolean }) {
   return (
     <Button
       type="submit"
       className="h-auto! min-h-11 max-w-full py-2 whitespace-normal!"
-      disabled={pending}
+      disabled={pending || disabled}
     >
       {pending && <Loader2 className="animate-spin" />}
       {pending ? "Saving…" : label}
@@ -447,466 +435,62 @@ function InstanceForm({
     </form>
   );
 }
-function SignInSection() {
-  const {
-    data: oidcData,
-    isPending: oidcIsPending,
-    isError: oidcIsError,
-    error: oidcError,
-    refetch: refetchOidc,
-  } = useQuery({
-    queryKey: keys.oidc,
-    staleTime: 15_000,
-    queryFn: () =>
-      adminFetch<{ oidc_config: EffectiveOidcConfig | null; revision: string }>(
-        "/admin/api/oidc-config",
-      ),
-  });
-  const {
-    data: signInData,
-    isPending: signInIsPending,
-    isError: signInIsError,
-    error: signInError,
-    refetch: refetchSignIn,
-  } = useQuery({
-    queryKey: keys.signIn,
-    staleTime: 15_000,
-    queryFn: () => adminFetch<SignInOptions>("/admin/api/operator/sign-in"),
-  });
-  return (
-    <Section
-      title="Sign-in"
-      summary={
-        oidcData && signInData
-          ? {
-              label:
-                signInData.mode === "both"
-                  ? "Built-in accounts and identity provider"
-                  : signInData.mode === "oidc"
-                    ? "Identity provider only"
-                    : "Built-in accounts only",
-              description: oidcData.oidc_config?.enabled
-                ? `Identity provider enabled${oidcData.oidc_config.issuer ? ` · ${oidcData.oidc_config.issuer}` : ""}`
-                : "No identity provider enabled",
-            }
-          : undefined
-      }
-    >
-      <div className="space-y-7">
-        {signInIsPending ? (
-          <Loading label="Loading sign-in choices" />
-        ) : signInIsError ? (
-          <SettingsError
-            error={signInError}
-            message="Sign-in choices could not be loaded."
-            onRetry={() => void refetchSignIn()}
-          />
-        ) : (
-          <SignInChoiceForm signIn={signInData} />
-        )}
-        {oidcIsPending ? (
-          <Loading label="Loading identity provider" />
-        ) : oidcIsError ? (
-          <SettingsError
-            error={oidcError}
-            message="Sign-in settings could not be loaded."
-            onRetry={() => void refetchOidc()}
-          />
-        ) : (
-          <OidcForm
-            config={oidcData.oidc_config}
-            revision={oidcData.revision}
-          />
-        )}
-      </div>
-    </Section>
-  );
-}
-function SignInChoiceForm({ signIn }: { signIn: SignInOptions }) {
-  const owner = useViewer().role === "owner";
-  const client = useQueryClient();
-  const [draft, setDraft] = useDraft({
-    mode: signIn.mode,
-    revision: signIn.revision,
-  });
-  const { mode } = draft;
-  const setMode = (mode: SignInMode) => setDraft({ ...draft, mode });
-  const modeMutation = useMutation({
-    mutationFn: () =>
-      adminFetch<SignInOptions>("/admin/api/operator/sign-in", {
-        method: "PUT",
-        body: { mode },
-        headers: { "If-Match": draft.revision },
-      }),
-    onSuccess: (data) => {
-      setDraft({ mode: data.mode, revision: data.revision });
-      client.setQueryData(keys.signIn, data);
-      void client.invalidateQueries({ queryKey: keys.oidc });
-      toast.success("Sign-in choice saved");
-    },
-  });
-  if (!owner)
-    return (
-      <p role="status" className="text-muted-foreground text-meta">
-        Only the owner can change this.
-      </p>
-    );
-  return (
-    <form
-      className="space-y-5"
-      onSubmit={(e) => {
-        e.preventDefault();
-        modeMutation.mutate();
-      }}
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <Badge variant={signIn.built_in ? "default" : "secondary"}>
-          Built-in accounts {signIn.built_in ? "on" : "off"}
-        </Badge>
-        <Badge variant={signIn.oidc ? "default" : "secondary"}>
-          OIDC {signIn.oidc ? "on" : "off"}
-        </Badge>
-      </div>
-      <Field
-        id="sign-in-mode"
-        label="Available sign-in methods"
-        help="This setting controls the methods shown on the sign-in page. The provider switch below only configures OIDC."
-      >
-        <Select
-          value={mode}
-          onValueChange={(value) => setMode(value as SignInMode)}
-        >
-          <SelectTrigger id="sign-in-mode" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="built-in">Built-in accounts only</SelectItem>
-            <SelectItem value="oidc">OIDC only</SelectItem>
-            <SelectItem value="both">Built-in accounts and OIDC</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      <MutationError error={modeMutation.error} />
-      <Save pending={modeMutation.isPending} label="Save sign-in choice" />
-    </form>
-  );
-}
-function oidcFields(config: EffectiveOidcConfig | null) {
-  return {
-    enabled: config?.enabled ?? false,
-    display_name: config?.display_name ?? "",
-    issuer: config?.issuer ?? "",
-    client_id: config?.client_id ?? "",
-    redirect_uri: config?.redirect_uri ?? "",
-    client_secret: "",
-    scopes: (config?.scopes ?? ["openid", "email", "profile"]).join(", "),
-    groups_claim: config?.groups_claim ?? "groups",
-    allowed_email_domains: config?.allowed_email_domains?.join(", ") ?? "",
-    admin_emails: config?.admin_emails?.join(", ") ?? "",
-    admin_groups: config?.admin_groups?.join(", ") ?? "",
-    admin_roles: config?.admin_roles?.join(", ") ?? "",
-    authorization_endpoint: config?.authorization_endpoint ?? "",
-    token_endpoint: config?.token_endpoint ?? "",
-    jwks_uri: config?.jwks_uri ?? "",
-    clock_skew_seconds: String(config?.clock_skew_seconds ?? 60),
-  };
-}
-function OidcForm({
-  config,
-  revision,
-}: {
-  config: EffectiveOidcConfig | null;
-  revision: string;
-}) {
-  const owner = useViewer().role === "owner";
-  const client = useQueryClient();
-  const [draft, setDraft] = useDraft({ fields: oidcFields(config), revision });
-  const { fields } = draft;
-  const setFields = (fields: ReturnType<typeof oidcFields>) =>
-    setDraft({ ...draft, fields });
-  const update = (key: keyof typeof fields, value: string) =>
-    setFields({ ...fields, [key]: value });
-  const mutation = useMutation({
-    mutationFn: () => {
-      const body: OidcConfigUpdate = {
-        enabled: fields.enabled,
-        display_name: fields.display_name,
-        issuer: fields.issuer.trim(),
-        client_id: fields.client_id.trim(),
-        redirect_uri: fields.redirect_uri.trim(),
-        scopes: split(fields.scopes),
-        groups_claim: fields.groups_claim,
-        allowed_email_domains: split(fields.allowed_email_domains),
-        admin_emails: split(fields.admin_emails),
-        admin_groups: split(fields.admin_groups),
-        admin_roles: split(fields.admin_roles),
-        authorization_endpoint: fields.authorization_endpoint,
-        token_endpoint: fields.token_endpoint,
-        jwks_uri: fields.jwks_uri,
-        clock_skew_seconds: Number(fields.clock_skew_seconds),
-      };
-      if (fields.client_secret.trim())
-        body.client_secret = fields.client_secret;
-      return adminFetch<{ oidc_config: EffectiveOidcConfig; revision: string }>(
-        "/admin/api/oidc-config",
-        { method: "PUT", body, headers: { "If-Match": draft.revision } },
-      );
-    },
-    onSuccess: (data) => {
-      setDraft({
-        fields: oidcFields(data.oidc_config),
-        revision: data.revision,
-      });
-      client.setQueryData(keys.oidc, data);
-      void client.invalidateQueries({ queryKey: keys.signIn });
-      void client.invalidateQueries({ queryKey: keys.effective });
-      toast.success("Identity provider saved");
-    },
-  });
-  if (!owner)
-    return (
-      <p role="status" className="text-muted-foreground text-meta">
-        Only the owner can change this.
-      </p>
-    );
-  return (
-    <form
-      className="space-y-5 border-t pt-7"
-      onSubmit={(e) => {
-        e.preventDefault();
-        mutation.mutate();
-      }}
-    >
-      {!config && (
-        <p className="text-muted-foreground text-meta">
-          No identity provider is connected yet. Add its details below to enable
-          sign-in.
-        </p>
-      )}
-      <Toggle
-        id="oidc-enabled"
-        label="Enable identity provider"
-        checked={fields.enabled}
-        onChange={(enabled) => setFields({ ...fields, enabled })}
-      />
-      <Field
-        id="oidc-display-name"
-        label="Provider display name"
-        help="Shown on the sign-in page. Leave blank to use single sign-on."
-      >
-        <Input
-          id="oidc-display-name"
-          maxLength={80}
-          value={fields.display_name}
-          onChange={(e) => update("display_name", e.target.value)}
-        />
-      </Field>
-      <Field id="oidc-issuer" label="Issuer URL">
-        <Input
-          id="oidc-issuer"
-          type="url"
-          required={fields.enabled}
-          value={fields.issuer}
-          onChange={(e) => update("issuer", e.target.value)}
-        />
-      </Field>
-      <Field id="oidc-client" label="Client ID">
-        <Input
-          id="oidc-client"
-          required={fields.enabled}
-          value={fields.client_id}
-          onChange={(e) => update("client_id", e.target.value)}
-        />
-      </Field>
-      <Field
-        id="oidc-secret"
-        label="Client secret"
-        help={
-          config?.client_secret_set
-            ? "A secret is saved. Leave this blank to keep it."
-            : "Write-only. The saved value is never shown."
-        }
-      >
-        <Input
-          id="oidc-secret"
-          type="password"
-          autoComplete="new-password"
-          value={fields.client_secret}
-          onChange={(e) => update("client_secret", e.target.value)}
-        />
-      </Field>
-      <Field id="oidc-redirect" label="Redirect URL">
-        <Input
-          id="oidc-redirect"
-          type="url"
-          required={fields.enabled}
-          value={fields.redirect_uri}
-          onChange={(e) => update("redirect_uri", e.target.value)}
-        />
-      </Field>
-      <details>
-        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
-          Provider details and access rules
-        </summary>
-        <div className="space-y-5 pb-2">
-          {(
-            [
-              ["scopes", "Scopes"],
-              ["groups_claim", "Groups claim"],
-              ["allowed_email_domains", "Allowed email domains"],
-              ["admin_emails", "Sign-in email exceptions"],
-              ["admin_groups", "Admin groups"],
-              ["admin_roles", "Admin roles"],
-              ["authorization_endpoint", "Authorization endpoint"],
-              ["token_endpoint", "Token endpoint"],
-              ["jwks_uri", "Signing keys URL"],
-            ] as const
-          ).map(([key, label]) => (
-            <Field
-              key={key}
-              id={`oidc-${key}`}
-              label={label}
-              help={
-                key === "admin_emails"
-                  ? "These emails can sign in even outside the allowed domains. When no role grant exists, a verified email from the configured issuer can bootstrap the first owner. Once any grant exists, this list grants no role. Use Admin groups or Admin roles to grant administrator access."
-                  : undefined
-              }
-            >
-              <Input
-                id={`oidc-${key}`}
-                aria-describedby={
-                  key === "admin_emails" ? `oidc-${key}-help` : undefined
-                }
-                value={fields[key]}
-                onChange={(e) => update(key, e.target.value)}
-              />
-            </Field>
-          ))}
-          <p className="text-muted-foreground text-meta">
-            Separate list values with commas. Leave endpoint overrides blank to
-            use provider discovery.
-          </p>
-          <Field id="oidc-clock" label="Clock tolerance (seconds)">
-            <Input
-              id="oidc-clock"
-              type="number"
-              min={0}
-              step={1}
-              value={fields.clock_skew_seconds}
-              onChange={(e) => update("clock_skew_seconds", e.target.value)}
-            />
-          </Field>
-        </div>
-      </details>
-      <MutationError error={mutation.error} />
-      <Save pending={mutation.isPending} label="Save sign-in" />
-      <p className="text-muted-foreground text-meta">
-        Changes apply to future sign-ins. Keep this session open until you test
-        the provider.{" "}
-        <a className="text-link underline" href="/setup">
-          Owner recovery
-        </a>
-      </p>
-    </form>
-  );
-}
 function DefaultsSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.defaults,
     staleTime: 15_000,
     queryFn: async () => {
-      const [defaults, profiles] = await Promise.all([
+      const [defaults, plans] = await Promise.all([
         adminFetch<DefaultsResponse>("/admin/api/settings/defaults"),
-        api.profiles.list(),
+        api.accessPlans.list(),
       ]);
-      return { ...defaults, profiles };
+      return { ...defaults, plans };
     },
   });
-  const {
-    data: accessData,
-    isPending: accessPending,
-    isError: accessError,
-    error: accessErrorDetails,
-    refetch: refetchAccess,
-  } = useQuery({
-    queryKey: keys.accessDefaults,
-    staleTime: 15_000,
-    queryFn: api.userAccessDefaults.get,
-  });
   return (
-    <>
-      <Section
-        title="Defaults"
-        description="Choose the access plan people use when no personal, email, group or role assignment applies."
-      >
-        {isPending ? (
-          <Loading />
-        ) : !data ? (
-          <SettingsError
-            error={error}
-            message="Default access could not be loaded."
-            onRetry={() => void refetch()}
-          />
-        ) : (
-          <>
-            {isError && (
-              <SettingsError
-                error={error}
-                message="Couldn’t refresh default access. The values below may be out of date; your edits are kept."
-                onRetry={() => void refetch()}
-              />
-            )}
-            <DefaultsForm data={data} />
-          </>
-        )}
-      </Section>
-      <Section
-        title="App creation"
-        description="An app holds the API keys a person uses to connect AI software to this gateway."
-      >
-        {accessPending ? (
-          <Loading />
-        ) : !accessData ? (
-          <SettingsError
-            error={accessErrorDetails}
-            message="App creation settings could not be loaded."
-            onRetry={() => void refetchAccess()}
-          />
-        ) : (
-          <>
-            {accessError && (
-              <SettingsError
-                error={accessErrorDetails}
-                message="Couldn’t refresh app creation settings. The values below may be out of date; your edits are kept."
-                onRetry={() => void refetchAccess()}
-              />
-            )}
-            <AccessDefaultsForm initial={accessData} />
-          </>
-        )}
-      </Section>
-    </>
+    <Section
+      title="People and access"
+      description="People can use only what their access plan allows. Nobody has a plan until you choose one."
+    >
+      {isPending ? (
+        <Loading />
+      ) : !data ? (
+        <SettingsError
+          error={error}
+          message="Access plans couldn't be loaded. Try again."
+          onRetry={() => void refetch()}
+        />
+      ) : (
+        <>
+          {isError && (
+            <SettingsError
+              error={error}
+              message="Couldn’t refresh access settings. The values below may be out of date; your edits are kept."
+              onRetry={() => void refetch()}
+            />
+          )}
+          <DefaultsForm data={data} />
+        </>
+      )}
+    </Section>
   );
 }
+const ASK_EACH_TIME = "ask";
 function DefaultsForm({
   data,
 }: {
   data: DefaultsResponse & {
-    profiles: { id: string; name: string }[];
+    plans: { id: string; name: string }[];
   };
 }) {
   const owner = useViewer().role === "owner";
   const client = useQueryClient();
-  const [plan, setPlan] = useDraft(data.defaults.profile_id ?? "none");
-  const selectedPlan = data.profiles.find((profile) => profile.id === plan);
-  const selectedPlanIsLegacy =
-    selectedPlan !== undefined && isLegacyAccessPlan(selectedPlan.name);
-  // Different authorities have separate saves: a failed app-options write cannot claim a plan was saved.
+  const [plan, setPlan] = useDraft(data.defaults.invite_access_plan ?? ASK_EACH_TIME);
   const planSave = useMutation({
     mutationFn: () =>
       adminFetch("/admin/api/settings/defaults", {
         method: "PUT",
-        body: { profile_id: plan === "none" ? null : plan },
+        body: { invite_access_plan: plan === ASK_EACH_TIME ? null : plan },
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.defaults });
@@ -929,9 +513,9 @@ function DefaultsForm({
         }}
       >
         <Field
-          id="default-plan"
-          label="Default access plan"
-          help="Changes apply to new and existing people who use this default. Apps and keys with their own plan keep it. Household access rules still apply."
+          id="invite-plan"
+          label="Access plan for new invitations"
+          help="Preselected when you invite someone. It changes future invitations only."
         >
           <Select
             value={plan}
@@ -942,51 +526,25 @@ function DefaultsForm({
             }}
           >
             <SelectTrigger
-              id="default-plan"
-              aria-describedby="default-plan-help default-plan-consequence"
+              id="invite-plan"
+              aria-describedby="invite-plan-help"
               className="h-auto! min-h-11 w-full *:data-[slot=select-value]:line-clamp-none *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:whitespace-normal"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="[&_[role=option]]:min-h-11 [&_[role=option]]:whitespace-normal">
               <SelectGroup>
-                <SelectItem value="none">
-                  None — built-in local access
-                </SelectItem>
-                {!data.profiles.some((p) => p.id === "default-local") && (
-                  <SelectItem value="default-local">
-                    Default local (built-in)
+                <SelectItem value={ASK_EACH_TIME}>Ask each time</SelectItem>
+                {data.plans.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
                   </SelectItem>
-                )}
-                {!data.profiles.some((p) => p.id === "default") && (
-                  <SelectItem value="default">Default (built-in)</SelectItem>
-                )}
-                {plan !== "none" &&
-                  !["default", "default-local"].includes(plan) &&
-                  (selectedPlanIsLegacy || !selectedPlan) && (
-                    <SelectItem value={plan}>Current plan</SelectItem>
-                  )}
-                {data.profiles
-                  .filter((p) => !isLegacyAccessPlan(p.name))
-                  .map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
+                ))}
               </SelectGroup>
             </SelectContent>
           </Select>
         </Field>
-        <p
-          id="default-plan-consequence"
-          className="text-body"
-          aria-live="polite"
-        >
-          {plan === "none"
-            ? "A new person can use local models and workflows through the built-in local access plan. Remote providers are not included. Choosing none does not block AI access."
-            : "A new person can use the models and capabilities allowed by this plan, within its limits. Remote providers are available only if the plan allows them."}
-        </p>
-        <Link
+        <Link prefetch={false}
           href="/people?tab=plans"
           className="text-link inline-flex min-h-11 max-w-full items-center underline underline-offset-4"
         >
@@ -994,12 +552,12 @@ function DefaultsForm({
         </Link>
         <MutationError error={planSave.error} />
         <div className="flex flex-wrap items-center gap-3">
-          <Save pending={planSave.isPending} label="Save default plan" />
+          <Save pending={planSave.isPending} label="Save" />
           <p role="status" className="text-muted-foreground text-meta">
             {planSave.isPending
-              ? "Saving default access…"
+              ? "Saving…"
               : planSave.isSuccess
-                ? "Default access plan saved"
+                ? "Access plan for new invitations saved"
                 : null}
           </p>
         </div>
@@ -1029,70 +587,6 @@ function DefaultsForm({
         )}
       </details>
     </div>
-  );
-}
-function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
-  const client = useQueryClient();
-  const [access, setAccess] = useDraft(initial);
-  const accessSave = useMutation({
-    mutationFn: () => api.userAccessDefaults.update(access),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: keys.accessDefaults });
-      void client.invalidateQueries({ queryKey: keys.effective });
-    },
-  });
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        accessSave.mutate();
-      }}
-    >
-      <fieldset
-        disabled={accessSave.isPending}
-        className="flex min-w-0 flex-col gap-5"
-      >
-        <legend className="sr-only">App creation options</legend>
-        <Toggle
-          id="self-service"
-          label="Let people create their own apps"
-          help="On: people can create apps and API keys themselves. Off: an owner or admin must provide them. Existing apps and keys are kept; apps without their own plan use built-in local access instead of the person’s plan."
-          checked={access.self_service_apps}
-          onChange={(value) => {
-            setAccess({ ...access, self_service_apps: value });
-            accessSave.reset();
-          }}
-        />
-        <Toggle
-          id="personal-app"
-          label="Create a personal app automatically"
-          help="On: create a personal app for people who do not have one when they sign in or open their account. Off: they create an app themselves. Requires people to be allowed to create apps."
-          checked={access.auto_create_personal_app}
-          onChange={(value) => {
-            setAccess({ ...access, auto_create_personal_app: value });
-            accessSave.reset();
-          }}
-        />
-      </fieldset>
-      {!access.self_service_apps && (
-        <p className="text-muted-foreground text-meta">
-          Automatic creation is inactive while people cannot create apps, even
-          if its switch is on.
-        </p>
-      )}
-      <MutationError error={accessSave.error} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Save pending={accessSave.isPending} label="Save app defaults" />
-        <p role="status" className="text-muted-foreground text-meta">
-          {accessSave.isPending
-            ? "Saving app creation…"
-            : accessSave.isSuccess
-              ? "Personal app defaults saved"
-              : null}
-        </p>
-      </div>
-    </form>
   );
 }
 function MediaSection() {
@@ -1153,6 +647,90 @@ function MediaSection() {
         />
       )}
     </Section>
+  );
+}
+function HostCommandsSection() {
+  const owner = useViewer().role === "owner";
+  const client = useQueryClient();
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: keys.hostCommands,
+    staleTime: 15_000,
+    queryFn: () =>
+      adminFetch<{ enabled: boolean; revision: string }>(
+        "/admin/api/operator/host-commands",
+      ),
+  });
+  return (
+    <Section
+      title="Computer commands"
+      summary={data ? { label: data.enabled ? "Allowed" : "Off" } : undefined}
+      description="Controls whether Azizam can start processes or run commands declared for engines."
+    >
+      {isPending ? (
+        <Loading label="Loading computer command setting" />
+      ) : isError ? (
+        <SettingsError
+          error={error}
+          message="Computer command setting could not be loaded."
+          onRetry={() => void refetch()}
+        />
+      ) : owner ? (
+        <HostCommandsForm initial={data} onSaved={(saved) => {
+          client.setQueryData(keys.hostCommands, saved);
+          toast.success("Computer command setting saved");
+        }} />
+      ) : (
+        <p className="text-muted-foreground text-meta">Only the owner can change this.</p>
+      )}
+    </Section>
+  );
+}
+
+function HostCommandsForm({
+  initial,
+  onSaved,
+}: {
+  initial: { enabled: boolean; revision: string };
+  onSaved: (saved: { enabled: boolean; revision: string }) => void;
+}) {
+  const [draft, setDraft] = useDraft(initial);
+  const mutation = useMutation({
+    mutationFn: () =>
+      adminFetch<{ enabled: boolean; revision: string }>(
+        "/admin/api/operator/host-commands",
+        {
+          method: "PUT",
+          body: { enabled: draft.enabled },
+          headers: { "If-Match": draft.revision },
+        },
+      ),
+    onSuccess: (saved) => {
+      setDraft(saved);
+      onSaved(saved);
+    },
+  });
+  return (
+    <form className="space-y-5" onSubmit={(event) => {
+      event.preventDefault();
+      mutation.mutate();
+    }}>
+      <Toggle
+        id="allow-host-commands"
+        label="Allow Azizam to run commands on this computer"
+        help="Engine start, stop and status recipes run as the gateway user."
+        checked={draft.enabled}
+        onChange={(enabled) => setDraft({ ...draft, enabled })}
+      />
+      {draft.enabled !== initial.enabled && (
+        <p className="text-muted-foreground text-meta" role="status">
+          {draft.enabled
+            ? "After you save, configured engines may start processes and run commands on this computer."
+            : "After you save, Azizam will block new process starts and external manager commands."}
+        </p>
+      )}
+      <MutationError error={mutation.error} />
+      <Save pending={mutation.isPending} disabled={draft.enabled === initial.enabled} label="Save computer command setting" />
+    </form>
   );
 }
 function mediaFields(initial: Partial<MediaAdmission>) {
@@ -1577,7 +1155,26 @@ function AdvancedSection() {
             ) : (
               <>
                 <Button variant="outline" asChild>
-                  <a href={data.export_url} download>
+                  {/* A link, so it still works without scripts; a click saves
+                      the file through adminDownload, which can ask the person to
+                      confirm it is them first. */}
+                  <a
+                    href={data.export_url}
+                    download
+                    onClick={(event) => {
+                      event.preventDefault();
+                      adminDownload(
+                        data.export_url,
+                        "gateway-effective-config.json",
+                      ).catch((failure: unknown) =>
+                        toast.error(
+                          failure instanceof Error && failure.message
+                            ? failure.message
+                            : "The export didn’t download. Try again.",
+                        ),
+                      );
+                    }}
+                  >
                     <Download />
                     Export redacted snapshot
                   </a>
@@ -1605,10 +1202,13 @@ export default function SettingsPage() {
       <div className="page-stack">
         <InstanceSection />
         <SignInSection />
+        <SessionsSection />
         <DefaultsSection />
         <HouseholdPromptsSection />
+        <RetentionLedgerPanel id="retention-ledger" endpoint="/admin/api/settings/retention/ledger" />
         <ReceiptsSection />
         <MediaSection />
+        <HostCommandsSection />
         <ExtensionsSection />
         <AdvancedSection />
       </div>

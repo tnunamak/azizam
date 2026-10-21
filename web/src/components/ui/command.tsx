@@ -10,6 +10,7 @@ import { destinations } from "@/lib/product";
 import { useViewer } from "@/components/shell/session";
 import { formatAppName, formatPersonName } from "@/lib/format";
 import { CopyField } from "@/components/product/copy-field";
+import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/product/error-state";
 import { Command as CommandPrimitive } from "cmdk";
 import { cn } from "@/lib/cn";
@@ -218,6 +219,7 @@ export function CommandPalette({
   const viewer = useViewer();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
   const [copyAddress, setCopyAddress] = useState<string | null>(null);
   const [addressError, setAddressError] = useState(false);
   const [previousOpen, setPreviousOpen] = useState(open);
@@ -225,6 +227,7 @@ export function CommandPalette({
   const commandInvoker = useRef<HTMLElement | null>(null);
   if (previousOpen !== open) {
     setPreviousOpen(open);
+    setSearch("");
     setCopyAddress(null);
     setAddressError(false);
   }
@@ -234,24 +237,41 @@ export function CommandPalette({
     input?.focus();
     input?.select();
   }, [copyAddress]);
-  const { data: appData } = useQuery({
+  const {
+    data: appData,
+    isPending: appsPending,
+    isError: appsFailed,
+    refetch: refetchApps,
+  } = useQuery({
     queryKey: ["foundation", "command-apps"],
     queryFn: async () => {
       const r = await fetch("/me/api/session");
       if (!r.ok) throw new Error();
-      return r.json() as Promise<{
+      const data = await r.json();
+      if (!Array.isArray(data.apps)) throw new Error("Apps were not returned");
+      return data as {
         user?: { email?: string };
         apps: Array<{ id: string; name: string }>;
-      }>;
+      };
     },
     enabled: open && viewer.authenticated && !viewer.serviceAdmin,
   });
-  const { data: peopleData } = useQuery({
+  const {
+    data: peopleData,
+    isPending: peoplePending,
+    isError: peopleFailed,
+    refetch: refetchPeople,
+  } = useQuery({
     queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled: open && viewer.admin && !viewer.serviceAdmin,
   });
-  const { data: modelData } = useQuery({
+  const {
+    data: modelData,
+    isPending: modelsPending,
+    isError: modelsFailed,
+    refetch: refetchModels,
+  } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
     select: (registry) => {
@@ -268,6 +288,12 @@ export function CommandPalette({
     },
     enabled: open && viewer.admin,
   });
+  const matches = (value: string) => value.toLowerCase().includes(search.trim().toLowerCase());
+  const apps = (appData?.apps ?? []).filter((app) => matches(formatAppName(app.name, appData?.user?.email)));
+  const models = Object.keys(modelData?.aliases ?? {}).filter(matches);
+  const people = (peopleData ?? []).filter((person) => matches([
+    person.display_name, person.name, person.email,
+  ].filter(Boolean).join(" ")));
   const go = (href: string) => {
     setOpen(false);
     router.push(href);
@@ -300,9 +326,15 @@ export function CommandPalette({
     setBusy(true);
     try {
       const response = await fetch("/health", { cache: "no-store" });
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        toast.error("The gateway responded, but reported a problem. View Status.");
+        return;
+      }
       const result = await response.json();
-      if (result.status !== "healthy") throw new Error();
+      if (result.status !== "healthy") {
+        toast.error("The gateway responded, but reported a problem. View Status.");
+        return;
+      }
       toast.success(
         "The gateway is reachable. Engine requests are tested on Try.",
       );
@@ -345,6 +377,8 @@ export function CommandPalette({
           <CommandInput
             placeholder="A page, app, model or person…"
             aria-label="Go to"
+            value={search}
+            onValueChange={setSearch}
           />
           <CommandList>
             <CommandEmpty>No matches. Try a page or app name.</CommandEmpty>
@@ -381,26 +415,28 @@ export function CommandPalette({
                 </CommandItem>
               )}
             </CommandGroup>
-            {appData?.apps.length ? (
-              <CommandGroup heading="Apps">
-                {appData.apps.map((app) => (
+            {viewer.authenticated && !viewer.serviceAdmin && (
+              <RemoteCommandGroup heading="Apps" pending={appsPending} failed={appsFailed} count={apps.length} retry={() => void refetchApps()}>
+                {apps.map((app) => (
                   <CommandItem
                     key={app.id}
+                    forceMount
                     onSelect={() =>
                       go(`/apps?app=${encodeURIComponent(app.id)}`)
                     }
                   >
                     <KeyRound />
-                    {formatAppName(app.name, appData.user?.email)}
+                    {formatAppName(app.name, appData?.user?.email)}
                   </CommandItem>
                 ))}
-              </CommandGroup>
-            ) : null}
-            {Object.keys(modelData?.aliases || {}).length ? (
-              <CommandGroup heading="Models">
-                {Object.keys(modelData?.aliases || {}).map((name) => (
+              </RemoteCommandGroup>
+            )}
+            {viewer.admin && (
+              <RemoteCommandGroup heading="Models" pending={modelsPending} failed={modelsFailed} count={models.length} retry={() => void refetchModels()}>
+                {models.map((name) => (
                   <CommandItem
                     key={name}
+                    forceMount
                     onSelect={() =>
                       go(`/models?model=${encodeURIComponent(name)}`)
                     }
@@ -409,13 +445,14 @@ export function CommandPalette({
                     {name}
                   </CommandItem>
                 ))}
-              </CommandGroup>
-            ) : null}
-            {peopleData?.length ? (
-              <CommandGroup heading="People">
-                {peopleData.map((person) => (
+              </RemoteCommandGroup>
+            )}
+            {viewer.admin && !viewer.serviceAdmin && (
+              <RemoteCommandGroup heading="People" pending={peoplePending} failed={peopleFailed} count={people.length} retry={() => void refetchPeople()}>
+                {people.map((person) => (
                   <CommandItem
                     key={person.id}
+                    forceMount
                     value={person.id}
                     keywords={[
                       person.display_name || "",
@@ -439,8 +476,8 @@ export function CommandPalette({
                     ) : null}
                   </CommandItem>
                 ))}
-              </CommandGroup>
-            ) : null}
+              </RemoteCommandGroup>
+            )}
             <CommandSeparator />
             <CommandGroup heading="Actions">
               <CommandItem
@@ -462,7 +499,7 @@ export function CommandPalette({
           </CommandList>
         </Command>
         {copyAddress !== null && (
-          <div ref={addressRecovery} className="space-y-3 border-t p-4">
+          <div ref={addressRecovery} data-testid="gateway-address-recovery" className="space-y-3 border-t p-4">
             <p role="alert" className="text-destructive text-sm">
               Copy failed. Select the gateway address and copy it manually.
             </p>
@@ -473,7 +510,7 @@ export function CommandPalette({
           <div className="border-t p-4">
             <ErrorState
               heading="Couldn’t load the gateway address"
-              message="The gateway address could not be loaded. Check your connection and try again."
+              message="We couldn't load the gateway address. Try again."
               action={{
                 label: "Try again",
                 onClick: () => void copyGatewayAddress(),
@@ -484,5 +521,31 @@ export function CommandPalette({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function RemoteCommandGroup({
+  heading, pending, failed, count, retry, children,
+}: {
+  heading: string;
+  pending: boolean;
+  failed: boolean;
+  count: number;
+  retry: () => void;
+  children: React.ReactNode;
+}) {
+  // Like cmdk's own groups, a loaded group with no matches is hidden.
+  if (!pending && !failed && count === 0) return null;
+  return (
+    <CommandGroup heading={heading} forceMount>
+      {pending ? (
+        <p role="status" className="px-2 py-3 text-sm">Loading {heading.toLowerCase()}…</p>
+      ) : failed ? (
+        <div role="status" className="px-2 py-3 text-sm">
+          {`${heading} couldn't be loaded.`}{" "}
+          <Button type="button" variant="outline" size="sm" onClick={retry}>Try again.</Button>
+        </div>
+      ) : children}
+    </CommandGroup>
   );
 }

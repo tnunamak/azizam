@@ -1,13 +1,22 @@
-import type { Metadata } from "next";
+import type { Viewport } from "next";
 import { AppShell } from "@/components/shell/app-shell";
-import { PRODUCT_NAME } from "@/lib/product";
+import { EARLY_SCRIPT } from "@/lib/early-fetch";
+import { publicOrigin, siteMetadata } from "@/lib/site-metadata";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: { default: PRODUCT_NAME, template: `%s · ${PRODUCT_NAME}` },
-  description:
-    "Your own AI provider. Connect your apps and manage your gateway.",
+export const metadata = siteMetadata(
+  publicOrigin(process.env.AZIZAM_PUBLIC_URL),
+);
+
+// The browser's own bar takes the chrome colour (tokens.css --chrome) of the
+// theme the reader's system prefers.
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#eef2f3" },
+    { media: "(prefers-color-scheme: dark)", color: "#08171c" },
+  ],
 };
+
 export default function RootLayout({
   children,
 }: {
@@ -15,6 +24,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Starts the viewer and Home requests before the JavaScript has loaded (lib/early-fetch.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: EARLY_SCRIPT }} />
+      </head>
       <body>
         <AppShell>{children}</AppShell>
       </body>

@@ -1,0 +1,67 @@
+# RP cells (TEST_STRATEGY 4.2.7, 4.7): one per synthetic request set in request_sets.json.
+# Checked by scripts/ci/policy.py. A recorded cell needs scenarios/<protocol>/rp-<set>.json;
+# a pending cell needs owner, reason and expires_on within 90 days; a not-applicable cell
+# names the registry upstream_protocol and a reason, and is valid only while no shipped
+# local-engine preset speaks that protocol upstream.
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-text"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-stream"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "embeddings"
+status = "recorded"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-text"
+status = "not-applicable"
+upstream_protocol = "anthropic-messages"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-stream"
+status = "not-applicable"
+upstream_protocol = "anthropic-messages"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-text"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-stream"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "generate-text"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "ollama"
+set = "embed"
+status = "not-applicable"
+upstream_protocol = "ollama"
+reason = "no shipped local engine preset speaks this protocol upstream (Anthropic and Ollama are client-facing frontends here, covered by fake-upstream fault tests); policy requires a recording once one does"
+
+[[cell]]
+protocol = "comfyui"
+set = "observe"
+status = "recorded"

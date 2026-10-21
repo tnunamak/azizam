@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from gateway.lifecycle_drivers import SwapContext, SystemdDriver
 
@@ -119,3 +119,81 @@ def test_exact_model_aux_and_profile_is_noop_but_profile_change_restarts(tmp_pat
         "llama-bee.service",
     )
     assert dropin.read_text() == driver._dropin_text(q8)
+
+
+def test_swap_writes_independent_activation_bytes_and_exact_commands(
+    tmp_path: Path,
+) -> None:
+    service = {
+        "host": "127.0.0.1",
+        "port": 18091,
+        "lifecycle": {
+            "driver": "systemd",
+            "driver_config": {
+                "scope": "user",
+                "unit": "fixture.service",
+                "dropin": "95-activation.conf",
+                "health_endpoint": "/health",
+                "health_timeout_s": 2,
+                "activation_env_keys": {
+                    "model": "FIXTURE_MODEL",
+                    "aux": "FIXTURE_AUX",
+                },
+                "activation_profiles": {"p-b": {"FIXTURE_CTX": 8192}},
+            },
+        },
+    }
+    driver = SystemdDriver()
+    dropin = tmp_path / "95-activation.conf"
+    commands = AsyncMock(return_value=True)
+    health = AsyncMock(return_value=0.0)
+    activation = driver.build_activation(
+        service, model="/models/fixture.gguf", profile="p-b"
+    )
+    assert activation is not None
+
+    with patch.object(driver, "_dropin_path", return_value=dropin), patch.object(
+        driver, "_run_systemctl", commands
+    ), patch.object(driver, "_wait_until_healthy", health):
+        assert asyncio.run(driver.swap(service, activation)) is True
+
+    # Expected bytes are written out literally; they do not call _dropin_text.
+    assert dropin.read_text() == (
+        "# Managed by azizam. Do not edit by hand; set role "
+        "`model:`/`mmproj:` in proxy_config.yml.\n"
+        "# Activation profile: p-b\n"
+        "[Service]\n"
+        'Environment="FIXTURE_MODEL=/models/fixture.gguf"\n'
+        'Environment="FIXTURE_AUX="\n'
+        'Environment="FIXTURE_CTX=8192"\n'
+    )
+    assert commands.await_args_list == [
+        call(["systemctl", "--user", "daemon-reload"]),
+        call(["systemctl", "--user", "restart", "fixture.service"]),
+    ]
+    health.assert_awaited_once_with(service, "/health", 2.0)
+
+
+def test_failed_health_restores_exact_dropin_and_restarts_previous_unit(tmp_path: Path) -> None:
+    service = _service()
+    driver = SystemdDriver()
+    dropin = tmp_path / "95-activation.conf"
+    previous = b"# previous\n[Service]\nEnvironment=\"FIXTURE_MODEL=old\"\n"
+    dropin.write_bytes(previous)
+    activation = driver.build_activation(service, model="/models/new.gguf", profile="kv-q8")
+    assert activation is not None
+    commands = AsyncMock(return_value=True)
+    health = AsyncMock(side_effect=[None, 0.0])
+
+    with patch.object(driver, "_dropin_path", return_value=dropin), patch.object(
+        driver, "_run_systemctl", commands
+    ), patch.object(driver, "_wait_until_healthy", health):
+        assert asyncio.run(driver.swap(service, activation)) is False
+
+    assert dropin.read_bytes() == previous
+    assert commands.await_args_list == [
+        call(["systemctl", "--user", "daemon-reload"]),
+        call(["systemctl", "--user", "restart", "llama-bee.service"]),
+        call(["systemctl", "--user", "daemon-reload"]),
+        call(["systemctl", "--user", "restart", "llama-bee.service"]),
+    ]

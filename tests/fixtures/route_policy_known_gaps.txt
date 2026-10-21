@@ -1,0 +1,179 @@
+# Route-policy inventory rows that prove no policy decision yet.
+#
+# tests/test_route_policy_inventory.py::_report fails when a row proves
+# nothing (no denial, no category refusal where one is required, no explicit
+# route contract) unless that pass lists the row here, and it fails when a
+# listed row starts to prove policy. So this list can only shrink.
+#
+# Each entry is "METHOD template STATUS"; a listed row that changes status
+# fails too. The comment is the outcome when the entry was recorded. Typical causes: the request recipe stops at
+# body validation or an unknown sample ID before policy; a provider is not
+# configured in the hermetic config; or, in category passes, the refusal
+# carries no "category rules:" reason. To remove an entry, make the request
+# reach policy or give the route an explicit contract in the test.
+
+[Ordinary access plan: model-facing HTTP route inventory]
+POST /gateway/v1/media/jobs 400                                # coverage gap: {"error": {"code": "unsupported_media_job", "message": "Media job inten
+POST /gateway/v1/media/jobs/{job_id}/events 400                # coverage gap: {"error": {"code": "invalid_media_job_event", "message": "event payload
+POST /v1/systemone 422                                         # coverage gap: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supported
+POST /typesafe/v1/systemone 422                                # coverage gap: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supported
+POST /v1/decisions 501                                         # coverage gap: {"error": {"code": "decisions_backend_unavailable", "message": "OpenAI
+POST /sdapi/v1/options 422                                     # coverage gap: {"detail": [{"input": null, "loc": ["body", "model"], "msg": "setting '
+GET /v1/images/{image_id}/content 400                          # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+GET /openai/v1/images/{image_id}/content 400                   # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+GET /v1/assets/{asset_id}/content 400                          # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+GET /openai/v1/assets/{asset_id}/content 400                   # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+GET /gateway/v1/assets/{asset_id} 400                          # coverage gap: {"error": {"message": "Invalid asset id", "type": "invalid_request_erro
+GET /gateway/v1/assets/{asset_id}/content 400                  # coverage gap: {"error": {"message": "expires must be an integer", "type": "invalid_re
+POST /v1/messages/count_tokens 400                             # coverage gap: {"error": {"message": "'messages' must be a non-empty list", "type": "i
+POST /anthropic/v1/messages/count_tokens 400                   # coverage gap: {"error": {"message": "'messages' must be a non-empty list", "type": "i
+POST /api/embeddings 400                                       # coverage gap: {"error": "'prompt' must be a string"}
+POST /ollama/api/embeddings 400                                # coverage gap: {"error": "'prompt' must be a string"}
+
+[Category enforcement: model-facing HTTP route inventory]
+GET /gateway/v1/workflows/{workflow_id} 404                    # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/receipts/{request_id} 404                      # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/media/jobs 400                                # not exercised: {"error": {"code": "unsupported_media_job", "message": "Media job inte
+GET /gateway/v1/media/jobs/{job_id} 404                        # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/events 404                 # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/media/jobs/{job_id}/events 400                # not exercised: {"error": {"code": "invalid_media_job_event", "message": "event payloa
+POST /gateway/v1/media/jobs/{job_id}/cancel 404                # not exercised: was: HTTP status in DENIED
+GET /me/api/make/jobs/{job_id} 404                             # not exercised: was: HTTP status in DENIED
+POST /me/api/make/jobs/{job_id}/cancel 404                     # not exercised: was: HTTP status in DENIED
+GET /me/api/jobs/{job_id} 404                                  # not exercised: was: HTTP status in DENIED
+GET /me/api/media/{asset_id} 404                               # not exercised: was: HTTP status in DENIED
+DELETE /me/api/media/{asset_id} 404                            # not exercised: was: HTTP status in DENIED
+GET /me/api/media/{asset_id}/download 404                      # not exercised: was: HTTP status in DENIED
+POST /v1/systemone 422                                         # not exercised: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supporte
+POST /typesafe/v1/systemone 422                                # not exercised: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supporte
+POST /v1/decisions 501                                         # not exercised: {"error": {"code": "decisions_backend_unavailable", "message": "OpenAI
+POST /sdapi/v1/options 422                                     # not exercised: {"detail": [{"input": null, "loc": ["body", "model"], "msg": "setting
+POST /me/api/connection-test 200                               # not exercised: The gateway returned HTTP 403. Check your key's access and service sta
+POST /v1/audio/transcriptions 404                              # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/transcriptions 404                       # not exercised: was: HTTP status in DENIED
+POST /v1/audio/translations 404                                # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/translations 404                         # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/content 404                # not exercised: a missing job answers 404 before any model is considered
+GET /v1/assets/{asset_id}/thumbnail 403                    # not exercised: was: HTTP status in DENIED (signed URL, not category-governed, like the content route)
+GET /v1/images/{image_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /openai/v1/images/{image_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /v1/assets/{asset_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
+GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
+GET /v1/status 403                                             # not exercised: was: HTTP status in DENIED
+POST /v1/messages/count_tokens 400                             # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
+POST /anthropic/v1/messages/count_tokens 400                   # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
+POST /api/embeddings 400                                       # not exercised: {"error": "'prompt' must be a string"} was: 400/422 validation
+POST /ollama/api/embeddings 400                                # not exercised: {"error": "'prompt' must be a string"} was: 400/422 validation
+HEAD /api/blobs/{digest} 403                                   # not exercised: was: HTTP status in DENIED
+HEAD /ollama/api/blobs/{digest} 403                            # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/current/v1/chat/completions 401         # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/current/v1/completions 401              # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/chat/completions 401 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/providers/{provider} 404                       # not exercised: was: HTTP status in DENIED
+DELETE /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
+OPTIONS /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
+PATCH /gateway/v1/providers/{provider}/{native_path:path} 404  # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/providers/{provider}/{native_path:path} 404   # not exercised: was: HTTP status in DENIED
+PUT /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
+
+[Category resolved-service check: model-facing HTTP route inventory]
+GET /gateway/v1/workflows/{workflow_id} 404                    # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/receipts/{request_id} 404                      # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/media/jobs 400                                # not exercised: {"error": {"code": "unsupported_media_job", "message": "Media job inte
+GET /gateway/v1/media/jobs/{job_id} 404                        # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/events 404                 # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/media/jobs/{job_id}/events 400                # not exercised: {"error": {"code": "invalid_media_job_event", "message": "event payloa
+POST /gateway/v1/media/jobs/{job_id}/cancel 404                # not exercised: was: HTTP status in DENIED
+GET /me/api/make/jobs/{job_id} 404                             # not exercised: was: HTTP status in DENIED
+POST /me/api/make/jobs/{job_id}/cancel 404                     # not exercised: was: HTTP status in DENIED
+GET /me/api/jobs/{job_id} 404                                  # not exercised: was: HTTP status in DENIED
+GET /me/api/media/{asset_id} 404                               # not exercised: was: HTTP status in DENIED
+DELETE /me/api/media/{asset_id} 404                            # not exercised: was: HTTP status in DENIED
+GET /me/api/media/{asset_id}/download 404                      # not exercised: was: HTTP status in DENIED
+POST /v1/audio/voice_consents 400                              # not exercised: {"error": {"code": "multipart_required", "message": "This request must
+GET /v1/audio/voice_consents/{consent_id} 404                  # not exercised: was: HTTP status in DENIED
+POST /v1/audio/voice_consents/{consent_id} 400                 # not exercised: {"error": {"code": "invalid_name", "message": "name is required.", "pa
+DELETE /v1/audio/voice_consents/{consent_id} 404               # not exercised: was: HTTP status in DENIED
+POST /v1/audio/voices 400                                      # not exercised: {"error": {"code": "invalid_name", "message": "name must be a non-empt
+GET /v1/audio/voices/{voice_id} 404                            # not exercised: was: HTTP status in DENIED
+POST /v1/audio/voices/{voice_id} 400                           # not exercised: {"error": {"code": "nothing_to_update", "message": "Send name, descrip
+DELETE /v1/audio/voices/{voice_id} 404                         # not exercised: was: HTTP status in DENIED
+GET /v1/audio/voices/{voice_id}/sample 404                     # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/voice_consents 400                       # not exercised: {"error": {"code": "multipart_required", "message": "This request must
+GET /openai/v1/audio/voice_consents/{consent_id} 404           # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/voice_consents/{consent_id} 400          # not exercised: {"error": {"code": "invalid_name", "message": "name is required.", "pa
+DELETE /openai/v1/audio/voice_consents/{consent_id} 404        # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/voices 400                               # not exercised: {"error": {"code": "invalid_name", "message": "name must be a non-empt
+GET /openai/v1/audio/voices/{voice_id} 404                     # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/voices/{voice_id} 400                    # not exercised: {"error": {"code": "nothing_to_update", "message": "Send name, descrip
+DELETE /openai/v1/audio/voices/{voice_id} 404                  # not exercised: was: HTTP status in DENIED
+GET /openai/v1/audio/voices/{voice_id}/sample 404              # not exercised: was: HTTP status in DENIED
+POST /v1/systemone 422                                         # not exercised: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supporte
+POST /typesafe/v1/systemone 422                                # not exercised: {"detail": [{"loc": ["body", "prompt"], "msg": "prompt is not supporte
+POST /v1/decisions 501                                         # not exercised: {"error": {"code": "decisions_backend_unavailable", "message": "OpenAI
+POST /sdapi/v1/options 422                                     # not exercised: {"detail": [{"input": null, "loc": ["body", "model"], "msg": "setting
+POST /gateway/v1/faces/likeness 400                            # not exercised: {"error": {"code": "invalid_request", "message": "this request must be
+POST /gateway/v1/images/identity 400                           # not exercised: {"error": {"code": "invalid_request", "message": "this request must be
+POST /v1/audio/speech 404                                      # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/speech 404                               # not exercised: was: HTTP status in DENIED
+POST /v1/audio/transcriptions 404                              # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/transcriptions 404                       # not exercised: was: HTTP status in DENIED
+POST /v1/audio/translations 404                                # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/translations 404                         # not exercised: was: HTTP status in DENIED
+POST /v1/rerank 404                                            # not exercised: was: HTTP status in DENIED
+POST /openai/v1/rerank 404                                     # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/content 404                # not exercised: a missing job answers 404 before any model is considered
+GET /v1/assets/{asset_id}/thumbnail 403                    # not exercised: was: HTTP status in DENIED (signed URL, not category-governed, like the content route)
+GET /v1/images/{image_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /openai/v1/images/{image_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /v1/assets/{asset_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
+GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
+POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
+POST /v1/videos 404                                            # not exercised: was: HTTP status in DENIED
+POST /openai/v1/videos 404                                     # not exercised: was: HTTP status in DENIED
+GET /v1/videos/{video_id} 400                                  # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+GET /openai/v1/videos/{video_id} 400                           # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+GET /v1/videos/{video_id}/content 400                          # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+GET /openai/v1/videos/{video_id}/content 400                   # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+DELETE /v1/videos/{video_id} 400                               # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+DELETE /openai/v1/videos/{video_id} 400                        # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+POST /v1/videos/{video_id}/remix 400                           # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+POST /openai/v1/videos/{video_id}/remix 400                    # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err
+POST /v1/videos/edits 400                                      # not exercised: {"error": {"message": "video is required: upload a file or pass {\"id\
+POST /openai/v1/videos/edits 400                               # not exercised: {"error": {"message": "video is required: upload a file or pass {\"id\
+POST /v1/videos/extensions 400                                 # not exercised: {"error": {"message": "video is required: pass {\"id\": \"video_...\"}
+POST /openai/v1/videos/extensions 400                          # not exercised: {"error": {"message": "video is required: pass {\"id\": \"video_...\"}
+POST /v1/audio/generate 404                                    # not exercised: was: HTTP status in DENIED
+POST /openai/v1/audio/generate 404                             # not exercised: was: HTTP status in DENIED
+GET /v1/models/{model_id:path} 404                             # not exercised: was: HTTP status in DENIED
+GET /anthropic/v1/models/{model_id:path} 404                   # not exercised: was: HTTP status in DENIED
+GET /openai/v1/models/{model_id:path} 404                      # not exercised: was: HTTP status in DENIED
+GET /v1/status 403                                             # not exercised: was: HTTP status in DENIED
+POST /v1/messages/count_tokens 400                             # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
+POST /anthropic/v1/messages/count_tokens 400                   # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
+POST /api/embeddings 400                                       # not exercised: {"error": "'prompt' must be a string"} was: 400/422 validation
+POST /ollama/api/embeddings 400                                # not exercised: {"error": "'prompt' must be a string"} was: 400/422 validation
+GET /v1/responses/{response_id} 404                            # not exercised: was: HTTP status in DENIED
+GET /openai/v1/responses/{response_id} 404                     # not exercised: was: HTTP status in DENIED
+GET /v1/responses/{response_id}/input_items 404                # not exercised: was: HTTP status in DENIED
+GET /openai/v1/responses/{response_id}/input_items 404         # not exercised: was: HTTP status in DENIED
+DELETE /v1/responses/{response_id} 404                         # not exercised: was: HTTP status in DENIED
+DELETE /openai/v1/responses/{response_id} 404                  # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/current/v1/chat/completions 401         # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/current/v1/completions 401              # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/chat/completions 401 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/providers/{provider} 404                       # not exercised: was: HTTP status in DENIED
+DELETE /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
+OPTIONS /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
+PATCH /gateway/v1/providers/{provider}/{native_path:path} 404  # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/providers/{provider}/{native_path:path} 404   # not exercised: was: HTTP status in DENIED
+PUT /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/receipts 200                                   # not exercised: only the blanket decoy GET rule covered it
+GET /gateway/v1/providers 200                                  # not exercised: only the blanket decoy GET rule covered it

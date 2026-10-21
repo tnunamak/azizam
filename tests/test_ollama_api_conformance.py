@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from test_anthropic_schema_conformance import (  # noqa: E402
     _FakeClient,
     chat_completion,
@@ -54,7 +55,7 @@ def ndjson(response) -> list[dict]:
 class OllamaConformanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
-        self.auth = patch.object(proxy, "AUTH_ENABLED", False)
+        self.auth = authenticated()
         self.auth.start()
         self.addCleanup(self.auth.stop)
         self.sent: list[dict] = []

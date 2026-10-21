@@ -16,29 +16,67 @@ Keep your favorite frontend. Point Open WebUI, a coding agent, or your own app a
 - **Choose paid access explicitly.** Remote models require provider permission and pass spend checks. Unresolved charges remain visible and block capped spending. See [remote providers](docs/REMOTE_PROVIDERS.md).
 - **Make more than chat.** Discover media workflows, run typed decisions, and inspect request receipts where supported. See [workflow contracts](docs/EXTENSION_ARCHITECTURE.md) and [decisions](docs/ops/DECISIONS.md).
 
-Available capabilities depend on your engines and access plan. A registered route does not establish full vendor compatibility. Start with [the docs index](docs/README.md) for the guide that matches your task.
+Available capabilities depend on your engines and access plan. A registered route does not establish full vendor compatibility. Visit [azizam.dev](https://azizam.dev) for the public site and documentation, or browse [the repository docs index](docs/README.md).
 
-## Five-minute quickstart
+## Quickstart
 
-Allow about five minutes for owner setup after the containers are ready. The first image build and model downloads can take longer. You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose includes the gateway and its LiteLLM execution sidecar; it does not download an inference model.
+You need an inference engine: a server that runs the model, such as llama.cpp, vLLM, LM Studio or Ollama. The gateway does not include an engine or download a model.
 
-1. Download or clone this repository. Open a terminal in its root. Use the tested recipe from [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) exactly:
+Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_SETUP.md#bare-metal-install-no-docker). The steps below use Compose. No `.env` file is required.
+
+1. Start the gateway. Open a terminal in this repository's folder and run:
 
    ```bash
    docker compose up -d
    ```
 
-2. Open `http://127.0.0.1:5000/setup`. Create the first owner account. Continue to Home, choose your app, and use **Create key for** that app. Save the value when it appears; it is shown once. No `.env` file is required.
-3. Open **Gateway → Engines**. Add your chat engine's OpenAI-compatible base URL as reachable from the gateway container. Set its health endpoint to `/v1/models`. Map a public name such as `my-llama` to the engine's actual model ID.
-4. Open Home and connect an app with base URL `http://127.0.0.1:5000/openai/v1`, your App key, and `my-llama`. Use **Gateway check** to make a real gateway request, then send a message from your app to check its settings.
+   The first start builds the gateway image. This can take several minutes.
 
-On Linux, Compose provides `host.docker.internal` for the host. For example, an engine with a reachable port 8080 can use `http://host.docker.internal:8080/v1`. A host engine bound only to loopback is not reachable from the container; use a reachable host address and restrict access with your firewall.
+2. Check that the gateway answers:
 
-The gateway listens on host loopback by default. A client on another device needs a reachable HTTPS address. The localhost recipe uses non-secure cookies for HTTP setup; enable secure cookies before exposing it over HTTPS. Follow [reverse-proxy setup](docs/REVERSE_PROXY.md), [configuration ownership](docs/CONFIG_SOURCE_OF_TRUTH.md), and the [operator guide](docs/guides/OPERATOR.md).
+   ```bash
+   curl -i http://127.0.0.1:5000/health
+   ```
+
+   The first line of the reply should be `HTTP/1.1 200 OK`. If you set `AZIZAM_PORT`, use that port in every URL here.
+
+3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. Enter an email address, a password, and the password again. This account owns the gateway.
+
+4. Create an App key. Open **Home**, choose your app, and click **Create key for** that app. The key starts with `opk_`. Copy it now. It is shown only once.
+
+5. Add your engine. Open **Gateway → Engines**, then click **Add engine**.
+   - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.168.1.50:8080/v1`.
+   - For Ollama, choose **Server with its own model list**. Type the address with no `/v1`, such as `http://192.168.1.50:11434`.
+
+   The address must work from where the gateway runs. Read [Connect an engine by where it runs](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) first. The dialog has several steps, and each has a **Continue** button. **Continue** sends a few harmless requests to the server. Nothing is saved yet. If the server needs a key, enter the engine's key there. Do not enter your App key. Tick the abilities you want, such as chat. Keep or rename the model names it found, then name the engine and click **Add engine**.
+
+   Write down the public model name you kept, such as `my-llama`. Your app sends this name.
+
+6. Connect your app with these values:
+   - Base URL: `http://127.0.0.1:5000/openai/v1`
+   - API key: your App key (`opk_…`)
+   - Model: the public model name from step 5
+
+   Check the key and the model list with one request:
+
+   ```bash
+   curl -s http://127.0.0.1:5000/openai/v1/models \
+     -H "Authorization: Bearer opk_YOUR_KEY_HERE"
+   ```
+
+   Then send a message from your app. Open **Usage** to see its request record.
+
+Compose publishes the gateway only on `127.0.0.1`, using port `5000` by default. State and cache use the named volumes `gateway-data` and `gateway-cache`. See [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) for more detail.
+
+An engine on another computer, or one run on this computer but not on loopback, needs a listener and a firewall setting. Clients on another device, or in another container, need a different base URL. The [first-run guide](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) gives the exact values for each layout.
+
+The loopback description here is specific to the Compose quickstart. Do not assume every launch mode binds only to loopback. The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0` and does not grant keyless LAN access. Check the effective listener, published ports, trusted proxies and App trusted addresses before exposing the gateway. A client on another device needs a reachable HTTPS address. The localhost recipe uses non-secure cookies for HTTP setup; enable secure cookies before exposing it over HTTPS. Follow [reverse-proxy setup](docs/REVERSE_PROXY.md), [configuration ownership](docs/CONFIG_SOURCE_OF_TRUTH.md), and the [operator guide](docs/guides/OPERATOR.md).
 
 ## Connect your apps
 
 Use an App key (`opk_…`) for requests. An admin key (`oak_…`) is for gateway administration. Each app can have a separate key so you can revoke one without disrupting the others.
+
+A protected API request without a key returns `401 key_required`, unless an owner has added the client address to an App under **Apps & keys → app menu → Trusted addresses**. That request uses the App's access plan. A sent key always takes priority; a placeholder such as `loopback` returns `401 key_invalid`. Forwarded client addresses count only when the proxy is in `auth.trusted_proxies`.
 
 These labels come from the [client compatibility matrix](docs/COMPATIBILITY_TARGET_MATRIX.md#current-targets-at-a-glance). **Tested** means a recorded manual smoke check, not every feature or version. **Untested** means the matrix records no verified app-level check. The [API support matrix](docs/SUPPORT_MATRIX.md) separately records routes and their limits.
 
@@ -104,7 +142,7 @@ The member opens Home, picks a connection recipe, and uses their own key. Give t
 
 App keys are bearer credentials with access-plan permissions. Browser accounts use signed sessions and CSRF protection. Admin credentials grant control-plane access and must not be pasted into client apps. Enter provider credentials as write-only keys in Providers, or reference the gateway service environment. See [key custody](docs/REMOTE_PROVIDERS.md#key-custody-and-threat-model) for encryption and backup requirements.
 
-Authenticated member access scopes jobs, assets and receipts to their App ownership. Complete signed asset URLs remain bearer capabilities until expiry, so treat shared download links as private. Historical records without trusted ownership are hidden from scoped users. Disabling authentication removes that isolation boundary.
+Signed-in Library, Jobs and Usage access defaults to the person's own work. Ownership can come from owned Apps or trusted user/App principal and credential-hash records. Owners and superadmins can explicitly inspect broader Library or Usage scopes. The Jobs endpoints and Library deletion stay self-scoped. Broader media visibility does not grant another person's saved prompt or full-metadata download. Complete signed asset URLs remain bearer capabilities until expiry, so treat shared download links as private. Historical records without trusted ownership are hidden from scoped users. Authentication cannot be disabled.
 
 Put remote access behind TLS, keep secure cookies enabled there, and back up durable state and signing secrets. Review [the security policy](SECURITY.md), [authentication guide](AUTH_GUIDE.md), and [operator guide](docs/guides/OPERATOR.md) before sharing an instance.
 

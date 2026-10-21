@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gateway import category_enforcement, category_policy as policy
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.category_api import snapshot_to_json
 from gateway.category_store import CategoryStore
 from gateway.policy import ALLOWED, DENIED, PolicyDecision, PolicyRequest
@@ -132,24 +133,23 @@ def test_runtime_auth_applies_the_rules(gate):
 
     @dataclass
     class RuntimeLike:
-        profile: object
+        access: object
         person_id: str
         app_id: str
 
-    identity = RuntimeLike(runtime_auth.DEFAULT_PROFILE, "mia", "family-app")
+    identity = RuntimeLike(access(plan_for("default-local")), "mia", "family-app")
     decision = runtime_auth.evaluate_and_apply(identity, _request())
     assert decision.decision == DENIED
 
 
 def test_discovery_shows_the_category_decision_for_a_governed_identity(gate):
     from gateway.capabilities import Capability, capability_with_policy_view
-    from gateway.policy import DEFAULT_PROFILE
     _activate(gate, _snapshot(value="adult"))
     flux = Capability(intent="image.generate", backend="comfyui", workflow="flux")
-    governed = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("mia", "family-app"))
+    governed = capability_with_policy_view(flux, access(plan_for("default-local")), identity=Identity("mia", "family-app"))
     assert governed.policy_available is False
     assert any("category rules: REQUIRE_MISMATCH" in reason for reason in governed.policy_reasons)
-    other = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("sam", "work-app"))
+    other = capability_with_policy_view(flux, access(plan_for("default-local")), identity=Identity("sam", "work-app"))
     assert other.policy_available is True
 
 
@@ -210,3 +210,69 @@ def test_visible_without_a_gate_keeps_discovery():
 def test_visible_fails_closed_when_the_store_is_unreadable(gate):
     gate.write_text("not a database")
     assert not category_enforcement.visible(Identity("sam", "work-app"), _request())
+
+
+# Mutation round 2 (scripts/mutate): pins the survivors of the clean baseline sweep.
+
+def test_the_source_label_in_receipts_is_the_literal_policy_categories(gate):
+    _activate(gate, _snapshot(value="adult"))
+    decision = category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW)
+    assert decision.sources == ("profile:test", "policy:categories")
+
+
+def test_a_service_stem_drops_only_the_final_revision_suffix():
+    assert category_enforcement._stem("flux@r1") == "flux"
+    assert category_enforcement._stem("team@box@r7") == "team@box"
+    assert category_enforcement._stem("plain") == "plain"
+
+
+def test_an_unexpected_store_error_denies_and_the_next_check_recovers(gate, monkeypatch):
+    _activate(gate, _snapshot())
+    real = CategoryStore.get_active
+    calls = []
+
+    def flaky(self):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("store exploded")
+        return real(self)
+
+    monkeypatch.setattr(CategoryStore, "get_active", flaky)
+    decision = category_enforcement.apply(Identity("sam", "work-app"), _request(), ALLOW)
+    assert decision.decision == DENIED
+    assert decision.reasons == ("category rules: POLICY_UNAVAILABLE",)
+    assert category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW) is ALLOW
+
+
+def _empty_rules(path: Path) -> None:
+    plan = policy.Plan("kids", (), ())
+    _activate(path, policy.PolicyVersion("rules", {}, {"mia": (plan,)}, {"family-app": (plan,)}, {}))
+
+
+def test_a_route_check_with_no_services_names_the_requested_capability(gate):
+    _empty_rules(gate)
+    decision = category_enforcement.apply(
+        Identity("mia", "family-app"), PolicyRequest(protocol="openai.images", intent="image.generate"), ALLOW)
+    assert decision.reasons == ("category rules: NO_GRANT (no service grants image.generate)",)
+
+
+def test_a_route_check_with_no_services_and_no_capability_says_this_request(gate):
+    _empty_rules(gate)
+    decision = category_enforcement.apply(
+        Identity("mia", "family-app"), PolicyRequest(protocol="openai.images"), ALLOW)
+    assert decision.reasons == ("category rules: NO_GRANT (no service grants this request)",)
+
+
+@pytest.mark.parametrize("governed", ["person", "app"])
+def test_an_identity_with_no_person_or_app_is_not_governed_by_a_rule_keyed_xxxx(gate, governed):
+    """Kills category_enforcement.py:124 and :125 ``""`` -> ``"XXXX"``.
+
+    A missing person or app id must look up as the empty string. A rule set that governs a person
+    (or app) literally named XXXX must not pick up an identity that has none.
+    """
+    plan = policy.Plan("kids", (policy.Grant("image.generate", "flux@r1"),),
+                       (policy.Row("aud", "audience", "in", ("general",)),))
+    base = _snapshot()
+    people, apps = ({"XXXX": (plan,)}, {}) if governed == "person" else ({}, {"XXXX": (plan,)})
+    _activate(gate, policy.PolicyVersion("rules", base.categories, people, apps, base.services))
+    assert category_enforcement.apply(Identity(None, None), _request(), ALLOW) is ALLOW

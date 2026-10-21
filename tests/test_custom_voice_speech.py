@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated, service_app  # noqa: E402
 from gateway import admin_store, custom_voices as cv, media_jobs, receipt_store
 from gateway.admin_api import AdminContext
 from gateway.admin_runtime import AdminSQLiteStore
@@ -62,7 +63,7 @@ class CustomVoiceRouteCase(unittest.TestCase):
         self.ready = AsyncMock(return_value=None)
         self.client = TestClient(proxy.app)
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", cfg),
             patch.object(proxy.httpx, "AsyncClient", _FakeClient),
@@ -206,11 +207,15 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
         self.assertEqual([r for r in _FakeClient.requests if "/transcriptions" in r["url"]], [])
 
         cloned = self.make_voice()
-        self.assertEqual(self.speak({"id": cloned["id"]}, model="omnivoice").status_code, 200)
+        with patch.object(receipt_store, "finalize", wraps=receipt_store.finalize) as finalized:
+            self.assertEqual(self.speak({"id": cloned["id"]}, model="omnivoice").status_code, 200)
+        self.assertEqual(finalized.call_args.args[0].metadata["stt"]["attempts_started"], 1)
         self.assertEqual(_FakeClient.requests[-1]["body"]["ref_text"], "this is the reference transcript")
         self.assertEqual(self.store.get_voice("key-a", cloned["id"])["transcript"], "this is the reference transcript")
         transcriptions = len([r for r in _FakeClient.requests if "/transcriptions" in r["url"]])
-        self.speak({"id": cloned["id"]}, model="omnivoice")
+        with patch.object(receipt_store, "finalize", wraps=receipt_store.finalize) as finalized:
+            self.speak({"id": cloned["id"]}, model="omnivoice")
+        self.assertNotIn("stt", finalized.call_args.args[0].metadata)
         self.assertEqual(len([r for r in _FakeClient.requests if "/transcriptions" in r["url"]]), transcriptions)  # cached
 
     def test_clients_cannot_inject_voice_ref_with_a_built_in_voice(self) -> None:
@@ -228,10 +233,11 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
 
     def test_built_in_voices_are_unchanged(self) -> None:
         self.make_voice(name="Narrator")
-        for given, expected in (("shimmer", "shimmer"), ("Marin", "marin"), ("cheerful_female", "shimmer"), ("nope", "alloy")):
+        for given, expected in (("shimmer", "shimmer"), ("Marin", "marin"), ("cheerful_female", "shimmer")):
             with self.subTest(voice=given):
                 self.assertEqual(self.speak(given).status_code, 200)
                 self.assertEqual(_FakeClient.requests[-1]["body"]["voice"], expected)
+        self.assertEqual(self.speak("nope").json()["error"]["code"], "voice_not_available")
 
 
 class ShadowingTests(CustomVoiceRouteCase):
@@ -239,7 +245,7 @@ class ShadowingTests(CustomVoiceRouteCase):
         for name in ("shimmer", "Alloy", "cheerful_female"):
             with self.subTest(name=name):
                 with self.assertRaises(cv.VoiceError) as ctx:
-                    cv.validate_name(name)
+                    cv.validate_name(name, reserved=proxy._builtin_voice_names())
                 self.assertEqual(ctx.exception.code, "voice_name_reserved")
 
     def test_a_custom_voice_with_a_look_alike_name_does_not_change_what_the_built_in_name_means(self) -> None:
@@ -364,7 +370,7 @@ class RevocationOwnershipTests(CustomVoiceRouteCase):
         admin_store.init_db(db)
         store = AdminSQLiteStore(db)
         account = admin_store.ensure_service_account("svc", path=db)
-        app = admin_store.create_app("svc-app", kind="service", owner_service_account_id=account["id"], path=db)
+        app = service_app("svc-app", path=db)
         credential = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="hash-1", prefix="opk", path=db)
         seen = []
         store.on_credential_revoked = lambda record: seen.append(record.get("hash"))

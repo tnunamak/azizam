@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Callout } from "@/components/product/status-ui";
-import { capLimitFrom } from "@/app/home/presentation";
+import { capLimitFrom } from "@/app/_home/presentation";
 import { askOwner, useOwnerName } from "@/lib/use-owner-name";
 
 function nextMonthStart(now: Date): Date {
@@ -49,7 +49,7 @@ export function CapNotice({
         }
         actions={
           <Button asChild size="sm" variant="outline">
-            <Link href="/status/">Open Status</Link>
+            <Link prefetch={false} href="/status/">Open Status</Link>
           </Button>
         }
       >

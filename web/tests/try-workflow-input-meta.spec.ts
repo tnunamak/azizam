@@ -230,10 +230,19 @@ describe("media references", () => {
       assetIdFromPasted(`https://ai.vivid.fish/me/api/media/img_${hex}/download?scope=me`),
     ).toBe(`img_${hex}`);
     expect(
-      assetIdFromPasted(`https://ai.vivid.fish/ui/library/?asset=img_${hex}`),
+      assetIdFromPasted(`https://ai.vivid.fish/library/?asset=img_${hex}`),
     ).toBe(`img_${hex}`);
     expect(assetIdFromPasted("https://example.com/cat.png")).toBe(
       "https://example.com/cat.png",
+    );
+  });
+});
+
+describe("seed help", () => {
+  it("does not promise identical results", () => {
+    const seed: WorkflowInput = { name: "seed", type: "integer" };
+    expect(inputHint(seed, "video")).toBe(
+      "Reuse this number to help repeat a result with the same model and settings.",
     );
   });
 });

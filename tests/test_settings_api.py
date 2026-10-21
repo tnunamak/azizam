@@ -6,9 +6,10 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, lan_auth_policy, media_jobs, prompt_memory
+from gateway import admin_store, media_jobs, prompt_memory
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.settings_api import create_settings_router, instance_settings
+from tests.support.access import store_plan
 
 
 @pytest.fixture
@@ -100,7 +101,7 @@ def test_prompt_memory_kill_switch_reports_pending_metadata_cleanup(tmp_path):
     assert response.json()["prompt_purge"]["retry_scheduled"] is True
 
 
-@pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])
+@pytest.mark.parametrize("route", ["instance", "defaults", "effective", "effective/export"])
 def test_settings_reject_missing_member_and_admin(settings, route):
     client, _, _ = settings
     assert client.get(f"/admin/api/settings/{route}").status_code == 401
@@ -138,127 +139,35 @@ def test_instance_invalid_input_leaves_no_setting(settings, change):
     assert admin_store.get_operator_setting("instance_presentation", path=path) is None
 
 
-def test_lan_placeholder_keys_default_response_is_owner_only_and_not_persisted(settings):
-    client, path, _ = settings
-    response = client.get("/admin/api/settings/lan-placeholder-keys", headers=OWNER)
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {
-        "lan_placeholder_keys": lan_auth_policy.DEFAULT_LAN_PLACEHOLDER_KEYS,
-        "source": "admin.db",
-        "apply_mode": "live",
-    }
-    assert admin_store.get_operator_setting(lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY, path=path) is None
-
-
-def test_lan_placeholder_keys_mutation_requires_owner_and_csrf(settings):
-    client, path, _ = settings
-    for headers in ({}, {"test-role": "member"}, {"test-role": "admin"}, {"test-role": "owner"}):
-        response = client.put(
-            "/admin/api/settings/lan-placeholder-keys",
-            json={"lan_placeholder_keys": ["fixture-placeholder"]},
-            headers=headers,
-        )
-        assert response.status_code in {401, 403}
-    assert admin_store.get_operator_setting(lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY, path=path) is None
-
-
-def test_lan_placeholder_keys_persist_empty_and_custom_policy_live(settings):
-    client, path, _ = settings
-    empty = client.put("/admin/api/settings/lan-placeholder-keys", json={"lan_placeholder_keys": []}, headers=OWNER)
-    assert empty.status_code == 200
-    assert empty.json()["lan_placeholder_keys"] == []
-    assert lan_auth_policy.lan_placeholder_keys(path) == []
-
-    custom = client.put(
-        "/admin/api/settings/lan-placeholder-keys",
-        json={"lan_placeholder_keys": ["custom-lan", " sk-local ", "EMPTY"]},
-        headers=OWNER,
-    )
-    assert custom.status_code == 200
-    assert custom.json() == {
-        "lan_placeholder_keys": ["custom-lan", "sk-local", "EMPTY"],
-        "source": "admin.db",
-        "apply_mode": "live",
-    }
-    assert client.get("/admin/api/settings/lan-placeholder-keys", headers=OWNER).json() == custom.json()
-    assert lan_auth_policy.lan_placeholder_keys(path) == ["custom-lan", "sk-local", "EMPTY"]
-    audit = admin_store.list_audit(action_prefix="operator.lan_placeholder_keys", path=path)
-    assert sorted(event["metadata"]["count"] for event in audit) == [0, 3]
-    assert "custom-lan" not in json.dumps(audit)
-
-
-@pytest.mark.parametrize("body", [
-    {},
-    {"lan_placeholder_keys": "lan"},
-    {"lan_placeholder_keys": ["ok"], "extra": []},
-    {"lan_placeholder_keys": [1]},
-    {"lan_placeholder_keys": [""]},
-    {"lan_placeholder_keys": ["   "]},
-    {"lan_placeholder_keys": ["has\ncontrol"]},
-    {"lan_placeholder_keys": ["x" * 129]},
-    {"lan_placeholder_keys": ["item"] * 65},
-    {"lan_placeholder_keys": ["opk_live"]},
-    {"lan_placeholder_keys": ["oak_live"]},
-    {"lan_placeholder_keys": ["sk-live"]},
-])
-def test_lan_placeholder_keys_invalid_input_leaves_policy_unchanged(settings, body):
-    client, path, _ = settings
-    assert client.put(
-        "/admin/api/settings/lan-placeholder-keys",
-        json={"lan_placeholder_keys": ["before"]},
-        headers=OWNER,
-    ).status_code == 200
-    response = client.put("/admin/api/settings/lan-placeholder-keys", json=body, headers=OWNER)
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "invalid_lan_placeholder_keys"
-    assert lan_auth_policy.lan_placeholder_keys(path) == ["before"]
-
-
-@pytest.mark.parametrize("stored", [
-    {"lan_placeholder_keys": "lan"},
-    {"lan_placeholder_keys": ["ok", "sk-real"]},
-    {"lan_placeholder_keys": [""]},
-    {"wrong_key": ["lan"]},
-])
-def test_lan_placeholder_keys_malformed_persisted_policy_fails_closed(settings, stored):
-    client, path, _ = settings
-    admin_store.put_operator_setting(lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY, stored, path=path)
-    assert lan_auth_policy.lan_placeholder_keys(path) == []
-    response = client.get("/admin/api/settings/lan-placeholder-keys", headers=OWNER)
-    assert response.status_code == 200
-    assert response.json()["lan_placeholder_keys"] == []
-
-
-def test_lan_placeholder_keys_effective_snapshot_redacts_policy_values(settings):
+def test_removed_lan_placeholder_keys_route_is_gone(settings):
     client, _, _ = settings
-    assert client.put(
-        "/admin/api/settings/lan-placeholder-keys",
-        json={"lan_placeholder_keys": ["custom-lan-secret"]},
-        headers=OWNER,
-    ).status_code == 200
-    response = client.get("/admin/api/settings/effective", headers=OWNER)
-    assert response.status_code == 200
-    assert response.json()["config"]["auth_policy"]["lan_placeholder_keys"] == "<redacted>"
-    assert "custom-lan-secret" not in response.text
+    assert client.get("/admin/api/settings/lan-placeholder-keys", headers=OWNER).status_code == 404
 
 
-def test_default_plan_replace_is_one_grant_and_preserves_specific_mapping(settings):
+def test_invitation_plan_default_saves_validates_and_audits(settings):
     client, path, _ = settings
-    first = admin_store.create_profile("First", {"id": "first"}, path=path)["id"]
-    second = admin_store.create_profile("Second", {"id": "second"}, path=path)["id"]
-    specific = admin_store.create_runtime_profile_mapping(source_kind="email", source_value="special@example.test", profile_id=first, path=path)
-    for profile_id in (first, second, first):
-        response = client.put("/admin/api/settings/defaults", json={"profile_id": profile_id}, headers=OWNER)
+    first = store_plan("First", path=path)["id"]
+    second = store_plan("Second", path=path)["id"]
+    assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"] == {"invite_access_plan": None}
+    for plan_id in (first, second, first):
+        response = client.put("/admin/api/settings/defaults", json={"invite_access_plan": plan_id}, headers=OWNER)
         assert response.status_code == 200
-        assert response.json()["defaults"]["profile_id"] == profile_id
-        assert len([m for m in admin_store.list_runtime_profile_mappings(path=path) if m["source_kind"] == "all_users"]) == 1
-    assert admin_store.resolve_runtime_profile_mapping(email="special@example.test", gateway_role="none", path=path) == first
-    assert any(m["id"] == specific["id"] for m in admin_store.list_runtime_profile_mappings(path=path))
-    assert client.put("/admin/api/settings/defaults", json={"profile_id": "missing"}, headers=OWNER).status_code == 400
-    assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"]["profile_id"] == first
-    assert client.put("/admin/api/settings/defaults", json={"profile_id": None}, headers=OWNER).status_code == 200
-    assert admin_store.resolve_runtime_profile_mapping(email="ordinary@example.test", gateway_role="none", path=path) is None
+        assert response.json()["defaults"]["invite_access_plan"] == plan_id
+    for bad in ({"invite_access_plan": "missing"}, {"invite_access_plan": 1}, {"profile_id": first}, {}):
+        assert client.put("/admin/api/settings/defaults", json=bad, headers=OWNER).status_code == 400
+    assert admin_store.invite_access_plan(path=path) == first
+    assert client.put("/admin/api/settings/defaults", json={"invite_access_plan": None}, headers=OWNER).status_code == 200
+    assert admin_store.invite_access_plan(path=path) is None
+    actions = [row["action"] for row in admin_store.list_audit(path=path)]
+    assert actions.count("operator.invite_access_plan.update") == 4
+
+
+def test_a_deleted_invitation_plan_reads_as_ask_each_time(settings):
+    client, path, _ = settings
+    plan_id = store_plan("Gone", path=path)["id"]
+    client.put("/admin/api/settings/defaults", json={"invite_access_plan": plan_id}, headers=OWNER)
+    admin_store.delete_access_plan(plan_id, path=path)
+    assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"]["invite_access_plan"] is None
 
 
 def test_readonly_export_is_nested_secret_free_and_matches_view(settings):
@@ -280,19 +189,7 @@ def test_readonly_export_is_nested_secret_free_and_matches_view(settings):
 def test_defaults_mutation_requires_owner_and_csrf(settings):
     client, _, _ = settings
     for headers in ({}, {"test-role": "member"}, {"test-role": "admin"}, {"test-role": "owner"}):
-        assert client.put("/admin/api/settings/defaults", json={"profile_id": None}, headers=headers).status_code in {401, 403}
-
-
-def test_default_grant_and_audit_rollback_together(settings, monkeypatch):
-    _, path, _ = settings
-    first = admin_store.create_profile("First", {"id": "first"}, path=path)["id"]
-    admin_store.create_runtime_profile_mapping(source_kind="all_users", source_value="*", profile_id=first, path=path)
-    def fail_audit(*args, **kwargs):
-        raise RuntimeError("fixture audit failure")
-    monkeypatch.setattr(admin_store, "_record_audit_in_transaction", fail_audit)
-    with pytest.raises(RuntimeError):
-        admin_store.replace_default_runtime_profile_mapping(profile_id=None, actor=AdminContext(subject="tester"), path=path)
-    assert admin_store.resolve_runtime_profile_mapping(email="ordinary@example.test", gateway_role="none", path=path) == first
+        assert client.put("/admin/api/settings/defaults", json={"invite_access_plan": None}, headers=headers).status_code in {401, 403}
 
 
 def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkeypatch):

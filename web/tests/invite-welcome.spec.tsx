@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import InvitePage from "@/app/invite/page";
@@ -43,28 +43,26 @@ function memory(remember: boolean, neverKeep: boolean) {
   };
 }
 
-async function acceptWith(promptMemory: Response) {
-  window.history.replaceState(null, "", "/ui/invite/#token=invite-token");
+async function acceptWith(promptMemory: Response | Promise<Response>) {
+  window.history.replaceState(null, "", "/invite/#token=invite-token");
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/auth/api/options")
-        return json({ built_in: true, oidc: false });
-      if (path === "/auth/api/invite") return json(invitation);
-      if (path === "/auth/api/invite/accept")
-        return json({ next: "/ui/", credential: { api_key: "opk_test" } });
-      if (path === "/me/api/prompt-memory") return promptMemory;
-      return json({ error: { code: "not_found", message: "Not found" } }, 404);
-    }),
-  );
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/auth/api/options")
+      return json({ built_in: true, oidc: false });
+    if (path === "/auth/api/invite") return json(invitation);
+    if (path === "/auth/api/invite/accept")
+      return json({ next: "/", credential: { api_key: "opk_test" } });
+    if (path === "/me/api/prompt-memory") return promptMemory;
+    return json({ error: { code: "not_found", message: "Not found" } }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  render(
+  const view = render(
     <QueryClientProvider client={client}>
       <InvitePage />
     </QueryClientProvider>,
@@ -77,6 +75,7 @@ async function acceptWith(promptMemory: Response) {
   );
   await user.click(screen.getByRole("button", { name: "Create account" }));
   await screen.findByRole("heading", { name: "Your account is ready" });
+  return { client, fetchMock, unmount: view.unmount };
 }
 
 describe("Invite: the welcome card's line on prompts", () => {
@@ -101,15 +100,41 @@ describe("Invite: the welcome card's line on prompts", () => {
     expect(screen.queryByText(/remembers what you type/)).toBeNull();
   });
 
-  it("claims nothing when the setting can't be read", async () => {
-    await acceptWith(
-      new Response(
-        JSON.stringify({ error: { code: "boom", message: "Down" } }),
-        { status: 500 },
-      ),
-    );
-    // Let the failed read settle before checking the card stayed silent.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByText(/what you type/)).toBeNull();
+  it("claims nothing after prompt settings reach a terminal read error", async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const fixture = await acceptWith(pending);
+    try {
+      const reads = () =>
+        fixture.fetchMock.mock.calls.filter(
+          ([input]) => String(input) === "/me/api/prompt-memory",
+        );
+      await waitFor(() => expect(reads()).toHaveLength(1));
+      expect(screen.queryByText(/what you type/)).toBeNull();
+      await act(async () => {
+        finish(
+          Response.json(
+            { error: { code: "boom", message: "Down" } },
+            { status: 500 },
+          ),
+        );
+        await pending;
+      });
+      await waitFor(() =>
+        expect(
+          fixture.client.getQueryState(["account", "prompt-memory"]),
+        ).toMatchObject({ status: "error", fetchStatus: "idle" }),
+      );
+      expect(reads()).toHaveLength(1);
+      expect(
+        screen.getByRole("heading", { name: "Your account is ready" }),
+      ).toBeVisible();
+      expect(screen.queryByText(/what you type/)).toBeNull();
+    } finally {
+      fixture.unmount();
+      fixture.client.clear();
+    }
   });
 });

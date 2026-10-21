@@ -389,10 +389,57 @@ def test_missing_referenced_secret_omits_env_without_blocking_start(tmp_path: Pa
     assert secret_env_name_for_provider("openrouter", "sec_missing") not in env
 
 
+def test_sidecar_resolver_failures_remove_stale_env_and_hide_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gateway import provider_sidecar
+
+    db_path = tmp_path / "admin.db"
+    secret_id = "sec_failure_fixture"
+    env_name = secret_env_name_for_provider("fixture", secret_id)
+    _write_registry_json(
+        db_path,
+        {
+            "services": {
+                "fixture": {
+                    "kind": "provider",
+                    "config": {
+                        "provider_id": "fixture",
+                        "base_url": "https://provider.test/v1",
+                        "api_key_secret_id": secret_id,
+                    },
+                }
+            }
+        },
+    )
+    base_env = {"PATH": "/synthetic/bin", env_name: "stale-value"}
+
+    for failure_type in (KeyError, FileNotFoundError, ValueError):
+        seen: list[tuple[str, Path, str]] = []
+
+        def fail_resolution(secret, *, db_path, expected_origin, seen=seen, failure_type=failure_type):
+            seen.append((secret, db_path, expected_origin))
+            raise failure_type("synthetic-sensitive-error-detail")
+
+        monkeypatch.setattr(provider_sidecar, "get_provider_secret", fail_resolution)
+        result = build_sidecar_env(db_path=db_path, base_env=base_env)
+
+        assert seen == [(secret_id, db_path, "https://provider.test:443")]
+        assert result == {"PATH": "/synthetic/bin"}
+        assert base_env[env_name] == "stale-value"
+        output = capsys.readouterr()
+        assert failure_type.__name__ in output.err
+        assert "synthetic-sensitive-error-detail" not in output.out + output.err
+        assert "stale-value" not in output.out + output.err
+
+
 def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "admin.db"
+    secret_id = "sec_openrouter"
+    base_url = "https://openrouter.ai/api/v1"
+    env_name = secret_env_name_for_provider("openrouter", secret_id)
     _write_registry_json(
         db_path,
         {
@@ -400,22 +447,28 @@ def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(
                 "openrouter": {
                     "config": {
                         "provider_id": "openrouter",
-                        "api_key_secret_id": "sec_openrouter",
+                        "base_url": base_url,
+                        "api_key_secret_id": secret_id,
                     },
-                    "secret_refs": {"api_key_secret_id": "sec_openrouter"},
+                    "secret_refs": {"api_key_secret_id": secret_id},
                 }
             }
         },
     )
-    put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000)
+    put_provider_secret(
+        secret_id, "synthetic-sidecar-key",
+        db_path=db_path, now=1000, approved_origin=base_url,
+    )
+    before = build_sidecar_env(db_path=db_path, base_env={"PATH": "/synthetic/bin"})
+    assert before[env_name] == "synthetic-sidecar-key"
+
     (tmp_path / "provider-secrets.key").unlink()
 
-    env = build_sidecar_env(
+    after = build_sidecar_env(
         db_path=db_path,
-        base_env={"PATH": os.environ.get("PATH", "")},
+        base_env={"PATH": "/synthetic/bin", env_name: "stale-value"},
     )
-
-    assert env == {"PATH": os.environ.get("PATH", "")}
+    assert after == {"PATH": "/synthetic/bin"}
 
 
 def _write_registry_json(db_path: Path, registry: dict[str, object]) -> None:

@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from gateway import admin_store, receipt_store
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.provider_admin import create_provider_admin_router
 from test_provider_admin import FakeProviderAdminStore, _auth
 
@@ -151,7 +152,8 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
                     {
                         "id": 1,
                         "provider": "openrouter",
-                        "profile_id": "builders",
+                        "app_id": None,
+                        "person_id": None,
                         "status": "needs_reconciliation",
                         "estimated_usd": "0.020000000",
                         "actual_usd": None,
@@ -160,6 +162,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
                         "settled_at": 1_700_000_010,
                         "request_id": "req_123",
                         "generation_id": "gen_456",
+                        "app_name": None,
                     }
                 ]
             },
@@ -386,20 +389,11 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertNotIn("openrouter", self.store.registry["services"])
 
     def test_remove_rejects_provider_with_reserved_inflight_charge(self) -> None:
-        from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
         from gateway.providers import Cost, provider_lookup, reserve_provider_spend
 
         provider = provider_lookup(self.store.registry, "openrouter-canonical")
         self.assertIsNotNone(provider)
-        profile = DEFAULT_PROFILE.with_overrides(
-            id="builders",
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter-canonical"}),
-                max_usd_per_request=None,
-                budget_usd_per_day=None,
-                budget_usd_per_month=None,
-            ),
-        )
+        profile = identity("builders-plan" and plan_for("builders", paid=sorted({"openrouter-canonical"})))
         with patch.dict(os.environ, {"OPENROUTER_CANONICAL_API_KEY": "test-key"}):
             reserve_provider_spend(
                 profile,

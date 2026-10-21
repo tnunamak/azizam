@@ -218,6 +218,14 @@ AUDIO_TRANSCRIPTIONS_OPENAPI: JsonObjectSchema = {
             },
         },
         **_common_error_responses(),
+        "413": _json_error_response("Audio exceeds a configured upload, decode, duration, segment or format cap."),
+        "503": {
+            **_json_error_response("Backend unavailable, or shared STT capacity is busy (resource_admission_denied)."),
+            "headers": {"Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {"type": "integer", "example": 5},
+            }},
+        },
     },
 }
 
@@ -233,6 +241,14 @@ AUDIO_TRANSLATIONS_OPENAPI: JsonObjectSchema = {
             },
         },
         **_common_error_responses(),
+        "413": _json_error_response("Audio exceeds a configured upload, decode, duration, segment or format cap."),
+        "503": {
+            **_json_error_response("Backend unavailable, or shared STT capacity is busy (resource_admission_denied)."),
+            "headers": {"Retry-After": {
+                "description": "Retry delay in seconds when shared STT capacity is busy.",
+                "schema": {"type": "integer", "example": 5},
+            }},
+        },
     },
 }
 
@@ -398,7 +414,7 @@ IMAGES_VARIATIONS_OPENAPI: JsonObjectSchema = {
     "responses": {
         # Routed through a configurable edit-capable workflow (no local
         # model dedicated to "variations" exists) with a fixed generic
-        # prompt -- see proxy_comfy_variations_request in proxy.py.
+        # prompt -- see proxy_graph_image_variations_request in proxy.py.
         "200": {
             "description": "OpenAI-shaped image variation result.",
             "content": {
@@ -428,6 +444,24 @@ SIGNED_IMAGE_CONTENT_OPENAPI: JsonObjectSchema = {
         "400": _json_error_response("Invalid signed URL."),
         "403": _json_error_response("Signature expired or invalid."),
         "404": _json_error_response("Asset evicted or not found."),
+    }
+}
+
+
+SIGNED_THUMBNAIL_OPENAPI: JsonObjectSchema = {
+    "responses": {
+        "200": {
+            "description": (
+                "A WebP preview of the asset, 480 px on the long side at most. Auth is the "
+                "signed `expires`+`sig` query string a thumbnail URL carries; a content URL "
+                "signature does not open this route."
+            ),
+            "content": {"image/webp": {"schema": {"type": "string", "format": "binary"}}},
+        },
+        "304": {"description": "The preview has not changed since the `If-None-Match` ETag."},
+        "400": _json_error_response("Invalid signed URL."),
+        "403": _json_error_response("Signature expired or invalid."),
+        "404": _json_error_response("No preview for this asset."),
     }
 }
 

@@ -6,10 +6,6 @@
       "status": 200,
       "headers": [
         [
-          "x-backend-test",
-          "yes"
-        ],
-        [
           "x-azizam-llm-execution",
           "litellm"
         ],
@@ -35,10 +31,6 @@
     "chat-stream": {
       "status": 200,
       "headers": [
-        [
-          "x-backend-test",
-          "yes"
-        ],
         [
           "x-azizam-llm-execution",
           "litellm"
@@ -72,6 +64,10 @@
         [
           "content-type",
           "application/json"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "eyJpZCI6ICJtc2dfY2hhdGNtcGwtYWJjIiwgInR5cGUiOiAibWVzc2FnZSIsICJyb2xlIjogImFzc2lzdGFudCIsICJtb2RlbCI6ICJkZWZhdWx0IiwgImNvbnRlbnQiOiBbeyJ0eXBlIjogInRleHQiLCAidGV4dCI6ICJIZWxsbyJ9XSwgInN0b3BfcmVhc29uIjogImVuZF90dXJuIiwgInN0b3Bfc2VxdWVuY2UiOiBudWxsLCAidXNhZ2UiOiB7ImlucHV0X3Rva2VucyI6IDExLCAib3V0cHV0X3Rva2VucyI6IDd9fQ=="
@@ -94,6 +90,10 @@
         [
           "content-type",
           "text/event-stream; charset=utf-8"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "ZXZlbnQ6IG1lc3NhZ2Vfc3RhcnQKZGF0YTogeyJ0eXBlIjoibWVzc2FnZV9zdGFydCIsIm1lc3NhZ2UiOnsiaWQiOiJtc2dfY2hhdGNtcGwtYWJjIiwidHlwZSI6Im1lc3NhZ2UiLCJyb2xlIjoiYXNzaXN0YW50IiwibW9kZWwiOiJkZWZhdWx0IiwiY29udGVudCI6W10sInN0b3BfcmVhc29uIjpudWxsLCJzdG9wX3NlcXVlbmNlIjpudWxsLCJ1c2FnZSI6eyJpbnB1dF90b2tlbnMiOjAsIm91dHB1dF90b2tlbnMiOjB9fX0KCmV2ZW50OiBjb250ZW50X2Jsb2NrX3N0YXJ0CmRhdGE6IHsidHlwZSI6ImNvbnRlbnRfYmxvY2tfc3RhcnQiLCJpbmRleCI6MCwiY29udGVudF9ibG9jayI6eyJ0eXBlIjoidGV4dCIsInRleHQiOiIifX0KCmV2ZW50OiBjb250ZW50X2Jsb2NrX2RlbHRhCmRhdGE6IHsidHlwZSI6ImNvbnRlbnRfYmxvY2tfZGVsdGEiLCJpbmRleCI6MCwiZGVsdGEiOnsidHlwZSI6InRleHRfZGVsdGEiLCJ0ZXh0IjoiSGVsbG8ifX0KCmV2ZW50OiBjb250ZW50X2Jsb2NrX3N0b3AKZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdG9wIiwiaW5kZXgiOjB9CgpldmVudDogbWVzc2FnZV9kZWx0YQpkYXRhOiB7InR5cGUiOiJtZXNzYWdlX2RlbHRhIiwiZGVsdGEiOnsic3RvcF9yZWFzb24iOiJlbmRfdHVybiIsInN0b3Bfc2VxdWVuY2UiOm51bGx9LCJ1c2FnZSI6eyJvdXRwdXRfdG9rZW5zIjowfX0KCmV2ZW50OiBtZXNzYWdlX3N0b3AKZGF0YTogeyJ0eXBlIjoibWVzc2FnZV9zdG9wIn0KCg=="
@@ -108,6 +108,10 @@
         [
           "content-type",
           "application/json"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "eyJtb2RlbCI6ICJkZWZhdWx0IiwgImNyZWF0ZWRfYXQiOiAiMjAyNy0wMS0xNVQwODowMDowMFoiLCAibWVzc2FnZSI6IHsicm9sZSI6ICJhc3Npc3RhbnQiLCAiY29udGVudCI6ICJIZWxsbyJ9LCAiZG9uZSI6IHRydWUsICJkb25lX3JlYXNvbiI6ICJzdG9wIiwgInRvdGFsX2R1cmF0aW9uIjogMCwgImxvYWRfZHVyYXRpb24iOiAwLCAicHJvbXB0X2V2YWxfY291bnQiOiAxMSwgInByb21wdF9ldmFsX2R1cmF0aW9uIjogMCwgImV2YWxfY291bnQiOiA3LCAiZXZhbF9kdXJhdGlvbiI6IDB9"
@@ -122,6 +126,10 @@
         [
           "content-type",
           "application/json"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "eyJtb2RlbCI6ICJkZWZhdWx0IiwgImNyZWF0ZWRfYXQiOiAiMjAyNy0wMS0xNVQwODowMDowMFoiLCAicmVzcG9uc2UiOiAiSGVsbG8iLCAiZG9uZSI6IHRydWUsICJkb25lX3JlYXNvbiI6ICJzdG9wIiwgInRvdGFsX2R1cmF0aW9uIjogMCwgImxvYWRfZHVyYXRpb24iOiAwLCAicHJvbXB0X2V2YWxfY291bnQiOiAxMSwgInByb21wdF9ldmFsX2R1cmF0aW9uIjogMCwgImV2YWxfY291bnQiOiA3LCAiZXZhbF9kdXJhdGlvbiI6IDB9"
@@ -140,6 +148,10 @@
         [
           "content-type",
           "application/x-ndjson"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "eyJtb2RlbCI6ImRlZmF1bHQiLCJjcmVhdGVkX2F0IjoiMjAyNy0wMS0xNVQwODowMDowMFoiLCJyZXNwb25zZSI6IkhlbGxvIiwiZG9uZSI6ZmFsc2V9CnsibW9kZWwiOiJkZWZhdWx0IiwiY3JlYXRlZF9hdCI6IjIwMjctMDEtMTVUMDg6MDA6MDBaIiwicmVzcG9uc2UiOiIiLCJkb25lIjp0cnVlLCJkb25lX3JlYXNvbiI6InN0b3AiLCJ0b3RhbF9kdXJhdGlvbiI6MCwibG9hZF9kdXJhdGlvbiI6MCwicHJvbXB0X2V2YWxfY291bnQiOjAsInByb21wdF9ldmFsX2R1cmF0aW9uIjowLCJldmFsX2NvdW50IjowLCJldmFsX2R1cmF0aW9uIjowfQo="
@@ -180,6 +192,10 @@
         [
           "content-type",
           "application/json"
+        ],
+        [
+          "x-azizam-loss",
+          "{\"dropped\":[],\"approximated\":[]}"
         ]
       ],
       "body_b64": "eyJtb2RlbCI6ICJ0ZXN0IiwgImVtYmVkZGluZ3MiOiBbWzAuMSwgMC4yXV0sICJ0b3RhbF9kdXJhdGlvbiI6IDAsICJsb2FkX2R1cmF0aW9uIjogMCwgInByb21wdF9ldmFsX2NvdW50IjogMX0="

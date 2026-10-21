@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronRight, MoreHorizontal, RefreshCcw, Server } from "lucide-react";
 
 import {
@@ -11,11 +11,12 @@ import {
   ApiError,
   queryKeys,
   type CurrentHealthService,
-  type Profile,
+  type OverviewPayload,
   type Service,
   type ServiceRegistry,
   type StatusPayload,
 } from "@/lib/api";
+import { errorCopy } from "@/lib/error-copy";
 import { PRODUCT_NAME } from "@/lib/product";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -44,7 +45,6 @@ import {
   engineShortName,
 } from "@/lib/health-presentation";
 import { cn } from "@/lib/cn";
-import type { PlanSpend } from "@/lib/product-api-types";
 import { SectionHeading } from "@/components/product/readiness";
 import {
   Callout,
@@ -109,6 +109,10 @@ function titleize(value: string): string {
   return value
     .replace(/[._-]/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+function displayName(value: string): string {
+  // Keep human-written names; turn identifier-shaped fallbacks into words.
+  return /^\S+[._-]\S+$/.test(value) ? titleize(value) : value;
 }
 function valueText(value: unknown): string {
   if (value == null || value === "") return "";
@@ -186,15 +190,15 @@ function enginesFrom(
         service,
         health: h,
         backend,
-        name: engineDisplayName(service, display),
-        shortName: engineShortName(service, display),
+        name: displayName(engineDisplayName(service, display)),
+        shortName: displayName(engineShortName(service, display)),
         // People's names for capabilities (VOICE glossary): Speech is Voice.
         label:
           display?.capability_labels
             ?.filter((label) => !/\((?:speech|transcription)\)/i.test(label))
             .map((label) => (label === "Speech" ? "Voice" : label))
             .join(", ") || "",
-        role: service.role || h?.role || titleize(service.kind || "engine"),
+        role: titleize(service.role || h?.role || service.kind || "engine"),
         state: healthPresentation.label,
         tone: healthPresentation.tone,
         endpoint: endpoint(service, backend),
@@ -229,7 +233,7 @@ function EngineSheet({
         <SheetHeader>
           <SheetTitle>{engine.name}</SheetTitle>
           <SheetDescription>
-            {[engine.label, engine.state].filter(Boolean).join(" · ")}
+            {[engine.label, engineStateWord(engine).word].filter(Boolean).join(" · ")}
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-5 px-4 pb-6 font-normal">
@@ -241,7 +245,12 @@ function EngineSheet({
               ...(engine.models.length
                 ? [["Served models", engine.models.join(", ")]]
                 : []),
-              ...(engine.lastError ? [["Last error", engine.lastError]] : []),
+              ...(["down", "degraded"].includes(engineStateKey(engine))
+                ? [
+                    ["Symptom", engineStateWord(engine).word],
+                    ["Next step", "Check the engine address and that it is running, then refresh."],
+                  ]
+                : []),
             ].map(([label, value]) => (
               <div key={label}>
                 <dt className="text-muted-foreground">{label}</dt>
@@ -250,7 +259,7 @@ function EngineSheet({
             ))}
           </dl>
           <Button variant="outline" asChild>
-            <Link
+            <Link prefetch={false}
               href={`/engines?service=${encodeURIComponent(engine.service.id)}`}
             >
               Configure engine
@@ -275,11 +284,22 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-/** Engine rows speak the same state words as capabilities. */
+function engineIsIdle(engine: EngineView): boolean {
+  if (!engine.service.enabled) return false;
+  // These are the shared presentation's explicit standby states. The
+  // gateway also marks a stopped, unused standby engine as neutral.
+  return (
+    ["Ready to start", "Standby, stopped"].includes(engine.state) ||
+    (engine.health?.in_use === false &&
+      engine.health.tone === "neutral" &&
+      ["down", "stopped"].includes(engine.health.observation ?? ""))
+  );
+}
+
+/** Classification stays separate from the plain-language row copy. */
 function engineStateKey(engine: EngineView): CapabilityStateKey {
   if (!engine.service.enabled) return "off";
-  if (["Ready", "Ready to start", "Standby, stopped"].includes(engine.state))
-    return "ready";
+  if (engineIsIdle(engine) || engine.state === "Ready") return "ready";
   if (engine.state === "Busy" || engine.state === "Starting") return "busy";
   if (engine.state === "Degraded") return "degraded";
   if (engine.state === "Unavailable") return "down";
@@ -289,6 +309,42 @@ function engineStateKey(engine: EngineView): CapabilityStateKey {
 
 function stateWordFor(key: CapabilityStateKey) {
   return { word: STATE_WORDS[key].word, tone: STATE_WORDS[key].tone };
+}
+
+function connectionFailure(engine: EngineView): "timeout" | "refused" | null {
+  // A prior transport error cannot override a healthy, idle or unknown check.
+  if (!["down", "degraded"].includes(engineStateKey(engine))) return null;
+  const error = engine.lastError ?? "";
+  if (
+    /connect(?:ion)?[ _-]*timeout|connection[^.\n]*timed?\s*out|\bETIMEDOUT\b/i.test(error)
+  )
+    return "timeout";
+  if (/connection[ _-]*refused|\bECONNREFUSED\b/i.test(error)) return "refused";
+  return null;
+}
+
+function engineStateWord(engine: EngineView): { word: string; tone: StateTone } {
+  if (engineIsIdle(engine))
+    return { word: "Idle, starts when needed", tone: "off" };
+  const state = stateWordFor(engineStateKey(engine));
+  const failure = connectionFailure(engine);
+  if (failure === "timeout") return { ...state, word: "Did not answer in time" };
+  if (failure === "refused") return { ...state, word: "Not running" };
+  return state;
+}
+
+function LastChecked({ at }: { at: number | null | undefined }) {
+  return (
+    <span className="text-muted-foreground block text-meta">
+      {typeof at === "number" && Number.isFinite(at) && at > 0 ? (
+        <>
+          Last checked <RelativeTime ts={at} fallback="not recorded" />
+        </>
+      ) : (
+        "Last checked: not recorded"
+      )}
+    </span>
+  );
 }
 
 /**
@@ -340,7 +396,7 @@ function failedRequestsFact(
               {" · "}
             </span>
             <a
-              href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
+              href={`/usage/?receipt=${encodeURIComponent(latest.receipt.request_id)}`}
               className="text-link font-medium underline-offset-4 hover:underline max-sm:block max-sm:w-fit max-sm:py-3"
             >
               Open receipt
@@ -369,6 +425,8 @@ type Problem = {
   action?: string;
   disk?: boolean;
   retry?: () => void;
+  /** Re-apply the stored registry; `error` is the plain words of a failed try. */
+  apply?: { run: () => void; pending: boolean; error: string | null };
   /** Short verdict when this is the only problem. */
   headline: string;
 };
@@ -481,7 +539,7 @@ function unexplainedProblems(
       facts: [],
       body: [
         unknown[0].detail ?? "No recent check has answered for them.",
-        "The gateway does not say which engine serves them.",
+        "Open Engines to check which engine serves them, then refresh status.",
       ],
       href: "/engines/",
       action: "Open Engines",
@@ -490,6 +548,9 @@ function unexplainedProblems(
 }
 
 function symptomOf(engine: EngineView): string {
+  const failure = connectionFailure(engine);
+  if (failure === "timeout") return `${engine.shortName} did not answer in time.`;
+  if (failure === "refused") return `${engine.shortName} is not running.`;
   return engineSymptom({
     name: engine.shortName,
     lastError: engine.lastError,
@@ -620,7 +681,7 @@ function engineProblems(
       // The verdict line above carries the state word, so the title says
       // what it means for people, or the fault when nothing is exposed.
       title: consequence
-        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
+        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : key === "degraded" ? "requests may be slow or fail right now" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
         : single
           ? symptomOf(first).replace(/\.$/, "")
           : `${affected.length} engines ${symptomOf(first)
@@ -638,7 +699,7 @@ function engineProblems(
       facts,
       evidence,
       history,
-      body: single ? [engineRemedy(first.lastError)] : undefined,
+      body: [engineRemedy(first.lastError)],
       href: single
         ? `/engines/?service=${encodeURIComponent(first.service.id)}`
         : "/engines/",
@@ -648,26 +709,16 @@ function engineProblems(
 }
 
 /**
- * Spending-cap refusals, read from refused receipts' warnings, per access
- * plan. A refusal stops counting once a later paid request on the same plan
- * succeeded, or after 24 hours.
+ * Spending-cap refusals, read from refused receipts' warnings. Caps are per
+ * paid provider and for the whole gateway (Providers page). A refusal stops
+ * counting once a later paid request succeeded, or after 24 hours.
  */
-function capProblems(
-  records: ActivityRecord[],
-  profiles: Profile[] | undefined,
-  now: number,
-): Problem[] {
-  const byPlan = new Map<string, ActivityRecord[]>();
-  const resolved = new Set<string>();
+function capProblems(records: ActivityRecord[], now: number): Problem[] {
+  const refused: ActivityRecord[] = [];
   for (const record of records.toSorted(
     (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0),
   )) {
-    const plan = record.receipt?.app_profile ?? "unknown";
-    if (resolved.has(plan)) continue;
-    if (record.receipt?.remote && isSuccess(record.receipt.status)) {
-      resolved.add(plan);
-      continue;
-    }
+    if (record.receipt?.remote && isSuccess(record.receipt.status)) break;
     const capped =
       String(record.receipt?.status ?? "").toLowerCase() === "rejected" &&
       (record.receipt?.warnings ?? []).some((text) => CAP_WARNING.test(text));
@@ -685,109 +736,57 @@ function capProblems(
       )
     )
       continue;
-    byPlan.set(plan, [...(byPlan.get(plan) ?? []), record]);
+    refused.push(record);
   }
-  return [...byPlan.entries()].map(([planId, refused]) => {
-    const profile = profiles?.find((item) => item.id === planId);
-    const name = profile?.name ?? "An access plan";
-    const remote = (
-      profile?.profile as
-        | {
-            remote?: {
-              budget_usd_per_day?: string | number | null;
-              budget_usd_per_month?: string | number | null;
-            };
-          }
-        | undefined
-    )?.remote;
-    const daily =
-      remote?.budget_usd_per_day != null
-        ? Number(remote.budget_usd_per_day)
-        : null;
-    const monthly =
-      remote?.budget_usd_per_month != null
-        ? Number(remote.budget_usd_per_month)
-        : null;
-    const warning =
-      (refused[0].receipt?.warnings ?? []).find((text) =>
-        CAP_WARNING.test(text),
-      ) ?? "";
-    // What the refusals and the plan's own spend record support, and no
-    // more (red team round 2): spend per period when the gateway knows it
-    // (plan_spend), else "Unavailable"; the refusal's own words, quoted;
-    // reset times in local time from the gateway when it gives them.
-    const spend =
-      (profile as { plan_spend?: PlanSpend[] | null } | undefined)
-        ?.plan_spend ?? [];
-    const when = (ts: number) =>
-      new Date(ts * 1000).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    const per = (period: PlanSpend["period"]) =>
-      period === "daily" ? "in the last 24 h" : "this month";
-    const facts: Array<[string, ReactNode]> = [
-      ["Affects", "Paid models for people on this access plan"],
-      [
-        "Spent",
-        spend.length ? (
-          <span key="s" className="block space-y-0.5">
-            {spend.map((item) => (
-              <span key={item.period} className="block">
-                {item.spent_usd != null
-                  ? `USD ${Number(item.spent_usd).toFixed(2)} of ${Number(item.cap_usd).toFixed(2)} ${per(item.period)}`
-                  : `Unavailable (limit USD ${Number(item.cap_usd).toFixed(2)} ${per(item.period)})`}
-              </span>
-            ))}
-          </span>
-        ) : (
-          [
-            "Unavailable",
-            daily != null ? `limit USD ${daily.toFixed(2)} a day` : null,
-            monthly != null ? `USD ${monthly.toFixed(2)} a month` : null,
-          ]
-            .filter(Boolean)
-            .join("; ")
-        ),
-      ],
-      ["Gateway said", warning ? `“${warning}”` : "A spending limit"],
-      [
-        "Resets",
-        spend.some((item) => item.resets_at != null) ? (
-          <span key="r" className="block space-y-0.5">
-            {spend
-              .map((item) => (
-                <span key={item.period} className="block">
-                  {item.period === "daily" ? "Daily" : "Monthly"}:{" "}
-                  {item.resets_at != null ? when(item.resets_at) : "Reset time not provided"}
-                </span>
-              ))}
-          </span>
-        ) : (
-          "Reset time not provided"
-        ),
-      ],
-      ["Refused", failedRequestsFact(refused, records.length)],
-    ];
-    return {
-      key: `cap:${planId}`,
+  if (!refused.length) return [];
+  const warning =
+    (refused[0].receipt?.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "";
+  const facts: Array<[string, ReactNode]> = [
+    ["Affects", "Paid models"],
+    ["Gateway said", warning ? `“${warning}”` : "A spending limit"],
+    ["Refused", failedRequestsFact(refused, records.length)],
+  ];
+  return [
+    {
+      key: "cap:paid",
       severity: "attention",
       tone: "warn",
-      // The refusals show a limit refused paid requests; they do not show
-      // how much was spent.
-      title: profile
-        ? `A spending limit on the ${name} access plan refused paid requests`
-        : "A spending limit refused paid requests",
-      headline: profile
-        ? `${name} access plan reached its spending limit`
-        : "Spending limit reached",
+      title: "A spending limit refused paid requests",
+      headline: "Spending limit reached",
       facts,
-      href: "/people?tab=plans",
-      action: profile ? "Edit access plan" : "Open access plans",
-    } satisfies Problem;
-  });
+      href: "/providers",
+      action: "Open providers",
+    } satisfies Problem,
+  ];
+}
+
+/** The stored registry is not what the gateway runs: the overview's registry
+ * item and the stored records it left out, with the action that re-applies it. */
+function registryProblems(
+  overview: OverviewPayload | undefined,
+  apply: NonNullable<Problem["apply"]>,
+): Problem[] {
+  const item = overview?.attention?.find((entry) => entry.kind === "registry");
+  const excluded = overview?.registry_excluded ?? [];
+  if (!item && !excluded.length) return [];
+  const critical = !item || item.severity === "problem";
+  const title = item?.title ?? "Some saved records are not in use";
+  return [
+    {
+      key: "registry-apply",
+      severity: critical ? "critical" : "attention",
+      tone: critical ? "bad" : "warn",
+      title,
+      headline: title,
+      facts: [],
+      body: [
+        ...(item?.detail ? [item.detail] : []),
+        ...excluded.map((record) => `${record.id}: ${record.error}`),
+      ],
+      href: null,
+      apply,
+    },
+  ];
 }
 
 function ProblemCard({
@@ -797,7 +796,7 @@ function ProblemCard({
 }: {
   problem: Problem;
   primary: boolean;
-  onDiskHelp: () => void;
+  onDiskHelp: (opener: HTMLButtonElement) => void;
 }) {
   return (
     <Callout
@@ -809,8 +808,18 @@ function ProblemCard({
       evidence={problem.evidence}
       history={problem.history}
       actions={
-        problem.href || problem.disk || problem.retry ? (
+        problem.href || problem.disk || problem.retry || problem.apply ? (
           <>
+            {problem.apply ? (
+              <Button
+                size={primary ? "md" : "sm"}
+                variant={primary ? "default" : "outline"}
+                disabled={problem.apply.pending}
+                onClick={problem.apply.run}
+              >
+                {problem.apply.pending ? "Applying…" : "Apply again"}
+              </Button>
+            ) : null}
             {problem.retry ? <Button variant="outline" size="sm" onClick={problem.retry}>Retry</Button> : null}
             {problem.href ? (
               <Button
@@ -822,7 +831,7 @@ function ProblemCard({
                     : "outline"
                 }
               >
-                <Link href={problem.href}>
+                <Link prefetch={false} href={problem.href}>
                   {problem.action ?? "Open"}
                   <ChevronRight aria-hidden="true" />
                 </Link>
@@ -832,7 +841,8 @@ function ProblemCard({
               <Button
                 size={primary ? "md" : "sm"}
                 variant="outline"
-                onClick={onDiskHelp}
+                className="min-h-11 min-w-11"
+                onClick={(event) => onDiskHelp(event.currentTarget)}
               >
                 Check disk
               </Button>
@@ -847,6 +857,7 @@ function ProblemCard({
       {problem.body?.map((line) => (
         <p key={line}>{line}</p>
       ))}
+      {problem.apply?.error ? <p role="alert">{problem.apply.error}</p> : null}
     </Callout>
   );
 }
@@ -864,8 +875,8 @@ function EngineRow({
   const series = engine.backend?.history?.status_series;
   const slots = hourSlots(series, end);
   const { up, checked } = hoursUp(slots);
-  const key = engineStateKey(engine);
-  const { word, tone } = stateWordFor(key);
+  const idle = engineIsIdle(engine);
+  const { word, tone } = engineStateWord(engine);
   return (
     <tr
       className="border-b last:border-0"
@@ -878,7 +889,7 @@ function EngineRow({
         <EngineSheet engine={engine} open={open} onOpenChange={setOpen}>
           <button
             type="button"
-            className="block max-w-full min-w-0 truncate text-left text-meta font-medium hover:underline max-sm:min-h-11"
+            className="block max-w-full min-w-0 truncate text-left text-meta font-medium hover:underline max-sm:min-h-11 max-sm:min-w-11"
             title={engine.name}
           >
             {engine.shortName}
@@ -891,7 +902,7 @@ function EngineRow({
         ) : null}
       </th>
       <td className="hidden py-2.5 pr-3 align-middle sm:table-cell">
-        {engine.service.enabled ? (
+        {engine.service.enabled && !idle ? (
           <UptimeBar
             series={series}
             end={end}
@@ -902,10 +913,11 @@ function EngineRow({
         ) : null}
       </td>
       <td className="figures text-muted-foreground hidden py-2.5 pr-4 text-right align-middle text-meta sm:table-cell">
-        {engine.service.enabled && checked ? `${up}/${checked} h up` : ""}
+        {engine.service.enabled && !idle && checked ? `${up}/${checked} h up` : ""}
       </td>
       <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
+        <LastChecked at={engine.checkedAt} />
       </td>
     </tr>
   );
@@ -950,7 +962,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
       >
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
-            <button type="button" className="block min-h-11 truncate text-left text-meta font-medium hover:underline" aria-label={`${provider.name} details`}>
+            <button type="button" className="block min-h-11 min-w-11 truncate text-left text-meta font-medium hover:underline" aria-label={`${provider.name} details`}>
               {provider.name}
             </button>
           </SheetTrigger>
@@ -973,7 +985,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
                     ] as Array<[string, ReactNode]>)),
                 ["Last check", provider.checkedAt ? <RelativeTime ts={provider.checkedAt} /> : "Not checked yet"],
               ]} />
-              <Button asChild variant="outline"><Link href="/providers">{provider.keyState === "missing" ? "Add provider key" : "Open providers"}</Link></Button>
+              <Button asChild variant="outline"><Link prefetch={false} href="/providers">{provider.keyState === "missing" ? "Add provider key" : "Open providers"}</Link></Button>
             </div>
           </SheetContent>
         </Sheet>
@@ -1019,15 +1031,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
       </td>
       <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
-        <span className="text-muted-foreground block text-meta">
-          {provider.checkedAt ? (
-            <>
-              Checked <RelativeTime ts={provider.checkedAt} fallback="" />
-            </>
-          ) : (
-            "Not checked yet"
-          )}
-        </span>
+        <LastChecked at={provider.checkedAt} />
       </td>
     </tr>
   );
@@ -1038,6 +1042,16 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const diskHelpOpener = useRef<HTMLButtonElement | null>(null);
+  const layersSection = useRef<HTMLElement | null>(null);
+  const showAllButton = useRef<HTMLButtonElement | null>(null);
+  const trackShowAllButton = useCallback((node: HTMLButtonElement | null) => {
+    // Only move focus when the removed control actually held it.
+    if (!node && showAllButton.current === document.activeElement) {
+      layersSection.current?.focus();
+    }
+    showAllButton.current = node;
+  }, []);
   const {
     data: statusData,
     error: statusError,
@@ -1061,10 +1075,19 @@ export function StatusClient() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: profiles, isPending: profilesIsPending, isError: profilesIsError, refetch: refetchProfiles } = useQuery({
-    queryKey: queryKeys.profiles,
-    queryFn: api.profiles.list,
-    retry: false,
+  // The registry callout is extra: a failed overview read shows nothing.
+  const { data: overviewData, refetch: refetchOverview } = useQuery({
+    queryKey: queryKeys.overview,
+    queryFn: api.overview,
+    refetchInterval: 30_000,
+  });
+  const reload = useMutation({
+    mutationFn: api.config.reload,
+    onSuccess: () => {
+      void refetchOverview();
+      void refetchStatus();
+      void refetchRegistry();
+    },
   });
   const providers = useOptionalProviderStatus();
   const activity = useActivitySample(true);
@@ -1232,7 +1255,9 @@ export function StatusClient() {
               title: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} is down`,
               headline: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} down`,
               facts,
-              body: provider.keyState === "missing" ? [] : ["The last connection check failed."],
+              body: provider.keyState === "missing"
+                ? ["Add this provider’s key in Providers, then check its connection."]
+                : ["The last connection check failed.", "Open Providers to check its address and key, then try the connection again."],
               href: "/providers",
               action: provider.keyState === "missing" ? "Add provider key" : `Open ${provider.name}`,
             } satisfies Problem,
@@ -1301,8 +1326,8 @@ export function StatusClient() {
               [string, ReactNode]
             >,
             body: [
-              "Its capabilities read Unknown until it answers.",
-              "Check that the engine is running and its health address answers.",
+              "We cannot confirm what this engine can do until a new check succeeds.",
+              "Check that the engine is running and its health address answers, then refresh status.",
             ],
             href: `/engines/?service=${encodeURIComponent(engine.service.id)}`,
             action: `Inspect ${engine.shortName}`,
@@ -1311,6 +1336,13 @@ export function StatusClient() {
       });
   const problems = [
     ...loadProblems,
+    ...registryProblems(overviewData, {
+      run: () => reload.mutate(),
+      pending: reload.isPending,
+      error: reload.isError
+        ? errorCopy(reload.error, { role: "owner" }).message
+        : null,
+    }),
     ...engineProblems(
       engines.filter(
         (engine) =>
@@ -1334,7 +1366,7 @@ export function StatusClient() {
           ),
         )),
     ...providerProblems,
-    ...capProblems(records, profilesIsError ? undefined : profiles, now),
+    ...capProblems(records, now),
     ...signalProblems,
   ];
   const running = records.filter((record) =>
@@ -1400,7 +1432,10 @@ export function StatusClient() {
     (engine) => !troubled.has(engine.service.id),
   );
   const count = (key: CapabilityStateKey) =>
-    others.filter((engine) => engineStateKey(engine) === key).length;
+    others.filter(
+      (engine) => !engineIsIdle(engine) && engineStateKey(engine) === key,
+    ).length;
+  const idleCount = others.filter(engineIsIdle).length;
   const providerList = providers.state === "ready" ? providers.providers : [];
   const providersDown = providerList.filter(
     (provider) => providerState(provider) === "down",
@@ -1412,18 +1447,19 @@ export function StatusClient() {
   // "4 other engines ready, 1 off, 1 provider" cryptic; D1.4 found the
   // sentences that replaced it read as prose): "Other engines: 4 ready,
   // 1 turned off" and "Remote providers: 1 set up".
-  const engineParts = (
-    [
-      ["ready", "ready"],
-      ["busy", "busy"],
-      ["degraded", "degraded"],
-      ["down", "down"],
-      ["unknown", "not checked"],
-      ["off", "turned off"],
-    ] as Array<[CapabilityStateKey, string]>
-  )
-    .map(([key, words]) => [count(key), words] as const)
-    .filter(([n]) => n > 0);
+  const engineParts = [
+    [idleCount, "idle"] as const,
+    ...(
+      [
+        ["ready", "ready"],
+        ["busy", "busy"],
+        ["degraded", "degraded"],
+        ["down", "down"],
+        ["unknown", "not checked"],
+        ["off", "turned off"],
+      ] as Array<[CapabilityStateKey, string]>
+    ).map(([key, words]) => [count(key), words] as const),
+  ].filter(([n]) => n > 0);
   const summaryLines: Array<[string, string]> = [
     ...(engineParts.length
       ? [
@@ -1451,7 +1487,7 @@ export function StatusClient() {
         <button
           type="button"
           onClick={providers.refetch}
-          className="text-link font-medium underline underline-offset-4"
+          className="text-link inline-flex min-h-11 min-w-11 items-center font-medium underline underline-offset-4"
         >
           Retry providers
         </button>
@@ -1463,7 +1499,6 @@ export function StatusClient() {
     providers.refetch();
     model.refetch();
     void activity.refetch();
-    void refetchProfiles();
   };
 
   return (
@@ -1548,21 +1583,16 @@ export function StatusClient() {
                       key={problem.key}
                       problem={problem}
                       primary={index === 0}
-                      onDiskHelp={() => setDiskHelpOpen(true)}
+                      onDiskHelp={(opener) => {
+                        diskHelpOpener.current = opener;
+                        setDiskHelpOpen(true);
+                      }}
                     />
                   ))}
                 </div>
               </section>
             ) : null}
 
-            {profilesIsError ? (
-              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
-                Access plan details couldn’t load.
-                <Button variant="outline" size="sm" onClick={() => void refetchProfiles()}>Retry access plans</Button>
-              </div>
-            ) : profilesIsPending && records.some((record) => (record.receipt?.warnings ?? []).some((warning) => CAP_WARNING.test(warning))) ? (
-              <p className="text-muted-foreground text-meta">Checking access plan details…</p>
-            ) : null}
             {activity.isPending ? (
               <p className="text-muted-foreground text-meta">Checking recent requests…</p>
             ) : activity.isError || !activity.data ? (
@@ -1641,7 +1671,11 @@ export function StatusClient() {
                 </section>
               ) : null}
 
-              <section aria-labelledby="layers-heading">
+              <section
+                ref={layersSection}
+                tabIndex={-1}
+                aria-labelledby="layers-heading"
+              >
                 <SectionHeading
                   id="layers-heading"
                   title="Engines and providers"
@@ -1651,6 +1685,7 @@ export function StatusClient() {
                     returns, every engine would read "Unknown" for a moment. */}
                 {registryIsPending || statusIsPending ? (
                   <Skeleton
+                    role="status"
                     aria-busy="true"
                     aria-label="Checking engines"
                     className="rounded-panel h-48 w-full"
@@ -1661,7 +1696,7 @@ export function StatusClient() {
                     title="No engines yet"
                     actions={
                       <Button asChild size="sm">
-                        <Link href="/engines">Add an engine</Link>
+                        <Link prefetch={false} href="/engines">Add an engine</Link>
                       </Button>
                     }
                   >
@@ -1717,7 +1752,7 @@ export function StatusClient() {
                       // The provider layer's empty state, with its next action.
                       <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-meta">
                         <span>No remote providers are configured.</span>
-                        <Link
+                        <Link prefetch={false}
                           href="/engines"
                           className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
                         >
@@ -1729,6 +1764,7 @@ export function StatusClient() {
                 ) : (
                   <>
                     <button
+                      ref={trackShowAllButton}
                       type="button"
                       onClick={() => setShowAll(true)}
                       className="bg-card hover:border-input rounded-panel flex min-h-8 max-sm:min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-meta"
@@ -1763,6 +1799,13 @@ export function StatusClient() {
           <SheetContent
             side="right"
             className="w-full overflow-y-auto sm:max-w-lg"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (diskHelpOpen) return;
+              const opener = diskHelpOpener.current;
+              if (opener?.isConnected && !opener.disabled) opener.focus();
+              else layersSection.current?.focus();
+            }}
           >
             <SheetHeader>
               <SheetTitle>Check disk</SheetTitle>

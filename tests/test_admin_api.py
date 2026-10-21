@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store, extension_packages, service_registry  # noqa: E402
+from tests.support.access import plan_for  # noqa: E402
 from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
@@ -25,14 +26,12 @@ from gateway.admin_api import (  # noqa: E402
     derive_admin_attention,
 )
 from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
-from gateway.policy import AppProfile  # noqa: E402
 
 
 class DeriveAdminAttentionTests(unittest.TestCase):
     def test_healthy_snapshot_yields_no_attention(self) -> None:
         snap = {
-            "apps": [{"id": "a1", "name": "Good", "default_profile_id": "p1"}],
-            "profiles": [{"id": "p1"}],
+            "apps": [{"id": "a1", "name": "Good", "effective_access_plan_id": "p1"}],
             "credentials": [{"app_id": "a1", "revoked_at": None}],
         }
         self.assertEqual(derive_admin_attention(snap), [])
@@ -40,13 +39,12 @@ class DeriveAdminAttentionTests(unittest.TestCase):
     def test_flags_app_and_service_problems_sorted_by_severity(self) -> None:
         snap = {
             "apps": [
-                {"id": "a1", "name": "Disabled", "disabled_at": 1, "default_profile_id": "p1"},
+                {"id": "a1", "name": "Disabled", "disabled_at": 1, "effective_access_plan_id": "p1"},
                 {"id": "a2", "name": "MissingProf", "default_profile_id": "p_gone"},
-                {"id": "a3", "name": "NoKey", "default_profile_id": "p1"},
-                {"id": "a4", "name": "Healthy", "default_profile_id": "p1"},
-                {"id": "a5", "name": "paperless", "default_profile_id": "p1"},
+                {"id": "a3", "name": "NoKey", "effective_access_plan_id": "p1"},
+                {"id": "a4", "name": "Healthy", "effective_access_plan_id": "p1"},
+                {"id": "a5", "name": "paperless", "effective_access_plan_id": "p1"},
             ],
-            "profiles": [{"id": "p1"}],
             "credentials": [
                 {"app_id": "a4", "revoked_at": None},
                 {"app_id": "a5", "revoked_at": None},
@@ -86,7 +84,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertEqual(severities, sorted(severities, key=lambda s: 0 if s == "problem" else 1))
         titles = " | ".join(i["title"] for i in items)
         self.assertNotIn("Disabled is disabled", titles)
-        self.assertIn("MissingProf's profile is missing", titles)
+        self.assertIn("MissingProf has no access plan", titles)
         self.assertIn("NoKey has no active key", titles)
         self.assertIn("ComfyUI is down", titles)
         self.assertIn("TabbyAPI is degraded", titles)
@@ -99,11 +97,11 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertNotIn("Fine", titles)
         # Target identity is canonical; names are display-only.
         by_title = {i["title"]: i for i in items}
-        self.assertEqual(by_title["MissingProf's profile is missing"]["target_kind"], "app")
-        self.assertEqual(by_title["MissingProf's profile is missing"]["target_id"], "a2")
-        self.assertEqual(by_title["MissingProf's profile is missing"]["target_name"], "MissingProf")
+        self.assertEqual(by_title["MissingProf has no access plan"]["target_kind"], "app")
+        self.assertEqual(by_title["MissingProf has no access plan"]["target_id"], "a2")
+        self.assertEqual(by_title["MissingProf has no access plan"]["target_name"], "MissingProf")
         self.assertEqual(
-            by_title["MissingProf's profile is missing"]["href"],
+            by_title["MissingProf has no access plan"]["href"],
             "/admin/apps?app=a2",
         )
         self.assertEqual(by_title["ComfyUI is down"]["target_id"], "comfy")
@@ -132,8 +130,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
 
     def test_auth_key_attention_does_not_guess_app_by_name(self) -> None:
         snap = {
-            "apps": [{"id": "a1", "name": "paperless", "default_profile_id": "p1"}],
-            "profiles": [{"id": "p1"}],
+            "apps": [{"id": "a1", "name": "paperless", "effective_access_plan_id": "p1"}],
             "credentials": [{"app_id": "a1", "revoked_at": None}],
             "status": {
                 "auth_keys": [
@@ -598,11 +595,10 @@ class FakeAdminStore:
             }
         ]
         self.apps: dict[str, dict[str, Any]] = {}
-        self.profiles: list[dict[str, Any]] = [
-            {"id": "default-local", "label": "Default local"}
+        self.access_plans: list[dict[str, Any]] = [
+            {"id": "plan_local", "name": "Local only"}
         ]
         self.credentials: dict[str, dict[str, Any]] = {}
-        self.runtime_mappings: dict[str, dict[str, Any]] = {}
         self.service_availability: dict[str, Any] = {}
         self.media_job_admission: dict[str, Any] = {}
         self.service_registry: dict[str, Any] = {
@@ -612,13 +608,13 @@ class FakeAdminStore:
             "workflows": {},
             "capabilities": {},
         }
+        # Documents that name a package's records; a removal they still name is refused.
+        self.references: dict[str, Any] = {}
+        # The registry generation an If-Match names; a package change advances it.
+        self.generation = 1
         self.extension_package_index: dict[str, Any] = (
             extension_packages.empty_extension_package_index()
         )
-        self.user_access_defaults: dict[str, bool] = {
-            "self_service_apps": True,
-            "auto_create_personal_app": True,
-        }
         self.audit: list[dict[str, Any]] = []
         self._next_id = 1
 
@@ -644,7 +640,7 @@ class FakeAdminStore:
             "id": app_id,
             "name": data["name"],
             "owner": data.get("owner") or actor.subject,
-            "profile_id": data.get("profile_id") or "default-local",
+            "access_plan": data.get("access_plan"),
             "created_at": "2026-05-17T00:00:00Z",
         }
         self.apps[app_id] = record
@@ -666,10 +662,8 @@ class FakeAdminStore:
             return None
         if "name" in data:
             record["name"] = data["name"]
-        if "default_profile_id" in data or "profile_id" in data:
-            record["profile_id"] = data.get(
-                "default_profile_id", data.get("profile_id")
-            )
+        if "access_plan" in data:
+            record["access_plan"] = data["access_plan"]
         self.audit.append(
             {
                 "at": "2026-05-17T01:00:00Z",
@@ -714,124 +708,46 @@ class FakeAdminStore:
         )
         return dict(record)
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        return list(self.profiles)
+    def list_access_plans(self) -> list[dict[str, Any]]:
+        return [dict(plan) for plan in self.access_plans]
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
-        return next(
-            (profile for profile in self.profiles if profile["id"] == profile_id),
-            None,
-        )
+    def get_access_plan(self, plan_id: str) -> dict[str, Any] | None:
+        return next((dict(plan) for plan in self.access_plans if plan["id"] == plan_id), None)
 
-    def create_profile(
+    def create_access_plan(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
-        name = data.get("name") or data.get("label") or data.get("id") or "unnamed"
-        if any(
-            p.get("name") == name or p.get("label") == name for p in self.profiles
-        ):
-            raise ValueError(f"profile name {name!r} is already in use")
-        record = {
-            "id": data.get("id") or self._id("prof"),
-            "name": name,
-            "label": name,
-        }
-        self.profiles.append(record)
+        name = str(data.get("name") or "").strip()
+        if any(plan["name"] == name for plan in self.access_plans):
+            raise ValueError(f"access plan name {name!r} is already in use")
+        record = {"id": self._id("plan"), "name": name}
+        self.access_plans.append(record)
+        self.audit.append({"at": "2026-05-17T00:00:00Z", "actor": actor.subject,
+                           "action": "access_plan.create", "target": record["id"]})
         return dict(record)
 
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        record = self.get_profile(profile_id)
+        record = next((plan for plan in self.access_plans if plan["id"] == plan_id), None)
         if record is None:
             return None
-        new_name = data.get("name") or data.get("label")
-        if new_name and any(
-            p["id"] != profile_id and p.get("name") == new_name
-            for p in self.profiles
-        ):
-            raise ValueError(f"profile name {new_name!r} is already in use")
-        if "name" in data:
-            record["name"] = data["name"]
-        if "label" in data:
-            record["label"] = data["label"]
-        if "description" in data:
-            record["description"] = data["description"]
-        if "profile" in data:
-            record["profile"] = data["profile"]
-        self.audit.append(
-            {
-                "at": "2026-05-17T01:00:00Z",
-                "actor": actor.subject,
-                "action": "profile.update",
-                "target": profile_id,
-            }
-        )
+        record["name"] = str(data.get("name") or record["name"])
+        self.audit.append({"at": "2026-05-17T01:00:00Z", "actor": actor.subject,
+                           "action": "access_plan.update", "target": plan_id})
         return dict(record)
 
-    def delete_profile(
-        self, *, profile_id: str, actor: AdminContext
+    def delete_access_plan(
+        self, *, plan_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
-        record = self.get_profile(profile_id)
+        record = next((plan for plan in self.access_plans if plan["id"] == plan_id), None)
         if record is None:
             return None
-        self.profiles = [p for p in self.profiles if p["id"] != profile_id]
-        self.audit.append(
-            {
-                "at": "2026-05-17T01:00:00Z",
-                "actor": actor.subject,
-                "action": "profile.delete",
-                "target": profile_id,
-            }
-        )
-        return dict(record)
-
-    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
-        return [
-            dict(mapping)
-            for mapping in self.runtime_mappings.values()
-            if not mapping.get("disabled_at")
-        ]
-
-    def create_runtime_profile_mapping(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]:
-        mapping_id = self._id("map")
-        record = {
-            "id": mapping_id,
-            "source_kind": data.get("source_kind"),
-            "source_value": data.get("source_value") or "*",
-            "profile_id": data.get("profile_id") or "default-local",
-            "created_at": "2026-05-17T00:00:00Z",
-            "created_by": actor.subject,
-            "disabled_at": None,
-        }
-        self.runtime_mappings[mapping_id] = record
-        self.audit.append(
-            {
-                "at": "2026-05-17T00:00:00Z",
-                "actor": actor.subject,
-                "action": "runtime_profile_mapping.create",
-                "target": mapping_id,
-            }
-        )
-        return dict(record)
-
-    def disable_runtime_profile_mapping(
-        self, *, mapping_id: str, actor: AdminContext
-    ) -> dict[str, Any] | None:
-        record = self.runtime_mappings.get(mapping_id)
-        if record is None:
-            return None
-        record["disabled_at"] = "2026-05-17T01:00:00Z"
-        self.audit.append(
-            {
-                "at": "2026-05-17T01:00:00Z",
-                "actor": actor.subject,
-                "action": "runtime_profile_mapping.disable",
-                "target": mapping_id,
-            }
-        )
+        if any(app.get("access_plan") == plan_id for app in self.apps.values()):
+            raise ValueError(f"{record['name']} is used by 1 app. Move it to another plan first.")
+        self.access_plans.remove(record)
+        self.audit.append({"at": "2026-05-17T01:00:00Z", "actor": actor.subject,
+                           "action": "access_plan.delete", "target": plan_id})
         return dict(record)
 
     def list_credentials(self) -> list[dict[str, Any]]:
@@ -917,24 +833,9 @@ class FakeAdminStore:
 
     def operator_overrides(self) -> dict[str, Any]:
         return {
-            "user_access_defaults": dict(self.user_access_defaults),
             "service_availability": dict(self.service_availability),
             "media_job_admission": dict(self.media_job_admission),
         }
-
-    def update_user_access_defaults(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]:
-        self.user_access_defaults.update(data)
-        self.audit.append(
-            {
-                "at": "2026-05-17T01:00:00Z",
-                "actor": actor.subject,
-                "action": "operator.user_access_defaults.update",
-                "target": "user_access_defaults",
-            }
-        )
-        return dict(self.user_access_defaults)
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -1093,24 +994,40 @@ class FakeAdminStore:
         }
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]:
+        if expected_generation is not None and expected_generation != self.generation:
+            raise admin_store.OperatorSettingsGenerationConflict("service registry changed")
         try:
-            self.extension_package_index = extension_packages.remove_extension_package(
+            index, registry, affected = extension_packages.change_package_lifecycle(
                 self.extension_package_index,
+                self.service_registry,
                 package_id,
+                mode=mode,
+                references=self.references,
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
+        self.extension_package_index = index
+        self.service_registry = registry
         self.audit.append(
             {
                 "at": "2026-05-17T01:00:00Z",
                 "actor": actor.subject,
-                "action": "operator.extension_package.remove",
+                "action": f"operator.extension_package.{mode}",
                 "target": package_id,
+                "metadata": {"affected_records": affected},
             }
         )
-        return {"extension_packages": self.extension_package_index}
+        self.generation += 1
+        return {
+            "extension_package": index["packages"].get(package_id),
+            "extension_packages": index,
+            "service_registry": registry,
+            "affected_records": affected,
+            "operator_settings_generation": self.generation,
+        }
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
@@ -1199,37 +1116,8 @@ class FakeAdminStore:
             "automated_count": automated_count,
         }
 
-    def get_oidc_config_setting(self) -> dict[str, Any] | None:
-        raw: dict[str, Any] | None = getattr(self, "_oidc_config", None)
-        if raw is None:
-            return None
-        redacted = dict(raw)
-        if redacted.get("client_secret"):
-            redacted["client_secret"] = "<redacted>"
-            redacted["client_secret_set"] = True
-        else:
-            redacted.setdefault("client_secret", "")
-            redacted["client_secret_set"] = False
-        return redacted
-
     def setting_revision(self, key: str) -> str:
         return "os-1"
-
-    def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None
-    ) -> dict[str, Any]:
-        current: dict[str, Any] = getattr(self, "_oidc_config", {}) or {}
-        merged = {**current, **data}
-        # Never return client_secret in plain form — mirror real store behaviour.
-        redacted = dict(merged)
-        if "client_secret" in redacted and redacted["client_secret"]:
-            redacted["client_secret"] = "<redacted>"
-            redacted["client_secret_set"] = True
-        else:
-            redacted.setdefault("client_secret", "")
-            redacted["client_secret_set"] = False
-        self._oidc_config = merged  # type: ignore[attr-defined]
-        return {**redacted, "revision": "os-1"}
 
 
 def _admin_auth(request: Request) -> AdminContext:
@@ -1242,6 +1130,8 @@ def _admin_auth(request: Request) -> AdminContext:
             email="owner@example.com",
             roles=frozenset({"admin"}),
         )
+    if header == "Bearer member-token":
+        return AdminContext(subject="u_member", roles=frozenset({"member"}))
     if header == "Bearer viewer-token":
         return AdminContext(
             subject="u_viewer",
@@ -1268,7 +1158,7 @@ async def _fake_probe(host, port, path):
 def _make_client(
     store: FakeAdminStore | None = None,
     *,
-    profile_resolver=None,
+    access_resolver=None,
     service_probe=_fake_probe,
     status_provider=None,
 ) -> tuple[TestClient, FakeAdminStore]:
@@ -1278,7 +1168,7 @@ def _make_client(
         create_admin_router(
             store,
             auth=_admin_auth,
-            profile_resolver=profile_resolver,
+            access_resolver=access_resolver,
             service_probe=service_probe,
             status_provider=status_provider,
         )
@@ -1293,22 +1183,104 @@ def _auth(role: str = "admin") -> dict[str, str]:
     return {"Authorization": f"Bearer {role}-token", "If-Match": '"os-1"'}
 
 
-def test_policy_editor_is_admin_projected_and_fails_closed() -> None:
-    client, store = _make_client()
-    store.service_registry["protocol_frontends"] = {
-        "extension": {"protocol": "extension-api", "enabled": True}
-    }
-    response = client.get("/admin/api/policy/editor", headers=_auth())
-    assert response.status_code == 200
-    body = response.json()
-    assert body["profile"]["create"]["profile"]["status_visibility"] == {"level": "basic"}
-    assert "extension-api" in {choice["id"] for choice in body["profile"]["choices"]["protocols"]}
-    store.get_service_registry = lambda: (_ for _ in ()).throw(ValueError("broken"))  # type: ignore[method-assign]
-    unavailable = client.get("/admin/api/policy/editor", headers=_auth())
-    assert unavailable.status_code == 503
-    assert unavailable.json() == {"error": {"code": "policy_editor_unavailable", "message": "Policy editor choices could not be read."}}
 
+class AdminHighRiskAuthorizationTests(unittest.TestCase):
+    """Authorization must precede validation and every privileged side effect."""
 
+    def _assert_denied_then_allowed(
+        self, method, path, body, store_method, *, role="admin",
+        code="owner_required", allowed_status=200, result=None,
+    ) -> None:
+        client, store = _make_client()
+        # Keep the existing fake store but spy at the side-effect boundary.
+        # A successful owner control rules out an invalid body or missing route.
+        with patch.object(store, store_method, return_value=result) as operation:
+            denied = client.request(method, path, json=body, headers=_auth(role))
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.json()["error"]["code"], code)
+            operation.assert_not_called()
+            self.assertEqual(store.audit, [])
+            allowed = client.request(method, path, json=body, headers=_auth("owner"))
+            self.assertEqual(allowed.status_code, allowed_status, allowed.text)
+            operation.assert_called_once()
+            self.assertIn("owner", operation.call_args.kwargs["actor"].roles)
+
+    def test_non_owner_cannot_create_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/access-plans", {"name": "Restricted plan"},
+            "create_access_plan", allowed_status=201,
+            result={"id": "plan_new", "name": "Restricted plan"},
+        )
+
+    def test_non_owner_cannot_update_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "PUT", "/admin/api/access-plans/plan_local", {"name": "Changed plan"},
+            "update_access_plan", result={"id": "plan_local", "name": "Changed plan"},
+        )
+
+    def test_non_owner_cannot_delete_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "DELETE", "/admin/api/access-plans/plan_local", None,
+            "delete_access_plan", result={"id": "plan_local", "name": "Local only"},
+        )
+
+    def _assert_provider_key_owner_only(self, path, body, operation_name, expected_status):
+        # This client never contacts a sidecar or mints a real credential.
+        from unittest.mock import AsyncMock, Mock
+
+        key_client = Mock()
+        operation = AsyncMock(return_value={"key_alias": "test-alias"})
+        setattr(key_client, operation_name, operation)
+        store = FakeAdminStore()
+        app = FastAPI()
+        app.include_router(create_admin_router(
+            store, auth=_admin_auth, litellm_key_client=key_client,
+        ))
+        client = TestClient(app)
+        denied = client.post(path, json=body, headers=_auth())
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error"]["code"], "owner_required")
+        operation.assert_not_called()
+        self.assertEqual(store.audit, [])
+        allowed = client.post(path, json=body, headers=_auth("owner"))
+        self.assertEqual(allowed.status_code, expected_status, allowed.text)
+        operation.assert_awaited_once()
+
+    def test_non_owner_cannot_create_provider_key(self) -> None:
+        self._assert_provider_key_owner_only(
+            "/admin/api/operator/litellm/keys",
+            {"key_alias": "test-alias", "models": ["test-model"], "max_budget": 1},
+            "generate_key", 201,
+        )
+
+    def test_non_owner_cannot_delete_provider_keys(self) -> None:
+        self._assert_provider_key_owner_only(
+            "/admin/api/operator/litellm/keys/delete",
+            {"key_aliases": ["test-alias"]}, "delete_keys", 200,
+        )
+
+    def test_member_cannot_create_admin_key(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/admin-keys", {"name": "Automation", "role": "admin"},
+            "create_admin_automation_key", role="member", code="admin_forbidden",
+            allowed_status=201, result={"id": "cred_test", "name": "Automation"},
+        )
+
+    def test_member_cannot_replace_service_registry(self) -> None:
+        self._assert_denied_then_allowed(
+            "PUT", "/admin/api/operator/service-registry",
+            {"services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}},
+            "update_service_registry", role="member", code="admin_forbidden",
+            result={"value": {}, "operator_settings_generation": 2},
+        )
+
+    def test_member_cannot_enable_extension_package(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/extensions/enable",
+            {"source": {"type": "local_directory", "path": "/unused-test-package"}},
+            "enable_extension_package", role="member", code="admin_forbidden",
+            result={"review": {"ok": True}, "operator_settings_generation": 2},
+        )
 class AdminAuthTests(unittest.TestCase):
     def test_missing_token_returns_401_json(self) -> None:
         client, _ = _make_client()
@@ -1329,40 +1301,18 @@ class AdminAuthTests(unittest.TestCase):
 
     def test_authenticated_admin_can_read_overview(self) -> None:
         client, _ = _make_client()
-        client.post(
-            "/admin/api/runtime-profile-mappings",
-            json={
-                "source_kind": "oidc_group",
-                "source_value": "trusted-users",
-                "profile_id": "default-local",
-            },
-            headers=_auth(),
-        )
         resp = client.get("/admin/api/overview", headers=_auth())
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["actor"]["subject"], "u_owner")
         self.assertEqual(body["actor"]["roles"], ["admin"])
         self.assertIn("apps", body["counts"])
-        self.assertEqual(body["counts"]["runtime_profile_mappings"], 1)
-        self.assertEqual(
-            body["runtime_profile_mappings"][0]["source_kind"], "oidc_group"
-        )
+        self.assertEqual(body["counts"]["access_plans"], 1)
         self.assertEqual(
             body["access_model"]["nouns"],
-            ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+            ["user", "app", "access_plan", "key", "admin_role"],
         )
-        self.assertEqual(
-            body["access_model"]["runtime_mappings"]["source_kinds"],
-            [
-                "oidc_group",
-                "oidc_role",
-                "email",
-                "domain",
-                "gateway_role",
-                "all_users",
-            ],
-        )
+        self.assertNotIn("runtime_mappings", body["access_model"])
         self.assertIn(
             "separately",
             body["access_model"]["admin_roles"]["relationship"],
@@ -1743,7 +1693,7 @@ class AdminAppKeyFlowTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_app")
 
-    def test_update_app_name_and_profile(self) -> None:
+    def test_update_app_name_and_access_plan(self) -> None:
         client, store = _make_client()
         app_id = client.post(
             "/admin/api/apps", json={"name": "old"}, headers=_auth()
@@ -1751,28 +1701,13 @@ class AdminAppKeyFlowTests(unittest.TestCase):
 
         resp = client.patch(
             f"/admin/api/apps/{app_id}",
-            json={"name": "new", "default_profile_id": "default-local"},
+            json={"name": "new", "access_plan": "plan_local"},
             headers=_auth(),
         )
 
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json()["app"]["name"], "new")
         self.assertIn("app.update", [event["action"] for event in store.audit])
-
-    def test_update_app_rejects_unknown_profile(self) -> None:
-        client, _ = _make_client()
-        app_id = client.post(
-            "/admin/api/apps", json={"name": "old"}, headers=_auth()
-        ).json()["app"]["id"]
-
-        resp = client.patch(
-            f"/admin/api/apps/{app_id}",
-            json={"default_profile_id": "missing"},
-            headers=_auth(),
-        )
-
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_app")
 
     def test_delete_app_disables_it(self) -> None:
         client, store = _make_client()
@@ -1907,290 +1842,6 @@ class AdminCredentialRevocationTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["error"]["code"], "credential_not_found")
-
-
-class AdminProfileTests(unittest.TestCase):
-    def test_create_profile_with_valid_block(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/profiles",
-            json={
-                "id": "brother",
-                "label": "Brother's laptop",
-                "profile": {
-                    "id": "brother",
-                    "protocols": ["openai"],
-                    "status_visibility": {"level": "basic"},
-                },
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-
-    def test_create_profile_rejects_invalid_visibility(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/profiles",
-            json={
-                "profile": {
-                    "id": "bad",
-                    "status_visibility": {"level": "not-a-level"},
-                }
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_profile")
-
-    def test_update_profile_validates_and_mutates(self) -> None:
-        client, store = _make_client()
-        profile_id = "default-local"
-
-        resp = client.patch(
-            f"/admin/api/profiles/{profile_id}",
-            json={
-                "name": "Default local updated",
-                "description": "local-only",
-                "profile": {
-                    "id": "default-local",
-                    "protocols": ["openai"],
-                    "status_visibility": {"level": "basic"},
-                },
-            },
-            headers=_auth(),
-        )
-
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(resp.json()["profile"]["name"], "Default local updated")
-        self.assertIn("profile.update", [event["action"] for event in store.audit])
-
-    def test_update_profile_rejects_invalid_profile(self) -> None:
-        client, _ = _make_client()
-        resp = client.patch(
-            "/admin/api/profiles/default-local",
-            json={"profile": {"id": "bad", "status_visibility": {"level": "bad"}}},
-            headers=_auth(),
-        )
-
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_profile")
-
-    def test_list_profiles_returns_stored_profiles(self) -> None:
-        client, store = _make_client()
-        resp = client.get("/admin/api/profiles", headers=_auth())
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            [p["id"] for p in resp.json()["profiles"]],
-            [p["id"] for p in store.profiles],
-        )
-
-    def test_get_profile_by_id(self) -> None:
-        client, store = _make_client()
-        profile_id = store.profiles[0]["id"]
-        resp = client.get(f"/admin/api/profiles/{profile_id}", headers=_auth())
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(resp.json()["profile"]["id"], profile_id)
-
-    def test_get_profile_by_id_not_found(self) -> None:
-        client, _ = _make_client()
-        resp = client.get("/admin/api/profiles/no-such-profile", headers=_auth())
-        self.assertEqual(resp.status_code, 404)
-        self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
-
-    def test_delete_profile(self) -> None:
-        client, store = _make_client()
-        profile_id = store.profiles[0]["id"]
-        resp = client.delete(f"/admin/api/profiles/{profile_id}", headers=_auth())
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(resp.json()["profile"]["id"], profile_id)
-        self.assertIsNone(store.get_profile(profile_id))
-
-    def test_delete_profile_not_found(self) -> None:
-        client, _ = _make_client()
-        resp = client.delete("/admin/api/profiles/no-such-profile", headers=_auth())
-        self.assertEqual(resp.status_code, 404)
-        self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
-
-    def test_create_profile_name_conflict_returns_409(self) -> None:
-        client, store = _make_client()
-        existing_name = store.profiles[0].get("name") or store.profiles[0].get("label")
-        resp = client.post(
-            "/admin/api/profiles",
-            json={
-                "name": existing_name,
-                "profile": {
-                    "id": "conflict-test",
-                    "protocols": ["openai"],
-                    "status_visibility": {"level": "basic"},
-                },
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 409)
-        self.assertEqual(resp.json()["error"]["code"], "profile_name_conflict")
-
-    def test_update_profile_name_conflict_returns_409(self) -> None:
-        client, store = _make_client()
-        if len(store.profiles) < 2:
-            self.skipTest("need at least 2 profiles in fixture")
-        target_id = store.profiles[0]["id"]
-        taken_name = store.profiles[1].get("name") or store.profiles[1].get("label")
-        resp = client.patch(
-            f"/admin/api/profiles/{target_id}",
-            json={"name": taken_name},
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 409)
-        self.assertEqual(resp.json()["error"]["code"], "profile_name_conflict")
-
-
-class AdminRuntimeProfileMappingTests(unittest.TestCase):
-    def test_create_list_and_disable_runtime_profile_mapping(self) -> None:
-        client, _ = _make_client()
-        created = client.post(
-            "/admin/api/runtime-profile-mappings",
-            json={
-                "source_kind": "oidc_group",
-                "source_value": "trusted-users",
-                "profile_id": "default-local",
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(created.status_code, 201, created.text)
-        mapping = created.json()["mapping"]
-        self.assertEqual(mapping["source_kind"], "oidc_group")
-
-        listed = client.get(
-            "/admin/api/runtime-profile-mappings",
-            headers=_auth(),
-        )
-        self.assertEqual(listed.status_code, 200, listed.text)
-        self.assertEqual(
-            [row["id"] for row in listed.json()["mappings"]],
-            [mapping["id"]],
-        )
-
-        disabled = client.delete(
-            f"/admin/api/runtime-profile-mappings/{mapping['id']}",
-            headers=_auth(),
-        )
-        self.assertEqual(disabled.status_code, 200, disabled.text)
-        self.assertIsNotNone(disabled.json()["mapping"]["disabled_at"])
-
-    def test_runtime_profile_mapping_rejects_unknown_profile(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/runtime-profile-mappings",
-            json={
-                "source_kind": "oidc_group",
-                "source_value": "trusted-users",
-                "profile_id": "missing",
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_runtime_mapping")
-
-
-class AdminPolicySimulationTests(unittest.TestCase):
-    def test_inline_profile_allows_matching_request(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={
-                "profile": {
-                    "id": "brother",
-                    "protocols": ["openai"],
-                },
-                "request": {"protocol": "openai"},
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()
-        self.assertEqual(body["profile_id"], "brother")
-        self.assertTrue(body["decision"]["allowed"])
-        self.assertEqual(body["decision"]["decision"], "allowed")
-
-    def test_inline_profile_denies_disallowed_protocol(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={
-                "profile": {
-                    "id": "brother",
-                    "protocols": ["openai"],
-                },
-                "request": {"protocol": "anthropic"},
-            },
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertFalse(body["decision"]["allowed"])
-        self.assertEqual(body["decision"]["decision"], "denied")
-
-    def test_simulate_accepts_capability_selector_metadata(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={
-                "profile": {
-                    "id": "family-chat",
-                    "allow": {
-                        "intents": ["chat.completions"],
-                        "exposure": ["default"],
-                        "trust_tiers": ["stable"],
-                        "resource_tiers": ["interactive"],
-                        "tags": ["coder"],
-                    },
-                },
-                "request": {
-                    "intent": "chat.completions",
-                    "capability_exposure": "default",
-                    "capability_trust_tier": "stable",
-                    "capability_resource_tier": "interactive",
-                    "capability_tags": ["coder", "local"],
-                },
-            },
-            headers=_auth(),
-        )
-
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertTrue(resp.json()["decision"]["allowed"])
-
-    def test_resolver_can_supply_profile_by_id(self) -> None:
-        registry = {
-            "brother": AppProfile(id="brother", protocols=frozenset({"openai"})),
-        }
-        client, _ = _make_client(profile_resolver=registry.get)
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={"profile": "brother", "request": {"protocol": "openai"}},
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()
-        self.assertEqual(body["profile_id"], "brother")
-        self.assertTrue(body["decision"]["allowed"])
-
-    def test_resolver_404_for_unknown_id(self) -> None:
-        client, _ = _make_client(profile_resolver=lambda _id: None)
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={"profile": "missing", "request": {}},
-            headers=_auth(),
-        )
-        self.assertEqual(resp.status_code, 404)
-        self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
-
-    def test_simulate_requires_admin(self) -> None:
-        client, _ = _make_client()
-        resp = client.post(
-            "/admin/api/policy/simulate",
-            json={"profile": {}, "request": {}},
-        )
-        self.assertEqual(resp.status_code, 401)
 
 
 class AdminAuditTests(unittest.TestCase):
@@ -2482,72 +2133,10 @@ class AdminAuditTests(unittest.TestCase):
         resp = client.get("/admin/api/audit?before=notavalidcursor", headers=_auth())
         self.assertEqual(resp.status_code, 400)
 
-    def test_audit_oidc_groups_claim_round_trips(self) -> None:
-        """groups_claim field round-trips through GET/PUT oidc-config."""
-        client, store = _make_client()
-        # PUT with groups_claim.
-        put_resp = client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": False,
-                "issuer": "https://idp.example.com",
-                "client_id": "my-client",
-                "client_secret": "s3cr3t",
-                "redirect_uri": "https://gw.example.com/auth/callback",
-                "groups_claim": "cognito:groups",
-            },
-            headers=_auth("owner"),
-        )
-        self.assertEqual(put_resp.status_code, 200, put_resp.text)
-        cfg_put = put_resp.json()["oidc_config"]
-        self.assertEqual(cfg_put.get("groups_claim"), "cognito:groups")
-        # client_secret must be redacted.
-        self.assertNotEqual(cfg_put.get("client_secret"), "s3cr3t")
-
-        # GET must return the stored groups_claim plainly (not redacted).
-        get_resp = client.get("/admin/api/oidc-config", headers=_auth("owner"))
-        self.assertEqual(get_resp.status_code, 200)
-        cfg_get = get_resp.json()["oidc_config"]
-        self.assertEqual(cfg_get.get("groups_claim"), "cognito:groups")
-        # client_secret still must not be returned.
-        self.assertNotEqual(cfg_get.get("client_secret"), "s3cr3t")
-
-    def test_audit_oidc_groups_claim_default(self) -> None:
-        """When groups_claim is omitted, the stored value is preserved (patch semantics)."""
-        client, store = _make_client()
-        # Save an initial config with a custom groups_claim.
-        client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": False,
-                "issuer": "https://idp.example.com",
-                "client_id": "c",
-                "client_secret": "s",
-                "redirect_uri": "https://gw/cb",
-                "groups_claim": "my_groups",
-            },
-            headers=_auth("owner"),
-        )
-        # Update a different field without touching groups_claim.
-        patch_resp = client.put(
-            "/admin/api/oidc-config",
-            json={"enabled": False, "issuer": "https://other.example.com"},
-            headers=_auth("owner"),
-        )
-        self.assertEqual(patch_resp.status_code, 200)
-        cfg = patch_resp.json()["oidc_config"]
-        # groups_claim must be preserved from the earlier PUT.
-        self.assertEqual(cfg.get("groups_claim"), "my_groups")
-
 
 class AdminOperatorOverrideTests(unittest.TestCase):
     def test_admin_can_write_and_read_operator_overrides(self) -> None:
         client, store = _make_client()
-        access_resp = client.put(
-            "/admin/api/operator/user-access-defaults",
-            json={"self_service_apps": False},
-            headers=_auth(),
-        )
         service_resp = client.put(
             "/admin/api/operator/service-availability",
             json={
@@ -2576,10 +2165,9 @@ class AdminOperatorOverrideTests(unittest.TestCase):
 
         self.assertEqual(service_resp.status_code, 200, service_resp.text)
         self.assertEqual(media_resp.status_code, 200, media_resp.text)
-        self.assertEqual(access_resp.status_code, 200, access_resp.text)
         self.assertEqual(list_resp.status_code, 200, list_resp.text)
         overrides = list_resp.json()["overrides"]
-        self.assertFalse(overrides["user_access_defaults"]["self_service_apps"])
+        self.assertNotIn("user_access_defaults", overrides)
         self.assertEqual(
             overrides["service_availability"]["openai"]["state"],
             "degraded",
@@ -2589,9 +2177,8 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             ["video.generate"],
         )
         self.assertEqual(
-            [event["action"] for event in store.audit[-3:]],
+            [event["action"] for event in store.audit[-2:]],
             [
-                "operator.user_access_defaults.update",
                 "operator.service_availability.update",
                 "operator.media_job_admission.update",
             ],
@@ -2736,6 +2323,7 @@ class AdminOperatorOverrideTests(unittest.TestCase):
                         "protocol": "openai-compatible",
                         "base_url": "http://127.0.0.1:8081/v1",
                         "api_key_env": "LOCAL_LLM_KEY",
+                        "credential_origin": "http://127.0.0.1:8081",
                         "models": [
                             {
                                 "id": "assistant-default",
@@ -2749,13 +2337,6 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             "workflows": {},
             "capabilities": {},
         }
-        store.profiles = [
-            {
-                "id": "family",
-                "profile": {"id": "family", "protocols": ["openai.chat"]},
-            }
-        ]
-
         resp = client.get(
             "/admin/api/operator/litellm-config",
             headers=_auth(),
@@ -3016,6 +2597,112 @@ execution: job
             "extension_package_not_found",
         )
 
+    @staticmethod
+    def _install_demo_package(store: FakeAdminStore) -> None:
+        provenance = {"package_id": "demo-package", "package_version": "0.1.0", "package_hash": "hash-1"}
+        record = {"id": "demo-service", "enabled": True, "provenance": provenance,
+                  "config": {"models": [{"id": "demo-model"}]}}
+        store.service_registry["services"] = {"demo-service": record}
+        store.extension_package_index = {
+            "packages": {"demo-package": {
+                "id": "demo-package", "version": "0.1.0", "enabled": True, "package_hash": "hash-1",
+                "source": {"type": "local_directory", "path": "/tmp/demo"},
+                "installed_records": {"services": {"demo-service": {**record, "provenance": dict(provenance)}}},
+            }},
+            "sources": [],
+            "updated_at": 1,
+        }
+
+    def test_admin_disable_switches_off_each_owned_record_and_reports_it(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package?mode=disable", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertFalse(store.extension_package_index["packages"]["demo-package"]["enabled"])
+        self.assertFalse(store.service_registry["services"]["demo-service"]["enabled"])
+        self.assertEqual(resp.json()["affected_records"],
+                         [{"kind": "services", "id": "demo-service", "action": "disabled"}])
+        self.assertIn("operator.extension_package.disable", [event["action"] for event in store.audit])
+
+    def test_admin_remove_refuses_a_package_that_a_plan_still_names(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+        store.references = {"access plan Family": {"models": ["demo-model"]}}
+
+        resp = client.delete("/admin/api/extensions/demo-package", headers=_auth())
+
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "extension_package_referenced")
+        self.assertIn("access plan Family", resp.json()["error"]["message"])
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+        self.assertIn("demo-service", store.service_registry["services"])
+
+    def test_admin_package_mode_must_be_remove_or_disable(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package?mode=purge", headers=_auth())
+
+        self.assertEqual(resp.status_code, 422, resp.text)
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+
+    def test_admin_remove_declares_mode_as_remove_or_disable_in_the_schema(self) -> None:
+        client, _ = _make_client()
+
+        operation = client.app.openapi()["paths"]["/admin/api/extensions/{package_id}"]["delete"]
+        mode = next(item for item in operation["parameters"] if item["name"] == "mode")
+
+        self.assertEqual(mode["in"], "query")
+        self.assertEqual(mode["schema"]["enum"], ["remove", "disable"])
+        self.assertEqual(mode["schema"]["default"], "remove")
+
+    def test_admin_remove_honours_if_match_when_the_client_sends_it(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        stale = client.delete(
+            "/admin/api/extensions/demo-package", headers={**_auth(), "If-Match": '"os-0"'},
+        )
+
+        self.assertEqual(stale.status_code, 412, stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "generation_mismatch")
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+        current = client.delete(
+            "/admin/api/extensions/demo-package", headers={**_auth(), "If-Match": '"os-1"'},
+        )
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(current.headers["ETag"], '"os-2"')
+
+    def test_admin_remove_without_if_match_still_removes(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertNotIn("demo-package", store.extension_package_index["packages"])
+
+    def test_admin_remove_never_returns_an_unrelated_services_secret(self) -> None:
+        # The enable route hides command and environment values; DELETE returns the same registry.
+        for mode in ("remove", "disable"):
+            with self.subTest(mode=mode):
+                client, store = _make_client()
+                self._install_demo_package(store)
+                store.service_registry["services"]["unrelated"] = {
+                    "id": "unrelated",
+                    "enabled": True,
+                    "process": {"driver": "process", "env": {"TOKEN": "seeded-secret-value"}},
+                }
+
+                resp = client.delete(f"/admin/api/extensions/demo-package?mode={mode}", headers=_auth())
+
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertNotIn("seeded-secret-value", resp.text)
+                self.assertIn("unrelated", resp.json()["service_registry"]["services"])
+                self.assertEqual(resp.headers["Cache-Control"], "no-store")
+
     def test_operator_override_write_requires_admin(self) -> None:
         client, _ = _make_client()
         resp = client.put(
@@ -3026,11 +2713,6 @@ execution: job
 
     def test_operator_override_validation_rejects_bad_values(self) -> None:
         client, _ = _make_client()
-        access_resp = client.put(
-            "/admin/api/operator/user-access-defaults",
-            json={"self_service_apps": "maybe"},
-            headers=_auth(),
-        )
         service_resp = client.put(
             "/admin/api/operator/service-availability",
             json={"openai": {"state": "paused"}},
@@ -3042,11 +2724,6 @@ execution: job
             headers=_auth(),
         )
 
-        self.assertEqual(access_resp.status_code, 400)
-        self.assertEqual(
-            access_resp.json()["error"]["code"],
-            "invalid_operator_override",
-        )
         self.assertEqual(service_resp.status_code, 400)
         self.assertEqual(
             service_resp.json()["error"]["code"],
@@ -3057,6 +2734,108 @@ execution: job
             media_resp.json()["error"]["code"],
             "invalid_operator_override",
         )
+
+
+class AdminAccessPlanRouteTests(unittest.TestCase):
+    """Plans and app assignments over HTTP, against the real SQLite store."""
+
+    PLAN = {
+        "name": "Family",
+        "can_use": {"chat": {"items": "all"}},
+        "direct_engine_access": {"engines": [], "operations": []},
+        "paid_providers": [],
+        "provider_fallback": False,
+        "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
+        "can_load_models": False,
+        "receipt_detail": "basic",
+        "media_metadata": "none",
+    }
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(self.db)
+        self.store = AdminSQLiteStore(self.db)
+        self.owner = admin_store.upsert_oidc_user(
+            "https://idp.test", "owner", email="owner@example.test", path=self.db)
+        app = FastAPI()
+        app.include_router(create_admin_router(self.store, auth=_admin_auth))
+        self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _plan(self, **changes) -> dict:
+        response = self.client.post("/admin/api/access-plans", json={**self.PLAN, **changes}, headers=_auth("owner"))
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()["access_plan"]
+
+    def _app(self, access_plan, **body):
+        return self.client.post(
+            "/admin/api/apps",
+            json={"name": "client", "owner_user_id": self.owner["id"], "access_plan": access_plan, **body},
+            headers=_auth("owner"),
+        )
+
+    def test_plan_is_created_with_a_server_assigned_id_and_listed(self) -> None:
+        plan = self._plan()
+        self.assertTrue(plan["id"].startswith("plan_"))
+        listed = self.client.get("/admin/api/access-plans", headers=_auth("owner")).json()["access_plans"]
+        self.assertEqual([row["name"] for row in listed], ["Family"])
+
+    def test_plan_with_a_missing_field_is_refused_and_names_it(self) -> None:
+        body = {key: value for key, value in self.PLAN.items() if key != "receipt_detail"}
+        response = self.client.post("/admin/api/access-plans", json=body, headers=_auth("owner"))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_access_plan")
+        self.assertIn("receipt_detail", response.json()["error"]["message"])
+
+    def test_duplicate_plan_name_is_a_conflict(self) -> None:
+        self._plan()
+        response = self.client.post("/admin/api/access-plans", json=self.PLAN, headers=_auth("owner"))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "access_plan_name_conflict")
+
+    def test_app_without_an_access_plan_is_refused(self) -> None:
+        response = self.client.post(
+            "/admin/api/apps", json={"name": "client", "owner_user_id": self.owner["id"]}, headers=_auth("owner"))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("access_plan", response.json()["error"]["message"])
+        self.assertEqual(admin_store.list_apps(path=self.db), [])
+
+    def test_app_with_an_unknown_plan_is_refused(self) -> None:
+        response = self._app("plan_missing")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(admin_store.list_apps(path=self.db), [])
+
+    def test_app_assignment_can_be_changed_but_never_cleared(self) -> None:
+        plan = self._plan()
+        app_id = self._app("person").json()["app"]["id"]
+        moved = self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": plan["id"]}, headers=_auth("owner"))
+        self.assertEqual(moved.status_code, 200, moved.text)
+        self.assertEqual(admin_store.get_app(app_id, path=self.db)["access_plan"], plan["id"])
+        for cleared in ("", None):
+            response = self.client.patch(
+                f"/admin/api/apps/{app_id}", json={"access_plan": cleared}, headers=_auth("owner"))
+            self.assertEqual(response.status_code, 400)
+        self.assertEqual(admin_store.get_app(app_id, path=self.db)["access_plan"], plan["id"])
+
+    def test_plan_in_use_cannot_be_deleted_until_its_apps_move(self) -> None:
+        plan = self._plan()
+        app_id = self._app(plan["id"]).json()["app"]["id"]
+        refused = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth("owner"))
+        self.assertEqual(refused.status_code, 409)
+        self.assertEqual(refused.json()["error"]["code"], "access_plan_in_use")
+        self.assertIn("client", refused.json()["error"]["message"])
+        self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": "person"}, headers=_auth("owner"))
+        deleted = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth("owner"))
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(self.client.get("/admin/api/access-plans", headers=_auth("owner")).json()["access_plans"], [])
+
+    def test_plan_routes_require_an_admin(self) -> None:
+        for method, path in (("get", "/admin/api/access-plans"), ("post", "/admin/api/access-plans"),
+                             ("delete", "/admin/api/access-plans/plan_x")):
+            self.assertEqual(getattr(self.client, method)(path).status_code, 401, path)
 
 
 class AdminRegistrySQLiteCASTests(unittest.TestCase):
@@ -3202,7 +2981,7 @@ class AdminRegistrySQLiteCASTests(unittest.TestCase):
             "errors": [],
             "object_counts": {"services": 1, "protocol_frontends": 0, "workflows": 0, "capabilities": 0},
         }
-        source = {"type": "local_directory", "path": str(self.db.parent / "package")}
+        source = {"type": "git", "url": "https://example.com/package.git"}
         with patch.object(
             extension_packages,
             "validate_extension_package_source",
@@ -3243,7 +3022,7 @@ class AdminServiceCrudTests(unittest.TestCase):
         client, store = _make_client(self._store_with_provisioned())
         resp = client.post(
             "/admin/api/operator/services",
-            json={"name": "My vLLM", "preset": "vllm", "base_url": "http://10.0.0.5:8000/v1"},
+            json={"name": "My vLLM", "base_url": "http://10.0.0.5:8000/v1"},
             headers=_auth(),
         )
         self.assertEqual(resp.status_code, 201)
@@ -3419,7 +3198,7 @@ class AdminServiceCrudTests(unittest.TestCase):
         # Create a service first.
         client.post(
             "/admin/api/operator/services",
-            json={"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"},
+            json={"name": "tgw", "protocol": "openai-compatible", "base_url": "http://h:7860/v1"},
             headers=_auth(),
         )
         # Patch with a models list.
@@ -3505,49 +3284,29 @@ class AdminServiceCrudTests(unittest.TestCase):
 
 
 class AdminServicePresetsTests(unittest.TestCase):
-    def test_presets_endpoint_returns_list_with_custom_first(self) -> None:
-        """GET /operator/service-presets returns all presets; custom is first."""
+    def test_engine_definitions_replace_the_preset_list(self) -> None:
+        """GET /engine-definitions lists the definitions; Any OpenAI-compatible server is first."""
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        resp = client.get("/admin/api/engine-definitions", headers=_auth())
         self.assertEqual(resp.status_code, 200)
-        presets = resp.json()["presets"]
-        self.assertIsInstance(presets, list)
-        self.assertGreater(len(presets), 1)
-        # Custom preset must be first.
-        self.assertEqual(presets[0]["id"], "openai-compatible")
+        definitions = resp.json()["definitions"]
+        self.assertEqual(definitions[0]["definition"], "openai-compatible")
+        for row in definitions:
+            for field in ("definition", "definition_version", "title", "summary", "fields", "capabilities", "steps"):
+                self.assertIn(field, row, f"definition {row.get('definition')!r} missing {field!r}")
+        self.assertEqual(client.get("/admin/api/operator/service-presets", headers=_auth()).status_code, 404)
 
-    def test_presets_each_have_required_fields(self) -> None:
-        """Every preset must have id, label, base_path, default_port, capabilities."""
+    def test_engine_definitions_require_admin(self) -> None:
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        for preset in resp.json()["presets"]:
-            for field in ("id", "label", "base_path", "capabilities", "native_passthrough"):
-                self.assertIn(field, preset, f"preset {preset.get('id')!r} missing {field!r}")
-
-    def test_presets_requires_admin(self) -> None:
-        client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets")
+        resp = client.get("/admin/api/engine-definitions")
         self.assertEqual(resp.status_code, 401)
 
-    def test_presets_response_includes_capabilities_list(self) -> None:
-        """GET /operator/service-presets includes capabilities [{id, label}] for dedup."""
+    def test_a_preset_body_is_refused_with_the_way_forward(self) -> None:
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertIn("capabilities", body, "response must include 'capabilities' key")
-        caps = body["capabilities"]
-        self.assertIsInstance(caps, list)
-        self.assertGreater(len(caps), 0, "capabilities list must be non-empty")
-        for cap in caps:
-            self.assertIn("id", cap, f"capability entry missing 'id': {cap!r}")
-            self.assertIn("label", cap, f"capability entry missing 'label': {cap!r}")
-            self.assertIsInstance(cap["id"], str)
-            self.assertIsInstance(cap["label"], str)
-        # Spot-check a few expected values
-        ids = [c["id"] for c in caps]
-        for expected in ("chat", "completions", "vision", "embeddings"):
-            self.assertIn(expected, ids, f"expected capability {expected!r} missing")
+        resp = client.post("/admin/api/operator/services", headers=_auth(),
+                           json={"name": "x", "preset": "openai-compatible", "base_url": "http://h:1/v1"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("engine-definitions", resp.json()["error"]["message"])
 
     def test_managed_substrate_remove_is_blocked(self) -> None:
         """DELETE on the litellm managed-substrate row returns 403."""
@@ -3586,24 +3345,6 @@ class AdminServicePresetsTests(unittest.TestCase):
         self.assertEqual(svc["name"], "LiteLLM Custom")
         # Config must still be derived (execution_substrate preserved).
         self.assertEqual(svc["config"]["execution_substrate"], "litellm")
-
-    def test_presets_capabilities_include_generations_and_videos(self) -> None:
-        """Capability vocab must include 'generations' and 'videos' (H2: no hidden caps)."""
-        client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        self.assertEqual(resp.status_code, 200)
-        caps = resp.json()["capabilities"]
-        ids = [c["id"] for c in caps]
-        self.assertIn("generations", ids,
-                      "generations must appear in the capability vocabulary")
-        self.assertIn("videos", ids,
-                      "videos must appear in the capability vocabulary")
-        # Both must have non-empty human labels
-        cap_by_id = {c["id"]: c for c in caps}
-        self.assertTrue(cap_by_id["generations"]["label"],
-                        "generations must have a non-empty label")
-        self.assertTrue(cap_by_id["videos"]["label"],
-                        "videos must have a non-empty label")
 
     def test_detect_models_comfyui_protocol_returns_not_ok(self) -> None:
         """POST /operator/services/detect-models for a comfyui-protocol service.

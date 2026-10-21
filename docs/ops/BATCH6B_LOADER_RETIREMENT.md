@@ -55,7 +55,7 @@ handling. None call the retired executor or loader.
 
 Local activation still uses `ensure_target` / `_ensure_target_leased` /
 `_ensure_target` and the configured lifecycle driver's `ensure_ready` or
-`swap`. Its service data and `gateway/engine_quarantine.py` are unchanged.
+`swap`. Its service data is unchanged.
 
 `lifespan` creates `maintenance_loop`, which calls `unload_model` after the
 idle timeout and successful health and loaded-model probes. This is live

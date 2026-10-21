@@ -1,6 +1,6 @@
 # People and built-in accounts
 
-Owners manage People, Invites and Access plans at `/ui/people/`. Existing
+Owners manage People, Invites and Access plans at `/people/`. Existing
 profiles remain the policy model and use the existing profile CRUD and
 `POST /admin/api/policy/simulate` APIs. The Home, Settings and Status pages
 are unchanged by this feature.
@@ -9,9 +9,9 @@ are unchanged by this feature.
 
 1. The owner creates an invitation with a stored profile, expiry and optional
    email restriction. A pending invitation can be copied again or revoked.
-2. The invitee opens `/ui/invite/#token=...`. They create an email/password
+2. The invitee opens `/invite/#token=...`. They create an email/password
    account, or sign in with the configured OIDC provider and accept using
-   their signed-in identity. Targeted OIDC invites require a verified email.
+   their signed-in identity. Targeted OIDC invites require a verified email, and a verified email an open invitation names is let through the sign-in rules (an invitation with no email cannot admit a provider sign-in).
 3. Acceptance atomically assigns the access plan, creates a personal App and
    API key, consumes the invitation and records an audit event. All existing
    Apps and keys of an OIDC invitee receive the invitation's plan as well.
@@ -67,20 +67,46 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | `POST /admin/api/invites` | `{profile_id,email?,expires_in}`; invitation metadata and private link |
 | `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
 | `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
-| `GET /admin/api/operator/sign-in` | Current effective sign-in choices and `revision` |
-| `PUT /admin/api/operator/sign-in` | `{mode:"built-in"}`, `{mode:"oidc"}` or `{mode:"both"}` with `If-Match` from GET; returns saved choices and `revision` |
 
-The sign-in choice lives in `operator_settings.sign_in` in admin.db and
-applies without restart. OIDC must be configured before selecting `oidc` or
-`both` explicitly. The Settings lane can use these APIs without changing the
-account implementation. The default permits built-in sign-in and exposes
-OIDC when its existing configuration is enabled.
+## Avatars
 
-Sign-in choice and identity-provider configuration have separate revisions.
-Saving a sign-in choice does not invalidate a provider draft, and saving a
-provider does not invalidate a sign-in-choice draft. A stale revision for the
-same resource returns `409 settings_conflict`; a missing `If-Match` returns
-`428 settings_revision_required`.
+Every person has an avatar, drawn from their stable person id (never the display name, so a rename keeps the
+colour). The choice is one word, stored in `user_avatars` (created with the account schema; a table of its own so
+no People list returns the picture URL): `auto` (the default), `v1` to `v8` (the eight generated palettes) or
+`picture` (the picture the identity provider shared).
+
+| Endpoint | Result / request |
+| --- | --- |
+| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url}`; `picture_url` is a gateway path or `null`, never the provider's address |
+| `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable` |
+| `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` |
+| `GET /me/api/profile/avatar/picture[?person=id]` | The sign-in picture as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404` |
+
+The `picture` claim of the ID token is read at sign-in, only for a person who is let in. It is kept only when it is
+an `https` URL of at most 2048 characters with no credentials, and it is stored on the person (`user_avatars`),
+not in the session cookie. A claim that is present and fails these checks removes the stored URL; an absent claim
+leaves it. The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
+who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
+most 1 MB and 8 seconds, through the fetcher that guards media URLs (`gateway/media_fetch.py`) in its strict
+mode: public addresses only (checked after DNS and on every redirect hop), destination port 443 only, and never
+the operator's `AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS` exception, which is for media inputs. The header and the
+file signature must agree on one of the four image types. A good copy is kept in memory for six hours, a failure
+for five minutes, per person and URL; requests that arrive while a fetch runs wait for it (one fetch per
+picture). A failed fetch answers `404`, so the page shows the generated avatar. Every response about an avatar or
+a picture is `Cache-Control: no-store`: the server keeps the copy and the browser keeps nothing, so a sign-out, or
+another person's session in the same browser, is never answered from its cache. The picture is sent with
+`Content-Disposition: inline; filename="avatar"`, `nosniff` and a sandbox CSP. Only the person themself and an owner or admin (who already see the person in People
+and Library) can fetch a picture, and an owner or admin only when the person chose it.
+
+The sign-in switches, the identity provider connection and the sign-in rules
+are one document with one revision, read and written only through
+`/admin/api/signin` (see "Sign-in rules and the Sign-in page" in
+`docs/design/web-api-contract.md`). There is no separate route for the
+built-in or provider switch, and none for the provider connection. The choice
+lives in `operator_settings.sign_in` in admin.db and applies without restart.
+The default permits built-in sign-in and exposes OIDC when its connection is
+turned on. A stale revision returns `409 settings_conflict`; a missing
+`If-Match` returns `428 settings_revision_required`.
 
 ## Revocation and ownership
 
@@ -94,7 +120,8 @@ Removal retains a tombstone so an old OIDC identity cannot return and recover
 access. It deletes the password verifier and revokes Apps, keys, reset links
 and sessions while preserving historical attribution. It is not physical
 personal-data erasure. Password reset invalidates earlier browser sessions,
-but does not rotate runtime API keys.
+but does not rotate runtime API keys. A person can end all their own sessions
+with "Sign out everywhere"; see [Sign-in sessions](ops/SIGN_IN_SESSIONS.md).
 
 Receipt/job ownership is independent of profile visibility. New media jobs
 carry the authenticated App ID and key hash through job updates. Legacy

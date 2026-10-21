@@ -9,6 +9,7 @@ Callers supply already-loaded data and an already-authenticated policy view.
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import quote
 import copy
 import json
 import statistics
@@ -186,7 +187,7 @@ def build_models_catalog(
         model_rows.extend(models)
         allowed_count += count
 
-    aliases = _dedupe_alias_targets(_merge_rows(alias_rows))
+    aliases = _merge_rows(alias_rows)
     model_rows = _merge_rows(model_rows)
     for row in (*aliases, *model_rows):
         listed = listed_metadata.get(row["id"])
@@ -196,6 +197,7 @@ def build_models_catalog(
             row["io"] = {"input": list(architecture.get("input_modalities") or ()),
                          "output": list(architecture.get("output_modalities") or ())}
 
+    _mark_same_model(aliases, model_rows, alias_views or {})
     return {
         "schema_version": 1,
         "object": "models.catalog",
@@ -230,12 +232,15 @@ def _rows_for_capabilities(
         if cap.workflow:
             denied_targets.update(_public_model_ids_for_workflow(model_entries, str(cap.workflow)))
     caps_by_model: dict[str, list[Capability]] = defaultdict(list)
+    internal_workflow_ids: set[str] = set()  # No public model name: reachable only through an alias.
     for cap in allowed_caps:
         if cap.model:
             caps_by_model[str(cap.model)].append(cap)
         if cap.workflow:
             workflow_key = str(cap.workflow)
             public_ids = _public_model_ids_for_workflow(model_entries, workflow_key)
+            if not public_ids:
+                internal_workflow_ids.add(workflow_key)
             for public_id in public_ids or [workflow_key]:
                 caps_by_model[str(public_id)].append(cap)
 
@@ -255,8 +260,10 @@ def _rows_for_capabilities(
         model: [cap for cap in caps if "alias" not in cap.tags]
         for model, caps in caps_by_model.items()
     }
-    # A caller alias covers only its serving backend and declared operation.
-    # Retain a concrete row when it exposes any additional capability.
+    # Every name an app can send has its own row, so a model an alias points at
+    # stays listed (its row says which names reach it). Only an internal
+    # spelling is hidden behind the name that stands for it: a ``role:`` id, or a
+    # workflow id that has no public model name.
     covered = set()
     visible_alias_ids = {row["id"] for row in aliases}
     for operation, view in alias_views.items():
@@ -270,10 +277,10 @@ def _rows_for_capabilities(
                     or _capabilities_for_operation(caps_by_model.get(str(raw["alias"]), ()), str(operation)))
             backend = str(raw.get("service") or _first_backend(caps) or "")
             for cap in caps:
-                if cap.backend == backend:
+                if cap.backend == backend and cap.model == f"role:{target}":
+                    covered.add((cap.intent, backend, cap.model))
+                if cap.backend == backend and target in internal_workflow_ids:
                     covered.add((cap.intent, backend, target))
-                    if cap.model == f"role:{target}":
-                        covered.add((cap.intent, backend, cap.model))
     # A registered public role name can cover its internal spelling without
     # an alias. Scope the proof to this policy group, intent, and backend.
     for model, caps in concrete_by_model.items():
@@ -302,25 +309,35 @@ def _rows_for_capabilities(
     return aliases, models, len(allowed_caps)
 
 
-def _dedupe_alias_targets(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Synonymous media names share a card; chat profiles remain choices."""
-    merged = {}
-    for row in rows:
-        key = (row["id"],) if row.get("capability_title") == "Chat" else (
-            row.get("_serving_backend"), tuple(sorted(row["resolves_to"].items())),
-            tuple(cap["intent"] for cap in row["capabilities"]))
-        if key not in merged:
-            merged[key] = row
-        else:
-            current = merged[key]
-            names = list(dict.fromkeys([*current["use_names"], *row["use_names"]]))
-            if row["recommended"] and not current["recommended"]:
-                merged[key] = row
-                current = row
-            current["use_names"] = names
-    for row in merged.values():
-        row.pop("_serving_backend", None)
-    return list(merged.values())
+def _mark_same_model(aliases: list[dict[str, Any]], models: list[dict[str, Any]],
+                     alias_views: Mapping[str, Any]) -> None:
+    """Give each row ``same_model_as``: the other listed names that reach the same model.
+
+    A name's model is what the owner's alias data says it serves: an alias
+    reaches its ``resolves_to`` target, and an engine slot reaches the model it
+    declares. Two names are the same model when those meet. This reads only
+    alias data, so it holds for any engine and needs no per-engine rule.
+    """
+    slot_model: dict[str, str] = {}
+    for view in alias_views.values():
+        if not isinstance(view, Mapping):
+            continue
+        for engine in view.get("engines") or ():
+            if isinstance(engine, Mapping) and engine.get("engine") and engine.get("model"):
+                slot_model[str(engine["engine"])] = str(engine["model"])
+
+    def served(name: str) -> str:
+        return slot_model.get(name, name)
+
+    reaches: dict[str, set[str]] = {}
+    for row in aliases:
+        reaches[row["id"]] = {served(str(target)) for target in row["resolves_to"].values() if target}
+    for row in models:
+        reaches.setdefault(row["id"], {served(row["id"])})
+    for row in (*aliases, *models):
+        mine = reaches.get(row["id"], set())
+        row["same_model_as"] = sorted(
+            other for other, theirs in reaches.items() if other != row["id"] and mine & theirs)
 
 
 def _merge_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -419,7 +436,6 @@ def _alias_rows(
                 service_model_metadata=service_model_metadata,
                 listed=listed_metadata.get(alias),
             )
-            operation_row["_serving_backend"] = str(raw.get("service") or _first_backend(caps) or "")
             presentation = capability_presentation(caps[0], {
                 "capability": operation_row["capabilities"][0]["capability"], **raw,
                 LISTED_METADATA_KEY: listed_metadata.get(alias)})
@@ -974,11 +990,14 @@ async def probe_service_health(
     *,
     get_json: Callable[[str], Awaitable[Mapping[str, Any] | None]],
     service_ids: Iterable[str] | None = None,
+    endpoint_for: Callable[[Mapping[str, Any]], str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Probe generic service health endpoints declared as data.
 
     Services without ``health_endpoint`` are reported as unknown. This function
-    never infers readiness from enablement alone.
+    never infers readiness from enablement alone. ``endpoint_for`` turns a service
+    record into the URL to probe; the gateway passes one that puts the record's
+    stored credentials back, this module never reads them.
     """
 
     services = _services_mapping(service_records)
@@ -986,7 +1005,7 @@ async def probe_service_health(
 
     async def probe_one(service_id: str) -> tuple[str, dict[str, Any]]:
         service = services.get(service_id)
-        endpoint = _health_endpoint(service) if isinstance(service, Mapping) else None
+        endpoint = (endpoint_for or _health_endpoint)(service) if isinstance(service, Mapping) else None
         if not endpoint:
             # Nothing was checked, so this evidence has no observation time.
             return service_id, {
@@ -1100,39 +1119,35 @@ def _status_from_health_payload(payload: Mapping[str, Any]) -> str:
 def auth_contexts_from_user_snapshot(
     snapshot: Mapping[str, Any],
     *,
-    default_profile_id: str | None,
-    profile_loader: Callable[[str], Any | None],
-    context_for_profile: Callable[[Any, str], Any],
+    access_for_app: Callable[[str], Any | None],
+    person_access: Any,
+    context_for_access: Callable[[Any], Any],
 ) -> list[Any]:
-    """Build fail-closed catalog auth contexts from a user portal snapshot."""
+    """Build fail-closed catalog auth contexts from a user portal snapshot.
 
-    profile_ids: list[str] = []
+    One context per distinct pair of plans the person's enabled Apps run
+    under; with no App, the access a new "Same as my access plan" App would
+    have. An App whose access cannot be resolved contributes nothing.
+    """
+    accesses: list[Any] = []
     saw_enabled_app = False
-    saw_default_app = False
     for app_record in snapshot.get("apps") or ():
-        if not isinstance(app_record, Mapping):
-            continue
-        if app_record.get("disabled_at") or app_record.get("self_service_enabled") is False:
+        if not isinstance(app_record, Mapping) or app_record.get("disabled_at"):
             continue
         saw_enabled_app = True
-        profile_id = str(app_record.get("effective_profile_id") or app_record.get("profile_id") or "").strip()
-        if profile_id == "default-local":
-            saw_default_app = True
-            profile_ids.append("default-local")
-        elif profile_id:
-            profile_ids.append(profile_id)
-    if not profile_ids and default_profile_id and not saw_enabled_app:
-        profile_ids.append(default_profile_id)
+        access = access_for_app(str(app_record.get("id") or ""))
+        if access is not None:
+            accesses.append(access)
+    if not saw_enabled_app:
+        accesses.append(person_access)
     contexts: list[Any] = []
-    seen: set[str] = set()
-    for profile_id in profile_ids:
-        if profile_id in seen:
+    seen: set[tuple[str, ...]] = set()
+    for access in accesses:
+        key = tuple(getattr(access, "plan_ids", ()))
+        if not getattr(access, "complete", False) or key in seen:
             continue
-        seen.add(profile_id)
-        profile = profile_loader(profile_id)
-        if profile is None:
-            continue
-        contexts.append(context_for_profile(profile, profile_id))
+        seen.add(key)
+        contexts.append(context_for_access(access))
     return contexts
 
 
@@ -1161,7 +1176,7 @@ def _receipt_stats(receipts: Iterable[Mapping[str, Any]]) -> dict[str, dict[str,
                 recent[key].append(
                     {
                         "request_id": str(request_id),
-                        "href": f"/r/{request_id}",
+                        "href": f"/usage/?receipt={quote(str(request_id), safe='')}",
                         "status": receipt.get("status"),
                         "latency_ms": latency_ms if has_latency else None,
                     }

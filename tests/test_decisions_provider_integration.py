@@ -23,8 +23,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, decision_provider_execution, providers, receipt_store
-from gateway.policy import AppProfile, CapabilitySelector, RemoteProviderPolicy
+from tests.support.access import plan_for, access  # noqa: E402
+from gateway import admin_store, decision_provider_execution, media_jobs, providers, receipt_store
 from gateway.runtime_auth import RuntimeIdentity
 
 RAW_KEY = "opk_decisions_provider_integration"
@@ -67,40 +67,39 @@ def _provider_registry(*, provider_id="typesafe", protocols=("typesafe-systemone
     }
 
 
-def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> AppProfile:
-    return AppProfile(
-        id="paid-plan",
-        allow=CapabilitySelector(tags=frozenset(tags) if tags is not None else None),
-        models=frozenset(models) if models is not None else None,
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_usd_per_request,
-            budget_usd_per_day=budget_usd_per_day,
-            budget_usd_per_month=budget_usd_per_month,
-        ),
+def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> "AccessPlan":
+    # Capability tags are not access-plan parts; providers, listed models and
+    # spending caps are.
+    return plan_for(
+        "paid-plan", models=list(models) if models is not None else None, paid=sorted(providers),
+        usd_per_request=None if max_usd_per_request is None else str(max_usd_per_request),
+        usd_per_day=None if budget_usd_per_day is None else str(budget_usd_per_day),
+        usd_per_month=None if budget_usd_per_month is None else str(budget_usd_per_month),
     )
 
 
 @contextmanager
-def _authenticated(profile: AppProfile):
+def _authenticated(profile: "AccessPlan"):
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", profile=profile)
+    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", accountable_person_id="usr-123", access=access(profile))
 
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(proxy, "AUTH_ENABLED", True)
         mp.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
         yield identity, mp
 
 
 def _install_registry(mp: pytest.MonkeyPatch, tmp_path, registry: dict | None = None) -> None:
     admin_path = tmp_path / "admin.db"
+    facts_path = tmp_path / "media_jobs.db"
     admin_store.init_db(admin_path)
+    media_jobs.init_db(facts_path)
     mp.setenv("TYPESAFE_TEST_KEY", "ts_secret_test_key")
     mp.setenv("OPENAI_TEST_KEY", "oa_secret_test_key")
     mp.setattr(proxy, "ADMIN_DB_PATH", admin_path)
+    mp.setattr(proxy.media_jobs, "DB_PATH", facts_path)
     if hasattr(proxy, "ADMIN_STORE"):
         mp.setattr(proxy.ADMIN_STORE, "path", admin_path, raising=False)
         mp.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry or _provider_registry())
@@ -108,7 +107,7 @@ def _install_registry(mp: pytest.MonkeyPatch, tmp_path, registry: dict | None = 
 
 def _ledger_rows(path):
     with sqlite3.connect(path) as conn:
-        return conn.execute("SELECT provider, profile_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
+        return conn.execute("SELECT provider, app_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
 
 
 def _capture_receipts(mp: pytest.MonkeyPatch) -> list:
@@ -223,8 +222,8 @@ def test_typesafe_prefixed_systemone_routes_to_paid_provider_and_records_owner_r
     assert all(auth == "Bearer ts_secret_test_key" for _url, auth, _body in seen)
     assert [body["model"] for _url, _auth, body in seen] == ["jev-latest", "jev-latest"]
     assert _ledger_rows(tmp_path / "provider_spend.db") == [
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.002000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.002000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.002000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.002000000"),
     ]
     assert len(receipts) == 2
     for receipt in receipts:
@@ -355,7 +354,6 @@ def test_local_unavailable_does_not_implicitly_fallback_to_paid_provider(tmp_pat
     [
         (_profile(providers=frozenset()), 403, "remote_provider_not_allowed"),
         (_profile(max_usd_per_request=Decimal("0.000001")), 402, "budget_exceeded"),
-        (_profile(tags=frozenset({"approved-chat"})), 403, "remote_provider_not_allowed"),
         (_profile(models={"typesafe/other-model"}), 403, "remote_provider_not_allowed"),
     ],
 )
@@ -399,7 +397,7 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
     assert response.status_code == 200, response.text
     assert response.headers["x-azizam-cost-usd"] == "unknown"
     assert "ts_secret_test_key" not in response.text
-    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "paid-plan", "needs_reconciliation", "0.000643000", None)]
+    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "app-123", "needs_reconciliation", "0.000643000", None)]
     projected = receipts[-1].to_dict(audience="client")
     assert projected["cost"] == {"usd": None, "source": "unknown", "cost_class": "paid-remote", "reconciliation_status": "needs_reconciliation"}
     assert "ts_secret_test_key" not in str(projected)
@@ -478,9 +476,9 @@ def test_typesafe_provider_concurrency_blocks_third_request_until_first_settles(
     assert retry.status_code == 200
     assert entered == ["jev-latest", "jev-latest", "jev-latest"]
     assert _ledger_rows(tmp_path / "provider_spend.db") == [
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
     ]
 
 
@@ -507,27 +505,124 @@ def test_openai_decisions_is_501_without_explicit_decisions_capability(tmp_path,
 
 def test_openai_decisions_forwards_opaque_bytes_when_explicit_capability_configured_and_records_receipt(tmp_path):
     calls = []
+    begin_ids = []
+    finalize_ids = []
+    finalize_results = []
+    legacy_record_ids = []
+    in_flight = []
+    receipts_db = tmp_path / "openai-receipts.db"
+    receipt_store.init_db(receipts_db)
+
+    real_begin = receipt_store.begin
+    real_finalize = receipt_store.finalize
+    real_record = receipt_store.record
+    real_checkpoint = receipt_store.update_phases
+
+    def begin(receipt, *args, **kwargs):
+        begin_ids.append(receipt.request_id)
+        return real_begin(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    def finalize(receipt, *args, **kwargs):
+        finalize_ids.append(receipt.request_id)
+        result = real_finalize(receipt, *args, **{**kwargs, "path": receipts_db})
+        finalize_results.append(result)
+        return result
+
+    def record(receipt, *args, **kwargs):
+        legacy_record_ids.append(receipt.request_id)
+        return real_record(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    def checkpoint(receipt, *args, **kwargs):
+        return real_checkpoint(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    payload = {
+        "id": "dec_123",
+        "object": "decision",
+        "status": "completed",
+        "usage": {"input_tokens": 1000, "output_tokens": 1, "cost": "0.004"},
+    }
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((str(request.url), request.content, request.headers.get("authorization")))
-        return httpx.Response(200, json={"id": "dec_123", "object": "decision", "status": "completed", "usage": {"input_tokens": 1000, "output_tokens": 1, "cost": "0.004"}})
+        calls.append((
+            str(request.url), request.content,
+            request.headers.get("authorization"),
+        ))
+        assert len(begin_ids) == 1
+        accepted = receipt_store.get(begin_ids[0], path=receipts_db)
+        assert accepted is not None
+        assert accepted["status"] == "in_progress"
+        assert accepted["app_id"] == "app-123"
+        in_flight.append(accepted)
+        return httpx.Response(200, json=payload)
 
-    registry = _provider_registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}])
+    registry = _provider_registry(
+        provider_id="openai",
+        protocols=("openai-compatible", "decisions"),
+        models=[{"id": "gpt-5"}],
+    )
     raw = b'{"model":"gpt-5","input":"future","opaque":true}'
-    with _authenticated(_profile(max_usd_per_request=None, budget_usd_per_day=None, budget_usd_per_month=None)) as (_identity, mp):
+    profile = _profile(
+        max_usd_per_request=None,
+        budget_usd_per_day=None,
+        budget_usd_per_month=None,
+    )
+    with _authenticated(profile) as (_identity, mp):
         _install_registry(mp, tmp_path, registry)
-        receipts = _capture_receipts(mp)
+        mp.setattr(proxy.receipt_store, "begin", begin)
+        mp.setattr(proxy.receipt_store, "finalize", finalize)
+        mp.setattr(proxy.receipt_store, "record", record)
+        mp.setattr(proxy.receipt_store, "update_phases", checkpoint)
         with _mock_openai_http(handler):
-            response = TestClient(proxy.app).post("/v1/decisions", content=raw, headers={**AUTH_HEADERS, "content-type": "application/json"})
+            response = TestClient(proxy.app).post(
+                "/v1/decisions",
+                content=raw,
+                headers={**AUTH_HEADERS, "content-type": "application/json"},
+            )
 
     assert response.status_code == 200, response.text
+    assert response.json() == payload
     assert response.headers["x-azizam-remote"] == "1"
     assert response.headers["x-azizam-provider"] == "openai"
     assert response.headers["x-azizam-cost-usd"] == "0.004000000"
-    assert calls == [("https://openai.test/v1/decisions", raw, "Bearer oa_secret_test_key")]
-    assert _ledger_rows(tmp_path / "provider_spend.db") == [("openai", "paid-plan", "settled", "0E-9", "0.004000000")]
-    assert receipts
-    projected = receipts[-1].to_dict(audience="client")
+    assert calls == [
+        ("https://openai.test/v1/decisions", raw, "Bearer oa_secret_test_key")
+    ]
+
+    request_id = response.headers["x-azizam-request-id"]
+    assert begin_ids == [request_id]
+    assert finalize_ids == [request_id]
+    assert finalize_results == [True]
+    assert legacy_record_ids == []
+    assert len(in_flight) == 1
+    assert receipt_store.count(receipts_db, outer_only=False) == 1
+
+    stored = receipt_store.get(request_id, path=receipts_db)
+    assert stored["status"] == "succeeded"
+    assert stored["app_id"] == "app-123"
+    assert stored["api_key_name"] == "provider-test"
+    assert stored["requested_model"] == "gpt-5"
+    assert stored["accepted_at_ms"] == in_flight[0]["accepted_at_ms"]
+    assert stored["cost"]["usd"] == "0.004000000"
+    assert stored["cost"]["reconciliation_status"] == "settled"
+    assert _ledger_rows(tmp_path / "provider_spend.db") == [
+        ("openai", "app-123", "settled", "0E-9", "0.004000000")
+    ]
+    with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
+        linked = conn.execute(
+            "SELECT id, request_id, status, actual_usd FROM provider_spend"
+        ).fetchall()
+    assert linked == [
+        (stored["cost"]["reservation_id"], request_id, "settled", "0.004000000")
+    ]
+    projected = receipt_store.get(
+        request_id, path=receipts_db, audience="client"
+    )
     assert projected["remote"] is True
-    assert projected["cost"] == {"usd": "0.004000000", "source": "provider-reported", "cost_class": "paid-remote", "reconciliation_status": "settled"}
-    assert "oa_secret_test_key" not in str(projected)
+    assert projected["cost"] == {
+        "usd": "0.004000000",
+        "source": "provider-reported",
+        "cost_class": "paid-remote",
+        "reconciliation_status": "settled",
+    }
+    assert "oa_secret_test_key" not in json.dumps(stored)
+    assert "oa_secret_test_key" not in json.dumps(projected)

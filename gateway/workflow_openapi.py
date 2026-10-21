@@ -151,6 +151,34 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
     return schema
 
 
+def advertised_inputs_schema(record: WorkflowRecord) -> dict[str, Any]:
+    """The input schema callers are shown: the manifest inputs a request can set.
+
+    It reads the same field map (``request_mapping``) the request is built and
+    validated from, so an input a route sets itself (``{"in": "none"}``) in a
+    mode the workflow offers is never advertised.
+    """
+    schema = workflow_inputs_schema(record)
+    owned = gateway_owned_inputs(record)
+    schema["properties"] = {name: spec for name, spec in schema["properties"].items() if name not in owned}
+    required = [name for name in schema.get("required") or [] if name not in owned]
+    if required:
+        schema["required"] = required
+    else:
+        schema.pop("required", None)
+    return schema
+
+
+def gateway_owned_inputs(record: WorkflowRecord) -> frozenset[str]:
+    """Manifest inputs that a route the workflow offers sets itself."""
+    execution = _execution(record, _typical_seconds(record))
+    return frozenset(
+        name
+        for route in (execution["sync"], execution["async"]) if route
+        for name, where in (route.get("fields") or {}).items() if where.get("in") == "none"
+    )
+
+
 # ------------------------------------------------------------- request mapping
 
 
@@ -488,6 +516,18 @@ _MEDIA_JOB_SCHEMA = {
         "status": {"type": "string", "enum": _MEDIA_JOB_STATUSES},
         "progress": {"type": "integer", "minimum": 0, "maximum": 100},
         "error": {"type": ["string", "object", "null"]},
+        "error_code": {"type": ["string", "null"], "description": "A short token naming the failure."},
+        "error_category": {
+            "type": ["string", "null"],
+            "enum": ["authorization", "invalid_input", "upstream", "capacity", "timeout", "safety", "internal", None],
+            "description": ("Who refused: the gateway (authorization, invalid_input, capacity), the work "
+                            "(upstream, timeout, safety), or a gateway bug (internal)."),
+        },
+        "retryable": {"type": ["boolean", "null"], "description": "Whether the same job may succeed later."},
+        "upstream_http_status": {
+            "type": ["integer", "null"],
+            "description": "The HTTP status of an upstream failure; null when the gateway refused.",
+        },
         "assets": {
             "type": "array",
             "items": {
@@ -591,7 +631,7 @@ def augment_openapi(
     components["MediaJob"] = copy.deepcopy(_MEDIA_JOB_SCHEMA)
     components["MediaJobContent"] = copy.deepcopy(_MEDIA_JOB_CONTENT_SCHEMA)
     for record in records:
-        components[_schema_name(record)] = workflow_inputs_schema(record)
+        components[_schema_name(record)] = advertised_inputs_schema(record)
 
     paths = spec.setdefault("paths", {})
     errors = _errors()

@@ -1,8 +1,11 @@
 # Reverse Proxy and Deployment Security Guide
 
-Azizam binds to `127.0.0.1:5000` by default. The expectation
-for LAN or internet exposure is that a TLS-terminating reverse proxy (Nginx,
-Caddy, Traefik, HAProxy) sits in front.
+The Compose quickstart publishes the gateway on host loopback. Other launch modes
+can listen on other interfaces: the checked-in configuration sets `proxy.host` to `0.0.0.0`.
+Before LAN or internet exposure, check the effective listener, published ports,
+setup networks and trusted proxies. Put a TLS-terminating reverse proxy such as
+Nginx, Caddy, Traefik or HAProxy in front, and stop untrusted clients from reaching
+the gateway port directly. See the [configuration reference](../CONFIG.md).
 
 ## Health Checks
 
@@ -10,12 +13,14 @@ For client-address trust, first-owner claiming and the family-access checklist,
 read [Public exposure](ops/PUBLIC_EXPOSURE.md). The gateway applies forwarding
 trust itself; custom Uvicorn launch commands must use `--no-proxy-headers`.
 
-Use `HEAD /` or `HEAD /admin` for reverse-proxy health checks. Both return
-`200` with no body. The dedicated `GET /health` endpoint returns a JSON
-body with auth and credential status and is also suitable for upcheck polling.
+Use `GET /health` for reverse-proxy health checks. It returns a JSON body with
+auth and credential status.
 
-Do **not** use `GET /` or `GET /admin` as health check targets from a reverse
-proxy: those paths return HTML and require admin auth respectively.
+Do **not** use `HEAD /`, `GET /` or `HEAD /admin` as health check targets.
+`/` is the web app's Home page: it answers `503` when the web build is missing,
+which would mark a working API as down. `HEAD /admin` answers `405`. If your
+probe used `HEAD /admin` or `HEAD /`, change it to `GET /health` before you
+deploy the release that moves the web app to `/`.
 
 ## Recommended Nginx snippet
 
@@ -101,22 +106,19 @@ Your reverse proxy may add its own headers (e.g. HSTS). Use `add_header` /
 `header` directives at the proxy layer; the gateway headers are defaults and
 will not override what the proxy sets.
 
-## auth.enabled=false Warning
+## App keys and trusted addresses
 
-If `auth.enabled` is set to `false` **and** the gateway is bound to a
-non-loopback address (anything other than `127.0.0.1`, `::1`, or `localhost`),
-the gateway will print a loud startup warning:
+Authentication cannot be disabled. Remove `auth.enabled`, `auth.lan_bypass_*`
+and `auth.ollama_compat_discovery`, along with their old environment overrides.
+They are no longer supported.
 
-```
-[proxy] WARNING: auth is disabled and the gateway is bound to '0.0.0.0' ...
-```
+Protected API requests without a key return `401 key_required`, unless an
+owner added the client address to an App under **Apps & keys → app menu →
+Trusted addresses**. The request then uses that App's access plan. A sent key
+always wins. A placeholder such as `loopback` returns `401 key_invalid`, even
+from a trusted address.
 
-Deploying with auth disabled and a non-loopback bind is only safe when:
-- The reverse proxy enforces its own authentication layer, **and**
-- The gateway port is firewalled from untrusted networks.
-
-To silence the warning legitimately: keep `auth.enabled=false` but set
-`proxy.host` to `127.0.0.1` and let the reverse proxy handle TLS + auth.
-
-To enable auth: set `auth.enabled=true` in `proxy_config.yml` or set the
-environment variable `AZIZAM_AUTH_ENABLED=true`.
+`X-Forwarded-For` counts only when the connecting proxy is listed in
+`auth.trusted_proxies`. Configure proxy trust narrowly. A reverse proxy or a
+LAN address does not grant access by itself. Keep the gateway port protected
+from untrusted networks.
