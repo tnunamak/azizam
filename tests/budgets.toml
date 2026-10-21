@@ -190,7 +190,9 @@
 # Train r90: merged r89, A1, A4, keyframes and media-folder fixes, plus one
 # warm asset-family memo regression for A1/A4. Hermetic --collect-only -q
 # measured 15952; npx vitest list measured 3091 (2026-10-21).
-pytest = 15952
+# The merged public error-copy fixture adds one parameterized case.
+# Final hermetic --collect-only -q measured 15953 (2026-10-21).
+pytest = 15953
 vitest = 3091
 playwright = 502
 
