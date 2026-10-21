@@ -2130,6 +2130,17 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         except Exception:
             pass
 
+    def test_setup_local_owner_rejects_password_over_1024_characters(self) -> None:
+        password = "x" * 1025
+        response = self.client.post(
+            "/setup/local-owner",
+            data={"email": "owner@example.com", "password": password, "password_confirm": password},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Enter a password of up to 1,024 characters.", response.text)
+        self.assertEqual(admin_store.list_users(path=self.db), [])
+
     def test_setup_local_owner_create_blocked_once_owner_exists(self) -> None:
         create_admin_service_account_key("real-owner", path=self.db)
         response = self.client.post(

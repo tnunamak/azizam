@@ -69,7 +69,13 @@ def test_password_scrypt_random_salt_nonplaintext_and_constant_time_compare(monk
     assert all(len(a) == len(b) == 32 for a, b in comparisons)
 
 
-@pytest.mark.parametrize("password", [None, "", "short", "x" * 1025, 123])
+def test_short_passwords_are_accepted(monkeypatch):
+    monkeypatch.setattr(accounts, "_SCRYPT_N", 2 ** 10)
+    for password in ("a", "short", "x" * 11, "x" * 1024):
+        assert accounts.verify_password(password, accounts.hash_password(password))
+
+
+@pytest.mark.parametrize("password", [None, "", "x" * 1025, 123])
 def test_invalid_passwords_rejected_before_kdf(password, monkeypatch):
     monkeypatch.setattr(accounts.hashlib, "scrypt", lambda *args, **kwargs: pytest.fail("invalid password reached KDF"))
     expect_error("invalid_password", lambda: accounts.hash_password(password))
@@ -336,6 +342,46 @@ def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_cl
     assert login.status_code == 200
     assert "set-cookie" in login.headers
     assert len(rows(path, "SELECT * FROM account_sessions")) == 2
+
+
+@pytest.mark.parametrize("password", ["", "x" * 1025])
+def test_invite_accept_rejects_password_outside_boundary(account_db, account_client, fast_password_work, password):
+    path, plan = account_db
+    client, _ = account_client
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], path=path)
+    response = client.post("/auth/api/invite/accept", json={"token": token, "email": "person@example.test", "name": "Person", "password": password})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_password"
+
+
+def test_invite_accept_accepts_one_character_password(account_db, account_client, fast_password_work):
+    path, plan = account_db
+    client, _ = account_client
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], path=path)
+    response = client.post("/auth/api/invite/accept", json={"token": token, "email": "person@example.test", "name": "Person", "password": "x"})
+    assert response.status_code == 200
+    assert accounts.login("person@example.test", "x", "ip", path=path)["id"]
+
+
+@pytest.mark.parametrize("password", ["", "x" * 1025])
+def test_password_reset_rejects_password_outside_boundary(account_db, account_client, fast_password_work, password):
+    path, _ = account_db
+    client, _ = account_client
+    user, _, _ = invited_member(account_db)
+    _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
+    response = client.post("/auth/api/password-reset", json={"token": token, "password": password})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_password"
+
+
+def test_password_reset_accepts_one_character_password(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    client, _ = account_client
+    user, _, _ = invited_member(account_db)
+    _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
+    response = client.post("/auth/api/password-reset", json={"token": token, "password": "x"})
+    assert response.status_code == 200
+    assert accounts.login(user["email"], "x", "ip", path=path)["id"] == user["id"]
 
 
 def test_api_login_rejects_other_origin_and_reports_persistent_throttle(account_db, account_client, fast_password_work):

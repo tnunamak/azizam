@@ -32,7 +32,7 @@ single-use and expire after the chosen period (seven days by default). Share
 them privately. A redeemed link cannot be revoked; if the wrong person used
 it, remove or disable their account and revoke its App key.
 
-New passwords require 12–1,024 characters and use scrypt. Existing local-owner
+New passwords can be any length from 1 to 1,024 characters and use scrypt; the sign-in throttle, not a length rule, limits guessing. Existing local-owner
 PBKDF2 passwords still work. Login attempts have persistent per-email and
 per-IP limits. Browser sessions reuse the existing signed cookie and CSRF
 mechanism. No provider token is stored in a browser cookie.

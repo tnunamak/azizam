@@ -25,6 +25,10 @@ class LocalOwnerTests(unittest.TestCase):
         for value in ("", "pbkdf2_sha256$v1$bad", "other$v1$1000$aa$bb"):
             self.assertFalse(verify_password("correct-horse-battery", value))
 
+    def test_password_verifier_rejects_passwords_over_1024_characters(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Enter a password of up to 1,024 characters."):
+            hash_password("x" * 1025, iterations=1_000)
+
     def test_signing_key_is_persistent_and_owner_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "data" / "admin_session_key"

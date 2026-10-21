@@ -37,17 +37,22 @@ class _Body(BaseModel):
     model_config = ConfigDict(extra="forbid", str_max_length=1024)
 
 
+class _PasswordBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_max_length=4096)
+
+
 class Login(_Body):
     email: str
     password: str
     return_to: str | None = None
 
 
-class Accept(_Body):
+class Accept(_PasswordBody):
     token: str
     email: str
     name: str
     password: str | None = None
+
 
 
 class Reauth(_Body):
@@ -58,9 +63,10 @@ class InspectInvite(_Body):
     token: str
 
 
-class Reset(_Body):
+class Reset(_PasswordBody):
     token: str
     password: str
+
 
 
 class Invite(_Body):
