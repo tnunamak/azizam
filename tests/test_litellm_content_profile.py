@@ -268,3 +268,16 @@ def test_real_gateway_refuses_and_recovers_without_dispatching_content(monkeypat
             accepted = await client.post('/v1/chat/completions', json=body)
             assert accepted.status_code == 200
     asyncio.run(run())
+
+
+def test_endpoint_changes_are_disclosed_from_the_effective_registry(monkeypatch):
+    monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
+    monkeypatch.setenv('AZIZAM_LITELLM_BASE_URL', 'http://127.0.0.1:4011')
+    gate = content.ContentGate()
+    gate.problem = None
+    monkeypatch.setattr(content, 'gate', gate)
+    def registry(address):
+        return {'services': {'router': {'id': 'router', 'kind': 'llm-substrate', 'enabled': True,
+            'config': {'base_url': address}}}}
+    assert content.deployment_status(registry('http://127.0.0.1:4011'))['status'] == 'verified'
+    assert content.deployment_status(registry('https://owner-run.example'))['status'] == 'unmanaged'

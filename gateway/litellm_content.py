@@ -215,5 +215,7 @@ async def execution_refusal(base_url: str):
     return safe_error_response(503, "litellm_content_unverified", gate.status(base_url)["detail"])
 
 
-def deployment_status() -> dict[str, Any]:
-    return gate.status(os.environ.get("AZIZAM_LITELLM_BASE_URL", ""))
+def deployment_status(registry: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from gateway.backends.llm_execution import litellm_runtime_from_registry
+
+    return gate.status(litellm_runtime_from_registry(registry, env=os.environ).base_url)

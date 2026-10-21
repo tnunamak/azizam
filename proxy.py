@@ -14076,7 +14076,7 @@ def _retention_ledger_view(request: Request, request_id: str | None = None, *, v
         view["fact_basis"] = "Today's facts. Some destination facts are unavailable."
     from gateway.litellm_content import deployment_status
 
-    view["execution_substrate"] = deployment_status()
+    view["execution_substrate"] = deployment_status(registry)
     view["never_save_text"] += "\n\n" + view["execution_substrate"]["detail"]
     if receipt:
         view["request_id"] = request_id

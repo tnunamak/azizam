@@ -1866,7 +1866,7 @@ def create_admin_router(
         from gateway.litellm_content import deployment_status
 
         attention = derive_admin_attention({
-            "litellm_content": deployment_status(),
+            "litellm_content": deployment_status(registry),
             "registry_problem": registry_apply,
             "registry_excluded": registry_excluded,
             "unsent_inject_rules": _unsent_inject_rules(registry),
