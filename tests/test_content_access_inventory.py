@@ -15,6 +15,7 @@ from pathlib import Path
 import proxy
 import route_graph
 from gateway import mcp_server
+from tests.test_content_access_matrix import MATRIX
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).with_name("fixtures") / "content_access_inventory.json"
@@ -22,26 +23,46 @@ KINDS = {"creation", "prompt", "chat", "voice", "receipt", "job", "request_histo
 ACTIONS = {"read", "delete", "reuse", "share", "link", "cancel"}
 
 
+def _writers_in_source(text, path):
+    writers = []
+    tree = ast.parse(text)
+
+    def writer_name(node, aliases):
+        name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", "")
+        return aliases.get(name, name)
+
+    def walk(node, aliases, function="<module>", source=""):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            aliases = dict(aliases)
+            function = node.name
+            source = hashlib.sha256(ast.dump(node).encode()).hexdigest()
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = aliases.get(alias.name, alias.name)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            name = writer_name(node.value, aliases)
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    aliases[target.id] = name
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "INSERT INTO media_job_events" in node.value:
+            writers.append({"path": path, "function": function, "source_sha256": source, "call": "sql-insert", "event": "event_type"})
+        if isinstance(node, ast.Call):
+            name = writer_name(node.func, aliases)
+            if name in {"append_event", "append_client_event"} or (path == "gateway/me_make.py" and name == "_event"):
+                value = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg in {"kind", "event_type"}), None)
+                writers.append({"path": path, "function": function, "source_sha256": source,
+                                "call": name, "event": ast.unparse(value) if value is not None else "<missing>"})
+        for child in ast.iter_child_nodes(node):
+            walk(child, aliases, function, source)
+    walk(tree, {})
+    return writers
+
+
 def _event_writers():
     writers = []
-    for path in [ROOT / "proxy.py", *sorted((ROOT / "gateway").rglob("*.py"))]:
-        tree = ast.parse(path.read_text())
-        def walk(node, function="<module>", source=""):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                function = node.name
-                source = hashlib.sha256(ast.dump(node).encode()).hexdigest()
-            if isinstance(node, ast.Constant) and isinstance(node.value, str) and "INSERT INTO media_job_events" in node.value:
-                writers.append({"path": str(path.relative_to(ROOT)), "function": function,
-                                "source_sha256": source, "call": "sql-insert", "event": "event_type"})
-            if isinstance(node, ast.Call):
-                name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if name in {"append_event", "append_client_event"} or (path.name == "me_make.py" and name == "_event"):
-                    value = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg in {"kind", "event_type"}), None)
-                    writers.append({"path": str(path.relative_to(ROOT)), "function": function,
-                                    "source_sha256": source, "call": name, "event": ast.unparse(value) if value is not None else "<missing>"})
-            for child in ast.iter_child_nodes(node):
-                walk(child, function, source)
-        walk(tree)
+    for path in [*sorted(ROOT.glob("*.py")), *sorted((ROOT / "gateway").rglob("*.py"))]:
+        writers.extend(_writers_in_source(path.read_text(), str(path.relative_to(ROOT))))
     return sorted(writers, key=lambda row: json.dumps(row, sort_keys=True))
 
 
@@ -58,7 +79,8 @@ def _observed():
     tree = ast.parse(Path(mcp_server.__file__).read_text())
     dispatch = {node.name: hashlib.sha256(ast.dump(node).encode()).hexdigest()
                 for node in ast.walk(tree) if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name in {"Tools", "_Tools", "call_tool", "handle_message", "_job_paths"}}
+}
+    dispatch["<module>"] = hashlib.sha256(ast.dump(tree).encode()).hexdigest()
     return {"mcp_dispatch": dispatch, "routes": routes, "mcp_fields": sorted(field.name for field in fields(mcp_server.McpDeps)),
             "mcp_tools": tools, "event_writers": _event_writers()}
 
@@ -93,6 +115,7 @@ def _assert_classification(access):
             continue
         category, kind, action = part.split(":")
         assert category == "content" and kind in KINDS and action in ACTIONS
+        assert MATRIX[kind][action], f"blank matrix cell: {kind}:{action}"
 
 
 def test_job_event_types_have_a_closed_classified_inventory():
@@ -127,3 +150,31 @@ def test_sensitive_newer_callbacks_and_ledger_routes_are_not_operational_content
         rows = [row for row in frozen["routes"] if row["method"] == "GET" and row["path"] == path]
         assert len(rows) == 1
         assert rows[0]["access"] == ("content:receipt:read" if "{request_id}" in path else "none")
+
+
+def test_blank_matrix_classification_is_rejected():
+    import pytest
+    with pytest.raises(AssertionError, match="blank matrix cell"):
+        _assert_classification("content:chat:cancel")
+
+
+def test_aliased_event_writers_are_detected():
+    source = """from gateway.media_jobs import append_event as imported
+
+def helper(job_id):
+    emit = imported
+    emit(job_id, 'alias_type', {})
+    second = media_jobs.append_event
+    second(job_id, 'attribute_alias_type', {})
+"""
+    rows = _writers_in_source(source, "status_endpoint.py")
+    assert [r["event"] for r in rows] == ["'alias_type'", "'attribute_alias_type'"]
+    assert {r["call"] for r in rows} == {"append_event"}
+
+
+def test_continuation_and_full_metadata_have_their_distinct_actions():
+    for row in _frozen()["routes"]:
+        if row["method"] == "POST" and row["path"] in {"/v1/responses", "/openai/v1/responses"}:
+            assert row["access"] == "content:chat:read"
+        if "metadata=full" in row.get("note", ""):
+            assert "content:prompt:reuse" in row["access"]

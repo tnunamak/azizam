@@ -1,255 +1,255 @@
 {
   "event_writers": [
     {
+      "path": "gateway/me_make.py",
+      "function": "cancel_job",
+      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395",
       "call": "_event",
       "event": "'cancel_requested'",
-      "function": "cancel_job",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395"
+      "access": "content:job:read"
     },
     {
-      "call": "_event",
-      "event": "'canceled'",
+      "path": "gateway/me_make.py",
       "function": "_settle_canceled",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "4c68fcb1181d52c288bb5a156e1cfeac5900026dd6e3369c4ca9d2f19fc99047"
-    },
-    {
+      "source_sha256": "4c68fcb1181d52c288bb5a156e1cfeac5900026dd6e3369c4ca9d2f19fc99047",
       "call": "_event",
       "event": "'canceled'",
-      "function": "cancel_job",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395"
+      "access": "content:job:read"
     },
     {
+      "path": "gateway/me_make.py",
+      "function": "cancel_job",
+      "source_sha256": "a7e6124dbda3b0b834d1316570010de63b95512e695eb9e00dfd1a8582dff395",
+      "call": "_event",
+      "event": "'canceled'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/me_make.py",
+      "function": "_fail",
+      "source_sha256": "af7f5578ddb3fd68d40ee2206486d28ad5c9546fd6c2e6d957ba20af6e9b81a3",
       "call": "_event",
       "event": "'failed'",
-      "function": "_fail",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "af7f5578ddb3fd68d40ee2206486d28ad5c9546fd6c2e6d957ba20af6e9b81a3"
+      "access": "content:job:read"
     },
     {
+      "path": "gateway/me_make.py",
+      "function": "_submit",
+      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc",
       "call": "_event",
       "event": "'queued'",
-      "function": "_submit",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc"
+      "access": "content:job:read"
     },
     {
+      "path": "gateway/me_make.py",
+      "function": "_run",
+      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa",
       "call": "_event",
       "event": "'started'",
-      "function": "_run",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa"
+      "access": "content:job:read"
     },
     {
+      "path": "gateway/me_make.py",
+      "function": "_run",
+      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa",
       "call": "_event",
       "event": "'succeeded'",
-      "function": "_run",
-      "path": "gateway/me_make.py",
-      "access": "content:job:read",
-      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa"
+      "access": "content:job:read"
     },
     {
+      "path": "gateway/api.py",
+      "function": "store_event_appender",
+      "source_sha256": "0db5dabdb5beb2bf94a9106a03547f9074cfdccaed26a5b9950e9bed1fb9734a",
       "call": "append_client_event",
       "event": "event_type",
-      "function": "store_event_appender",
-      "path": "gateway/api.py",
       "access": "content:job:read",
       "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
-      "source_sha256": "0db5dabdb5beb2bf94a9106a03547f9074cfdccaed26a5b9950e9bed1fb9734a",
       "resolved_types": [
         "progress",
         "note"
       ]
     },
     {
+      "path": "proxy.py",
+      "function": "_run_image_media_job",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3",
       "call": "append_event",
       "event": "'attempt'",
-      "function": "_run_image_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+      "access": "content:job:read"
     },
     {
-      "call": "append_event",
-      "event": "'completed'",
+      "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d"
-    },
-    {
+      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d",
       "call": "append_event",
       "event": "'completed'",
-      "function": "_run_video_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+      "access": "content:job:read"
     },
     {
+      "path": "proxy.py",
+      "function": "_run_video_media_job",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0",
       "call": "append_event",
-      "event": "'failed'",
+      "event": "'completed'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_mark_audio_media_job_failed",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "02a43e7d19baebb7a88822ccd7c60e2d2ded969b8b24fbc3375fc3d383647b21"
-    },
-    {
+      "source_sha256": "02a43e7d19baebb7a88822ccd7c60e2d2ded969b8b24fbc3375fc3d383647b21",
       "call": "append_event",
       "event": "'failed'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_mark_image_media_job_failed",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "04581e1ce993af41eddb64a2b54484e1ff9eb583c115fbf30f131bc2f01fea65"
-    },
-    {
+      "source_sha256": "04581e1ce993af41eddb64a2b54484e1ff9eb583c115fbf30f131bc2f01fea65",
       "call": "append_event",
       "event": "'failed'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_mark_video_media_job_failed",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "9baa99f1b40d6a95b147b9da15d193aee891952b5c163c3faf9dad0dfd4db3e4"
+      "source_sha256": "9baa99f1b40d6a95b147b9da15d193aee891952b5c163c3faf9dad0dfd4db3e4",
+      "call": "append_event",
+      "event": "'failed'",
+      "access": "content:job:read"
     },
     {
-      "call": "append_event",
-      "event": "'progress'",
+      "path": "proxy.py",
       "function": "_run_video_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
-    },
-    {
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0",
       "call": "append_event",
       "event": "'progress'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "report",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "7d57b65f4619d79f7dbade4a58d8fa382b27db5117dc423438cc8c356a92cd2b"
+      "source_sha256": "7d57b65f4619d79f7dbade4a58d8fa382b27db5117dc423438cc8c356a92cd2b",
+      "call": "append_event",
+      "event": "'progress'",
+      "access": "content:job:read"
     },
     {
-      "call": "append_event",
-      "event": "'queued'",
+      "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8530c9b2098ba50cde6e0a300198f8e457d278fadd8613e0be5f550cd65f8c22"
-    },
-    {
+      "source_sha256": "8530c9b2098ba50cde6e0a300198f8e457d278fadd8613e0be5f550cd65f8c22",
       "call": "append_event",
       "event": "'queued'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_submit_video_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "4600c7ffa51a2c0576894ac4c7df1d1df3a8f4b5e00c066d3f2188ddafd6db73"
-    },
-    {
+      "source_sha256": "4600c7ffa51a2c0576894ac4c7df1d1df3a8f4b5e00c066d3f2188ddafd6db73",
       "call": "append_event",
       "event": "'queued'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "eb22b324241d00f466535e0cc22255c1bb90bf0ef5bdc7d86ef58e737d9976bf"
+      "source_sha256": "eb22b324241d00f466535e0cc22255c1bb90bf0ef5bdc7d86ef58e737d9976bf",
+      "call": "append_event",
+      "event": "'queued'",
+      "access": "content:job:read"
     },
     {
+      "path": "proxy.py",
+      "function": "_run_image_media_job",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3",
       "call": "append_event",
       "event": "'retry'",
-      "function": "_run_image_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+      "access": "content:job:read"
     },
     {
+      "path": "proxy.py",
+      "function": "_run_image_media_job",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3",
       "call": "append_event",
       "event": "'retry'",
-      "function": "_run_image_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+      "access": "content:job:read"
     },
     {
-      "call": "append_event",
-      "event": "'started'",
+      "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d"
-    },
-    {
+      "source_sha256": "afc6e449b8aa453bae4358beb0dcb2481cb2feed569ece90cafef98edd17b30d",
       "call": "append_event",
       "event": "'started'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_run_image_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
-    },
-    {
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3",
       "call": "append_event",
       "event": "'started'",
-      "function": "_run_video_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+      "access": "content:job:read"
     },
     {
+      "path": "proxy.py",
+      "function": "_run_video_media_job",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0",
+      "call": "append_event",
+      "event": "'started'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
+      "function": "_run_video_media_job",
+      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0",
       "call": "append_event",
       "event": "'submitted'",
-      "function": "_run_video_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "83a7ebc0ea765d04a0fd0228e6cc6cd668cf8fa8203801480978326c007efef0"
+      "access": "content:job:read"
     },
     {
-      "call": "append_event",
-      "event": "'succeeded'",
+      "path": "proxy.py",
       "function": "_protocol_image_result",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "ff9be2f2c4ebfbfa7330965d633a1a990c7a303b8091488030fe238f76c08f2f"
-    },
-    {
+      "source_sha256": "ff9be2f2c4ebfbfa7330965d633a1a990c7a303b8091488030fe238f76c08f2f",
       "call": "append_event",
       "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "proxy.py",
       "function": "_run_identity_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "7758f5955141dda2b0be4ace038ce8de3112e23e61e8261cc50c31b4d4becf62"
-    },
-    {
+      "source_sha256": "7758f5955141dda2b0be4ace038ce8de3112e23e61e8261cc50c31b4d4becf62",
       "call": "append_event",
       "event": "'succeeded'",
-      "function": "_run_image_media_job",
-      "path": "proxy.py",
-      "access": "content:job:read",
-      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3"
+      "access": "content:job:read"
     },
     {
+      "path": "proxy.py",
+      "function": "_run_image_media_job",
+      "source_sha256": "8776114f4daaaed966d60f592c62a76c45ee6538b15da9766db09b67a11557d3",
+      "call": "append_event",
+      "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/media_jobs.py",
+      "function": "append_client_event",
+      "source_sha256": "00e205787901d5bf147325d7440b8a34abe5b84aa5cf8e41f9b416f9fc23b513",
       "call": "append_event",
       "event": "event_type",
-      "function": "append_client_event",
-      "path": "gateway/media_jobs.py",
       "access": "content:job:read",
       "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
-      "source_sha256": "00e205787901d5bf147325d7440b8a34abe5b84aa5cf8e41f9b416f9fc23b513",
       "resolved_types": [
         "progress",
         "note"
       ]
     },
     {
+      "path": "gateway/me_make.py",
+      "function": "_event",
+      "source_sha256": "33f8dbd97bebb11094b3975584065f7459cd10ea878ed12bc97ce0b1a97ede3e",
       "call": "append_event",
       "event": "kind",
-      "function": "_event",
-      "path": "gateway/me_make.py",
       "access": "content:job:read",
       "note": "Dynamic trusted lifecycle or validated client event; remains open until step 3.",
-      "source_sha256": "33f8dbd97bebb11094b3975584065f7459cd10ea878ed12bc97ce0b1a97ede3e",
       "resolved_types": [
         "queued",
         "started",
@@ -1424,7 +1424,7 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_download",
       "method": "GET",
       "path": "/me/api/media/{asset_id}/download",
-      "access": "content:creation:link+content:prompt:read",
+      "access": "content:creation:link+content:prompt:reuse",
       "note": "metadata=full additionally requires the viewer's saved prompt."
     },
     {
@@ -2007,14 +2007,14 @@
       "handler": "proxy.assets_content",
       "method": "GET",
       "path": "/openai/v1/assets/{asset_id}/content",
-      "access": "content:creation:read+content:prompt:read",
+      "access": "content:creation:read+content:prompt:reuse",
       "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.assets_content",
       "method": "GET",
       "path": "/v1/assets/{asset_id}/content",
-      "access": "content:creation:read+content:prompt:read",
+      "access": "content:creation:read+content:prompt:reuse",
       "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
@@ -2093,15 +2093,15 @@
       "handler": "proxy.cancel_response",
       "method": "POST",
       "path": "/openai/v1/responses/{response_id}/cancel",
-      "access": "content:chat:cancel",
-      "note": "Current route is unsupported; step 3 must keep the chat cancel matrix cell Deny."
+      "access": "none",
+      "note": "Unsupported cancel route; no matrix cell or content authority."
     },
     {
       "handler": "proxy.cancel_response",
       "method": "POST",
       "path": "/v1/responses/{response_id}/cancel",
-      "access": "content:chat:cancel",
-      "note": "Current route is unsupported; step 3 must keep the chat cancel matrix cell Deny."
+      "access": "none",
+      "note": "Unsupported cancel route; no matrix cell or content authority."
     },
     {
       "handler": "proxy.chat_completions",
@@ -2143,13 +2143,15 @@
       "handler": "proxy.create_response",
       "method": "POST",
       "path": "/openai/v1/responses",
-      "access": "own-account+content:chat:reuse"
+      "access": "content:chat:read",
+      "note": "Stored-response continuation uses ContentRead, including same-App no-person rows."
     },
     {
       "handler": "proxy.create_response",
       "method": "POST",
       "path": "/v1/responses",
-      "access": "own-account+content:chat:reuse"
+      "access": "content:chat:read",
+      "note": "Stored-response continuation uses ContentRead, including same-App no-person rows."
     },
     {
       "handler": "proxy.delete_response",
@@ -2209,14 +2211,14 @@
       "handler": "proxy.images_content",
       "method": "GET",
       "path": "/openai/v1/images/{image_id}/content",
-      "access": "content:creation:read+content:prompt:read",
+      "access": "content:creation:read+content:prompt:reuse",
       "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
       "handler": "proxy.images_content",
       "method": "GET",
       "path": "/v1/images/{image_id}/content",
-      "access": "content:creation:read+content:prompt:read",
+      "access": "content:creation:read+content:prompt:reuse",
       "note": "Signed bearer bytes; metadata=full additionally authenticates the fetcher for their prompt."
     },
     {
@@ -3199,9 +3201,51 @@
     "succeeded": "content:job:read"
   },
   "mcp_dispatch": {
+    "McpDeps": "d36ad610e444a315a32352b9e7f294b7d9b025dcc52c85efb99b90b4bfc3bd7d",
+    "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
+    "_decode_header_value": "34648136c6a4cdfc8071129770a4beb60738f3a5053d8f974c6ce18c4b605878",
+    "_normal_origin": "96df6d69434cf32e0e38a64189bb2fcb0fad04285c4e48c1cd66d970f6fbbcea",
+    "_origin_allowed": "116c7b2c42c96ce89bfedc29bfd0cdcdb90870b978693e7cccbb0956b45ab704",
+    "_asset": "bdeb44dadbbd2f2bb8186cf7a2112a938431337c60f64edb4569e44c46e49f7e",
+    "_assets_from_response": "cf283156a090b1a96432eb757ba933193baa4661e69a480b818b7bf5b35ada20",
+    "_job_family": "0d1684dce09411c6a345fb99bbfc4cbbffc4c1c09ff44cbedd7907393ba8f187",
     "_job_paths": "7c5795ab8594aadbbbf6f357064596c572702cd82aab0b35c4b45e5c94a36465",
+    "_normalize_job": "2dcd8c0b5d75a70126d32343159f807c6f945c78f9ceda43adba1daf45377944",
     "Tools": "7be10b7c1a00897ed30cf61ad5f09796c41a6c038d1d0fbee95543e5c6842fb1",
+    "tool_result": "3fd760fa9e5e6847f39c9dcf8348b0932e101af7140aaf482c4057b9b7700d46",
     "call_tool": "abd0ca98c708e34effb9d7c763f0d953dc70471ef6e57ff97b2e0cd2e85c039d",
-    "handle_message": "955ccc6efd06b31fafd01f36d62ba64ea1c3c8e12885d539e7d1632f06d6b7be"
+    "_json": "d6cf8d0eccd7337c47b15be6d9560f65a5840c0594a91465a4f77f5eb985a098",
+    "_bad_request": "a294e7977da5864ff89dd16e015edfcec2fa1d8e301de8da7bdd95120665f97a",
+    "_validate_modern": "432f7895202e0642c6fa654e8220a821e5df44273f09d0619cca939675224d58",
+    "_valid_envelope": "22fc29e2742465753487013398e5186278267ef295aa1bc64093a58d5fda2587",
+    "handle_message": "955ccc6efd06b31fafd01f36d62ba64ea1c3c8e12885d539e7d1632f06d6b7be",
+    "_quoted": "b5c1398422b4a8d3081e4f0d7620a28718369daca734207393de9e2fc1c0ae7d",
+    "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
+    "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
+    "__init__": "6d113975bcca33ab17d54a78378c838f77d09011921d134c0286cf26a98cb2dd",
+    "_speech_names": "27631203d897683116b6ad58c8e63a6803f8dfdec1b6dc5c273d674d96abacb2",
+    "_catalog": "71ae813200fdc060939f2dba7acb9faa48c8f13abab0d60ece0dbeb2b2ad5dfe",
+    "resolve": "7d5dc8dfc14f531bcfa547db031ed466b2ebfcfdd1a3b3b7e716ed24a91a67a9",
+    "capabilities": "d15f7e84d08ffb4ffe70440626b3eab193d749a522aeba2e0701fe6d93bacae2",
+    "_describe": "67a43a10651421e480992293f9591739fe993a7a89b1a64f4180cfbb9e6b5ee1",
+    "_mode_for": "9822114f43518ae70aa3e2e036a408110ef3b0418126c39489ce8f438afa194c",
+    "run": "852c8514b9ddcb389f3298f498fc712adcd98da855f21183f65769218714972f",
+    "_speech": "08ce5e3b4dbeb91a3edcb6d8f71bee8eef24cc971c7e4bc1195ca9db50b9eac7",
+    "_send": "190eb4042ff7ea620fbe8b128b6e769daf40faa55e3f2cdbed60841c9bdbdabf",
+    "_wait": "62f9ea33e8db6edbb2567654350e22765ccf795e41b4e94ac4ef865af207055e",
+    "_done": "758fcaf9dd5da692064f7d820b5e4bb15dc2efb3eb22d29e7ec2cd0a19c84f77",
+    "_poll": "aee312761350f28e2290a9e3b5035661374b2dee6245e18b336e99e3774ff498",
+    "_await": "7a6273f815f3c0951d8290f9acd526a08751bdb6823ad69a95fdc903bf8a8923",
+    "_job_assets": "fd4c6f32ce5644515a3314cbae97b1fe8bb293a69e3fdc329cbac6abbd331a49",
+    "job": "0ef6e3762a63fe1cb8757e71beb72fd3d722d6d69b9fb678a02389de3ec6acd5",
+    "rename": "2f7b61af84cd091b444556c024ab01e678e568de109e6d232ae85dc7a3dd7cdc",
+    "base": "0d79c831f9739e2fffcef5e991fe1c26c61d0f9f70a6f446f46cadb7358bca8e",
+    "metadata_url": "beaf2ba02aadc666bb450ec003f221647b458575d3ebc55a91258324e5226ea7",
+    "dispatch": "53ccec55be40dacbb05313d7625f8cf06d11ed24f923ac934792f0cbdf3821d9",
+    "mcp_post": "853a486b3c95a9b2dd5ff0fdc00ac76a6860e6e56ab34eae178a491563fa6c46",
+    "mcp_no_stream": "dc1118144f06960affd356e3f599ae76703726c95f144af06f2d3554079690b3",
+    "protected_resource": "a9bd38a702db1bfd58c9833c829c59973acf8b5fd595d733418f0542f3cf5215",
+    "rank": "0b045bdafd1ab65458de7bd9f45a79a1c2fa18bd5cd8a8eeedb53a30d8d46f55",
+    "<module>": "5e2a05523df37ffffecb7752ae84ac8d6b33537be2ac7108a7304cc09472824e"
   }
 }
