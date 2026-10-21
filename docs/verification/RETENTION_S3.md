@@ -28,8 +28,8 @@ Paths below are relative to that installed `litellm/` directory.
 | `maximum_spend_logs_retention_period` | owner opt-in recommendation `7d` | `proxy/proxy_server.py:7479`; `proxy/db/db_transaction_queue/spend_log_cleanup.py:44` |
 
 `registry/litellm_no_content.yml` supplies the values to the config compiler
-and launcher. The child inherits only runtime basics and declared credential
-references. It does not inherit arbitrary logging, telemetry or debug settings.
+and launcher. The child inherits runtime basics, declared credential references and the
+operational cost-map, HTTP(S) proxy, NO_PROXY and REQUESTS_CA_BUNDLE variables. It does not inherit arbitrary logging, telemetry or debug settings.
 Compose supplies the same five fixed environment values and no database URL.
 
 ## Metadata decision
@@ -40,7 +40,10 @@ LiteLLM spend rows, IP metadata, error text and tracebacks add no required
 capability, so new spend and error rows are disabled.
 
 LiteLLM's numeric key/user/team spend updates remain necessary for virtual-key
-budgets. Its aggregate daily accounting remains operational metadata. The
+budgets. Its daily accounting keeps the User-Agent tag, model, endpoint and a per-day
+request_id. The request_id is the most recently aggregated value for that
+day/tag/key/model/provider/endpoint combination, not a list of every request.
+A client-supplied `user` field also reaches daily end-user accounting. The
 canary checks the real success logger, queued cost increments and budget guard.
 It does not disable all spend updates to obtain an empty database.
 
@@ -80,13 +83,16 @@ old rows, backups or WAL are erased.
 
 Managed execution checks the generated launch profile, a private launch proof,
 and the process PID/start-time/group and command line. It rejects stale proof
-or a different config. The database check uses a read-only transaction and
+or a different config. The database check uses a read-only transaction with a five-second statement timeout and
 returns three booleans, never rows or credentials. It checks config overrides,
 key `metadata.logging`, team `metadata.logging` and team
 `metadata.callback_settings` (`proxy/litellm_pre_call_utils.py:476-547`).
 
 The check runs at startup, on a process-generation change, after gateway key
-writes and hourly. Both local chat through LiteLLM and paid execution refuse
+writes and hourly while healthy. Refusals retry after 30 seconds, then every
+60 seconds until healthy; successful checks restore the hourly interval.
+Every problem-state change logs only a fixed-vocabulary slug. Status and the
+operator-facing refusal show the slug and the setting-specific fix. Both local chat through LiteLLM and paid execution refuse
 with `503 litellm_content_unverified` until it passes. Key listing/deletion
 remain available. Direct engine traffic and LiteLLM's internal gateway hop do
 not cross this execution gate.
@@ -108,9 +114,24 @@ Run the offline rehearsal against a copy of the newly generated YAML:
 `preflight-flags.json` has exactly `config_unsafe`, `key_unsafe` and
 `team_unsafe`, each `false`. Use `--no-database` only for a deployment with no
 database. Without either option the command exits 2 and reports
-`config_valid_database_unchecked`. The script starts nothing, opens no socket
-and never connects to PostgreSQL. It prints no config values or credentials.
-Deployment still performs the real generation and database check.
+`config_valid_database_unchecked`. These two offline modes open no socket. The opt-in live check below opens a
+database connection, runs the same DB_CHECK_SQL inside a read-only transaction
+with a five-second statement timeout, and has a ten-second outer timeout. It
+reports only a fixed problem slug (or profile_valid), never a URL, row or
+exception. A missing URL refuses as database_url_missing. Connection, schema
+and permission failures refuse as database_check_unavailable.
+
+After deployment, the lead will run this exact command from the deployed
+checkout, in a shell where DATABASE_URL has already been securely supplied:
+
+```sh
+./venv/bin/python scripts/rehearse-litellm-content \
+  --config data/litellm.config.yaml --database-url-env DATABASE_URL
+```
+
+Do not put the URL in argv or print it. This implementation pass did not run
+that command against the live database. Deployment still performs the process
+generation and database checks.
 
 The existing read-only audit says `LiteLLM_Config`, active virtual-key and team
 rows were absent. That supports deployment readiness at the audit time. This
@@ -128,10 +149,41 @@ URL-encoded and base64 forms.
 Separate markers cover message text, tool arguments, descriptions, schemas and
 tool results. They must reach the fake engine and appear in no database sink,
 index table or output line. Tool names must also be absent from
-`LiteLLM_ToolTable`. The positive control leaves the shim off and must persist
-the name, proving that its sink is exercised. It also enables spend/error
-logging and uses the default log level;
-it must expose content to both the database scanner and output scanner.
+`LiteLLM_ToolTable`. Five subprocess cases isolate the controls:
+
+- The unchanged profile keeps all content markers out of every sink.
+- Disabling only the tool shim puts the name in ToolTable.
+- Removing only LITELLM_LOG puts the prompt in stderr.
+- Enabling spend rows alone keeps tool content out of those rows.
+- Compared with that spend-row case, enabling only store_prompts_in_spend_logs
+  exposes tool names, arguments, descriptions and schemas, even with
+  turn_off_message_logging still true.
+
+Each case runs buffered chat, streaming chat, embeddings, 400 and 500 prompt
+echoes. The initial budget requests use a synthetic auth dependency; the
+separate end-user probe clears that override, rejects an unauthenticated
+embedding request and authenticates through the configured X-Litellm-Key
+header with a synthetic master key. Its client `user` reaches the real daily
+end-user write queue. Daily tag queues contain the User-Agent tag, model,
+endpoint and request_id. Prisma sinks remain recording fakes; no real DB is
+used by these canaries.
+
+The pinned failure-hook source returns False when disable_error_logs is true
+and otherwise falls through to None. A single-setting error-row mutation did
+not create rows in this build, so it is not presented as a positive control.
+The unchanged profile still asserts zero error rows for both HTTP error cases.
+
+The launcher and sidecar reject NUM_WORKERS/--num_workers values other than 1
+and reject --reload before shim imports or database publication. Uvicorn child
+interpreters would otherwise start without the process-local shim.
+
+The disposable Compose journey exposed two readiness details: LITELLM_LOG
+sets the output handler threshold but leaves the logger level at WARNING,
+and the router installs sync_deployment_callback_on_success automatically.
+The launcher now sets the three LiteLLM logger levels to CRITICAL as well.
+The checker accepts only an empty success-callback list or that one pinned
+internal callback, which increments a per-minute in-memory success counter
+(router.py:6674); arbitrary callbacks remain refused.
 
 Measured ceilings on 2026-10-21: pytest 15,358 (full hermetic collection),
 Vitest 3,051 (`vitest list --json`), Playwright 492 (471 + 3 + 18 across the
@@ -170,3 +222,18 @@ was weakened. Load15 was below 48 before each full launch.
 `~/.tmp/azizam-retention-s3/` on the implementation host. No live gateway,
 LiteLLM or PostgreSQL connection was used for this verification. The pinned
 Compose image was checked statically; a Compose container was not started.
+
+
+## Review follow-up verification
+
+The initial committed regression run reproduced 28 failures (34 passed). It
+covered refusal diagnostics/recovery, safe operational environment variables,
+read-only rehearsal, durable evidence links, legacy-row disclosure and worker
+spawn refusal. The five isolated mutation canaries subsequently passed.
+The separate Compose regression also failed first for effective logger levels
+and the automatically installed router callback.
+
+Rows written before this change remain until purged. This applies to spend
+rows, error rows and tool inventory. No purge, live database check, gateway
+restart or LiteLLM restart was performed. The lead owns the purge after
+operator approval.

@@ -136,7 +136,7 @@ async def compose_database_unseen(base_url: str) -> bool:
     # unreachable configured DB. Missing diagnostics are not proof of absence.
     if details.get("db") != "Not connected":
         return True
-    if details.get("log_level") != "CRITICAL" or details.get("cache") is not None or details.get("success_callbacks") != []:
+    if details.get("log_level") != "CRITICAL" or details.get("cache") is not None or details.get("success_callbacks") not in ([], ["sync_deployment_callback_on_success"]):
         raise ValueError("Compose effective runtime differs from profile")
     return False
 

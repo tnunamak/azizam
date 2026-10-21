@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import inspect
+import logging
 import os
 import sys
 from pathlib import Path
@@ -72,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         return 78
     try:
         install_no_content_shim()
+        # Upstream applies LITELLM_LOG to the handler but readiness reports
+        # logger levels. Set both sides of the effective diagnostic contract.
+        for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+            logging.getLogger(name).setLevel(logging.CRITICAL)
         if args.content_proof is not None:
             # Only the managed gateway needs a PID-bound proof. The Compose
             # launcher is standalone and uses its static shipped mount instead.
