@@ -25,6 +25,8 @@ export interface ConfirmDialogProps {
   /** e.g. "Disable app". Defaults to "Confirm". */
   confirmLabel?: string;
   cancelLabel?: string;
+  /** The action is not available yet; the dialog only explains. */
+  confirmDisabled?: boolean;
   /** Destructive styling (default). Set false for non-destructive confirms. */
   danger?: boolean;
   /** Typed-name mode for high-impact deletes (presentation law #5): the
@@ -61,6 +63,7 @@ function ConfirmDialogContent({
   description,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
+  confirmDisabled = false,
   danger = true,
   typedName,
   returnFocus: invoker,
@@ -153,7 +156,7 @@ function ConfirmDialogContent({
           type="button"
           variant={danger ? "destructive" : "default"}
           aria-busy={pending || undefined}
-          disabled={pending || nameMismatch}
+          disabled={pending || nameMismatch || confirmDisabled}
           onClick={() => void handleConfirm()}
         >
           {pending && <Spinner className="size-4" />}

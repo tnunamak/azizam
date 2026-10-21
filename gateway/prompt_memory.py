@@ -743,42 +743,64 @@ def _read_media_marker(folder: Path) -> dict[str, Any] | None:
         os.close(fd)
 
 
-def _write_media_marker(folder: Path, *, replace: bool) -> dict[str, Any]:
+def _write_media_marker(
+    folder: Path, *, replace: bool, expected: tuple[int, int] | None = None,
+) -> dict[str, Any]:
     """Write a new marker. ``replace`` is the owner's confirmation; otherwise nothing may already be there.
 
-    The owner's replacement goes through a scratch file and os.replace. The adoption
-    path creates the marker with O_EXCL instead of a hard link, so it works on
-    filesystems without hard links (FAT, exFAT, some SMB mounts). Either way, a
-    failed write leaves no marker behind.
+    The folder is opened once and every step runs against that open directory, so a folder renamed
+    or remounted after the identity check cannot receive the marker: ``expected`` is compared with the
+    directory actually opened, and a mismatch raises before anything is written. The owner's
+    replacement goes through a scratch file and os.replace. The adoption path creates the marker
+    with O_EXCL instead of a hard link, so it works on filesystems without hard links (FAT, exFAT,
+    some SMB mounts). Either way, a failed write leaves no marker behind.
     """
     marker = {"volume_id": uuid.uuid4().hex, "created_at": int(time.time())}
-    private_io.ensure_private_dir(folder)
-    path = folder / MEDIA_FOLDER_MARKER
     payload = json.dumps(marker).encode("utf-8")
-    if replace:
-        scratch = folder / (MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp")
+    # O_NOFOLLOW: a folder that is itself a symlink was always refused here.
+    folder_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        opened = os.fstat(folder_fd)
+        if expected is not None and (opened.st_dev, opened.st_ino) != expected:
+            raise OSError("media folder changed")
+        os.fchmod(folder_fd, 0o700)
+        if replace:
+            scratch = MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp"
+            try:
+                _write_marker_file(scratch, payload, folder_fd)
+                os.replace(scratch, MEDIA_FOLDER_MARKER, src_dir_fd=folder_fd, dst_dir_fd=folder_fd)
+            finally:
+                _unlink_in(scratch, folder_fd)
+            return marker
         try:
-            private_io.create_private_file(scratch)
-            with scratch.open("wb") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(scratch, path)
-        finally:
-            scratch.unlink(missing_ok=True)
+            # Raises FileExistsError when a marker appeared after the absence check; nothing is touched then.
+            _write_marker_file(MEDIA_FOLDER_MARKER, payload, folder_fd)
+        except FileExistsError:
+            raise
+        except BaseException:
+            _unlink_in(MEDIA_FOLDER_MARKER, folder_fd)
+            raise
         return marker
-    # Raises FileExistsError when a marker appeared after the absence check; nothing is touched then.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    finally:
+        os.close(folder_fd)
+
+
+def _write_marker_file(name: str, payload: bytes, folder_fd: int) -> None:
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder_fd)
     try:
         os.fchmod(fd, 0o600)
-        os.write(fd, payload)
+        if os.write(fd, payload) != len(payload):
+            raise OSError("media marker was written short")
         os.fsync(fd)
-    except BaseException:
+    finally:
         os.close(fd)
-        path.unlink(missing_ok=True)
-        raise
-    os.close(fd)
-    return marker
+
+
+def _unlink_in(name: str, folder_fd: int) -> None:
+    try:
+        os.unlink(name, dir_fd=folder_fd)
+    except FileNotFoundError:
+        pass
 
 
 def _recorded_volume(conn: sqlite3.Connection) -> str | None:
@@ -843,50 +865,29 @@ def _adopt_fresh_folder(folder: Path, *, prompt_path: Path | None, path: Path | 
         with _read_connection(prompt_path) as other:
             if _has_library_entries(other):
                 return
-    _record_unrecorded_folder(folder, path=path, fresh_library=True)
+    _record_fresh_folder(folder, path=path)
 
 
-def _record_unrecorded_folder(
-    folder: Path, *, path: Path | None, fresh_library: bool, expected: tuple[int, int] | None = None,
-) -> str | None:
-    """Write the marker and record it, or do nothing. Returns the new volume id, None when nothing was recorded.
-
-    Only a folder with no recorded identity and no marker qualifies. ``fresh_library`` adds the
-    fresh-install rule (no Library entry at all); the evidence path leaves that to its caller.
-    """
+def _record_fresh_folder(folder: Path, *, path: Path | None) -> None:
     conn = _connect(path)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
             # The checks repeat inside the write lock, so two first reads cannot both adopt.
             if (_recorded_volume(conn) is None and not os.path.lexists(folder / MEDIA_FOLDER_MARKER)
-                    and not (fresh_library and _has_library_entries(conn))):
-                _folder_identity(folder, expected)
+                    and not _has_library_entries(conn)):
                 marker = _write_media_marker(folder, replace=False)
                 _remember_media_marker(conn, marker)
                 conn.commit()
-                return str(marker["volume_id"])
-            conn.rollback()
-        except (OSError, ValueError, PublicFailure):
+            else:
+                conn.rollback()
+        except (OSError, ValueError):
             conn.rollback()
         except BaseException:
             conn.rollback()
             raise
     finally:
         conn.close()
-    return None
-
-
-def adopt_folder_on_evidence(
-    folder: Path, *, path: Path | None = None, expected: tuple[int, int] | None = None,
-) -> str | None:
-    """Record a folder the caller found holds most of the Library's files. Returns the volume id, or None.
-
-    The caller judges the evidence; this keeps the safe write. It never replaces a recorded
-    identity or an existing marker, so a changed volume (a mismatch) still needs the owner.
-    A failed write leaves the folder unconfirmed.
-    """
-    return _record_unrecorded_folder(folder, path=path, fresh_library=False, expected=expected)
 
 
 def media_folder_state(
@@ -929,7 +930,7 @@ def confirm_media_folder(
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            marker = _write_media_marker(folder, replace=True)
+            marker = _write_media_marker(folder, replace=True, expected=expected)
         except OSError as exc:
             raise PublicFailure("media_folder_unavailable", 503) from exc
         _remember_media_marker(conn, marker)

@@ -92,24 +92,29 @@ clears the signed-in person's own entries whose file is gone:
   recorded identity is never regenerated, even after every entry is removed.
   The marker is created with `O_EXCL`, so a filesystem without hard links (FAT,
   exFAT, some SMB mounts) works.
-- An existing install with nothing recorded adopts its folder on the first
-  Library read when the folder holds the files of more than half of the
-  Library's checkable items (exactly half is not enough; an id that is not a
-  64-digit hash is not counted). The marker is written like the fresh-install
-  one (`O_EXCL`, checks repeated inside the write lock) and the adoption is
-  audited as `media.folder.self_confirm` with a system actor and the two counts.
-  A folder with a recorded identity that does not match (`mismatch`) is never
-  adopted this way. A confirmed folder is not counted on read.
-- Any other existing install, and intentional moves, need the owner, once. The Library
-  read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`. Until
-  the folder is confirmed, the owner sees a notice with the folder path, the
-  count of missing items and **Yes, this is my media folder** (`POST /me/api/media/confirm-folder`). Members see only that
-  the owner confirms the folder once. Confirmation refuses a folder that holds
-  none of a non-empty Library (409 `media_folder_no_matches`), writes a new
-  marker, records its ID and is audited as `media.folder.confirm`. It removes
-  nothing. Back up the marker with the media and the identity with the
-  database. Never confirm merely to dismiss the notice when the expected disk
-  is absent.
+- Existing installs and intentional moves need the owner, once, and only when
+  they remove something. What a folder holds never confirms it: a partial copy
+  or an old backup can hold most of the Library while the rest sits on the
+  original disk, and Remove missing would then delete those entries. The
+  Library read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`.
+  Nothing asks about it while browsing; missing items stay listed as
+  unavailable. When the owner chooses **Remove missing items** and the folder
+  is not confirmed, the confirmation dialog for that action asks: it names the
+  folder, says how many of the Library's checked items have no file there, and
+  offers **Remove N items**. That one choice calls
+  `POST /me/api/media/confirm-folder` and then removes. A folder that holds none
+  of a non-empty Library cannot be confirmed (409 `media_folder_no_matches`);
+  the dialog tells the owner to check the media disk instead. A folder that
+  holds every checked item, or a Library with nothing that can be checked,
+  offers no Remove missing at all. A `mismatch` also shows a warning in the
+  owner's list of unavailable items. Members see no folder detail; if they
+  choose Remove missing they are told the owner has to confirm first.
+  Confirmation writes a new marker into the folder it checked (the marker is
+  written relative to the opened directory, and refused if that directory is
+  not the one that was listed), records its ID and is audited as
+  `media.folder.confirm`. It removes nothing by itself. Back up the marker with
+  the media and the identity with the database. Never confirm when the expected
+  disk is absent.
 - A file is gone only when nothing in the folder holds its digest under any
   suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
   reads the folder, not the Library listing.
