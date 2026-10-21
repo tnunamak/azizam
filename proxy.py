@@ -20302,7 +20302,9 @@ async def _apply_workflow_extensions_to_image_request(
         )
         if receipt is not None:
             record_image_extension_binding(receipt, result)
-    except (ExtensionError, ManifestError, ValueError) as e:
+    except ManifestError:
+        return None, _image_workflow_configuration_error(manifest, "image workflow")
+    except (ExtensionError, ValueError) as e:
         return None, _image_extension_error_response(receipt, str(e))
 
     if result.unknown_top_level:
