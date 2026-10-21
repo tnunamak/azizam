@@ -7,6 +7,7 @@ from gateway import accounts, admin_runtime, admin_store, me_media, ownership
 from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
 from gateway.runtime_auth import hash_api_key
 from proxy import AuthContext
+from starlette.requests import Request
 from tests.support.access import store_plan
 from tests.test_mcp_oauth import RESOURCE, World
 
@@ -50,9 +51,6 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
 
 def test_viewer_from_real_mcp_oauth_grant_auth(tmp_path):
     world = World(tmp_path)
-    _, tokens = world.connect()
-    grant = world.oauth.verify_access_token(tokens["access_token"], RESOURCE)
-    assert grant is not None
     # The grant's person goes through the production session-App resolver.
     person = admin_store.upsert_oidc_user("https://idp.test", "mcp-person", email="m@example.test", path=world.db)["id"]
     plan = store_plan("Local", path=world.db)
@@ -63,10 +61,14 @@ def test_viewer_from_real_mcp_oauth_grant_auth(tmp_path):
     world.people[person] = {"id": person, "email": "m@example.test"}
     _, tokens = world.connect(person=person)
     grant = world.oauth.verify_access_token(tokens["access_token"], RESOURCE)
-    with patch.object(proxy.ADMIN_STORE, "path", world.db):
-        identity = proxy._mcp_identity_for_person(grant.person_id)
+    request = Request({"type": "http", "method": "POST", "scheme": "https", "server": ("gw.test", 443),
+                       "path": proxy.MCP_PATH, "query_string": b"person_id=forged&connection_id=forged", "headers": []})
+    with patch.object(proxy.ADMIN_STORE, "path", world.db), patch.object(proxy, "MCP_OAUTH", world.oauth), patch.object(proxy, "MCP_OAUTH_ENABLED", True):
+        authenticated = proxy._authenticate_mcp_access_token(request, proxy.MCP_PATH, tokens["access_token"])
+    assert isinstance(authenticated, AuthContext)
+    identity = authenticated.identity
     scope = me_media._member_media_scope(identity.person_id, world.db)
-    viewer = Viewer(identity.person_id, identity.app_id, auth_kind="mcp_grant", connection_id=grant.grant_id,
+    viewer = Viewer(identity.person_id, identity.app_id, auth_kind="mcp_grant", connection_id=identity.connection_id,
                     owner_keys=scope.owner_keys)
     assert (viewer.person_id, viewer.app_id, viewer.connection_id) == (person, app["id"], grant.grant_id)
     row = ChatRecord(person, app["id"], origin=ContentOrigin("mcp_grant", connection_id=grant.grant_id))
