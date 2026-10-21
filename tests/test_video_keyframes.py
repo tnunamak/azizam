@@ -574,7 +574,7 @@ class KeyframeCatalogTests(unittest.TestCase):
             for name in pictures:
                 self.assertTrue(schema["properties"][name]["x-azizam-asset"], (model, name))
                 self.assertIn(name, schema["required"], (model, name))
-            self.assertNotIn("image", schema["properties"], "the first picture is the route's input_reference")
+            self.assertTrue(schema["properties"]["image"]["x-azizam-asset"], model)
 
     def test_models_are_listed_for_video_generate(self) -> None:
         by_id = {e["id"]: e for e in proxy._build_workflow_model_entries()}
