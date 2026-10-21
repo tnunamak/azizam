@@ -58,9 +58,9 @@ export type WorkflowInputsProps = {
   outputKind?: OutputKind;
   /** Plain messages by input name, shown under the field. */
   problems?: Record<string, string>;
-  /** Files chosen for inputs that travel as multipart file parts, by request field. */
+  /** Files chosen for multipart inputs, keyed by input name (fields may repeat). */
   files?: Record<string, File | null>;
-  onFileChange?: (field: string, file: File | null) => void;
+  onFileChange?: (inputName: string, file: File | null) => void;
   /** Show the technical mapping (field names, types) in a disclosure: owners only. */
   technical?: boolean;
 };
@@ -180,7 +180,7 @@ export function workflowInputProblems(
   for (const input of inputs) {
     if (input.ignored || input.accepted === false) continue;
     if (isFileInput(input, mapping)) {
-      if (input.required && !files[fileFieldOf(input, mapping)]) {
+      if (input.required && !files[input.name]) {
         problems[input.name] = missingMessage(input, output);
       }
       continue;
@@ -256,10 +256,10 @@ export function WorkflowInputs({
           isUnsupportedCombinedInput(input, inputs, mapping)
         }
         fileInput={isFileInput(input, mapping)}
-        file={files[fileFieldOf(input, mapping)] ?? null}
+        file={files[input.name] ?? null}
         onFileChange={
           onFileChange &&
-          ((file) => onFileChange(fileFieldOf(input, mapping), file))
+          ((file) => onFileChange(input.name, file))
         }
         mediaInput={isMediaBodyInput(input, mapping)}
         outputKind={outputKind}
@@ -1000,6 +1000,7 @@ function isUnsupportedCombinedInput(
   inputs: WorkflowInput[],
   mapping: WorkflowInputMapping,
 ) {
+  if (isFileInput(input, mapping)) return false;
   const target = inputTarget(input, mapping);
   if (input.name === target.field && !target.combine?.length) return false;
   const combined =
