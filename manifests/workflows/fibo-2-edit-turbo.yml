@@ -1,0 +1,60 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.fibo-2-edit-turbo
+license: "CC BY-NC 4.0 (Bria FIBO 2.0; non-commercial use only, commercial use needs a separate agreement with Bria AI)"
+intent: image.edit
+display_name: FIBO 2 Edit Turbo
+purpose: Edit a photo in four steps
+description: Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.
+source: local
+trusted: true
+typical_seconds: 7
+inputs:
+  prompt:
+    type: string
+    required: true
+  source_image:
+    label: a picture to change
+    help: The picture you want to change. The result has the same shape at about one megapixel.
+    type: asset
+    required: true
+  steps:
+    label: steps
+    help: This model is trained for 4 steps. More steps rarely help.
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 4
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/fibo-2-edit-turbo.json
+    map:
+      prompt:
+        - node: "6"
+          input: prompt
+      source_image:
+        - node: "4"
+          input: image
+      steps:
+        - node: "7"
+          input: steps
+      seed:
+        - node: "7"
+          input: seed
+requires:
+  custom_nodes:
+    - RMBG
+  models:
+    - role: diffusion_model
+      path: diffusion_models/fibo2_edit_turbo_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_4b_int8_convrot.safetensors
+    - role: vae
+      path: vae/flux2-vae.safetensors
