@@ -129,9 +129,11 @@
 # Full hermetic --collect-only -q on 2026-10-21 measured 15373.
 # Train r86: full hermetic collection measured 15567 on 2026-10-21,
 # including six MOSS/private-output/availability integration cases.
+# Review gaps r86: +1 plan held only by a disabled app, +1 young-stage sweep case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15569.
 # Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
 # Offline node:test runs: 5 compatibility + 82 Pi = 87.
-pytest = 15567
+pytest = 15569
 vitest = 3068
 playwright = 502
 
