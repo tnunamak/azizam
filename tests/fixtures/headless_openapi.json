@@ -31931,7 +31931,7 @@
         }
       ],
       "short_id": "flux2-klein",
-      "typical_seconds": null
+      "typical_seconds": 27
     },
     {
       "aliases": [
@@ -32852,7 +32852,7 @@
         }
       ],
       "short_id": "flux2-klein",
-      "typical_seconds": 6.0
+      "typical_seconds": 20
     },
     {
       "aliases": [
