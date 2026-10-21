@@ -34558,7 +34558,7 @@
         }
       ],
       "short_id": "ltx-2.5-keyframes",
-      "typical_seconds": 56.0
+      "typical_seconds": 40.0
     },
     {
       "aliases": [
@@ -34957,7 +34957,7 @@
         }
       ],
       "short_id": "minimax-h3-keyframes",
-      "typical_seconds": 135.0
+      "typical_seconds": 120.0
     },
     {
       "aliases": [],
@@ -35060,7 +35060,7 @@
         }
       ],
       "short_id": "minimax-h3-keyframes-mid",
-      "typical_seconds": 135.0
+      "typical_seconds": 120.0
     },
     {
       "aliases": [],
