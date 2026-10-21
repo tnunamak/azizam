@@ -502,14 +502,45 @@ def _media_folder_view(
         )
     except PublicFailure:
         return None
-    if state == "confirmed" or not actor.owner:
+    if state == "confirmed":
         return {"state": state}
     stored, total, uncheckable = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
                                                 receipts_path=receipts_path)
+    # More than half of the checkable Library is here: that is evidence enough, so the owner is not asked.
+    # A mismatch (an identity is already recorded) never takes this path.
+    if state == "unconfirmed" and stored * 2 > total and _adopt_on_evidence(
+        storage.folder, storage.identity, stored, total, admin_path=admin_path, jobs_path=jobs_path,
+    ):
+        return {"state": "confirmed"}
+    if not actor.owner:
+        return {"state": state}
     return {
         "state": state, "path": str(storage.folder), "library_items": total, "items_here": stored,
         "uncheckable_items": uncheckable,
     }
+
+
+def _adopt_on_evidence(
+    folder: Path, identity: tuple[int, int] | None, stored: int, total: int, *, admin_path: Path, jobs_path: Path,
+) -> bool:
+    """Record the folder when the write succeeds, and audit it. A failed write leaves it unconfirmed."""
+    volume_id = prompt_memory.adopt_folder_on_evidence(folder, path=jobs_path, expected=identity)
+    if volume_id is None:
+        return False
+    try:
+        admin_store.record_audit(
+            "media.folder.self_confirm",
+            actor_kind="system",
+            actor_id="media-folder-check",
+            actor_label="Azizam (media folder check)",
+            target_kind="media_folder",
+            target_id=volume_id,
+            metadata={"library_items": total, "items_here": stored},
+            path=admin_path,
+        )
+    except Exception:  # the adoption is committed; the audit row is a record, not the change
+        logging.getLogger(__name__).exception("could not record the media folder adoption")
+    return True
 
 
 _HEX_DIGEST = re.compile(r"[0-9a-fA-F]{64}")

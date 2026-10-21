@@ -843,29 +843,50 @@ def _adopt_fresh_folder(folder: Path, *, prompt_path: Path | None, path: Path | 
         with _read_connection(prompt_path) as other:
             if _has_library_entries(other):
                 return
-    _record_fresh_folder(folder, path=path)
+    _record_unrecorded_folder(folder, path=path, fresh_library=True)
 
 
-def _record_fresh_folder(folder: Path, *, path: Path | None) -> None:
+def _record_unrecorded_folder(
+    folder: Path, *, path: Path | None, fresh_library: bool, expected: tuple[int, int] | None = None,
+) -> str | None:
+    """Write the marker and record it, or do nothing. Returns the new volume id, None when nothing was recorded.
+
+    Only a folder with no recorded identity and no marker qualifies. ``fresh_library`` adds the
+    fresh-install rule (no Library entry at all); the evidence path leaves that to its caller.
+    """
     conn = _connect(path)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
             # The checks repeat inside the write lock, so two first reads cannot both adopt.
             if (_recorded_volume(conn) is None and not os.path.lexists(folder / MEDIA_FOLDER_MARKER)
-                    and not _has_library_entries(conn)):
+                    and not (fresh_library and _has_library_entries(conn))):
+                _folder_identity(folder, expected)
                 marker = _write_media_marker(folder, replace=False)
                 _remember_media_marker(conn, marker)
                 conn.commit()
-            else:
-                conn.rollback()
-        except (OSError, ValueError):
+                return str(marker["volume_id"])
+            conn.rollback()
+        except (OSError, ValueError, PublicFailure):
             conn.rollback()
         except BaseException:
             conn.rollback()
             raise
     finally:
         conn.close()
+    return None
+
+
+def adopt_folder_on_evidence(
+    folder: Path, *, path: Path | None = None, expected: tuple[int, int] | None = None,
+) -> str | None:
+    """Record a folder the caller found holds most of the Library's files. Returns the volume id, or None.
+
+    The caller judges the evidence; this keeps the safe write. It never replaces a recorded
+    identity or an existing marker, so a changed volume (a mismatch) still needs the owner.
+    A failed write leaves the folder unconfirmed.
+    """
+    return _record_unrecorded_folder(folder, path=path, fresh_library=False, expected=expected)
 
 
 def media_folder_state(
