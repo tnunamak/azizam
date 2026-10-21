@@ -98,6 +98,48 @@ def test_sign_out_everywhere_from_device_a_kills_device_b_asset_urls(media):
     assert all(media.client().get(url).status_code == 403 for url in urls)
 
 
+def test_inflight_mint_cannot_drop_an_ended_session_binding(media):
+    client = owner_client(media)
+    session = cookie_session(client)
+    browser_sessions.end(session, path=media.path)
+    # The request still carries its original cookie after another request ended it.
+    url = mint(client)
+    assert parse_qs(urlsplit(url).query)["family"] == [session.family_id]
+    assert media.client().get(url).status_code == 403
+
+
+def test_unregistered_service_session_urls_end_with_their_session(media):
+    client = media.client()
+    session = browser_sessions.issue({"sub": "service-account", "email": "service@example.test"},
+                                     role="owner", cookie=media.config.cookie, path=media.path,
+                                     register=False, renewable=False)
+    put_cookie(client, encode_session_cookie(session, signing_key=SIGNING_KEY))
+    url = mint(client)
+    assert int(parse_qs(urlsplit(url).query)["expires"][0]) <= session.expires_at
+    assert media.client().get(url).status_code == 200
+    browser_sessions.end(session, path=media.path)
+    assert media.client().get(url).status_code == 403
+
+
+def test_no_store_survives_the_egress_gate_replacing_a_server_error():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from gateway.browser_cache import BrowserCacheMiddleware
+    from gateway.egress import EgressGate
+
+    app = FastAPI()
+
+    @app.get("/me/api/fail")
+    def fail():
+        raise RuntimeError("synthetic handler failure")
+
+    app.add_middleware(EgressGate)
+    app.add_middleware(BrowserCacheMiddleware)
+    response = TestClient(app).get("/me/api/fail")
+    assert response.status_code == 500
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_rotation_keeps_family_urls_and_invalidates_the_memo(media):
     client = owner_client(media)
     old = cookie_session(client)

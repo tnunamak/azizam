@@ -6917,6 +6917,8 @@ def _signed_asset_request_allowed(asset_id: str, expires: int, request: Request,
         return False
     if family is None and subject is None:
         return True
+    if expires <= time.time():
+        return False
     return bool(family and subject and accounts.asset_family_allowed(subject, family, path=ADMIN_STORE.path))
 
 
