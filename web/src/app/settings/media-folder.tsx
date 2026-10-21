@@ -82,6 +82,7 @@ export function MediaFolderSection() {
 
   const folder = folderToConfirm(data);
   if (!owner || !folder || folder.library_items == null) return null;
+  if (folder.library_items === 0 && !folder.uncheckable_items) return null;
   const path = folder.path ?? "the media folder";
   const checked = folder.library_items;
   const here = folder.items_here ?? 0;
@@ -101,7 +102,9 @@ export function MediaFolderSection() {
               <span className="block">{folderChangedSentence(path)}</span>
             ) : null}
             <span className="block">
-              {noneHere
+              {checked === 0
+                ? `Azizam can't check the existing Library entries against ${path}, so it can't tell whether this is the media folder. Only confirm if your media disk is connected and this is where your photos, videos and audio are kept.`
+                : noneHere
                 ? noneHereSentence(path, checked)
                 : libraryEvidenceSentence(path, checked, here)}
             </span>

@@ -173,6 +173,7 @@ interface MediaResponse {
   models?: string[];
   sources?: MediaSource[];
   media_folder?: MediaFolderView | null;
+  removal_plan?: { missing_items: number } | null;
 }
 
 interface MediaSource {
@@ -372,6 +373,9 @@ function validPayload(path: string, value: unknown): boolean {
     return Array.isArray(value.assets) && value.assets.every(validAsset) &&
       (value.next_cursor == null || typeof value.next_cursor === "string") &&
       (value.media_folder == null || validMediaFolder(value.media_folder)) &&
+      (value.removal_plan == null || (record(value.removal_plan) &&
+        Number.isInteger(value.removal_plan.missing_items) &&
+        (value.removal_plan.missing_items as number) >= 0)) &&
       (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
       (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
         record(source) && typeof source.id === "string" && typeof source.label === "string")));
@@ -399,23 +403,15 @@ interface RemovalDialog {
 function itemCount(count: number) {
   return `${count} ${count === 1 ? "item" : "items"}`;
 }
-// With every checked item here, or nothing that can be checked, there is nothing Remove missing could remove.
-function removalOffered(folder: MediaFolderView | null) {
+function removalDialog(folder: MediaFolderView | null, own: number): RemovalDialog {
   const open = folderToConfirm(folder);
-  if (!open || open.library_items == null) return true;
-  return open.library_items > 0 && (open.items_here ?? 0) < open.library_items;
-}
-function removalDialog(folder: MediaFolderView | null, own: number, more: boolean): RemovalDialog {
-  const open = folderToConfirm(folder);
-  const label = more ? "Remove" : `Remove ${itemCount(own)}`;
-  const title = more ? "Remove missing items?" : `Remove ${own} missing ${own === 1 ? "item" : "items"}?`;
+  const label = `Remove ${itemCount(own)}`;
+  const title = `Remove ${own} missing ${own === 1 ? "item" : "items"}?`;
   if (!open) {
     return {
       title,
-      body: more
-        ? "Removes your items whose files are gone, with their prompts, from your Library. Receipts and every stored file stay."
-        : "Removes them and their prompts from your Library. Receipts and every stored file stay.",
-      confirmLabel: "Remove",
+      body: "Removes them and their prompts from your Library. Receipts and every stored file stay.",
+      confirmLabel: label,
       blocked: false,
     };
   }
@@ -447,16 +443,14 @@ function removalDialog(folder: MediaFolderView | null, own: number, more: boolea
     };
   }
   // The viewer's own count comes first and says it is theirs; the folder evidence is the whole Library's.
-  const yours = more
-    ? `Some of your items have no file in ${path}.`
-    : `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
+  const yours = `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
   return {
     title,
     body: (
       <>
         {changed}
         <span className="block">
-          {`${yours} Removing ${more || own !== 1 ? "them deletes their" : "it deletes its"} Library ${more || own !== 1 ? "entries" : "entry"} and saved ${more || own !== 1 ? "prompts" : "prompt"}; the files themselves are not touched.`}
+          {`${yours} Removing ${own !== 1 ? "them deletes their" : "it deletes its"} Library ${own !== 1 ? "entries" : "entry"} and saved ${own !== 1 ? "prompts" : "prompt"}; the files themselves are not touched.`}
         </span>
         <span className="block">{libraryEvidenceSentence(path, checked, here)}</span>
       </>
@@ -2713,8 +2707,8 @@ export default function LibraryPage() {
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
   // Remove missing items clears the viewer's own entries, whoever is shown.
-  const ownGoneCount = goneAssets.filter(madeByViewer).length;
-  const removal = removalDialog(folder, ownGoneCount, hasNextPage);
+  const missingItemCount = mediaPages[0]?.removal_plan?.missing_items ?? 0;
+  const removal = removalDialog(folder, missingItemCount);
   function returnFocus(assetId: string) {
     // After a delete, the confirmation still holds focus; the page returns
     // focus once it closes (below).
@@ -3156,7 +3150,7 @@ export default function LibraryPage() {
           </div>
         ) : null}
       </div>
-      {!isLoading && !showInitialError && goneAssets.length > 0 ? (
+      {!isLoading && !showInitialError && (goneAssets.length > 0 || missingItemCount > 0) ? (
         <section
           id="gone-files"
           aria-label={
@@ -3177,7 +3171,7 @@ export default function LibraryPage() {
               <span className="text-muted-foreground">Receipts remain.</span>
             </p>
             <div className="flex flex-wrap items-center gap-x-4">
-              {ownGoneCount > 0 && removalOffered(folder) ? (
+              {missingItemCount > 0 ? (
                 <Button
                   variant="link"
                   className="h-auto min-h-6 min-w-6 px-0"

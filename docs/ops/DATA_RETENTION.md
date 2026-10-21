@@ -105,8 +105,9 @@ clears the signed-in person's own entries whose file is gone:
   `POST /me/api/media/confirm-folder` and then removes. A folder that holds none
   of a non-empty Library cannot be confirmed (409 `media_folder_no_matches`);
   the dialog tells the owner to check the media disk instead. A folder that
-  holds every checked item, or a Library with nothing that can be checked,
-  offers no Remove missing at all. A `mismatch` also shows a warning in the
+  offers Remove missing only when the viewer-wide `removal_plan.missing_items`
+  from `GET /me/api/media` is positive; filters and whole-Library folder evidence
+  do not decide this count. The removal selects again and reports the actual count. A `mismatch` also shows a warning in the
   owner's list of unavailable items. Members see no folder detail; if they
   choose Remove missing they are told Azizam can't remove missing items until
   the owner confirms where the Library's files are kept. So the owner does not
@@ -114,7 +115,8 @@ clears the signed-in person's own entries whose file is gone:
   folder** (owner only, only while the folder is unconfirmed or changed). It
   gives the same plain explanation with the whole-Library counts and calls the
   same `confirm-folder` route, with the same refusal when the folder holds none
-  of the Library's items.
+  of the Library's checked items. With only uncheckable entries, Settings warns
+  that Azizam cannot identify the folder from them; an empty Library asks nothing.
   Confirmation writes a new marker into the folder it checked (the marker is
   written relative to the opened directory, and refused if that directory is
   not the one that was listed), records its ID and is audited as
@@ -127,6 +129,7 @@ clears the signed-in person's own entries whose file is gone:
 - A finished job entry is deleted only when every asset its record names is
   gone. Otherwise each gone asset is hidden as that job made it
   (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+- A directory replacement after the final identity check but before the SQLite commit can still go undetected.
 - Prompts, hides and job deletions commit together in the media-jobs database or
   not at all. It never deletes a stored file or a receipt.
 - Removing a person's account deletes their hide rows with their prompts, in one

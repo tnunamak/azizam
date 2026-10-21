@@ -197,6 +197,14 @@ def create_me_media_router(
                                    receipts_path=receipt_path, prompt_path=prompt_path)
                 if not request.query_params.get("cursor") else None
             )
+            # Viewer-wide, regardless of the listing's search, filters or owner scope.
+            result["removal_plan"] = (
+                {"missing_items": len(_viewer_removal(
+                    actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
+                    receipts_path=receipt_path,
+                ).gone_assets)}
+                if storage is not None and not request.query_params.get("cursor") else None
+            )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
             return _json(result)
@@ -351,14 +359,9 @@ def create_me_media_router(
             storage = asset_storage_provider() if asset_storage_provider is not None else None
             if storage is None or storage.folder is None:
                 raise PublicFailure("media_folder_unavailable", 503)
-            scope = _member_media_scope(actor.user_id, admin_path)
-            plan = _plan_removal(
-                _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=_resolve_path(receipts_path)),
-                is_stored=lambda asset_id: _is_stored(asset_id, storage),
-                already_hidden=(
-                    _deleted_asset_ids(scope, admin_path),
-                    media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
-                ),
+            plan = _viewer_removal(
+                actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
+                receipts_path=_resolve_path(receipts_path),
             )
             if (plan.gone_assets or plan.job_ids) and not storage.digests:
                 raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
@@ -559,6 +562,22 @@ class _Removal:
     gone_assets: tuple[str, ...]
     hides: tuple[tuple[str, str], ...]
     job_ids: tuple[str, ...]
+
+
+def _viewer_removal(
+    user_id: str, storage: StorageSnapshot, *, admin_path: Path, jobs_path: Path,
+    receipts_path: Path,
+) -> _Removal:
+    """The same current selection for the read-only plan and the destructive action."""
+    scope = _member_media_scope(user_id, admin_path)
+    return _plan_removal(
+        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path),
+        is_stored=lambda asset_id: _is_stored(asset_id, storage),
+        already_hidden=(
+            _deleted_asset_ids(scope, admin_path),
+            media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
+        ),
+    )
 
 
 def _plan_removal(

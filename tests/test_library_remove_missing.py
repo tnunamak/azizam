@@ -102,6 +102,58 @@ class RemoveMissingTests(unittest.TestCase):
     def job_ids(self, request_id: str) -> list[str]:
         return [job["job_id"] for job in media_jobs.recent(500, path=self.jobs_db) if job["request_id"] == request_id]
 
+    def test_viewer_plan_ignores_filters_and_equals_removal(self) -> None:
+        self.seed()
+        before_jobs = media_jobs.recent(500, path=self.jobs_db)
+        before_marker = (self.cache / ".azizam-media").read_bytes()
+        with patch("gateway.me_media._viewer_removal", wraps=me_media._viewer_removal) as selection:
+            page = self.client.get("/me/api/media?q=prompt+A&limit=1").json()
+            self.assertEqual(page["removal_plan"], {"missing_items": 2})
+            self.assertEqual(len(page["assets"]), 1)
+            self.assertEqual(media_jobs.recent(500, path=self.jobs_db), before_jobs)
+            self.assertEqual((self.cache / ".azizam-media").read_bytes(), before_marker)
+            removed = self.client.post(REMOVE, headers=VALID)
+            self.assertEqual(removed.status_code, 200, removed.text)
+            self.assertEqual(removed.json()["removed_assets"], page["removal_plan"]["missing_items"])
+            self.assertEqual(selection.call_count, 2, "plan and action use the same viewer selection")
+        self.assertEqual(self.client.get("/me/api/media").json()["removal_plan"], {"missing_items": 0})
+
+    def test_removal_reselects_when_a_file_disappears_after_the_plan(self) -> None:
+        self.seed()
+        page = self.client.get("/me/api/media").json()
+        self.assertEqual(page["removal_plan"], {"missing_items": 2})
+        self._asset_path(asset("B")).unlink()
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 3, "removed_jobs": 2})
+        self.assertEqual(self.library(), {asset("D"): True})
+
+    def test_owner_plan_includes_shared_asset_named_in_another_persons_deletion_audit(self) -> None:
+        owner_app = admin_store.create_app(
+            "Owner", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
+        )
+        shared = asset("a")
+        self._write_asset(shared, ["sha256:alice", "sha256:owner"])
+        self._write_asset(asset("b"), ["sha256:owner"])
+        for app, request_id, output in ((self.app_a, "alice_shared", shared),
+                                        (owner_app, "owner_shared", shared),
+                                        (owner_app, "owner_kept", asset("b"))):
+            self._receipt(app["id"], request_id)
+            self._job(request_id, output)
+        self.assertEqual(self.client.delete(f"/me/api/media/{shared}", headers=VALID).status_code, 200)
+        self.assertTrue(self._asset_path(shared).exists())
+        self._asset_path(shared).unlink()
+        self.current_user = self.owner
+        # Force the evidence path: its global deletion exclusion omits the shared asset.
+        (self.cache / ".azizam-media").unlink()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+        page = self.client.get("/me/api/media").json()
+        self.assertEqual(page["media_folder"]["library_items"], page["media_folder"]["items_here"])
+        self.assertEqual(page["removal_plan"], {"missing_items": 1})
+        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 200)
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).json()["removed_assets"], 1)
+
     def test_an_unmounted_folder_with_a_new_file_removes_nothing(self) -> None:
         self.seed()
         # Simulate an absent volume followed by an ordinary write on the bare mount.

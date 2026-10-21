@@ -985,6 +985,7 @@ def remove_missing_media(
             media_jobs.hide_assets_in(conn, person_id, hides)
             deleted = media_jobs.delete_succeeded_in(conn, job_ids)
             _require_media_folder(conn, media_folder, media_identity)
+            # A directory replacement after this final check but before SQLite commits can still go undetected.
             conn.commit()
         except BaseException:
             conn.rollback()

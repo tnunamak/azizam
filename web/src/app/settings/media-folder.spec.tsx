@@ -115,6 +115,25 @@ describe("owner's Confirm the media folder action", () => {
     await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(NO_MATCHES));
   });
 
+  it("warns that uncheckable entries cannot identify the folder while allowing explicit confirmation", async () => {
+    serve(folder({ library_items: 0, items_here: 0, uncheckable_items: 3 }));
+    renderSection();
+    const button = await screen.findByRole("button", { name: "Confirm the media folder" });
+    expect(screen.getByText("Azizam can't check the existing Library entries against cache/images, so it can't tell whether this is the media folder. Only confirm if your media disk is connected and this is where your photos, videos and audio are kept.")).toBeVisible();
+    expect(screen.queryByText(/0 of 0/)).toBeNull();
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    await waitFor(() => expect(mocks.success).toHaveBeenCalledWith("Media folder confirmed."));
+  });
+
+  it("shows nothing to confirm for an empty Library", async () => {
+    serve(folder({ library_items: 0, items_here: 0, uncheckable_items: 0 }));
+    renderSection();
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(screen.queryByText("Media folder")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm the media folder" })).toBeNull();
+  });
+
   it("is absent once the folder is confirmed", async () => {
     serve({ state: "confirmed" });
     renderSection();
