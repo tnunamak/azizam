@@ -279,6 +279,9 @@ class CharacterReplaceTests(RemixReplaceBase):
         r = self.client.post("/v1/videos", json=body)
         self.assertEqual(r.status_code, 400, r.text)
         self.assertIn("source_video", r.json()["error"]["param"])
+        self.assertEqual(r.json()["error"]["message"],
+                         "source_video is required for this model: pass a video id, URL or data URI")
+        self.assertEqual(self.comfy.uploads, [])
 
         r = self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "p"})
         self.assertEqual(r.status_code, 400, r.text)

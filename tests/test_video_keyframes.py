@@ -10,6 +10,8 @@ upload), against a fake ComfyUI and the shipped proxy_config.yml.
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
+from starlette.datastructures import FormData
 import contextlib
 import copy
 import json
@@ -405,6 +407,32 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
         r = self.client.post("/v1/videos", json=body)
         self.assertEqual(r.status_code, 400, r.text)
         self.assertEqual(r.json()["error"]["param"], f"extensions.{NS}.last_frame")
+        self.assertEqual(self.comfy.uploads, [])
+        self.assertEqual(self.comfy.submitted, [])
+
+    def test_unreadable_middle_picture_is_refused_before_any_upload(self) -> None:
+        body = self._body("video-minimax-h3-keyframes-mid", middle_frame="not a picture or a link!")
+        self.assert_refused(self.client.post("/v1/videos", json=body), param=f"extensions.{NS}.middle_frame")
+
+    def test_empty_and_oversized_assets_are_refused_before_any_upload(self) -> None:
+        for data, message in ((b"", "empty"), (PNG_LAST, "larger than")):
+            with self.subTest(message=message):
+                body = self._body()
+                with patch.object(proxy, "_resolve_video_workflow_asset", AsyncMock(return_value=(data, "end.png", "image/png"))), \
+                     patch.object(proxy.video_inputs, "MAX_SOURCE_VIDEO_BYTES", len(PNG_LAST) - 1):
+                    response = self.client.post("/v1/videos", json=body)
+                self.assert_refused(response, param=f"extensions.{NS}.last_frame")
+                self.assertIn(message, response.json()["error"]["message"])
+
+    def test_invalid_seconds_are_refused_before_fetching_a_url_asset(self) -> None:
+        body = self._body(last_frame="https://example.test/end.png")
+        body["seconds"] = 99
+        with patch.object(proxy, "_fetch_media_url", AsyncMock(side_effect=AssertionError("unexpected fetch"))) as fetch:
+            response = self.client.post("/v1/videos", json=body)
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("seconds must be between", response.json()["error"]["message"])
+        fetch.assert_not_awaited()
+        self.assertEqual(self.comfy.uploads, [])
         self.assertEqual(self.comfy.submitted, [])
 
     def test_first_frame_only_models_do_not_take_a_last_picture(self) -> None:
@@ -418,6 +446,28 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
 
 class KeyframeMultipartRequestTests(KeyframeRouteBase):
     """The OpenAI SDK sends videos.create as multipart; pictures can be files."""
+
+    def test_unknown_file_parts_are_refused_without_reading(self) -> None:
+        for name in ("unknown_file", "prompt", "extensions[other][picture]", "inputs[last_frame][extra]"):
+            with self.subTest(name=name):
+                read = AsyncMock(side_effect=AssertionError("unknown part was read"))
+                upload = SimpleNamespace(filename="large.bin", read=read, close=AsyncMock())
+                form = FormData([(name, upload)])
+                with patch.object(proxy.request_forms, "read_form", AsyncMock(return_value=form)):
+                    response = self.client.post("/v1/videos", data={"model": "irrelevant"})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["code"], "unknown_parameter")
+                self.assertEqual(response.json()["error"]["param"], name)
+                read.assert_not_awaited()
+                self.assertEqual(self.comfy.uploads, [])
+
+    def test_inputs_picture_as_file_upload(self) -> None:
+        response = self.client.post(
+            "/v1/videos", data={"model": "video-minimax-h3-keyframes", "prompt": "p", "seconds": "5"},
+            files={"input_reference": ("first.png", PNG_FIRST, "image/png"),
+                   "inputs[last_frame]": ("last.png", PNG_LAST, "image/png")})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.uploaded("22"), PNG_LAST)
 
     def test_both_pictures_as_file_uploads(self) -> None:
         r = self.client.post(
@@ -551,8 +601,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
                          "video-minimax-h3-keyframes")
 
     def test_finished_clip_lands_in_the_library_as_a_video(self) -> None:
-        import anyio
-
+        
         self._create()
         mp4 = mp4_bytes()
         self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4")
