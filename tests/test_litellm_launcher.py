@@ -55,3 +55,17 @@ def test_spawn_modes_refused_before_imports_or_database(monkeypatch, capsys, arg
     else:
         with pytest.raises(ValueError, match='single_process_required'):
             provider_sidecar.main(['run', '--db', '/not-opened.db', '--', 'litellm', *argv])
+
+
+def test_launcher_sets_effective_logger_levels_before_server(monkeypatch):
+    import logging
+    import sys
+    from types import SimpleNamespace
+    names = ('LiteLLM', 'LiteLLM Router', 'LiteLLM Proxy')
+    for name in names:
+        monkeypatch.setattr(logging.getLogger(name), 'level', logging.WARNING)
+    monkeypatch.setattr(launcher, 'install_no_content_shim', lambda: None)
+    def start():
+        assert all(logging.getLogger(name).getEffectiveLevel() == logging.CRITICAL for name in names)
+    monkeypatch.setitem(sys.modules, 'litellm', SimpleNamespace(run_server=start))
+    assert launcher.main([]) == 0

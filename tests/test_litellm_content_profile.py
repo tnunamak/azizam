@@ -235,14 +235,19 @@ def test_unexpected_profile_sections_cannot_load_callbacks():
     assert content.config_problem(config) == 'unexpected_section'
 
 
-def test_compose_checks_authenticated_effective_diagnostics(monkeypatch, fake_upstreams):
+@pytest.mark.parametrize('callbacks', [[], ['sync_deployment_callback_on_success'], ['log_file']])
+def test_compose_checks_authenticated_effective_diagnostics(monkeypatch, fake_upstreams, callbacks):
     from tests.support.fake_upstream import scenario_from_data
     fake = fake_upstreams.asgi(scenario_from_data({'protocol': 'litellm-admin', 'name': 'no-content-readiness',
         'provenance': {'source': 'hand-written', 'reference': 'LiteLLM 1.86.2 readiness/details'},
         'exchanges': [{'id': 'readiness', 'match': {'method': 'GET', 'path': '/health/readiness/details'},
-            'response': {'json': {'db': 'Not connected', 'log_level': 'CRITICAL', 'cache': None, 'success_callbacks': []}}}]}),
+            'response': {'json': {'db': 'Not connected', 'log_level': 'CRITICAL', 'cache': None, 'success_callbacks': callbacks}}}]}),
         host='readiness.fk.test')
-    assert asyncio.run(content.compose_database_unseen(fake.base_url)) is False
+    if callbacks == ['log_file']:
+        with pytest.raises(ValueError, match='differs from profile'):
+            asyncio.run(content.compose_database_unseen(fake.base_url))
+    else:
+        assert asyncio.run(content.compose_database_unseen(fake.base_url)) is False
 
 
 def test_real_gateway_refuses_and_recovers_without_dispatching_content(monkeypatch, tmp_path, fake_upstreams):
