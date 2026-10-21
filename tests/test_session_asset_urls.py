@@ -650,3 +650,26 @@ def test_asset_policy_cache_expires_after_five_seconds(media, monkeypatch):
     assert media.client().get(url).status_code == 200
     clock[0] = 105.0
     assert media.client().get(url).status_code == 403
+
+
+def test_sign_in_handoff_immediately_invalidates_warm_asset_family_memo(media):
+    client = owner_client(media)
+    session = cookie_session(client)
+    url = mint(client)
+    anonymous = media.client()
+    response = anonymous.get(url)
+    assert response.status_code == 200
+    memo_key = (str(media.path), session.subject, session.family_id)
+    assert accounts._asset_families[memo_key][2] is True
+    generation = accounts._asset_family_generation
+    request = Request({"type": "http", "headers": [
+        (b"cookie", (media.config.cookie.name + "=" + client.cookies.get(media.config.cookie.name)).encode()),
+    ]})
+
+    # A1 ends the incoming family through A4's account-write invalidation path.
+    browser_sessions.end_incoming(request, cookie=media.config.cookie, signing_key=SIGNING_KEY, path=media.path)
+
+    assert accounts._asset_family_generation > generation
+    assert memo_key not in accounts._asset_families
+    assert not accounts.asset_family_allowed(session.subject, session.family_id, path=media.path)
+    assert anonymous.get(url, headers={"if-none-match": response.headers["etag"]}).status_code == 403
