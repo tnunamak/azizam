@@ -232,9 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 secret_hash = provider_secret_fingerprint(args.db, registry=registry)
                 runtime_hash = hashlib.sha256(f"{config_hash}\n{secret_hash}\n".encode()).hexdigest()
                 receipt = args.runtime_hash_file
-                tmp = receipt.with_name(f".{receipt.name}.{os.getpid()}.tmp")
-                tmp.write_text(runtime_hash + "\n")
-                tmp.replace(receipt)
+                from gateway import private_io
+                private_io.atomic_write_text(receipt, runtime_hash + "\n")
         finally:
             conn.rollback()
     os.execvpe(exec_args[0], exec_args, child_env)
