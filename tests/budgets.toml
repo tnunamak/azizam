@@ -92,8 +92,10 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-pytest = 15319
-vitest = 3051
+# Password boundary followups: +8 Python cases; hermetic collection measured 15327.
+# Three browser password-flow cases; full Vitest list measured 3054.
+pytest = 15327
+vitest = 3054
 playwright = 492
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
