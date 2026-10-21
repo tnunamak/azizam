@@ -25,7 +25,8 @@ export function folderChangedSentence(path: string) {
 // The whole-Library evidence: how many checked items have no file in the folder, and when to go ahead.
 export function libraryEvidenceSentence(path: string, checked: number, here: number) {
   const missing = Math.max(checked - here, 0);
-  return `Across the whole Library, ${missing} of ${checkedItems(checked)} ${missing === 1 ? "is" : "are"} missing from ${path}, so only do this if your media disk is connected and ${path} is where your photos, videos and audio are kept.`;
+  if (missing === 0) return null;
+  return `Across the whole Library, ${missing} of ${checkedItems(checked)} ${checked === 1 ? "is" : "are"} missing from ${path}, so only do this if your media disk is connected and ${path} is where your photos, videos and audio are kept.`;
 }
 
 export function noneHereSentence(path: string, checked: number) {

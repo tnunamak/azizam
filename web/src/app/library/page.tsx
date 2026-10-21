@@ -410,7 +410,12 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
   if (!open) {
     return {
       title,
-      body: "Removes them and their prompts from your Library. Receipts and every stored file stay.",
+      body: own === 1 ? (
+        <>
+          <span className="block">Removes it and its saved prompt from your Library. Receipts stay.</span>
+          <span className="block">The stored file is not touched.</span>
+        </>
+      ) : "Removes them and their saved prompts from your Library. Receipts and every stored file stay.",
       confirmLabel: label,
       blocked: false,
     };
@@ -444,15 +449,17 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
   }
   // The viewer's own count comes first and says it is theirs; the folder evidence is the whole Library's.
   const yours = `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
+  const evidence = libraryEvidenceSentence(path, checked, here);
   return {
     title,
     body: (
       <>
         {changed}
         <span className="block">
-          {`${yours} Removing ${own !== 1 ? "them deletes their" : "it deletes its"} Library ${own !== 1 ? "entries" : "entry"} and saved ${own !== 1 ? "prompts" : "prompt"}; the files themselves are not touched.`}
+          {`${yours} Removing ${own !== 1 ? "them deletes their" : "it deletes its"} Library ${own !== 1 ? "entries" : "entry"} and saved ${own !== 1 ? "prompts" : "prompt"}${own === 1 ? "." : "; the stored files are not touched."}`}
         </span>
-        <span className="block">{libraryEvidenceSentence(path, checked, here)}</span>
+        {own === 1 ? <span className="block">The stored file is not touched.</span> : null}
+        {evidence ? <span className="block">{evidence}</span> : null}
       </>
     ),
     confirmLabel: label,
@@ -2483,7 +2490,9 @@ export default function LibraryPage() {
     queryFn: ({ pageParam, signal }) =>
       mediaRequest<MediaResponse>(
         mediaPath +
-          (pageParam ? `&cursor=${encodeURIComponent(String(pageParam))}` : ""),
+          (pageParam
+            ? `&cursor=${encodeURIComponent(String(pageParam))}`
+            : "&removal_plan=1"),
         { signal },
       ),
     getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
@@ -2767,9 +2776,11 @@ export default function LibraryPage() {
         {
           method: "POST",
           headers: {
+            "content-type": "application/json",
             "x-azizam-user-action": "1",
             "x-azizam-csrf": session.csrf_token,
           },
+          body: JSON.stringify({ expected_missing: missingItemCount }),
         },
         "delete",
       );
@@ -2781,7 +2792,6 @@ export default function LibraryPage() {
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => {
-      if (error instanceof MediaFolderFailure) setConfirmingRemoval(false);
       // The folder's state is on the Library read, and this removal may have just recorded the folder.
       void queryClient.invalidateQueries({ queryKey: ["library"] });
       toast.error(failureCopy(error));
@@ -2793,12 +2803,20 @@ export default function LibraryPage() {
       return mediaRequest<{ confirmed: boolean }>(CONFIRM_FOLDER_PATH, {
         method: "POST",
         headers: {
+          "content-type": "application/json",
           "x-azizam-user-action": "1",
           "x-azizam-csrf": session.csrf_token,
         },
+        body: JSON.stringify({
+          items_here: folder?.items_here,
+          library_items: folder?.library_items,
+        }),
       }, "folder");
     },
-    onError: (error) => toast.error(failureCopy(error)),
+    onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+      toast.error(failureCopy(error));
+    },
   });
   const personOptions = canChooseOwner
     ? [

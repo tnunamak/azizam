@@ -17,9 +17,9 @@ vi.mock("@/lib/toast", () => ({
 
 import { createQueryClient } from "@/lib/api";
 import { MediaFolderSection } from "./media-folder";
+import { libraryEvidenceSentence } from "@/lib/media-folder";
 
-const NO_MATCHES =
-  "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again.";
+const STALE = "Your Library changed since you opened this. Review it again.";
 const folder = (extra: Record<string, unknown> = {}) => ({
   state: "unconfirmed",
   path: "cache/images",
@@ -31,8 +31,10 @@ const folder = (extra: Record<string, unknown> = {}) => ({
 
 let calls: string[];
 let confirmReply: () => Response;
+let confirmInit: RequestInit | undefined;
 function serve(media_folder: unknown) {
   calls = [];
+  confirmInit = undefined;
   confirmReply = () => Response.json({ confirmed: true });
   vi.stubGlobal(
     "fetch",
@@ -41,6 +43,7 @@ function serve(media_folder: unknown) {
       if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
       if (path === "/me/api/media/confirm-folder") {
         calls.push(`confirm ${JSON.stringify(init?.headers)}`);
+        confirmInit = init;
         return confirmReply();
       }
       calls.push(path);
@@ -49,11 +52,13 @@ function serve(media_folder: unknown) {
   );
 }
 function renderSection() {
+  const queryClient = createQueryClient();
   render(
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <MediaFolderSection />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 beforeEach(() => {
@@ -67,9 +72,20 @@ afterEach(() => {
 });
 
 describe("owner's Confirm the media folder action", () => {
+  it("uses checked-total agreement and omits zero missing evidence", () => {
+    expect(libraryEvidenceSentence("cache/images", 1, 0)).toContain(
+      "1 of 1 checked item is missing",
+    );
+    expect(libraryEvidenceSentence("cache/images", 2, 1)).toContain(
+      "1 of 2 checked items are missing",
+    );
+    expect(libraryEvidenceSentence("cache/images", 4, 4)).toBeNull();
+  });
+
   it("explains with whole-Library counts and confirms through the owner route", async () => {
     serve(folder());
-    renderSection();
+    const queryClient = renderSection();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const button = await screen.findByRole("button", { name: "Confirm the media folder" });
     expect(
       screen.getByText(
@@ -78,8 +94,17 @@ describe("owner's Confirm the media folder action", () => {
     ).toBeVisible();
     await userEvent.click(button);
     await waitFor(() => expect(mocks.success).toHaveBeenCalledWith("Media folder confirmed."));
+    expect(calls[0]).toBe("/me/api/media?folder_state=1");
+    expect(confirmInit?.headers).toEqual({
+      "content-type": "application/json",
+      "x-azizam-user-action": "1",
+      "x-azizam-csrf": "csrf-1",
+    });
+    expect(JSON.parse(String(confirmInit?.body))).toEqual({ items_here: 602, library_items: 845 });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["library"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings", "media-folder"] });
     expect(calls).toContain(
-      'confirm {"x-azizam-user-action":"1","x-azizam-csrf":"csrf-1"}',
+      'confirm {"content-type":"application/json","x-azizam-user-action":"1","x-azizam-csrf":"csrf-1"}',
     );
   });
 
@@ -89,6 +114,13 @@ describe("owner's Confirm the media folder action", () => {
     expect(
       await screen.findByText(/^The media folder looks different from last time \(cache\/images\)\./),
     ).toBeVisible();
+  });
+
+  it("omits whole-Library evidence when no checked items are missing", async () => {
+    serve(folder({ library_items: 4, items_here: 4 }));
+    renderSection();
+    expect(await screen.findByRole("button", { name: "Confirm the media folder" })).toBeEnabled();
+    expect(screen.queryByText(/Across the whole Library/)).toBeNull();
   });
 
   it("cannot be pressed when the folder holds none of the items, and says to check the disk", async () => {
@@ -104,15 +136,19 @@ describe("owner's Confirm the media folder action", () => {
 
   it("shows the gateway's refusal as it is", async () => {
     serve(folder());
-    renderSection();
+    const queryClient = renderSection();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const button = await screen.findByRole("button", { name: "Confirm the media folder" });
     confirmReply = () =>
       Response.json(
-        { error: { code: "media_folder_no_matches", message: NO_MATCHES } },
+        { error: { code: "media_folder_changed", message: STALE } },
         { status: 409 },
       );
     await userEvent.click(button);
-    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(NO_MATCHES));
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(STALE));
+    await waitFor(() => expect(calls.filter((path) => path === "/me/api/media?folder_state=1")).toHaveLength(2));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings", "media-folder"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["library"] });
   });
 
   it("warns that uncheckable entries cannot identify the folder while allowing explicit confirmation", async () => {

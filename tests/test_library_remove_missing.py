@@ -222,12 +222,16 @@ class RemoveMissingTests(unittest.TestCase):
             self._job(request_id, output)
         self.assertEqual(self.client.delete(f"/me/api/media/{shared}", headers=VALID).status_code, 200)
         self.assertTrue(self._asset_path(shared).exists())
-        self._asset_path(shared).unlink()
         self.current_user = self.owner
         # Force the evidence path: the shared asset remains whole-Library evidence.
         (self.cache / ".azizam-media").unlink()
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
+        present = self.client.get("/me/api/media?removal_plan=1").json()
+        self.assertEqual(present["media_folder"]["library_items"], 2)
+        self.assertEqual(present["media_folder"]["items_here"], 2)
+        self.assertEqual(present["removal_plan"], {"missing_items": 0})
+        self._asset_path(shared).unlink()
         page = self.client.get("/me/api/media?removal_plan=1").json()
         self.assertEqual(page["media_folder"]["library_items"], 2)
         self.assertEqual(page["media_folder"]["items_here"], 1)

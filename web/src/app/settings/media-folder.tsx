@@ -52,7 +52,7 @@ export function MediaFolderSection() {
     retry: false,
     queryFn: async () => {
       const page = await request<{ media_folder?: MediaFolderView | null }>(
-        "/me/api/media?limit=1",
+        "/me/api/media?folder_state=1",
       );
       return page.media_folder ?? null;
     },
@@ -60,24 +60,35 @@ export function MediaFolderSection() {
   const confirm = useMutation({
     mutationFn: async () => {
       const session = await request<{ csrf_token: string }>("/me/api/session");
+      const folder = data;
       return request<{ confirmed: boolean }>("/me/api/media/confirm-folder", {
         method: "POST",
         headers: {
+          "content-type": "application/json",
           "x-azizam-user-action": "1",
           "x-azizam-csrf": session.csrf_token,
         },
+        body: JSON.stringify({
+          items_here: folder?.items_here,
+          library_items: folder?.library_items,
+        }),
       });
     },
     onSuccess: () => {
       toast.success("Media folder confirmed.");
       void queryClient.invalidateQueries({ queryKey: mediaFolderKey });
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
-    onError: (error) =>
+    onError: (error) => {
+      if (error instanceof Refused)
+        void queryClient.invalidateQueries({ queryKey: mediaFolderKey });
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
       toast.error(
         error instanceof Error && error.message
           ? error.message
           : "We couldn’t confirm the media folder. Try again.",
-      ),
+      );
+    },
   });
 
   const folder = folderToConfirm(data);
@@ -87,6 +98,7 @@ export function MediaFolderSection() {
   const checked = folder.library_items;
   const here = folder.items_here ?? 0;
   const noneHere = checked > 0 && here === 0;
+  const evidence = libraryEvidenceSentence(path, checked, here);
   return (
     <SettingsSection
       id="media-folder"
@@ -101,13 +113,13 @@ export function MediaFolderSection() {
             {folder.state === "mismatch" ? (
               <span className="block">{folderChangedSentence(path)}</span>
             ) : null}
-            <span className="block">
-              {checked === 0
-                ? `Azizam can't check the existing Library entries against ${path}, so it can't tell whether this is the media folder. Only confirm if your media disk is connected and this is where your photos, videos and audio are kept.`
-                : noneHere
-                ? noneHereSentence(path, checked)
-                : libraryEvidenceSentence(path, checked, here)}
-            </span>
+            {checked === 0 ? (
+              <span className="block">
+                {`Azizam can't check the existing Library entries against ${path}, so it can't tell whether this is the media folder. Only confirm if your media disk is connected and this is where your photos, videos and audio are kept.`}
+              </span>
+            ) : noneHere ? (
+              <span className="block">{noneHereSentence(path, checked)}</span>
+            ) : evidence ? <span className="block">{evidence}</span> : null}
             <span className="block">
               Until you confirm it, members can’t remove their missing items.
               Confirming removes nothing.
