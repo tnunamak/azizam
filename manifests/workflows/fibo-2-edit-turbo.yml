@@ -5,7 +5,7 @@ id: image.edit.fibo-2-edit-turbo
 license: "CC BY-NC 4.0 (Bria FIBO 2.0; non-commercial use only, commercial use needs a separate agreement with Bria AI)"
 intent: image.edit
 display_name: FIBO 2 Edit Turbo
-purpose: Edit a photo from a text instruction in four steps
+purpose: Edit a photo in four steps
 description: Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.
 source: local
 trusted: true
