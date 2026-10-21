@@ -1003,3 +1003,42 @@ for (const width of [390, 1440]) {
     await request;
   });
 }
+
+
+for (const width of [390, 1440]) {
+  test(`access refresh keeps focus and announces completion at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/try/");
+    const access = page.getByRole("group", { name: "Try access" });
+    const status = access.getByRole("status");
+    await expect(status).toContainText("Your access plan:");
+    const refresh = access.getByRole("button", { name: "Refresh access" });
+    await expect(refresh).toHaveAttribute("aria-busy", "false");
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    let requests = 0;
+    await page.route("**/me/api/models/catalog", async (route) => {
+      requests++;
+      await held;
+      await route.continue();
+    });
+    try {
+      await refresh.click();
+      await expect(refresh).toBeFocused();
+      await expect(refresh).toBeEnabled();
+      await expect(refresh).toHaveAttribute("aria-disabled", "true");
+      await expect(refresh).toHaveAttribute("aria-busy", "true");
+      await expect(status).toHaveText("Checking your access plan…");
+      // Keyboard activation must not start a second refresh while busy.
+      await refresh.press("Enter");
+    } finally {
+      finish();
+    }
+    await expect(refresh).toHaveAttribute("aria-busy", "false");
+    await expect(refresh).toBeFocused();
+    await expect(status).toContainText("Access refresh complete.");
+    expect(requests).toBe(1);
+    const audit = await new AxeBuilder({ page }).analyze();
+    expect(audit.violations.filter(({ impact }) => impact === "serious" || impact === "critical")).toEqual([]);
+  });
+}

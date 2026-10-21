@@ -1188,7 +1188,10 @@ function usedByLabel(plan: AccessPlan): string | null {
     used.people.length ? `${used.people.length} ${used.people.length === 1 ? "person" : "people"}` : null,
     used.apps.length ? `${used.apps.length} ${used.apps.length === 1 ? "app" : "apps"}` : null,
   ].filter(Boolean);
-  return parts.length ? `Used by ${parts.join(" and ")}` : "No one is on this plan yet";
+  const holders = parts.length ? `Used by ${parts.join(" and ")}` : "No one is on this plan yet";
+  const pending = used.invites ? `${used.invites} invitation${used.invites === 1 ? "" : "s"} pending.` : "";
+  const rule = used.signin_rules ? "Assigned by a sign-in rule" : "";
+  return [holders + (pending || rule ? "." : ""), pending, rule].filter(Boolean).join(" ");
 }
 function Confirmation({
   title,

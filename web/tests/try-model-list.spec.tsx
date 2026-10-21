@@ -499,6 +499,7 @@ describe("Try keys stay in page memory", () => {
 
 
 it("announces access refresh completion and preserves Refresh focus while loading", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   account.viewer = { authenticated: true, serviceAdmin: false, admin: false };
   Object.assign(account, { promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }) });
   let finish: (() => void) | undefined;

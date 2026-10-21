@@ -1244,6 +1244,8 @@ export default function TryPage() {
   const [catalogPlan, setCatalogPlan] = useState<
     { id: string; name: string } | null | undefined
   >(undefined);
+  const [accessRefresh, setAccessRefresh] = useState<"idle" | "loading" | "complete">("idle");
+  const catalogLoading = Object.values(catalogState).some((state) => state === "loading");
   const [unknownModelCount, setUnknownModelCount] = useState(0);
   const speechChoices = catalog.speech?.find((option) => option.id === model.speech)?.speechVoices;
   const voice = selectedVoice(speechChoices, voicesByModel[model.speech]);
@@ -2371,15 +2373,16 @@ export default function TryPage() {
 
       <section className="text-muted-foreground text-sm">
         {personViewer && (
-          <div className="mb-3 space-y-1" aria-label="Try access">
+          <div className="mb-3 space-y-1" role="group" aria-label="Try access">
             <p>Signed in as {viewer.name}.</p>
-            <p>
+            <p role="status">
               {catalogPlan ? `Your access plan: ${catalogPlan.name}.`
                 : ["idle", "loading"].includes(catalogState.models)
                   ? "Checking your access plan…"
                   : catalogPlan === null
                     ? "No access plan is assigned to your account. Ask the owner."
                     : "Your access plan could not be confirmed."}
+              {accessRefresh === "complete" && " Access refresh complete."}
             </p>
             {viewer.admin && (
               <p>
@@ -2394,8 +2397,14 @@ export default function TryPage() {
               type="button"
               variant="outline"
               size="sm"
-              disabled={Object.values(catalogState).some((state) => state === "loading")}
-              onClick={() => void loadCatalog(key?.secret)}
+              aria-disabled={catalogLoading || accessRefresh === "loading"}
+              aria-busy={catalogLoading || accessRefresh === "loading"}
+              onClick={async () => {
+                if (catalogLoading || accessRefresh === "loading") return;
+                setAccessRefresh("loading");
+                await loadCatalog(key?.secret);
+                if (mounted.current) setAccessRefresh("complete");
+              }}
             >
               Refresh access
             </Button>
