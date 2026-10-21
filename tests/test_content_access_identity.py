@@ -131,3 +131,11 @@ def test_asset_and_video_lists_build_one_viewer_per_request():
                 assert proxy._asset_access_allowed("synthetic-asset", auth)
                 assert proxy._video_job_access_allowed("job", auth)
         assert build.call_count == 1
+
+
+def test_decide_own_rejects_string_principals():
+    import pytest
+    from gateway.content_access import decide_own
+    viewer = Viewer(person_id=None, app_id=None, auth_kind="session", owner_keys=frozenset({"x"}))
+    with pytest.raises(TypeError):
+        decide_own(viewer, "xy")

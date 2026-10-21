@@ -48,6 +48,7 @@ authentication, never request-body claims. ContentOrigin records explicit browse
 App-key credential or MCP connection attribution; None means legacy. This step
 adds auth-kind and credential-id propagation plus one Viewer builder. Step 3 must
 persist content origins at production write sites.
+Step 3 also covers the hand-built Viewer with `privacy_permission=True` in `gateway/retention.py:497` and the `identity_from_access_row` `app_key` default in `home_api.py` and `proxy.py` (~16204).
 O6 still applies only to creations, voices, jobs and receipts. The auth-kind/permission fields
 have no credential storage or issuance surface in this step; no history/debug
 capture route is added.

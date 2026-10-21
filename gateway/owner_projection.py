@@ -245,6 +245,10 @@ def _receipt_route(record):
             or (isinstance(path, str) and path.startswith("/gateway/v1/providers/"))):
         return "provider"
     if record.get("remote") is False:
+        if not record.get("backend") and not any(record.get(key) is not None for key in (
+                "started_at_ms", "first_output_at_ms", "finished_at_ms")) and record.get("status") not in {
+                    "succeeded", "failed", "canceled", "expired"}:
+            return "unknown"
         return "local"
     return None
 

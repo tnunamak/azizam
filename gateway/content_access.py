@@ -238,6 +238,8 @@ def decide_own(viewer: Viewer, principals: Iterable[str]) -> bool:
     Resource availability, actions and explicit-App precedence stay with callers.
     The Viewer's keys exclude the empty legacy alias at construction.
     """
+    if isinstance(principals, str):
+        raise TypeError("principals must be an iterable of strings, not a string")
     return not viewer.owner_keys.isdisjoint(principals)
 
 
