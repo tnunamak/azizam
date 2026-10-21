@@ -70,6 +70,17 @@ def _manifest(name: str) -> dict:
 
 
 class KeyframeDataTests(unittest.TestCase):
+    def test_inputs_bound_to_integer_node_inputs_are_declared_integer(self) -> None:
+        signatures = json.loads((ROOT / "tests/fixtures/comfy_node_signatures.json").read_text())
+        for model in KEYFRAME_MODELS:
+            manifest, graph = _manifest(model), _graph(model)
+            for name, targets in manifest["bindings"]["comfyui"]["map"].items():
+                for target in targets:
+                    signature = signatures[graph[target["node"]]["class_type"]]["input"]
+                    types = {**signature.get("required", {}), **signature.get("optional", {})}
+                    if types.get(target["input"]) == "INT":
+                        self.assertEqual(manifest["inputs"][name]["type"], "integer", (model, name, target))
+
     def test_every_binding_names_an_existing_node_and_input(self) -> None:
         for model in KEYFRAME_MODELS:
             manifest, graph = _manifest(model), _graph(model)
@@ -257,6 +268,8 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
     def test_h3_first_and_last_picture_reach_their_load_nodes(self) -> None:
         r = self.client.post("/v1/videos", json=self._body())
         self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(self.comfy.uploads), 2)
+        self.assertEqual(len(self.comfy.submitted), 1)
         self.assertEqual(r.json()["azizam_resolved_model"], "video-minimax-h3-keyframes")
         g = self.graph
         self.assertEqual(self.uploaded("20"), PNG_FIRST)
@@ -320,7 +333,24 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
         r = self.client.post("/v1/videos", json=self._body("video-ltx-2.5-keyframes", last_frame_strength=1.5))
         self.assertEqual(r.status_code, 400, r.text)
         self.assertEqual(r.json()["error"]["code"], "invalid_workflow_extension")
+        self.assertEqual(self.comfy.uploads, [])
         self.assertEqual(self.comfy.submitted, [])
+
+    def test_invalid_extensions_are_refused_before_asset_resolution(self) -> None:
+        for model in (*KEYFRAME_MODELS, "video-minimax-h3-i2v", "video-ltx-2.5-i2v"):
+            for invalid in ({"unknown_input": 1}, {"image": _uri(PNG_FIRST)}, {"last_frame": 42}):
+                with self.subTest(model=model, invalid=invalid):
+                    body = self._body(model, middle_frame=_uri(PNG_MID))
+                    if model != "video-minimax-h3-keyframes-mid":
+                        del body["extensions"][NS]["middle_frame"]
+                    body["extensions"][NS].update(invalid)
+                    with patch.object(proxy, "_resolve_input_reference", AsyncMock()) as resolve:
+                        r = self.client.post("/v1/videos", json=body)
+                    self.assertEqual(r.status_code, 400, r.text)
+                    self.assertEqual(r.json()["error"]["code"], "invalid_workflow_extension")
+                    resolve.assert_not_awaited()
+                    self.assertEqual(self.comfy.uploads, [])
+                    self.assertEqual(self.comfy.submitted, [])
 
     def test_h3_middle_picture(self) -> None:
         body = self._body("video-minimax-h3-keyframes-mid", middle_frame=_uri(PNG_MID))
@@ -363,6 +393,7 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
         r = self.client.post("/v1/videos", json=self._body(image=_uri(PNG_FIRST)))
         self.assertEqual(r.status_code, 400, r.text)
         self.assertIn("input_reference", r.json()["error"]["message"])
+        self.assertEqual(self.comfy.uploads, [])
         self.assertEqual(self.comfy.submitted, [])
 
     def test_an_unreadable_last_picture_is_refused(self) -> None:
