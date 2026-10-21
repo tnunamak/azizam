@@ -100,7 +100,7 @@ test("Try names the signed-in account's plan, ignores a plan in the URL, and ref
   );
   expect(await screen.findByText("Your access plan: Family.")).toBeVisible();
   expect(screen.getByText("Signed in as River.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people/?tab=plans");
+  expect(screen.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people?tab=plans");
   expect(screen.getByText(/Checking another plan does not change your access here/)).toBeVisible();
   planName = "Everything and categories";
   fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));

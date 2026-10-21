@@ -132,5 +132,5 @@ it("offers the owner New, Edit and Delete for access plans", async () => {
   await user.keyboard("{Escape}");
   const unused = screen.getByRole("heading", { name: "Creative" }).closest("li")!;
   await user.click(within(unused).getByRole("button", { name: "Assign people" }));
-  expect(screen.getByRole("tab", { name: "People", exact: true })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: /^People$/ })).toHaveAttribute("aria-selected", "true");
 });
