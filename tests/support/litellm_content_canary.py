@@ -185,7 +185,7 @@ async def run() -> None:
         assert not ps.app.dependency_overrides
         denied = await client.post('/v1/embeddings', json={'model': 'canary', 'input': MARKER})
         assert denied.status_code == 401
-        real_auth = await client.post('/v1/embeddings', headers={'Authorization': 'Bearer sk-canary-master'},
+        real_auth = await client.post('/v1/embeddings', headers={'X-Litellm-Key': 'Bearer sk-canary-master'},
             json={'model': 'canary', 'input': MARKER, 'user': 'client-end-user'})
         assert real_auth.status_code == 200, real_auth.text
     # Exercise the actual failure hook with a traceback-bearing error. The
