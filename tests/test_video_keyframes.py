@@ -618,7 +618,7 @@ class KeyframeMcpTests(unittest.TestCase):
     def test_run_sends_first_picture_as_input_reference_and_the_rest_as_extensions(self) -> None:
         sent: list = []
         client = self._server(sent)
-        arguments = {"target": "video-ltx-2.5-keyframes", "mode": "async", "wait_seconds": 0, "inputs": {
+        arguments = {"target": "ltx-2.5-keyframes", "mode": "async", "wait_seconds": 0, "inputs": {
             "prompt": "a lighthouse", "image": _uri(PNG_FIRST), "last_frame": _uri(PNG_LAST),
             "last_frame_strength": 0.6, "image_strength": 0.8}}
         result = self._rpc(client, "tools/call", {"name": "run", "arguments": arguments})
@@ -635,7 +635,7 @@ class KeyframeMcpTests(unittest.TestCase):
     def test_run_refuses_a_missing_last_picture_before_calling_the_core(self) -> None:
         sent: list = []
         result = self._rpc(self._server(sent), "tools/call", {"name": "run", "arguments": {
-            "target": "video-minimax-h3-keyframes", "inputs": {"prompt": "x", "image": _uri(PNG_FIRST)}}})
+            "target": "minimax-h3-keyframes", "inputs": {"prompt": "x", "image": _uri(PNG_FIRST)}}})
         self.assertTrue(result["isError"])
         self.assertIn("last_frame", json.dumps(result))
         self.assertEqual([call for call in sent if call[0] == "POST"], [])
