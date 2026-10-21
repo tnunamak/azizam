@@ -9,6 +9,9 @@ ownership remain admin-plane actions.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -19,6 +22,8 @@ from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
 from gateway.runtime_auth import hash_api_key
+
+_SESSION_VIEW_SECRET = secrets.token_bytes(32)
 
 __all__ = [
     "UserPortalError",
@@ -233,6 +238,8 @@ def build_user_portal_snapshot(
     person_id = str(user["id"])
     return {
         "authenticated": True,
+        # Public per-sign-in epoch, stable across renewal, distinct from every credential.
+        "session_view_id": hmac.new(_SESSION_VIEW_SECRET, session.family_id.encode(), hashlib.sha256).hexdigest(),
         "user": {
             "id": user.get("id"),
             # The stable id the generated avatar is drawn from (a rename keeps the colour), and the

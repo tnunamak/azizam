@@ -27,6 +27,21 @@ _SCRYPT_N = 2**17
 _PASSWORD_WORK = threading.BoundedSemaphore(2)
 _SCHEMA = admin_store.ACCOUNT_SCHEMA
 
+# The gateway runs one process. These are short-lived answers, never a second
+# revocation source. Account writes invalidate them after committing, including
+# family rotation, sign-out, sign-out everywhere and account removal/disable.
+_ASSET_FAMILY_TTL = 5.0
+_asset_families: dict[tuple[str, str, str], tuple[float, float, bool]] = {}
+_asset_family_lock = threading.Lock()
+_asset_family_generation = 0
+
+
+def invalidate_asset_families() -> None:
+    global _asset_family_generation
+    with _asset_family_lock:
+        _asset_family_generation += 1
+        _asset_families.clear()
+
 
 class AccountError(ValueError):
     def __init__(self, code: str, message: str, status: int = 400) -> None:
@@ -38,16 +53,25 @@ class AccountError(ValueError):
 def connection(path: Path) -> Iterator[sqlite3.Connection]:
     if request_connections.active():
         # Share the request's admin-store connection: this is the same database.
-        with admin_store._conn(path) as conn, conn:
-            yield conn
+        with admin_store._conn(path) as conn:
+            changes = conn.total_changes
+            try:
+                with conn:
+                    yield conn
+            finally:
+                if conn.total_changes != changes:
+                    invalidate_asset_families()
         return
     conn = sqlite_startup.connect(path, timeout=10)
+    changes = conn.total_changes
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         with conn:
             yield conn
     finally:
+        if conn.total_changes != changes:
+            invalidate_asset_families()
         conn.close()
 
 
@@ -205,6 +229,47 @@ def session_verdict(user_id: str, session_id: str, family_id: str | None = None,
 
 def session_allowed(user_id: str, session_id: str, *, path: Path, family_id: str | None = None) -> bool:
     return session_verdict(user_id, session_id, family_id, path=path) in {LIVE, GRACE}
+
+
+def asset_family_allowed(user_id: str, family_id: str, *, path: Path) -> bool:
+    """Apply the session middleware's verdict to the family's current id.
+
+    An asset fetch is not a presentation of a retired cookie: it follows renewal
+    without marking a successor as used or triggering stolen-cookie detection.
+    Unregistered legacy/service sessions use the same fallback as the middleware;
+    their signed asset URL is capped at the cookie's own deadline by its minter.
+    """
+    key = (str(path), user_id, family_id)
+    current, tick = time.time(), time.monotonic()
+    with _asset_family_lock:
+        cached = _asset_families.get(key)
+        if cached and tick < cached[0] and current < cached[1]:
+            return cached[2]
+        generation = _asset_family_generation
+    deadline = float("inf")
+    with connection(path) as conn:
+        row = None
+        if "account_session_lineage" in _tables(conn):
+            row = conn.execute(
+                "SELECT session_id, expires_at FROM account_session_lineage "
+                "WHERE family_id=? AND retired_at IS NULL AND superseded=0", (family_id,),
+            ).fetchone()
+        session_id = row["session_id"] if row else family_id
+        if row is None:
+            row = conn.execute("SELECT expires_at FROM account_sessions WHERE session_id=? AND user_id=?",
+                               (session_id, user_id)).fetchone()
+        if row:
+            deadline = row["expires_at"]
+        allowed = current < deadline and session_verdict_in(
+            conn, user_id, session_id, family_id, now=current,
+        ) in {LIVE, GRACE, LOST}
+    with _asset_family_lock:
+        # A write racing this read must not repopulate an invalidated answer.
+        if generation == _asset_family_generation:
+            if len(_asset_families) >= 4096:
+                _asset_families.clear()
+            _asset_families[key] = (tick + _ASSET_FAMILY_TTL, deadline, allowed)
+    return allowed
 
 
 def require_live_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
