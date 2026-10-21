@@ -63,7 +63,7 @@ def test_sign_in_ends_the_session_the_browser_already_had(sg, via):
     assert len(session_cookies(response)) == 1
     current = browser_sessions.read(client.cookies.get(COOKIE), signing_key=SIGNING_KEY, path=sg.path)
     assert current.family_id != previous.family_id
-    assert not accounts.session_allowed(previous.subject, previous.session_id, previous.family_id, path=sg.path)
+    assert not accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
     assert old_copy.get("/me/api/apps").status_code == 401
 
 
@@ -72,7 +72,7 @@ def test_after_a_switch_the_old_cookie_and_try_key_get_401(sg):
     helper_client(sg)
     set_password(sg, HELPER)
     # End the whole family, including a retired id still inside the renewal grace window.
-    previous = forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY)
+    previous = forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY, authenticated_ago=0)
     retired_copy = sg.client()
     put_cookie(retired_copy, client.cookies.get(COOKIE))
     assert signed_in_state(client)  # rotates the due cookie
@@ -98,6 +98,7 @@ def test_two_tabs_signing_in_together_end_the_old_session_and_leave_one_working_
     helper_client(sg)
     for email in (OWNER, HELPER):
         set_password(sg, email)
+    existing_families = {row["family_id"] for row in sg.rows("SELECT DISTINCT family_id FROM account_session_lineage")}
     previous = cookie_session(old_browser)
     tabs = [sg.client(), sg.client()]
     for tab in tabs:
@@ -134,13 +135,13 @@ def test_two_tabs_signing_in_together_end_the_old_session_and_leave_one_working_
         assert abs(session.absolute_expires_at - session.issued_at - 90 * DAY) < 1
         families.add(session.family_id)
     assert len(families) == 2  # Addendum 1 permits one extra family, expiring normally.
-    assert not accounts.session_allowed(previous.subject, previous.session_id, previous.family_id, path=sg.path)
+    assert not accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
     browser = sg.client()
     put_cookie(browser, settled[-1][0].cookies.get(COOKIE))  # last Set-Cookie received wins
     assert signed_in_state(browser)
     live = sg.rows("SELECT DISTINCT family_id FROM account_session_lineage WHERE retired_at IS NULL")
     # The helper's pre-existing session is on another device; this browser created only these two.
-    assert families.issubset({row["family_id"] for row in live})
+    assert {row["family_id"] for row in live} - existing_families == families
 
 
 @pytest.mark.parametrize("incoming", ["missing", "forged", "expired", "ended"])
@@ -172,7 +173,7 @@ def test_failed_password_sign_in_keeps_the_incoming_session(sg):
     response = client.post("/auth/api/login", json={"email": OWNER, "password": "wrong"})
 
     assert response.status_code == 401
-    assert accounts.session_allowed(previous.subject, previous.session_id, previous.family_id, path=sg.path)
+    assert accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
     assert signed_in_state(client)
 
 
