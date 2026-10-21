@@ -572,10 +572,18 @@ class Measurements:
 def _wave_slice(source: wave.Wave_read, destination: Path, start: float, end: float) -> None:
     source.setpos(int(start * source.getframerate()))
     private_io.ensure_private_dir(destination.parent)
-    private_io.create_private_file(destination)
-    with wave.open(str(destination), "wb") as output:
-        output.setparams(source.getparams())
-        output.writeframes(source.readframes(int((end - start) * source.getframerate())))
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            with wave.open(handle, "wb") as output:
+                output.setparams(source.getparams())
+                output.writeframes(source.readframes(int((end - start) * source.getframerate())))
+        os.replace(temporary, destination)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _arm_parent_death(expected_parent: int) -> None:
