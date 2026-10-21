@@ -1,0 +1,82 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: video.generate.minimax-h3-keyframes-mid
+license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
+intent: video.generate
+display_name: MiniMax H3 Keyframes + Middle
+purpose: Animate between a first, a middle and a last picture, with stereo sound
+description: Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.
+source: local
+trusted: true
+typical_seconds: 135  # parent i2v figure; keyframes not yet timed on this host (see docs/workflows)
+inputs:
+  prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
+    type: string
+    required: true
+  seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
+    type: integer
+    minimum: 0
+  steps:
+    label: Refinement steps
+    help: More steps take longer.
+    type: integer
+    minimum: 1
+    maximum: 50
+    default: 8
+  image:
+    label: a starting picture
+    help: The picture the video starts from.
+    type: asset
+    required: true
+  last_frame:
+    label: an ending picture
+    help: The picture the video ends on.
+    type: asset
+    required: true
+  middle_frame:
+    label: a middle picture
+    help: A picture the video passes through halfway, at half its frame count.
+    type: asset
+    required: true
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-minimax-h3-keyframes-mid.json
+    map:
+      prompt:
+      - node: '9'
+        input: prompt
+      seed:
+      - node: '10'
+        input: noise_seed
+      steps:
+      - node: '12'
+        input: steps
+      image:
+      - node: '20'
+        input: image
+      last_frame:
+      - node: '22'
+        input: image
+      middle_frame:
+      - node: '24'
+        input: image
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors
+  - role: text_encoder
+    path: text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+  - role: vae
+    path: vae/minimax_h3_video_vae_int8_convrot.safetensors
+  - role: vae
+    path: vae/minimax_h3_audio_vae_fp32.safetensors
+  - role: lora
+    path: loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors

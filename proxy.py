@@ -358,6 +358,7 @@ from gateway.video_extensions import (
     merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
     STANDARD_VIDEO_EXTEND_FIELDS,
+    ROUTE_MANAGED_VIDEO_INPUTS,
     bind_video_workflow_extensions,
 )
 from gateway.openai_media_schemas import (
@@ -10323,9 +10324,6 @@ class _VideoFormParseError(Exception):
     """Raised when an incoming multipart /v1/videos request can't be normalized."""
 
 
-_VIDEO_FORM_FILE_FIELDS = frozenset({"input_reference"})
-
-
 async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     """Normalize an openai-python multipart /v1/videos request into a JSON body.
 
@@ -10335,8 +10333,9 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     as scalars, input_reference as asset id / URL / data: URI / base64). Here we
     flatten the form back into that shape so the downstream pipeline is unchanged.
 
-    File uploads for `input_reference` are converted to a data: URI so the
-    existing input_reference resolver can decode them without any new branch.
+    Every uploaded file part (`input_reference`, or a workflow asset input sent as
+    `extensions[com.azizam.workflow][<name>]`) is converted to a data: URI so the
+    existing asset resolvers can decode it without any new branch.
     """
     try:
         form = await request_forms.read_form(request, max_part_size=video_inputs.MAX_FORM_PART_BYTES)
@@ -10346,7 +10345,7 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     try:
         items: list[tuple[str, Any]] = []
         for name, value in form.multi_items():
-            if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
+            if hasattr(value, "read") and hasattr(value, "filename"):
                 try:
                     raw = await value.read()
                 except Exception as exc:
@@ -10536,6 +10535,7 @@ async def _resolve_video_workflow_assets(
             and spec.get("type") == "asset"
             and spec.get("required")
             and name in binding_map
+            and name not in ROUTE_MANAGED_VIDEO_INPUTS  # e.g. `image`: sent as input_reference
             and name not in block
         ):
             raise _VideoAssetError(
@@ -10544,7 +10544,12 @@ async def _resolve_video_workflow_assets(
     assets: dict[str, tuple[bytes, str, str]] = {}
     for name, value in block.items():
         spec = specs.get(name)
-        if not isinstance(spec, Mapping) or spec.get("type") != "asset" or name not in binding_map:
+        if (
+            not isinstance(spec, Mapping)
+            or spec.get("type") != "asset"
+            or name not in binding_map
+            or name in ROUTE_MANAGED_VIDEO_INPUTS  # the binder refuses these with a hint
+        ):
             continue
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(

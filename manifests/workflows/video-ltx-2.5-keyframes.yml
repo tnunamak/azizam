@@ -1,0 +1,105 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: video.generate.ltx-2.5-keyframes
+license: "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0"
+intent: video.generate
+display_name: LTX 2.5 Distilled Keyframes
+purpose: Animate between a first and a last picture, with sound
+description: Make a video with sound that starts on one picture and ends on another, following a description.
+source: local
+trusted: true
+typical_seconds: 56  # parent i2v figure; keyframes not yet timed on this host (see docs/workflows)
+inputs:
+  prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
+    type: string
+    required: true
+  negative_prompt:
+    label: What to avoid
+    help: Describe anything you want left out.
+    type: string
+  frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
+    type: number
+    minimum: 1
+    maximum: 50
+    default: 24
+  seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
+    type: integer
+    minimum: 0
+  image:
+    label: a starting picture
+    help: The picture the video starts from.
+    type: asset
+    required: true
+  image_strength:
+    label: Picture influence
+    help: Adjust how strongly the starting picture shapes the video.
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.7
+  last_frame:
+    label: an ending picture
+    help: The picture the video ends on.
+    type: asset
+    required: true
+  last_frame_strength:
+    label: Ending picture influence
+    help: Adjust how strongly the ending picture shapes the last frame; 1 pins it.
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 1
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-ltx-2.5-keyframes.json
+    map:
+      prompt:
+      - node: '5'
+        input: text
+      negative_prompt:
+      - node: '6'
+        input: text
+      frame_rate:
+      - node: '23'
+        input: value
+      - node: '24'
+        input: value
+      seed:
+      - node: '30'
+        input: noise_seed
+      - node: '31'
+        input: noise_seed
+      image:
+      - node: '70'
+        input: image
+      image_strength:
+      - node: '79'
+        input: value
+      last_frame:
+      - node: '101'
+        input: image
+      last_frame_strength:
+      - node: '100'
+        input: value
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
+  - role: text_encoder
+    path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+  - role: vae
+    path: vae/ltx-2.5-video-vae-bf16.safetensors
+  - role: vae
+    path: vae/ltx-2.5-audio-vae-bf16.safetensors
+  - role: upscale_model
+    path: latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
