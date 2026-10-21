@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway import custom_voices, providers
+from gateway import admin_store, custom_voices, private_io, providers, thumbnails
 from gateway.engine_protocol import node_info
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +73,48 @@ def test_node_info_cache_and_staging_are_private_under_permissive_umask(monkeypa
     assert sorted(path.name for path in target.parent.iterdir()) == [target.name]
 
 
+def test_private_atomic_writer_stages_mode_0600(monkeypatch, tmp_path, permissive_umask) -> None:
+    target = tmp_path / "store" / "content.json"
+    replace = private_io.os.replace
+    staging_modes = []
+
+    def inspect_stage(source, destination):
+        staging_modes.append(mode(Path(source)))
+        replace(source, destination)
+
+    monkeypatch.setattr(private_io.os, "replace", inspect_stage)
+    private_io.atomic_write_text(target, "private")
+    assert staging_modes == [0o600]
+    assert mode(target) == 0o600
+
+
+def test_thumbnail_file_and_directory_are_private_under_permissive_umask(tmp_path, permissive_umask) -> None:
+    from PIL import Image
+
+    source = tmp_path / "images" / "source.png"
+    source.parent.mkdir()
+    Image.new("RGB", (8, 8), "red").save(source)
+    thumbnail = thumbnails.thumbnail_for(source)
+    assert thumbnail is not None
+    assert mode(thumbnail.parent) == 0o700
+    assert mode(thumbnail) == 0o600
+    assert not list(thumbnail.parent.glob("*.tmp"))
+
+
+def test_admin_store_schema_backup_is_private_under_permissive_umask(monkeypatch, tmp_path, permissive_umask) -> None:
+    db = tmp_path / "admin.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schema_version (version INTEGER)")
+    conn.execute("INSERT INTO schema_version VALUES (6)")
+    conn.commit()
+    monkeypatch.setattr("gateway.access_plan_migration.migrate", lambda _conn: None)
+    try:
+        admin_store._migrate_to_access_plans(conn)
+    finally:
+        conn.close()
+    assert mode(admin_store.access_plans_backup_path(db)) == 0o600
+
+
 def test_provider_migration_backup_is_private_under_permissive_umask(tmp_path, permissive_umask) -> None:
     db = tmp_path / "provider.db"
     with sqlite3.connect(db) as conn:
@@ -114,3 +156,18 @@ def test_mode_report_groups_paths_and_fix_only_changes_fixture_tree(tmp_path, pe
     assert fixed.returncode == 0
     assert mode(images) == 0o700
     assert mode(images / "sensitive-name.bin") == 0o600
+
+
+def test_mode_fixer_does_not_follow_symlink_directories(tmp_path, permissive_umask) -> None:
+    root, outside = tmp_path / "fixture", tmp_path / "outside"
+    outside.mkdir()
+    private_file = outside / "must-stay-alone.bin"
+    private_file.write_bytes(b"outside")
+    os.chmod(private_file, 0o666)
+    images = root / "cache" / "images"
+    images.parent.mkdir(parents=True)
+    images.symlink_to(outside, target_is_directory=True)
+    command = [sys.executable, str(ROOT / "scripts" / "check-private-modes"), "--root", str(root), "--fix"]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert mode(private_file) == 0o666
