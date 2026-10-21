@@ -28,6 +28,10 @@ def _writers_in_source(text, path):
     tree = ast.parse(text)
 
     def writer_name(node, aliases):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
+                and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)):
+            return aliases.get(node.args[1].value, node.args[1].value)
         name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", "")
         return aliases.get(name, name)
 
@@ -48,6 +52,14 @@ def _writers_in_source(text, path):
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and "INSERT INTO media_job_events" in node.value:
             writers.append({"path": path, "function": function, "source_sha256": source, "call": "sql-insert", "event": "event_type"})
         if isinstance(node, ast.Call):
+            # A passed writer may be called outside this syntax tree. Freeze the
+            # transfer itself, so callback/partial registration cannot evade the
+            # closed inventory. Its runtime event types need explicit resolution.
+            for value in [*node.args, *(kw.value for kw in node.keywords)]:
+                name = writer_name(value, aliases)
+                if name in {"append_event", "append_client_event"}:
+                    writers.append({"path": path, "function": function, "source_sha256": source,
+                                    "call": name, "event": "<indirect>"})
             name = writer_name(node.func, aliases)
             if name in {"append_event", "append_client_event"} or (path == "gateway/me_make.py" and name == "_event"):
                 value = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg in {"kind", "event_type"}), None)
@@ -121,7 +133,7 @@ def test_job_event_types_have_a_closed_classified_inventory():
     frozen = _frozen()
     actual = set()
     for writer in _event_writers():
-        value = ast.parse(writer["event"], mode="eval").body
+        value = ast.parse(writer["event"], mode="eval").body if writer["event"] != "<indirect>" else None
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             actual.add(value.value)
         else:

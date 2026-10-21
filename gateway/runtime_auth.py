@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping
+from typing import Iterable, Literal, Mapping
 
 from gateway.policy import (
     NO_ACCESS,
@@ -74,6 +74,8 @@ class RuntimeIdentity:
     # trusted client address the request came from.
     connection_id: str | None = None
     trusted_address: str | None = None
+    credential_id: str | None = None
+    auth_kind: Literal["session", "app_key", "mcp_grant", "trusted_address", "service_key"] = "app_key"
 
 
 def plan_ref(identity: "RuntimeIdentity | None") -> str | None:

@@ -33,8 +33,7 @@ ACTORS = {
     "maker-key": Viewer("a", "a", owner_keys=KEYS, auth_kind="app_key", credential_id="key:a"),
     "mcp-grant-same-app": Viewer("a", "a", owner_keys=KEYS, auth_kind="mcp_grant", connection_id="connection:a"),
     "mcp-grant-other-app": Viewer("a", "surface:a", owner_keys=KEYS, auth_kind="mcp_grant", connection_id="connection:a"),
-    "mcp-grant-missing-origin": Viewer("a", "a", owner_keys=KEYS, auth_kind="mcp_grant"),
-    "mcp-grant-empty-origin": Viewer("a", "a", owner_keys=KEYS, auth_kind="mcp_grant", connection_id=""),
+    "mcp-grant-missing-record-origin": Viewer("a", "a", owner_keys=KEYS, auth_kind="mcp_grant", connection_id="connection:a"),
     "mcp-grant-different-person": Viewer("b", "a", owner_keys=KEYS, auth_kind="mcp_grant", connection_id="connection:a"),
     "trusted-address": Viewer(None, "a", owner_keys=KEYS, auth_kind="trusted_address", trusted_address="192.0.2.7"),
     "same-app-different-person": Viewer("b", "a", owner_keys=KEYS, auth_kind="app_key", credential_id="key:b"),
@@ -52,7 +51,7 @@ ACTORS = {
     "owner-recipient": Viewer("q", "q", owner_keys=frozenset({"app:q"}), is_owner=True, auth_kind="session"),
     "unrelated": Viewer("b", "b", owner_keys=frozenset({"app:b"}), auth_kind="session"),
     "bearer-holder-without-identity": Viewer(auth_kind="service_key"),
-    "empty-identity": Viewer("", "", "", frozenset({""}), True, auth_kind="service_key"),
+    "empty-identity": Viewer(None, "", "", frozenset({""}), True, auth_kind="service_key"),
 }
 ORIGINS = (None, ContentOrigin("session"), ContentOrigin("app_key", credential_id="key:a"),
            ContentOrigin("app_key", credential_id="key:rotated"), ContentOrigin("app_key"),

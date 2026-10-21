@@ -2450,7 +2450,7 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
-                                        connection_id=connection.grant_id))
+                                        connection_id=connection.grant_id, auth_kind="mcp_grant"))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -6974,10 +6974,8 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
         # Fail closed for authenticated callers when metadata is absent. Auth-
         # disabled local runs have no identity and keep the old cache behavior.
         return _asset_owner_key(auth_context) is None
-    from gateway.content_access import CreationRecord, Own, Viewer, decide
-    return isinstance(decide(
-        Viewer(auth_kind="service_key", owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
-        CreationRecord(asset_id, frozenset(owners)), "read"), Own)
+    from gateway.content_access import decide_own, viewer_from_auth
+    return decide_own(viewer_from_auth(auth_context, owner_keys=_asset_read_owner_keys(auth_context)), owners)
 
 
 _CURRENT_MAKER = object()
@@ -9388,10 +9386,8 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
     if not owner:
         # OWNER_VISIBILITY_STEP3: delete the no-identity video-job exception.
         return _asset_owner_key(auth_context) is None
-    from gateway.content_access import JobRecord, Own, Viewer, decide
-    return isinstance(decide(
-        Viewer(auth_kind="service_key", owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
-        JobRecord(frozenset({owner})), "read"), Own)
+    from gateway.content_access import decide_own, viewer_from_auth
+    return decide_own(viewer_from_auth(auth_context, owner_keys=_asset_read_owner_keys(auth_context)), (owner,))
 
 
 def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
@@ -21415,7 +21411,7 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
             if identity is not None and connection_id:
                 if not (MCP_OAUTH_ENABLED and MCP_OAUTH.connection_active(connection_id, person_id)):
                     return None
-                identity = replace(identity, connection_id=connection_id)
+                identity = replace(identity, connection_id=connection_id, auth_kind="mcp_grant")
         else:
             identity = runtime_identity_for_trusted_app(app_id, str(auth.get("trusted_address") or ""),
                                                         path=ADMIN_STORE.path)

@@ -19,10 +19,10 @@ NAMES = ProjectionNames(people={"person:a": "Alice", "person:b": "Bob"},
 
 def seeded_record():
     return {
-        "request_id": "req_" + "a" * 32, "job_id": "mj_" + "b" * 32, "person_id": "person:a", "app_id": "app:a",
+        "request_id": "req_" + "a" * 32, "job_id": "mj_" + "b" * 32, "maker_person_id": "person:a", "app_id": "app:a",
         "resolved_model": "model:a", "resolved_workflow": "flow:a", "intent": "image.generate",
-        "source_kind": "app", "protocol": "openai.images", "stream": True, "route": "provider",
-        "provider": "provider:a", "status": "succeeded", "status_code": 200,
+        "source_kind": "app", "protocol": "openai.images", "stream": True, "remote": True,
+        "backend": "provider:a", "status": "succeeded", "status_code": 200,
         "terminal_reason": "completed", "accepted_at_ms": 1700000000000, "updated_at_ms": 1700000001000, "policy_decision": "allowed", "attempt_number": 1,
         "usage": {"images": 2, "input_tokens": 9, "unexpected": MARKER},
         "cost": {"amount_usd": 0.5, "quality": "measured", "source": "provider", "reconciled": True, "secret": MARKER},
@@ -52,7 +52,7 @@ def test_recursive_projection_drops_content_and_uses_submission_person():
 
 def test_unknown_catalog_and_free_text_values_never_fall_back():
     record = seeded_record()
-    for key in ("request_id", "job_id", "resolved_model", "resolved_workflow", "provider", "person_id", "app_id", "source_kind", "protocol", "status", "terminal_reason", "intent", "route"):
+    for key in ("request_id", "job_id", "resolved_model", "resolved_workflow", "backend", "maker_person_id", "app_id", "source_kind", "protocol", "status", "terminal_reason", "intent", "route"):
         record[key] = MARKER
     record["resource_decision"] = {"reasons": [{"code": MARKER, "effect": MARKER, "resource_class": MARKER}]}
     record["retention"] = [{"kind": MARKER, "decision": MARKER}]
@@ -122,7 +122,7 @@ def test_invalid_numeric_values_are_unavailable_not_strings_or_nonfinite():
     ("failed", 403, "local", "plan"), ("failed", 500, "local", "unknown"),
 ])
 def test_support_layer_is_derived_without_raw_error(reason, status, route, expected):
-    shown = project("receipt", {"terminal_reason": reason, "status_code": status, "route": route, "error": MARKER})
+    shown = project("receipt", {"terminal_reason": reason, "status_code": status, "remote": route == "provider", "error": MARKER})
     assert shown.layer == expected
     assert MARKER not in shown.model_dump_json()
 

@@ -1437,7 +1437,8 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.usage_summary",
       "method": "GET",
       "path": "/me/api/usage/summary",
-      "access": "content:receipt:read"
+      "access": "content:receipt:read",
+      "note": "Owner exception: Everyone/other-person selectors, all sources and the people list remain until step 3."
     },
     {
       "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.delete_prompt_memory",
@@ -2131,13 +2132,15 @@
       "handler": "proxy.count_response_input_tokens",
       "method": "POST",
       "path": "/openai/v1/responses/input_tokens",
-      "access": "own-account+content:chat:reuse"
+      "access": "none",
+      "note": "Token counting reads no stored content."
     },
     {
       "handler": "proxy.count_response_input_tokens",
       "method": "POST",
       "path": "/v1/responses/input_tokens",
-      "access": "own-account+content:chat:reuse"
+      "access": "none",
+      "note": "Token counting reads no stored content."
     },
     {
       "handler": "proxy.create_response",

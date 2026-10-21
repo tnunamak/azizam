@@ -2425,12 +2425,14 @@ def runtime_identity_for_app_credential_hash(
             except Exception:
                 pass
     app = {"kind": row["app_kind"], "owner_user_id": row["owner_user_id"]}
-    return identity_from_access_row(
+    identity = identity_from_access_row(
         row,
         key_hash=key_hash,
         name=str(row.get("app_name") or row.get("cred_display_name") or row["app_id"]),
         person_id=person_for_app_credential(app, {"created_by": row["cred_created_by"]}),
     )
+    return replace(identity, credential_id=str(row["cred_id"]),
+                   auth_kind="service_key" if row["app_kind"] == "service" else "app_key")
 
 
 def runtime_identity_for_session_app(
@@ -2449,9 +2451,9 @@ def runtime_identity_for_session_app(
         row = admin_store.runtime_access_row(connection, app_id=app_id)
     if row is None or row.get("owner_user_id") != person_id or not row["on_session_app"]:
         return None
-    return identity_from_access_row(
+    return replace(identity_from_access_row(
         row, key_hash=f"app:{app_id}", name=str(row.get("app_name") or app_id), person_id=person_id,
-    )
+    ), auth_kind="session")
 
 
 def runtime_identity_for_trusted_address(
@@ -2479,7 +2481,7 @@ def runtime_identity_for_trusted_address(
     identity = identity_from_access_row(
         row, key_hash=f"app:{row['app_id']}", name=str(row.get("app_name") or row["app_id"]), person_id=None,
     )
-    return replace(identity, trusted_address=str(client))
+    return replace(identity, trusted_address=str(client), auth_kind="trusted_address")
 
 
 def runtime_identity_for_trusted_app(

@@ -39,12 +39,15 @@ ContentRead is limited to prompt, chat and request-history reads:
   debug reads/deletes require privacy permission for delegated callers.
 - Stored-response continuation is `chat:read`, including no-person continuation.
   Included prompt shares are read-only; delegated recipients need permission.
+  D52 treats content made by another person as "elsewhere" for a delegated
+  credential, including the prompt attached to an explicitly shared creation.
 
 Viewer.auth_kind is required: session, app_key, mcp_grant, trusted_address or
 service_key. credential_id, connection_id and trusted_address come from trusted
 authentication, never request-body claims. ContentOrigin records explicit browser,
 App-key credential or MCP connection attribution; None means legacy. This step
-adds types only. Step 3 must persist these origins at production write sites.
+adds auth-kind and credential-id propagation plus one Viewer builder. Step 3 must
+persist content origins at production write sites.
 O6 still applies only to creations, voices, jobs and receipts. The auth-kind/permission fields
 have no credential storage or issuance surface in this step; no history/debug
 capture route is added.
@@ -52,7 +55,7 @@ Shares are typed, supplied evidence in pure tests; there is no share store or
 production share resolver yet. Own precedes Shared. An unavailable resource is
 Denied even if a stale share exists. A prompt share selects its maker's row only.
 
-## Trusted identity sources for the eventual Viewer builder
+## Trusted identity sources for viewer_from_auth
 
 | Source | Current main authority | Viewer identity and principal set | Privacy permission |
 |---|---|---|---|
@@ -76,8 +79,12 @@ Search production code for `OWNER_VISIBILITY_STEP3`. These markers name the
 exceptions rather than moving them into the matrix:
 
 1. `me_media._media_scope` still accepts Everyone and other-person selectors;
-   `_record_in_scope` still accepts `app_ids=None`. `user_runtime.build_user_activity_snapshot`
+   `_receipt_in_scope` still accepts `app_ids=None`. `user_runtime.build_user_activity_snapshot`
    still requests all Apps for owners. Receipt detail retains its owner bypass.
+   `_usage_app_scope` accepts `person=all` and another person's id for owners;
+   `_usage_summary` lists all sources for an owner and offers the Everyone/people
+   list. `/me/api/usage/summary` is `content:receipt:read` with this owner exception.
+   The Library's `_media_scope(person=<other id>)` branch has the same exception.
 2. `proxy._asset_access_allowed` and `_video_job_access_allowed` still permit
    absent ownership for a caller with no identity. The video exception was also
    present in r18, but the step-1 build note mentioned only the asset exception.
@@ -140,7 +147,21 @@ line references here name current-main symbols rather than stale v3 offsets.
 ## Projection and inventory limits
 
 `owner_projection.py` builds receipt, job, storage and receipt-list values with
-recursive closed schemas. Person labels use the submission person's trusted id;
+recursive closed schemas. Receipt labels use the trusted maker_person_id when
+supplied with the internal stored record. That field is stored by RouteReceipt
+but omitted from client, admin and internal audience serializers; a receipt read
+through those audiences has no person label. Step 3 must provide trusted maker
+attribution before serving this projection, without inferring it from the App's
+current owner. This step adds no receipt write path or audience field.
+The projection reads terminal_reason and status_code from the supplied admin or
+internal audience. Client receipts omit them, so those values stay unavailable.
+Route comes from remote, the provider path or provider-native protocol; provider
+comes from backend and a trusted provider lookup. Queue, execution and first-output
+durations come from the phase timestamps; absent or reversed phases stay unavailable.
+The fully populated synthetic writer fixture freezes keys only across all audiences;
+no stored content is checked in.
+
+Person labels never use current accountability;
 model/workflow labels come from supplied catalog lookups, with no requested-model
 fallback. Protocol identifiers come from the existing protocol catalog data.
 The schema test rejects unknown nested fields and untyped strings, except names
@@ -149,8 +170,19 @@ No endpoint or MCP callback serves this projection in step 1.
 
 The registration inventory has 450 route-method entries, including registered
 HEAD and non-HTTP entries, all McpDeps fields, tool schemas/suboperations, whole-module and helper dispatch
-fingerprints and production event writers across root modules and gateway (including aliases and the SQL sink). Its 12 event
+fingerprints and production event writers across root modules and gateway (including aliases, static getattr, callback arguments, functools.partial and the SQL sink). Its 12 event
 types are today's emitted/validated types, not a claim that append_event already
 rejects all others. Classifications state the relevant core checks; they do not
 prove that every current route enforces them. Existing route graph and headless
 access tests remain separate behavior gates.
+
+
+Principal-only resources use decide_own with the Viewer's pre-stripped key set.
+The auth builder accepts either RuntimeIdentity or AuthContext; authentication
+boundaries populate auth_kind and credential_id for sessions, App and service
+keys, MCP grants and trusted addresses. Existing scopes may supply their already
+resolved alias set. This preserves the call site's scope; it does not broaden
+MCP or session access. The round-2 independent oracle in tests/support/td_oracle_r2.py
+keeps the reviewer's predicates separate from production and covers explicit
+session origins, missing App-key origin credential ids and both personless auth
+kinds. Invalid Viewers are rejected before evaluation.

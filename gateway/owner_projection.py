@@ -233,11 +233,29 @@ def _layer(reason, status_code, route):
     return "unknown"
 
 
+def _duration(record, start, end):
+    first = _number(record.get(start), integer=True)
+    last = _number(record.get(end), integer=True)
+    return last - first if first is not None and last is not None and last >= first else None
+
+
+def _receipt_route(record):
+    path = record.get("path")
+    if (record.get("remote") is True or record.get("protocol") == "provider-native"
+            or (isinstance(path, str) and path.startswith("/gateway/v1/providers/"))):
+        return "provider"
+    if record.get("remote") is False:
+        return "local"
+    return None
+
+
 def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any], *, names: ProjectionNames = ProjectionNames()):
     """Project trusted record identity/quantities; unknown free text never falls back.
 
-    ``person_id`` must be the immutable spending subject at submission, not the
-    App's current owner. A caller must resolve ids before supplying lookup maps.
+    Use an admin/internal audience to retain terminal_reason and status_code.
+    maker_person_id is stored internally but omitted from all receipt audiences;
+    step 3 must resolve that trusted attribution before serving a person label.
+    Never substitute the App's current accountable person for the maker.
     """
     common = {
         "model": _catalog(record.get("resolved_model"), names.models),
@@ -264,7 +282,7 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
                               ("count", "size_bytes", "free_bytes", "total_bytes", "reserve_bytes", "leased_bytes", "measured_at")})
     if kind != "receipt":
         raise ValueError("unknown operational record kind")
-    route = _enum(record.get("route"), {"local", "provider"})
+    route = _receipt_route(record)
     reason = _enum(record.get("terminal_reason"), get_args(Terminal), "unknown")
     status_code = _number(record.get("status_code"), integer=True)
     usage = _mapping(record.get("usage"))
@@ -288,14 +306,16 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
             retained.append(Retention(kind=RetentionKind(rkind), decision=RetentionDecision(decision)))
     policy_decision = _enum(record.get("policy_decision"), {"allowed", "denied", "not_evaluated"})
     return ReceiptView(request_id=_record_id(record.get("request_id"), "req_"), job_id=_record_id(record.get("job_id"), "mj_"), **common,
-                       person=_identity(record.get("person_id"), names.people), app=_identity(record.get("app_id"), names.apps),
+                       person=_identity(record.get("maker_person_id"), names.people), app=_identity(record.get("app_id"), names.apps),
                        source_kind=_enum(record.get("source_kind"), {"app", "local-network", "gateway-ui", "internal", "trusted_address", "mcp"}),
                        protocol=Protocol(_enum(record.get("protocol"), _PROTOCOL_VALUES, "unknown")),
                        stream=record.get("stream") is True, route=route,
-                       provider=_enum(record.get("provider"), names.providers),
+                       provider=_enum(record.get("backend"), names.providers) if route == "provider" else None,
                        status_code=status_code, terminal_reason=reason, layer=_layer(reason, status_code, route),
                        **{key: _number(record.get(key), integer=True) for key in ("accepted_at_ms", "queued_at_ms", "started_at_ms", "first_output_at_ms", "finished_at_ms", "updated_at_ms")},
-                       **{key: _number(record.get(key), integer=True) for key in ("queue_ms", "execution_ms", "first_output_ms")},
+                       queue_ms=_duration(record, "queued_at_ms", "started_at_ms"),
+                       execution_ms=_duration(record, "started_at_ms", "finished_at_ms"),
+                       first_output_ms=_duration(record, "started_at_ms", "first_output_at_ms"),
                        usage=Usage(**{key: _number(usage.get(key), integer=key not in {"audio_seconds", "video_seconds"}) for key in Usage.model_fields}),
                        cost=Cost(amount_usd=_number(cost.get("amount_usd")),
                                  quality=_enum(cost.get("quality"), {"measured", "estimated"}, "unknown"),

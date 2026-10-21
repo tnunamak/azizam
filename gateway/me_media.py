@@ -25,7 +25,8 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
+from gateway.content_access import Viewer, decide_own, viewer_from_auth
+from gateway.runtime_auth import RuntimeIdentity
 
 from gateway import directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
@@ -613,10 +614,10 @@ class _MediaScope:
 
     def __post_init__(self):
         # One immutable readable set per scope, reused across every receipt/job.
-        object.__setattr__(self, "_app_viewer", Viewer(auth_kind="session", person_id=self.viewer_person_id,
-                           owner_keys=frozenset(f"app:{app_id}" for app_id in (self.app_ids or ()))))
-        object.__setattr__(self, "_key_viewer", Viewer(auth_kind="session", person_id=self.viewer_person_id,
-                           owner_keys=self.owner_keys or frozenset()))
+        identity = RuntimeIdentity(name="", key_hash="", person_id=self.viewer_person_id, auth_kind="session")
+        object.__setattr__(self, "_app_viewer", viewer_from_auth(identity,
+                           owner_keys=(f"app:{app_id}" for app_id in (self.app_ids or ()))))
+        object.__setattr__(self, "_key_viewer", viewer_from_auth(identity, owner_keys=self.owner_keys or ()))
 
 
 def _actor_from_request(
@@ -756,6 +757,7 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if person == "all":
             # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
             return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
+        # OWNER_VISIBILITY_STEP3: remove the owner other-person Library selector.
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
     # Everyone starts with their own work; "everyone" is an explicit owner choice.
     scope = str(raw_scope or "me")
@@ -1380,30 +1382,25 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
         return {}
 
 
-def _record_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope, *, job: bool) -> bool:
+def _receipt_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
     if scope.app_ids is None:
         # OWNER_VISIBILITY_STEP3: delete owner-everyone / unscoped collection access.
         return True
     if record is None:
         return False
     if record.get("app_id"):
-        principals = frozenset({f"app:{record['app_id']}"})
+        principals = (f"app:{record['app_id']}",)
         # The existing Library scope treats an explicit App as authoritative.
         viewer = scope._app_viewer
     else:
         owner = record.get("owner_key_hash")
-        principals = frozenset({owner}) if isinstance(owner, str) else frozenset()
+        principals = (owner,) if isinstance(owner, str) else ()
         viewer = scope._key_viewer
-    content = JobRecord(principals) if job else ReceiptRecord(principals)
-    return isinstance(decide(viewer, content, "read"), Own)
-
-
-def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
-    return _record_in_scope(receipt, scope, job=False)
+    return decide_own(viewer, principals)
 
 
 def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
-    return _record_in_scope(job, scope, job=True)
+    return _receipt_in_scope(job, scope)
 
 
 # Nothing recorded where the request came from.
@@ -1727,6 +1724,7 @@ def _usage_summary(
         raise PublicFailure("unsupported_period", 400, param="period", accepted=["month"])
     app_ids, scope_label, scoped_users = _usage_app_scope(request, actor, admin_db_path)
     source_filter = _source_filter(request)
+    # OWNER_VISIBILITY_STEP3: restrict the owner's usage sources to their own scope.
     sources = _usage_sources(admin_db_path, app_ids=None if actor.owner else app_ids,
                              person_ids=None if actor.owner else scoped_users)
     _reject_forbidden_source_filter(source_filter, app_ids, sources, scoped_users)
@@ -1930,6 +1928,7 @@ def _usage_summary(
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
+        # OWNER_VISIBILITY_STEP3: remove the owner's Everyone/other-people usage list.
         "people": _usage_people(actor, admin_db_path) if actor.owner else [],
     }
 
@@ -1940,6 +1939,7 @@ def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tu
         return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if not actor.owner:
         raise PublicFailure("owner_required", 403, param="person")
+    # OWNER_VISIBILITY_STEP3: remove both owner Everyone and other-person usage selectors.
     if person == "all":
         return None, "everyone", None
     return _owned_app_ids(person, admin_db_path), "person", [person]

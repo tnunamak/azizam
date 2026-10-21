@@ -6,13 +6,16 @@ Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from pathlib import Path
 
 from gateway.public_failure import PublicFailure
 
 if TYPE_CHECKING:
+    from gateway.runtime_auth import RuntimeIdentity
+    from proxy import AuthContext
     from gateway.owner_projection import JobView, ProjectionNames, ReceiptView, StorageView
 
 Kind = Literal["creation", "prompt", "chat", "voice", "receipt", "job", "request_history", "debug_capture"]
@@ -35,6 +38,39 @@ class Viewer:
     def __post_init__(self):
         if self.auth_kind not in {"session", "app_key", "mcp_grant", "trusted_address", "service_key"}:
             raise ValueError("unknown authentication kind")
+        if self.auth_kind in {"trusted_address", "service_key"} and self.person_id is not None:
+            raise ValueError("this authentication kind has no person")
+        if self.auth_kind == "mcp_grant" and not self.connection_id:
+            raise ValueError("an MCP grant needs a non-empty connection_id")
+        object.__setattr__(self, "owner_keys", frozenset(self.owner_keys) - {""})
+
+
+def viewer_from_auth(
+    auth: AuthContext | RuntimeIdentity | None, *,
+    owner_keys: Iterable[str] | None = None, path: Path | None = None,
+) -> Viewer:
+    """Normalize trusted authentication, preserving the caller's principal scope.
+
+    Resolved scope keys may be supplied by a caller that already read aliases.
+    Privacy permission is not issued in step 1. Missing identity adds no authority.
+    """
+    from gateway import ownership
+    from gateway.runtime_auth import RuntimeIdentity
+    identity = auth if isinstance(auth, RuntimeIdentity) else getattr(auth, "identity", None)
+    if owner_keys is None:
+        # ownership accepts the AuthContext shape, not a bare RuntimeIdentity.
+        from types import SimpleNamespace
+        owner_keys = ownership.readable_owner_keys(SimpleNamespace(identity=identity), path=path) if identity else ()
+    return Viewer(
+        person_id=identity.person_id if identity else None,
+        app_id=identity.app_id if identity else None,
+        key_hash=identity.key_hash if identity and not identity.app_id else None,
+        owner_keys=frozenset(owner_keys), auth_kind=identity.auth_kind if identity else "app_key",
+        credential_id=identity.credential_id if identity else None,
+        trusted_address=identity.trusted_address if identity else None,
+        connection_id=identity.connection_id if identity else None,
+    )
+
 
 
 @dataclass(frozen=True)
@@ -196,11 +232,20 @@ def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHis
     return False
 
 
+def decide_own(viewer: Viewer, principals: Iterable[str]) -> bool:
+    """Principal-only Own check; no per-row resource or set allocation.
+
+    Resource availability, actions and explicit-App precedence stay with callers.
+    The Viewer's keys exclude the empty legacy alias at construction.
+    """
+    return not viewer.owner_keys.isdisjoint(principals)
+
+
 def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
     if not record.available:
         return DENY
     if isinstance(record, (CreationRecord, VoiceRecord, ReceiptRecord, JobRecord)):
-        own = bool((viewer.owner_keys - {""}) & (record.owner_keys - {""}))
+        own = decide_own(viewer, record.owner_keys)
         if isinstance(record, CreationRecord):
             if own and action in {"read", "delete", "reuse", "link"}:
                 return OWN
@@ -221,6 +266,8 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
         if action == "read":
             if _content_read(viewer, record):
                 return OWN
+            # D52: another person's included prompt is "elsewhere" for a
+            # delegated credential, even when the creation was shared with it.
             if viewer.auth_kind == "session" or viewer.privacy_permission:
                 return _shared(viewer, record)
         elif action == "delete" and _self(viewer, record):
