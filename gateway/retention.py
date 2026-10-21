@@ -464,6 +464,7 @@ def conversation_store(decision: Decision, requested: Any, *, has_scope: bool) -
         store = decision.person_id is not None
     if not has_scope:
         store = False
+    # OWNER_VISIBILITY_STEP3: preserve explicit no-person store until retention narrowing is connected to content policy.
     if not decision.keep and decision.reason != "no_person":
         store = False
     return bool(store)

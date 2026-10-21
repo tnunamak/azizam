@@ -1,11 +1,13 @@
 # Owner visibility step 1: implementation and current-main differences
 
-Approved policy: v3 at `782d763f`, D51 (2026-10-12, confirmed 2026-10-20).
+Authoritative policy: v4.2 at `c6968dc8` on `origin/design/owner-visibility`,
+`OWNER_VISIBILITY.md` §3.1 and `OWNER_VISIBILITY_TESTS.md` §2.
+These tables supersede conflicting implementation-lead chat amendments.
 Implementation base: `origin/main` at `52408b268215585dab40299f2ebc2bd920ab6bff`.
 This step consolidates existing checks. It does not switch visibility, issue
 privacy permissions, change saved records, or serve the owner projection.
 
-## Core and the lead's amendment
+## Core and authoritative action table
 
 `gateway/content_access.py` contains immutable Viewer/resource/access types and
 the pure decision function. Roles affect only `operational()`. Principal aliases
@@ -14,40 +16,35 @@ are resolved by the existing trusted callers, outside the pure core.
 | Kind | Read | Delete | Reuse | Share | Link | Cancel |
 |---|---|---|---|---|---|---|
 | creation | Own or Shared | Own | Own | Own and sole Maker | Own or Shared | Deny |
-| prompt | Self/App-maker (R4), or included share | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
-| chat | Self/App-maker (R4) | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
+| prompt | ContentRead or included share | Self | Self and ContentRead | Deny | Deny | Deny |
+| chat | ContentRead | Self and same App/legacy key | Self and same App/legacy key | Deny | Deny | Deny |
 | voice | Own | Own | Own | Deny | Deny | Deny |
 | receipt | Own | Deny | Deny | Deny | Deny | Deny |
 | job | Own | Deny | Deny | Deny | Deny | Own |
-| request_history | Self/App-maker (R4) | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny |
-| debug_capture | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny | Deny |
+| request_history | ContentRead | Self + delegated permission | Self + delegated permission | Deny | Deny | Deny |
+| debug_capture | Self + delegated permission | Self + delegated permission | Deny | Deny | Deny | Deny |
 
-This includes the lead's round-4 refinement on 2026-10-20, which supersedes the
-earlier blanket permission requirement and v3's chat Self+App restriction. The
-creating-credential refinement for v4.2 distinguishes MCP from browser origins:
+ContentRead is limited to prompt, chat and request-history reads:
 
-- A session reads its own person's content across Apps without a privacy flag.
-- An App key reads its person's content made by its exact non-null App without
-  the flag. Keys within an App share that authority; key-level equality is not
-  needed. Other App origins require privacy_permission.
-- An MCP grant reads its person's content made through its exact non-null
-  connection_id without the flag. Browser rows on the shared session App, other
-  connections, and unattributed legacy rows require privacy_permission. Null or
-  empty connection ids never establish creating-credential equality.
-- The same identity rule applies to allowed delete/reuse actions; debug_capture
-  never permits reuse.
-- A row with no person belongs to its creator App. Only a caller with no person
-  and the exact same non-null app_id satisfies App-maker; no person, including
-  an accountable owner or a holder of privacy permission, may read that row.
-- Included prompt shares remain read-only. A delegated recipient needs privacy
-  permission; a recipient session does not.
+- A browser session reads its non-null Self across Apps and origins.
+- An App key reads attributed App-key outputs of its exact App without the flag.
+  Rotated keys share this authority. Browser, MCP and legacy rows require the flag.
+- An MCP grant reads only its exact non-null creating connection without the flag.
+  The shared session App alone never proves OwnOutput.
+- No-person rows require a no-person App identity and the exact non-null App.
+  No-person mutations always deny. Debug capture always requires non-null Self.
+- Prompt deletion requires Self; prompt reuse (including delegated `md=full`)
+  also requires ContentRead. Chat mutation requires Self plus the same App, or
+  the exact `owner_key_hash` for an appless legacy row. History mutations and
+  debug reads/deletes require privacy permission for delegated callers.
+- Stored-response continuation is `chat:read`, including no-person continuation.
+  Included prompt shares are read-only; delegated recipients need permission.
 
-Creator app_id and connection_id are trusted submission attribution, never an
-inference from current App accountability or an intersection of readable owner
-keys. Viewer.delegation distinguishes App keys from MCP grants, including a grant
-whose connection id is missing. Step 3 must record connection/credential origin
-on new content writes and normalize legacy missing origins as browser-created
-for MCP access. This step adds typed attribution only; it changes no write path.
+Viewer.auth_kind is required: session, app_key, mcp_grant, trusted_address or
+service_key. credential_id, connection_id and trusted_address come from trusted
+authentication, never request-body claims. ContentOrigin records explicit browser,
+App-key credential or MCP connection attribution; None means legacy. This step
+adds types only. Step 3 must persist these origins at production write sites.
 O6 still applies only to creations, voices, jobs and receipts. The new delegation/permission fields
 have no credential storage or issuance surface in this step; no history/debug
 capture route is added.
@@ -59,11 +56,11 @@ Denied even if a stale share exists. A prompt share selects its maker's row only
 
 | Source | Current main authority | Viewer identity and principal set | Privacy permission |
 |---|---|---|---|
-| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | Not needed (`delegation=None`) |
-| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Only cross-App/session person content needs it (`delegation="app_key"`) |
-| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Person content requires Self and explicit privacy permission | Only cross-App/session person content needs it (`delegation="app_key"`) |
+| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | Not needed (`auth_kind="session"`) |
+| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Delegated ContentRead outside OwnOutput and history/debug need it (`auth_kind="app_key"`) |
+| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Person content requires Self and explicit privacy permission | Delegated ContentRead outside OwnOutput and history/debug need it (`auth_kind="app_key"`) |
 | Trusted address | `admin_runtime.runtime_identity_for_trusted_address` (2457-2482 on main) | `app:<id>`, no person; never the shared network as a person | False; exact-App App-maker rows only |
-| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Only exact creating-connection rows bypass the flag; browser, other-connection and legacy rows need it (`delegation="mcp_grant"`) |
+| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Only exact creating-connection rows bypass the flag; browser, other-connection and legacy rows need it (`auth_kind="mcp_grant"`) |
 | Control-plane service account | Runtime authentication rejects it on content routes | No content Viewer | False |
 | Missing identity | No trusted person, App, credential or principal | No content basis | False |
 
@@ -87,8 +84,8 @@ exceptions rather than moving them into the matrix:
 3. `retention.conversation_row_visible` retains today's narrow App/legacy-key
    scope before calling the core. Its appless null-person/key match remains a
    legacy exception; exact-App App-maker access is now part of the R4 matrix.
-   The old scope carries no delegation permission, so its existing delegated
-   reads keep a temporary grant at the call site. `_responses_row_visible`
+   The old scope carries no delegation permission, so `conversation_row_visible`
+   calls decide with `privacy_permission=True` forced on as a transitional grant. `_responses_row_visible`
    explicitly names this delegation. Key-API prompt reads in
    `_tracked_video_fields`, `proxy_graph_video_content`, and the key-fetcher
    md=full restore in `_signed_asset_content_response` have their own markers.
@@ -100,6 +97,10 @@ exceptions rather than moving them into the matrix:
 5. `media_jobs.append_event` still accepts any nonempty trusted event type.
    Its SQL sink, literal writers, dynamic writers and resolved current types are
    frozen by the inventory. Runtime type restriction remains a step-3 change.
+6. Admin job/event audiences, status recent media/live jobs and the owner request
+   log still expose current content. Home/Make accountable-App content decisions,
+   explicit no-person conversation storage and video prompt deletion under job-read
+   ownership are also marked for step 3.
 
 ## Current main differs from v3's r18 assumptions
 
@@ -147,8 +148,8 @@ whose lookup provenance is tested separately. Raw data bags never pass through.
 No endpoint or MCP callback serves this projection in step 1.
 
 The registration inventory has 450 route-method entries, including registered
-HEAD and non-HTTP entries, all McpDeps fields, tool schemas/suboperations, dispatch
-fingerprints and production event writers (including the SQL sink). Its 12 event
+HEAD and non-HTTP entries, all McpDeps fields, tool schemas/suboperations, whole-module and helper dispatch
+fingerprints and production event writers across root modules and gateway (including aliases and the SQL sink). Its 12 event
 types are today's emitted/validated types, not a claim that append_event already
 rejects all others. Classifications state the relevant core checks; they do not
 prove that every current route enforces them. Existing route graph and headless

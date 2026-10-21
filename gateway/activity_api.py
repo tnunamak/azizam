@@ -36,6 +36,7 @@ def create_activity_router(
         caller = authorize(request)
         if isinstance(caller, JSONResponse):
             return caller
+        # OWNER_VISIBILITY_STEP3: the owner request log must serve a closed operational projection, not admin receipts.
         users = admin_store.list_users(path=admin_path)
         people = [{"id": row["id"], "label": person_label(row)} for row in users]
         labels = {person["id"]: person["label"] for person in people}

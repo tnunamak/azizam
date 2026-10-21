@@ -9722,6 +9722,7 @@ def _gc_video_job_records_locked(now: float) -> None:
     for pid in drop:
         _video_job_records.pop(pid, None)
         _forget_video_record_row(pid)
+        # OWNER_VISIBILITY_STEP3: video DELETE/GC currently removes prompts under job-read ownership, not prompt Self.
         prompt_memory.delete_asset(f"video_{pid}")
 
 
@@ -20881,6 +20882,7 @@ def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) 
     video_id = (result.get("metadata") or {}).get("upstream_video_id")
     prompt_id = _prompt_id_from_video_id(video_id) if isinstance(video_id, str) else None
     if prompt_id:
+        # OWNER_VISIBILITY_STEP3: job-read cancellation/DELETE removes a prompt; enforce its separate prompt mutation rule.
         prompt_memory.delete_asset(f"video_{prompt_id}")
     return media_jobs.get(job_id, audience=audience, path=media_jobs.DB_PATH)
 

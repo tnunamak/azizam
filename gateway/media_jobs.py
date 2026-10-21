@@ -306,6 +306,7 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
     )
     if audience == "internal":
         return dict(data)
+    # OWNER_VISIBILITY_STEP3: admin job content needs Own or a closed owner operational projection.
     if audience == "admin":
         return {k: data[k] for k in ADMIN_VISIBLE_FIELDS if k in data}
     return {k: data[k] for k in CLIENT_VISIBLE_FIELDS if k in data}
@@ -1392,6 +1393,7 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
     }
     if audience == "internal":
         return {**base, "payload": dict(event.get("payload") or {})}
+    # OWNER_VISIBILITY_STEP3: admin event audiences still expose member job correlation; enforce job Own.
     if audience == "admin":
         # Admin sees that an event happened but not the freeform breadcrumb
         # bag. Operators who need the full payload bump to internal.
