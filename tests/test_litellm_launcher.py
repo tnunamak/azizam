@@ -57,6 +57,16 @@ def test_spawn_modes_refused_before_imports_or_database(monkeypatch, capsys, arg
             provider_sidecar.main(['run', '--db', '/not-opened.db', '--', 'litellm', *argv])
 
 
+@pytest.mark.parametrize('value', ['4', '0', 'abc'])
+def test_upstream_default_worker_count_cannot_spawn_unpatched_workers(monkeypatch, capsys, value):
+    # LiteLLM reads DEFAULT_NUM_WORKERS_LITELLM_PROXY as the click default for --num_workers.
+    monkeypatch.delenv('NUM_WORKERS', raising=False)
+    monkeypatch.setenv('DEFAULT_NUM_WORKERS_LITELLM_PROXY', value)
+    monkeypatch.setattr(launcher, 'install_no_content_shim', lambda: pytest.fail('shim imported before refusal'))
+    assert launcher.main([]) == 78
+    assert 'single_process_required' in capsys.readouterr().err
+
+
 def test_launcher_sets_effective_logger_levels_before_server(monkeypatch):
     import logging
     import sys

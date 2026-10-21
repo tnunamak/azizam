@@ -355,7 +355,8 @@ def test_failed_database_checks_back_off_without_exception_contents(monkeypatch,
     assert 'private-connection-string' not in str(gate.status('fixture')) + caplog.text
 
 
-@pytest.mark.parametrize('name', ['LITELLM_LOCAL_MODEL_COST_MAP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'REQUESTS_CA_BUNDLE'])
+@pytest.mark.parametrize('name', ['LITELLM_LOCAL_MODEL_COST_MAP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+                                  'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'])
 def test_operational_environment_survives_without_declaration(name):
     assert content.child_environment({name: 'fixture-value'}, declared=set())[name] == 'fixture-value'
 
