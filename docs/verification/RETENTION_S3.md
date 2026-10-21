@@ -41,8 +41,8 @@ capability, so new spend and error rows are disabled.
 
 LiteLLM's numeric key/user/team spend updates remain necessary for virtual-key
 budgets. Its daily accounting keeps the User-Agent tag, model, endpoint and a per-day
-request_id. The request_id is the most recently aggregated value for that
-day/tag/key/model/provider/endpoint combination, not a list of every request.
+request_id. That identifier stays on the per-day tag/key/model/provider/endpoint
+aggregate; it is not a separate spend row for every request.
 A client-supplied `user` field also reaches daily end-user accounting. The
 canary checks the real success logger, queued cost increments and budget guard.
 It does not disable all spend updates to obtain an empty database.
@@ -185,6 +185,8 @@ The checker accepts only an empty success-callback list or that one pinned
 internal callback, which increments a per-minute in-memory success counter
 (router.py:6674); arbitrary callbacks remain refused.
 
+### Initial implementation run
+
 Measured ceilings on 2026-10-21: pytest 15,358 (full hermetic collection),
 Vitest 3,051 (`vitest list --json`), Playwright 492 (471 + 3 + 18 across the
 three gate configurations), Node 87 (82 Pi cases and 5 compatibility cases).
@@ -197,7 +199,7 @@ The focused profile/canary/management run passed 44 cases. Endpoint/compiler
 and authenticated-ledger checks passed 72 cases. The rehearsal returned
 `profile_valid` with synthetic clean flags. It was not a live database check.
 
-The final full hermetic run used committed code `76456ccf`:
+The initial implementation's full hermetic run used committed code `76456ccf`:
 
 ```sh
 scripts/run-hermetic-pytest.sh --junit-xml-out /path/to/full-pass.xml \
@@ -234,6 +236,44 @@ The separate Compose regression also failed first for effective logger levels
 and the automatically installed router callback.
 
 Rows written before this change remain until purged. This applies to spend
-rows, error rows and tool inventory. No purge, live database check, gateway
-restart or LiteLLM restart was performed. The lead owns the purge after
+rows, error rows and tool inventory. No purge, live database check, live gateway
+restart or live LiteLLM restart was performed. The lead owns the purge after
 operator approval.
+
+
+The final affected-suite run tested committed implementation `329d13be`:
+
+```sh
+scripts/run-hermetic-pytest.sh --junit-xml-out /path/to/followups.xml \
+  -n 8 --dist worksteal --order-seed=20261020 -q --tb=short \
+  tests/test_retention*.py tests/test_receipt_retention.py \
+  tests/test_litellm*.py tests/test_provider_sidecar.py \
+  tests/test_sidecar_publication.py tests/test_engine_knowledge_boundary.py \
+  tests/test_route_graph_freeze.py tests/test_headless_access.py \
+  tests/test_adapter_differential*.py
+```
+
+Result: **965 passed** in 65.50 seconds; JUnit has zero failures or errors.
+This includes all five mutation cases, route freeze, headless access, engine
+knowledge boundary and the 108 adapter differential cases. Every one of the
+56 updated differential fixtures was compared with the review base
+`196c9b1f`: restoring only the three edited facts and their revision references
+restores the original JSON exactly.
+
+Both native and Docker Compose executions of `tests/e2e/fresh_instance.py`
+passed authenticated chat, shared availability checks and complete teardown.
+The native harness now starts the managed sidecar and pinned launcher with the
+compiled profile. The Compose harness waits for a bounded profile recheck when
+the gateway starts before LiteLLM is ready. Host listeners use only disposable
+ports in 18000–18999.
+
+Full hermetic collection measured **15,387** Python cases, up 29 from the
+review base; tests/budgets.toml sets that ceiling. Vitest lists **3,051** and
+Playwright lists **471 + 3 + 18 = 492**, matching their unchanged ceilings.
+The Node ceiling remains **87**; Node cases were not rerun in this follow-up.
+The full Python suite was collected; the affected suites above were executed.
+
+`git diff --check` passed. No old branch-based evidence URL or
+CANARY_POSITIVE switch remains in the affected files. Follow-up logs,
+collection listings and JUnit XML are in `~/.tmp/azizam-retention-s3/` with
+filenames starting with `followups-`.
