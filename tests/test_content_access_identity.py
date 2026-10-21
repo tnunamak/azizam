@@ -1,5 +1,6 @@
 """Step-1 identity gate: real auth/store builders, with test-owned state only."""
 from ipaddress import ip_address
+from dataclasses import replace
 from unittest.mock import patch
 
 import proxy
@@ -35,17 +36,19 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
     browser = Viewer(browser_identity.person_id, browser_identity.app_id, auth_kind="session", owner_keys=scope.owner_keys)
     for app in (personal, service, session_app):
         assert f"app:{app['id']}" in browser.owner_keys
-    admin_store.add_trusted_address(service["id"], "192.0.2.7", max_entries=32, path=db)
-    trusted_identity = admin_runtime.runtime_identity_for_trusted_address(ip_address("192.0.2.7"), path=db)
-    trusted = Viewer(trusted_identity.person_id, trusted_identity.app_id, auth_kind="trusted_address",
-                     trusted_address=trusted_identity.trusted_address,
-                     owner_keys=frozenset(ownership.readable_owner_keys(AuthContext(identity=trusted_identity), path=db)))
-    assert (trusted.person_id, trusted.trusted_address, trusted.key_hash, trusted.credential_id) == (None, "192.0.2.7", None, None)
-    assert isinstance(decide(trusted, ChatRecord(None, service["id"]), "read"), Own)
-    assert isinstance(decide(browser, ChatRecord(None, service["id"]), "read"), Deny)
+    for app, address in ((service, "192.0.2.7"), (personal, "192.0.2.8")):
+        admin_store.add_trusted_address(app["id"], address, max_entries=32, path=db)
+        trusted_identity = admin_runtime.runtime_identity_for_trusted_address(ip_address(address), path=db)
+        trusted = Viewer(trusted_identity.person_id, trusted_identity.app_id, auth_kind="trusted_address",
+                         trusted_address=trusted_identity.trusted_address,
+                         owner_keys=frozenset(ownership.readable_owner_keys(AuthContext(identity=trusted_identity), path=db)))
+        assert (trusted.person_id, trusted.trusted_address, trusted.key_hash, trusted.credential_id) == (None, address, None, None)
+        assert isinstance(decide(trusted, ChatRecord(None, app["id"]), "read"), Own)
+        assert isinstance(decide(browser, ChatRecord(None, app["id"]), "read"), Deny)
     assert isinstance(decide(browser, CreationRecord("asset", frozenset({f"app:{service['id']}"})), "read"), Own)
     row = ChatRecord(person, personal["id"], origin=ContentOrigin("session"))
     assert isinstance(decide(key, row, "read"), Deny)
+    assert isinstance(decide(key, replace(row, origin=ContentOrigin("app_key", credential_id=cred["id"])), "read"), Own)
     assert isinstance(decide(browser, row, "read"), Own)
 
 
