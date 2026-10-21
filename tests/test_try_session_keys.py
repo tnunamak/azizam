@@ -193,6 +193,9 @@ def test_try_catalog_names_the_current_person_plan_and_applies_category_grants(b
         for plan, expected in [(None, set()), (old, {"plain"}), (new, {"plain", "exp-flow"})]:
             accounts.change_person(member.user["id"], "test", plan_id=plan["id"] if plan else None, path=member.db)
             response = browser.client.get("/me/api/models/catalog")
+            if response.status_code != 200:
+                import asyncio
+                asyncio.run(proxy._user_models_catalog_payload(object()))
             assert response.status_code == 200, response.text
             catalog = response.json()
             assert (catalog["access_plan"]["id"] if catalog["access_plan"] else None) == (plan["id"] if plan else None)
