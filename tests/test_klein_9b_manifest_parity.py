@@ -5,6 +5,7 @@ Before the manifests existed, both workflows ran through the manifest-less path
 the ComfyUI round and image encoding are replaced. Run only with the hermetic runner.
 """
 import copy
+import itertools
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -51,20 +52,29 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
             side_effect=lambda *a, **k: proxy.Response(b"{}", status_code=200),
         ))
 
-    async def submitted(self, handler, request, *, with_manifest):
-        seen = []
+    async def submitted(self, handler, request, *, with_manifest, manifest_id=None):
+        seen, found = [], []
 
         async def run(client, workflow, *args, **kwargs):
             seen.append(copy.deepcopy(workflow))
             return None, [b"fake-image"]
 
         real = proxy._find_image_manifest
-        finder = real if with_manifest else (lambda intent, model: None)
+
+        def recording(intent, model):
+            manifest = real(intent, model)
+            found.append(manifest and manifest.get("id"))
+            return manifest
+
+        finder = recording if with_manifest else (lambda intent, model: None)
         with patch.object(proxy, "_graph_run_round", side_effect=run), patch.object(
             proxy, "_find_image_manifest", finder,
         ):
             response = await handler(request, proxy.NO_AUTH_CONTEXT)
         self.assertEqual(response.status_code, 200, response.body)
+        if with_manifest:
+            # Without this, a missing manifest would compare the fallback with itself.
+            self.assertIn(manifest_id, found)
         return seen
 
     async def test_generation_graph_is_identical_with_and_without_manifest(self):
@@ -78,10 +88,17 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                     if seed is not None and with_manifest:
                         body["extensions"] = {NAMESPACE: {"seed": seed}}
                     request = SimpleNamespace(json=AsyncMock(return_value=body))
-                    draws = [seed, seed + 1] if seed is not None else [101, 102]
-                    with patch.object(proxy.random, "randint", side_effect=draws):
+                    if seed is None:
+                        draws = iter([101, 102])
+                    elif with_manifest:
+                        # Draws that differ from the supplied seed: ignoring it would show.
+                        draws = itertools.count(901)
+                    else:
+                        draws = iter([seed, seed + 1])
+                    with patch.object(proxy.random, "randint", side_effect=lambda *_: next(draws)):
                         results.append(await self.submitted(
-                            proxy.proxy_graph_image_request, request, with_manifest=with_manifest))
+                            proxy.proxy_graph_image_request, request, with_manifest=with_manifest,
+                            manifest_id="image.generate.flux2-klein"))
                 self.assertEqual(results[0], results[1])
                 seeds = [g["31"]["inputs"]["seed"] for g in results[1]]
                 self.assertEqual(seeds, [41, 42] if seed is not None else [101, 102])
@@ -102,7 +119,7 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                     with patch.object(proxy.random, "randint", side_effect=[101, 102]):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_edit_request, _MultipartRequest(items),
-                            with_manifest=with_manifest))
+                            with_manifest=with_manifest, manifest_id="image.edit.flux2-klein"))
                 self.assertEqual(results[0], results[1])
                 seeds = [g["25"]["inputs"]["noise_seed"] for g in results[1]]
                 self.assertEqual(seeds, [101, 102])
