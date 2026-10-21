@@ -93,6 +93,13 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     finally:
         case.doCleanups()
     model_surface = [(row["id"], row.get("type"), row.get("architecture")) for row in models["data"]]
+    # Freeze the original catalog separately from the three data-only additions.
+    added = {"moss-image", "moss-image-fast", "moss-image-quality"}
+    assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == {
+        name: ("image", {"input_modalities": ["text"], "output_modalities": ["image"]})
+        for name in added
+    }
+    model_surface = [row for row in model_surface if row[0] not in added]
 
     app = FastAPI()
     app.include_router(create_gateway_router(_build_registry(), capabilities_provider=lambda _r: _sample_capabilities()))

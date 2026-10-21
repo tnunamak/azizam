@@ -133,7 +133,9 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             request=SimpleNamespace(), client=object(),
             base_workflow={"s": {"inputs": {"seed": 0}}, "b": {"inputs": {"batch_size": 1}}},
             meta={"batch_size_node": "b", "batch_size_field": "batch_size"},
-            seed_node="s", seed_field="seed", workflow_name="fixture",
+            manifest={**self.manifest, "bindings": {"comfyui": {"map": {
+                "seed": [{"node": "s", "input": "seed"}],
+            }}}}, workflow_name="fixture",
             width=512, height=512, n_requested=2, response_format="b64_json",
             headers={}, fixed_seed=41,
         )
@@ -297,6 +299,35 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.body)
         self.assertEqual([w["s"]["inputs"]["noise_seed"] for w in seen], [41, 42])
         self.assertEqual(self.workflow, before)
+
+    async def test_generation_seed_binding_reaches_each_actual_round(self):
+        self.manifest["intent"] = "image.generate"
+        self.manifest["bindings"]["comfyui"]["map"]["seed"].append(
+            {"node": "second", "input": "operator_seed"})
+        self.workflow["second"] = {"inputs": {"operator_seed": 0}}
+        before = copy.deepcopy(self.workflow)
+        for supplied_seed in (None, 41):
+            with self.subTest(seed=supplied_seed):
+                seen = []
+
+                async def run(client, workflow, *args, **kwargs):
+                    seen.append(copy.deepcopy(workflow))
+                    return None, [b"fake-image"]
+
+                body = {"model": "fixture-generate", "prompt": "a landscape", "n": 2}
+                if supplied_seed is not None:
+                    body["extensions"] = {"com.azizam.workflow": {"seed": supplied_seed}}
+                request = SimpleNamespace(json=AsyncMock(return_value=body))
+                with patch.object(proxy, "_graph_run_round", side_effect=run), patch.object(
+                    proxy.random, "randint", side_effect=[101, 102],
+                ):
+                    response = await proxy.proxy_graph_image_request(request, proxy.NO_AUTH_CONTEXT)
+                self.assertEqual(response.status_code, 200, response.body)
+                expected = [41, 42] if supplied_seed is not None else [101, 102]
+                self.assertEqual([w["s"]["inputs"]["noise_seed"] for w in seen], expected)
+                self.assertEqual([w["second"]["inputs"]["operator_seed"] for w in seen], expected)
+                self.assertTrue(all("seed" not in w["s"]["inputs"] for w in seen))
+                self.assertEqual(self.workflow, before)
 
     async def test_non_object_generation_json_is_400_before_backend_effects(self):
         fake = self.serve("upload-ok-any")

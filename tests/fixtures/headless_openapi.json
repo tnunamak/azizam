@@ -250,6 +250,15 @@
                     "$ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs"
                   },
                   {
+                    "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality"
+                  },
+                  {
                     "$ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile"
                   }
                 ],
@@ -2140,6 +2149,139 @@
         "title": "Krea 2 Turbo + SNOFS (uncensored)",
         "type": "object",
         "x-azizam-workflow-id": "image.generate.krea2-turbo-snofs"
+      },
+      "WorkflowInputs_image_generate_moss_image": {
+        "additionalProperties": false,
+        "description": "Make a picture from a description. Uses about 12 GB of memory.",
+        "properties": {
+          "batch_size": {
+            "default": 1,
+            "description": "How many pictures to make at once.",
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 1024,
+            "description": "Picture height in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "prompt": {
+            "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Reuse this number and the same settings for a similar result.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "default": 1024,
+            "description": "Picture width in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "MOSS Image",
+        "type": "object",
+        "x-azizam-workflow-id": "image.generate.moss-image"
+      },
+      "WorkflowInputs_image_generate_moss_image_fast": {
+        "additionalProperties": false,
+        "description": "Make a picture quickly with less memory. Uses about 9.6 GB of memory.",
+        "properties": {
+          "batch_size": {
+            "default": 1,
+            "description": "How many pictures to make at once.",
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 1024,
+            "description": "Picture height in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "prompt": {
+            "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Reuse this number and the same settings for a similar result.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "default": 1024,
+            "description": "Picture width in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "MOSS Image Fast",
+        "type": "object",
+        "x-azizam-workflow-id": "image.generate.moss-image-fast"
+      },
+      "WorkflowInputs_image_generate_moss_image_quality": {
+        "additionalProperties": false,
+        "description": "Make a picture with the best detail of the MOSS Image options. Takes longer to finish.",
+        "properties": {
+          "batch_size": {
+            "default": 1,
+            "description": "How many pictures to make at once.",
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 1024,
+            "description": "Picture height in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "prompt": {
+            "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Reuse this number and the same settings for a similar result.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 50,
+            "description": "More steps add detail but take longer.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "default": 1024,
+            "description": "Picture width in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "MOSS Image Quality",
+        "type": "object",
+        "x-azizam-workflow-id": "image.generate.moss-image-quality"
       },
       "WorkflowInputs_image_generate_sdxl_seamless_tile": {
         "additionalProperties": false,
@@ -19837,6 +19979,15 @@
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile"
                           }
                         ],
@@ -26678,6 +26829,15 @@
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile"
                           }
                         ],
@@ -33009,6 +33169,425 @@
       ],
       "short_id": "krea2-turbo-snofs",
       "typical_seconds": 9.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a picture from a description. Uses about 12 GB of memory.",
+      "display_name": "MOSS Image",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "POST",
+            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}/content"
+          },
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "kind": "media_job",
+          "poll": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}"
+          },
+          "statuses": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ],
+          "submit": {
+            "body": {
+              "intent": "image.generate",
+              "request": "<the sync request body>"
+            },
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "moss-image",
+            "path": "/gateway/v1/media/jobs"
+          },
+          "terminal": [
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "recommended": "sync",
+        "sync": {
+          "content_type": "application/json",
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "method": "POST",
+          "model": "moss-image",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/generations"
+        }
+      },
+      "id": "image.generate.moss-image",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image"
+      },
+      "intent": "image.generate",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "short_id": "moss-image",
+      "typical_seconds": 7.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a picture quickly with less memory. Uses about 9.6 GB of memory.",
+      "display_name": "MOSS Image Fast",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "POST",
+            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}/content"
+          },
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "kind": "media_job",
+          "poll": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}"
+          },
+          "statuses": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ],
+          "submit": {
+            "body": {
+              "intent": "image.generate",
+              "request": "<the sync request body>"
+            },
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "moss-image-fast",
+            "path": "/gateway/v1/media/jobs"
+          },
+          "terminal": [
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "recommended": "sync",
+        "sync": {
+          "content_type": "application/json",
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "method": "POST",
+          "model": "moss-image-fast",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/generations"
+        }
+      },
+      "id": "image.generate.moss-image-fast",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast"
+      },
+      "intent": "image.generate",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "short_id": "moss-image-fast",
+      "typical_seconds": 5.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a picture with the best detail of the MOSS Image options. Takes longer to finish.",
+      "display_name": "MOSS Image Quality",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "POST",
+            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}/content"
+          },
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "kind": "media_job",
+          "poll": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}"
+          },
+          "statuses": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ],
+          "submit": {
+            "body": {
+              "intent": "image.generate",
+              "request": "<the sync request body>"
+            },
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "moss-image-quality",
+            "path": "/gateway/v1/media/jobs"
+          },
+          "terminal": [
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "recommended": "async",
+        "sync": {
+          "content_type": "application/json",
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "method": "POST",
+          "model": "moss-image-quality",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/generations"
+        }
+      },
+      "id": "image.generate.moss-image-quality",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality"
+      },
+      "intent": "image.generate",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "short_id": "moss-image-quality",
+      "typical_seconds": 78.0
     },
     {
       "aliases": [],

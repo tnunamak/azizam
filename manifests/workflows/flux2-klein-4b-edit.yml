@@ -84,6 +84,10 @@ bindings:
       guidance:
         - node: "26"
           input: guidance
+      # Route-owned reseeding; the public input schema stays unchanged.
+      seed:
+        - node: "25"
+          input: noise_seed
       denoise:
         - node: "49"
           input: denoise

@@ -118,8 +118,19 @@
 # Retention review follow-ups: +29 deterministic diagnosis, environment, read-only
 # rehearsal, worker-mode and isolated mutation cases; full collection = 15387.
 # Slice 3 round-2 follow-ups: +6 lower-case proxy cases, +3 upstream worker-default cases (15387 -> 15396).
+# MOSS Image: three data-only workflows add six catalog UI-graph/payload cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15325.
+# Manifest-owned image reseeding: +8 batch/retry/input-name cases, +3 missing
+# binding cases, +11 byte-identical legacy graph cases and +1 generation-route case.
+# Full hermetic --collect-only -q measured 15348.
+# MOSS followups: +20 manifest-less fixed/random seed and byte/record cases,
+# +2 adaptive batch-limit cases, +1 invalid seed target, +1 identity-hash case,
+# and +1 legacy empty-round fixed-seed offset case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15373.
 pytest = 15327
 vitest = 3054
+playwright = 492
+
 playwright = 492
 
 playwright = 492

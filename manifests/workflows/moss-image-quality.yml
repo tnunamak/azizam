@@ -1,0 +1,90 @@
+# License cards verified 2026-10-20:
+# https://huggingface.co/Comfy-Org/MOSS-Image
+# https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: image.generate.moss-image-quality
+intent: image.generate
+display_name: MOSS Image Quality
+purpose: Slow images with the best detail
+description: Make a picture with the best detail of the MOSS Image options. Takes
+  longer to finish.
+source: local
+trusted: true
+typical_seconds: 78
+inputs:
+  prompt:
+    type: string
+    required: true
+    label: description
+    help: Describe what you want to make.
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  steps:
+    label: steps
+    help: More steps add detail but take longer.
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 50
+  seed:
+    type: integer
+    minimum: 0
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 3
+    default: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/moss-image-quality.json
+    map:
+      prompt:
+      - node: '4'
+        input: text
+      width:
+      - node: '10'
+        input: width
+      height:
+      - node: '10'
+        input: height
+      steps:
+      - node: '8'
+        input: steps
+      seed:
+      - node: '9'
+        input: noise_seed
+      batch_size:
+      - node: '10'
+        input: batch_size
+requires:
+  custom_nodes:
+  - RMBG
+  models:
+  - role: diffusion_model
+    path: diffusion_models/moss_image_sft_bf16.safetensors
+  - role: text_encoder
+    path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
+  - role: vae
+    path: vae/flux2-vae.safetensors
+license: Apache-2.0

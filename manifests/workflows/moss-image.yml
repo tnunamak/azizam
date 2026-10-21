@@ -1,0 +1,83 @@
+# License cards verified 2026-10-20:
+# https://huggingface.co/Comfy-Org/MOSS-Image
+# https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
+# https://huggingface.co/darask0/MOSS-Image_4-step_adapter_lora
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: image.generate.moss-image
+intent: image.generate
+display_name: MOSS Image
+purpose: Images from a prompt
+description: Make a picture from a description. Uses about 12 GB of memory.
+source: local
+trusted: true
+typical_seconds: 7
+inputs:
+  prompt:
+    type: string
+    required: true
+    label: description
+    help: Describe what you want to make.
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  seed:
+    type: integer
+    minimum: 0
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/moss-image.json
+    map:
+      prompt:
+      - node: '3'
+        input: text
+      width:
+      - node: '6'
+        input: width
+      height:
+      - node: '6'
+        input: height
+      seed:
+      - node: '5'
+        input: noise_seed
+      batch_size:
+      - node: '6'
+        input: batch_size
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/moss_image_sft_bf16.safetensors
+  - role: text_encoder
+    path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
+  - role: vae
+    path: vae/flux2-vae.safetensors
+  - role: adapter
+    path: rapid_moss/rapid-moss-4step/
+  custom_nodes:
+  - RMBG
+  - RapidMOSSAdapter
+license: Apache-2.0
