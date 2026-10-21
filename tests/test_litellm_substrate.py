@@ -173,11 +173,15 @@ def test_keeps_litellm_settings_minimal() -> None:
         }
     )
 
-    assert compiled["litellm_settings"] == {"drop_params": True}
+    from gateway.litellm_content import profile
+
+    assert compiled["litellm_settings"] == {"drop_params": True, **profile()["litellm_settings"]}
     assert compiled["general_settings"] == {
         "litellm_key_header_name": "X-Litellm-Key",
         "forward_client_headers_to_llm_api": True,
+        **profile()["general_settings"],
     }
+    assert compiled["router_settings"] == profile()["router_settings"]
     assert "metadata" not in compiled
 
 
