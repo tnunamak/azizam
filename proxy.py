@@ -15228,7 +15228,6 @@ async def _run_identity_job(
                 _ADMISSION_WORKER.reset(worker_token)
             item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
-            asset.update(identity_api.scene_extras(result))
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_SUCCEEDED, progress=100, add_assets=[asset],
                 metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
