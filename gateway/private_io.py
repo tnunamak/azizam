@@ -25,13 +25,23 @@ def ensure_private_dir(path: Path | str) -> Path:
             break
         current = current.parent
     for directory in reversed(missing):
-        directory.mkdir(mode=0o700)
-        os.chmod(directory, 0o700)
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        _set_private_directory_mode(directory)
     if path.exists():
-        if path.is_symlink() or not path.is_dir():
-            raise NotADirectoryError(path)
-        os.chmod(path, 0o700)
+        _set_private_directory_mode(path)
     return path
+
+
+def _set_private_directory_mode(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
 
 
 def create_private_file(path: Path | str) -> Path:
@@ -46,6 +56,28 @@ def create_private_file(path: Path | str) -> Path:
     finally:
         os.close(fd)
     return path
+
+
+def prepare_private_database(path: Path | str) -> Path:
+    """Privately precreate a new SQLite database; leave existing database modes alone."""
+    path = Path(path)
+    ensure_private_dir(path.parent)
+    if path.exists():
+        return path
+    try:
+        return create_private_file(path)
+    except FileExistsError:
+        # Another initializer won the create race. This was absent at entry, so
+        # validate and tighten only the newly-created concurrent result.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise FileExistsError(path)
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        return path
 
 
 def _stage(path: Path) -> tuple[int, Path]:
@@ -79,11 +111,13 @@ def atomic_copy_file(source: Path | str, target: Path | str) -> Path:
     """Copy a file into a private atomic replacement without preserving its mode."""
     source, target = Path(source), Path(target)
     fd, temporary = _stage(target)
+    target_file = os.fdopen(fd, "wb")
     try:
-        with source.open("rb") as source_file, os.fdopen(fd, "wb") as target_file:
-            shutil.copyfileobj(source_file, target_file)
-            target_file.flush()
-            os.fchmod(target_file.fileno(), 0o600)
+        with target_file:
+            with source.open("rb") as source_file:
+                shutil.copyfileobj(source_file, target_file)
+                target_file.flush()
+                os.fchmod(target_file.fileno(), 0o600)
         os.replace(temporary, target)
     except BaseException:
         temporary.unlink(missing_ok=True)

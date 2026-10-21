@@ -148,7 +148,8 @@ class CategoryStore:
         self.path = Path(path)
         if str(path) == ":memory:":
             raise ValueError("a persistent database path is required")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        from gateway import private_io
+        private_io.prepare_private_database(self.path)
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             result = conn.execute("PRAGMA integrity_check").fetchall()

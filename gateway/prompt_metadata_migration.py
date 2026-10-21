@@ -151,7 +151,8 @@ def strip_cached_assets(
         return result
     if throttle_seconds < 0 or (max_files is not None and max_files < 0):
         raise ValueError("migration limits cannot be negative")
-    state_path.parent.mkdir(parents=True, exist_ok=True)
+    from gateway import private_io
+    private_io.prepare_private_database(state_path)
     with _SCAN_LOCK, sqlite3.connect(state_path, timeout=30) as db:
         db.execute(_DDL)
         db.execute(_ATTEMPTS_DDL)

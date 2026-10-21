@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+from gateway import private_io
+
 # Lock files this thread already holds; nested connects must not block on them.
 _held = threading.local()
 
@@ -49,6 +51,7 @@ def _held_locks() -> set[Path]:
 def _open_lock(path: Path | str):
     """Open the store lock file; never delete it, or two holders could lock different files."""
     fd = os.open(lock_path(path), os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
     return os.fdopen(fd, "r+b")
 
 
@@ -188,7 +191,7 @@ def store_startup(path: Path, *, full_check: bool = True) -> Iterator[None]:
     block; this thread's nested connects reuse the held lock.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(path.parent)
     key = lock_path(path)
     if key in _held_locks():
         check_quarantine_pending(path)

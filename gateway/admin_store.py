@@ -765,13 +765,14 @@ def secure_state_path(path: Path) -> None:
     database avoids a process-wide umask change in this multithreaded gateway.
     """
     check_quarantine_pending(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         pass
     else:
+        os.fchmod(fd, 0o600)
         os.close(fd)
     for state_file in (path, Path(f"{path}-wal"), Path(f"{path}-shm"), Path(f"{path}-journal")):
         try:

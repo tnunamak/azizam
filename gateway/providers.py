@@ -318,9 +318,7 @@ def _backup_ledger_before_plan_migration(path: Path) -> None:
 
 
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
-    private_io.ensure_private_dir(path.parent)
-    if not path.exists():
-        private_io.create_private_file(path)
+    private_io.prepare_private_database(path)
     _backup_ledger_before_plan_migration(path)
     with sqlite3.connect(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
