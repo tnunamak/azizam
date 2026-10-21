@@ -22,7 +22,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
 from gateway.content_access import Viewer, decide_own, viewer_from_auth
@@ -177,6 +177,20 @@ def create_me_media_router(
             prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _media_scope(request, actor, admin_path)
+            if request.query_params.get("folder_state") == "1":
+                storage = asset_storage_provider() if asset_storage_provider is not None else None
+                result = {"media_folder": _media_folder_view(
+                    actor, storage, admin_path=admin_path, jobs_path=jobs_path,
+                    receipts_path=receipt_path, prompt_path=prompt_path,
+                )}
+                if request.query_params.get("removal_plan") == "1":
+                    result["removal_plan"] = (
+                        {"missing_items": len(_viewer_removal(
+                            actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
+                            receipts_path=receipt_path,
+                        ).gone_assets)} if storage is not None else None
+                    )
+                return _json(result)
             result = _list_media(
                 request,
                 scope=scope,
@@ -189,13 +203,6 @@ def create_me_media_router(
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
-            )
-            # The folder is listed and counted once per Library, on the first page; later pages carry no state.
-            storage = asset_storage_provider() if asset_storage_provider is not None else None
-            result["media_folder"] = (
-                _media_folder_view(actor, storage, admin_path=admin_path, jobs_path=jobs_path,
-                                   receipts_path=receipt_path, prompt_path=prompt_path)
-                if not request.query_params.get("cursor") else None
             )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
@@ -285,7 +292,7 @@ def create_me_media_router(
             return _error_response(exc)
 
     @router.post("/media/confirm-folder", include_in_schema=False)
-    def confirm_media_folder(request: Request) -> JSONResponse:
+    def confirm_media_folder(request: Request, body: Any = Body(default=None)) -> JSONResponse:
         """The owner's one-time confirmation that this folder is the Library's media folder.
 
         Refuses a folder that holds none of the Library's items while the Library has items: that is
@@ -307,6 +314,8 @@ def create_me_media_router(
                 raise PublicFailure("media_folder_unavailable", 503)
             stored, total, _uncheckable = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
                                                          receipts_path=_resolve_path(receipts_path))
+            if (_expected_count(body, "items_here"), _expected_count(body, "library_items")) != (stored, total):
+                raise PublicFailure("media_folder_changed", 409)
             if total and not stored:
                 raise PublicFailure("media_folder_no_matches", 409)
             volume_id = prompt_memory.confirm_media_folder(
@@ -330,7 +339,7 @@ def create_me_media_router(
             return _error_response(exc)
 
     @router.post("/media/remove-missing", include_in_schema=False)
-    def remove_missing_media(request: Request) -> JSONResponse:
+    def remove_missing_media(request: Request, body: Any = Body(default=None)) -> JSONResponse:
         """Drop the caller's Library and job entries whose files are gone.
 
         Refuses when the media folder cannot be read. It also refuses when the folder holds no media file
@@ -351,15 +360,12 @@ def create_me_media_router(
             storage = asset_storage_provider() if asset_storage_provider is not None else None
             if storage is None or storage.folder is None:
                 raise PublicFailure("media_folder_unavailable", 503)
-            scope = _member_media_scope(actor.user_id, admin_path)
-            plan = _plan_removal(
-                _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=_resolve_path(receipts_path)),
-                is_stored=lambda asset_id: _is_stored(asset_id, storage),
-                already_hidden=(
-                    _deleted_asset_ids(scope, admin_path),
-                    media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
-                ),
+            plan = _viewer_removal(
+                actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
+                receipts_path=_resolve_path(receipts_path),
             )
+            if len(plan.gone_assets) > _expected_count(body, "expected_missing"):
+                raise PublicFailure("media_folder_changed", 409)
             if (plan.gone_assets or plan.job_ids) and not storage.digests:
                 raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
             if plan.gone_assets or plan.job_ids:
@@ -520,20 +526,27 @@ def _folder_counts(
 ) -> tuple[int, int, int]:
     """(items whose file is in the folder, checkable Library items, uncheckable Library items), across everyone.
 
-    The Library items are the assets the finished jobs name, less the ones a person deleted. An id whose
+    The Library items are the assets the finished jobs name, including items a person hid from their view.
+    A present shared file remains evidence even after another person deletes their entry. An id whose
     digest is not 64 hex characters cannot be matched to a file, so it is in neither count; the caller
     reports it apart, and a Library with only such ids is unverifiable rather than present.
     """
-    deleted = _audited_deletions(admin_path)
     named: dict[str, None] = {}
     for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path):
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
-            if asset_id and asset_id not in deleted:
+            if asset_id:
                 named[asset_id] = None
     checkable = [asset_id for asset_id in named if _is_checkable(asset_id)]
     stored = sum(1 for asset_id in checkable if _digest_of(asset_id) in storage.digests)
     return stored, len(checkable), len(named) - len(checkable)
+
+
+def _expected_count(body: Any, name: str) -> int:
+    value = body.get(name) if isinstance(body, dict) else None
+    if type(value) is not int or value < 0:
+        raise PublicFailure("invalid_inputs", 400, param=name)
+    return value
 
 
 def _is_checkable(asset_id: str) -> bool:
@@ -559,6 +572,22 @@ class _Removal:
     gone_assets: tuple[str, ...]
     hides: tuple[tuple[str, str], ...]
     job_ids: tuple[str, ...]
+
+
+def _viewer_removal(
+    user_id: str, storage: StorageSnapshot, *, admin_path: Path, jobs_path: Path,
+    receipts_path: Path,
+) -> _Removal:
+    """The same current selection for the read-only plan and the destructive action."""
+    scope = _member_media_scope(user_id, admin_path)
+    return _plan_removal(
+        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path),
+        is_stored=lambda asset_id: _is_stored(asset_id, storage),
+        already_hidden=(
+            _deleted_asset_ids(scope, admin_path),
+            media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
+        ),
+    )
 
 
 def _plan_removal(

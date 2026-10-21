@@ -1083,6 +1083,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(len(second["assets"]), 1)
         self.assertNotEqual(item["asset_id"], second["assets"][0]["asset_id"])
         self.assertIsNone(second["next_cursor"])
+        self.assertNotIn("removal_plan", second)
         self.assertEqual(self.client.get("/me/api/media?start=2026-01-01").json()["assets"], [])
         self.assertEqual(self.client.get("/me/api/media?cursor=bad").status_code, 400)
         self.assertEqual(self.client.get("/me/api/media?start=invalid").status_code, 400)

@@ -32,7 +32,7 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
-* POST /me/api/media/confirm-folder is new (Library "This is the right media folder"):
+* POST /me/api/media/confirm-folder is new (called by the Library "Remove missing items" confirmation):
   the owner's marker confirmation is its own route, and every other method answers as
   /me/api/media/{asset_id} did before, as for remove-missing;
 * /me/api/profile/avatar, /me/api/profile/avatars and /me/api/profile/avatar/picture are new (a person's avatar and the

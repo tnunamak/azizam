@@ -175,6 +175,18 @@
 # asset resolution. Full hermetic collection measured 15845 (replaces the prior two-file estimate).
 # Keyframes round 3: +6 regressions; merged r88 full hermetic --collect-only -q
 # measured 15830 on 2026-10-21 (15845 - 21 from r88 + 6).
+# Media folder asked at Remove missing: +6 pytest cases (partial copy never adopted, mismatch never adopted,
+# no counting on confirmed or member reads, unrelated folder, two pinned-marker swap cases); Library spec 95 -> 98
+# cases by count. Measured 2026-10-21: pytest collect 15803, vitest list 3071.
+# Media folder round 3: +6 vitest cases (owner Confirm the media folder action); pytest unchanged. vitest list 3077.
+# Media-folder round 4: measured hermetic collection 15806 (+3 viewer-plan regressions)
+# and vitest list --json 3082 (+3 Library and +2 Settings rendered cases).
+# Media-folder round 5: measured full hermetic collection 15812 and Vitest list 3084.
+# Covers stale evidence refusal, smaller selection, lightweight reads, viewer scope,
+# required action evidence, checked-total grammar and zero-missing evidence.
+# Media-folder round 6: full hermetic collection measured 15814 (+2: listing
+# skips evidence/plan work; same-folder evidence drift refuses confirmation).
+# Full Vitest list measured 3086 (+2: filter reuse; click snapshot across refetch).
 pytest = 15804
 vitest = 3068
 playwright = 502

@@ -38,6 +38,7 @@ function renderLibrary(assets: unknown[]) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = String(input);
     requested.push(path);
+    if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: null });
     if (path.startsWith("/me/api/media?")) return Response.json({ assets, models: [], next_cursor: null });
     if (path.includes("/download?")) {
       const id = decodeURIComponent(path.split("/")[4]);
@@ -110,7 +111,7 @@ describe("Library tiles load small previews", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(imageRenders).toHaveLength(renders);
     expect(Array.from(document.querySelectorAll("[data-asset-open]"))).toEqual(nodes);
-    expect(requested.filter((path) => path.startsWith("/me/api/media?"))).toHaveLength(1);
+    expect(requested.filter((path) => path.startsWith("/me/api/media?") && !path.includes("folder_state=1"))).toHaveLength(1);
   });
 
   test("opening a tile keeps other tile previews unchanged and uses the original in the viewer", async () => {
@@ -127,7 +128,7 @@ describe("Library tiles load small previews", () => {
       expect(original).toHaveAttribute("height", "1024");
     });
     expect(imageRenders.filter((src) => src === "/signed/other/thumb")).toHaveLength(otherRenders);
-    expect(requested.filter((path) => path.startsWith("/me/api/media?"))).toHaveLength(1);
+    expect(requested.filter((path) => path.startsWith("/me/api/media?") && !path.includes("folder_state=1"))).toHaveLength(1);
   });
 
   test("a thumbnail that fails to load falls back to the original", async () => {
