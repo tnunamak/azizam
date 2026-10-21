@@ -307,7 +307,7 @@ def test_mode_report_contains_directory_errors_without_names(tmp_path, monkeypat
     open_file = os.open
 
     def denied_open(path, flags, *args, **kwargs):
-        if Path(path) == denied:
+        if Path(path) == denied or (str(path) == denied.name and "dir_fd" in kwargs):
             raise PermissionError("simulated unreadable directory")
         return open_file(path, flags, *args, **kwargs)
 
@@ -335,7 +335,7 @@ def test_mode_report_handles_directory_replaced_by_symlink(tmp_path, monkeypatch
 
     def replace_before_open(path, flags, *args, **kwargs):
         nonlocal replaced
-        if Path(path) == swapped and not replaced:
+        if (Path(path) == swapped or (str(path) == swapped.name and "dir_fd" in kwargs)) and not replaced:
             replaced = True
             swapped.rename(moved)
             swapped.symlink_to(outside, target_is_directory=True)
