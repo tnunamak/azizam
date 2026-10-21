@@ -5,7 +5,7 @@ id: video.generate.minimax-h3-keyframes-mid
 license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
 display_name: MiniMax H3 Keyframes + Middle
-purpose: Animate between a first, a middle and a last picture, with stereo sound
+purpose: Animate through three pictures, with stereo sound
 description: Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.
 source: local
 trusted: true

@@ -451,7 +451,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         self.assertEqual(r.status_code, 200, r.text)
         expected = self._expected("video-ltx-2.5-i2v", {
             "5": {"text": "p"}, "20": {"value": 1280}, "21": {"value": 704}, "22": {"value": 121},
-            "23": {"value": 24}, "24": {"value": 24}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
+            "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
             "70": {"image": "up1_input_reference.png"}, "79": {"value": 1.0},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))

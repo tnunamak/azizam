@@ -5,7 +5,7 @@ id: video.generate.minimax-h3-keyframes
 license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
 display_name: MiniMax H3 Keyframes
-purpose: Animate between a first and a last picture, with stereo sound
+purpose: Animate between two pictures, with stereo sound
 description: Make a video with stereo sound that starts on one picture and ends on another, following a description.
 source: local
 trusted: true

@@ -5,7 +5,7 @@ id: video.generate.ltx-2.5-keyframes
 license: "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0"
 intent: video.generate
 display_name: LTX 2.5 Distilled Keyframes
-purpose: Animate between a first and a last picture, with sound
+purpose: Animate between two pictures, with sound
 description: Make a video with sound that starts on one picture and ends on another, following a description.
 source: local
 trusted: true
