@@ -96,6 +96,7 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "AZIZAM_RESPONSES_DB": "responses.db",
         "AZIZAM_RECEIPTS_DB": "receipts.db",
         "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
+        "AZIZAM_KEY_ACTIVITY_LOG": "key_activity.jsonl",
     }.items():
         env[name] = str(state / filename)
     return env

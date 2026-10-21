@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     for name, filename in {
         'AZIZAM_ADMIN_DB': 'admin.db', 'AZIZAM_METRICS_DB': 'metrics.db',
         'AZIZAM_RESPONSES_DB': 'responses.db', 'AZIZAM_RECEIPTS_DB': 'receipts.db',
-        'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db',
+        'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db', 'AZIZAM_KEY_ACTIVITY_LOG': 'key_activity.jsonl',
     }.items():
         env[name] = str(state / filename)
     if SEED_PROFILE == 'household':

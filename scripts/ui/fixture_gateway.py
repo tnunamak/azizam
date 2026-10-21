@@ -4,6 +4,10 @@ import os
 import sys
 from scripts.ui.fixture_guard import install, parse_allowed_ports
 
+# The launcher runs with cwd set to its disposable state directory. Override
+# inherited host settings before any gateway import can initialize firehose.
+os.environ["AZIZAM_KEY_ACTIVITY_LOG"] = os.path.join(os.getcwd(), "key_activity.jsonl")
+
 def _freeze_household_clock(now):
     """Freeze Python wall clocks process-wide; leave monotonic timers running."""
     import datetime
