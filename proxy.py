@@ -11098,14 +11098,16 @@ async def proxy_graph_video_create(
                 }
             validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
             rejected = {**validation.rejected, **unknown_fields}
-            if rejected:
-                name, reason = next(iter(rejected.items()))
+            # Preserve the required-picture errors before reporting other invalid inputs.
+            for name, reason in validation.rejected.items():
                 spec = (video_manifest.get("inputs") or {}).get(name) or {}
                 if reason == "required input missing" and spec.get("type") == "asset":
                     raise _VideoAssetError(
                         f"{name} is required for this model",
                         param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
                     )
+            if rejected:
+                name, reason = next(iter(rejected.items()))
                 return _json_error(400, reason, param=name, code="invalid_workflow_extension")
             if workflow_cfg.get("requires_extensions"):
                 staged_assets, source_probe = await _resolve_video_workflow_assets(
