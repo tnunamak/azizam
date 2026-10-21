@@ -10,6 +10,9 @@ import test_engine_contract_oracle as oracle
 import test_engine_protocol_review_wire as wire
 from gateway import workflows_catalog
 from gateway.workflow_openapi import workflow_catalog
+from test_route_policy_inventory import gateway  # noqa: F401
+import test_route_policy_inventory as inventory
+import pytest
 
 
 def digest(value):
@@ -27,7 +30,7 @@ def assertion_locals(call):
     return None
 
 
-def test_export(monkeypatch, tmp_path):
+def test_export(monkeypatch, tmp_path, record_property):
     proxy.app.openapi_schema = None
     schema = proxy.app.openapi()
     out = {"headless_openapi.json": schema}
@@ -67,4 +70,11 @@ def test_export(monkeypatch, tmp_path):
         row = workflows_catalog._workflow_row(record, capability_rows=[], openapi_row=rows[identifier],
               aliases=proxy._gateway_aliases_provider(), receipts=[], jobs=[], base_url='')
         out['web/' + name] = row
-    print('WORKFLOW_SNAPSHOT_EXPORT=' + json.dumps(out, sort_keys=True))
+    record_property('snapshots', json.dumps(out, sort_keys=True))
+
+
+@pytest.mark.parametrize('gateway', ['discovery'], indirect=True)
+def test_category_export(gateway, monkeypatch, record_property):
+    values = assertion_locals(lambda: inventory.test_ungoverned_discovery_snapshot(gateway, monkeypatch))
+    if values:
+        record_property('snapshots', json.dumps({'category_discovery_ungoverned.json': values['responses']}))
