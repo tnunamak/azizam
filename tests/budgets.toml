@@ -129,6 +129,8 @@
 # Full hermetic --collect-only -q on 2026-10-21 measured 15373.
 # Train r86: full hermetic collection measured 15567 on 2026-10-21,
 # including six MOSS/private-output/availability integration cases.
+# Review gaps r86: +1 plan held only by a disabled app, +1 young-stage sweep case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15569.
 # Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
 # Offline node:test runs: 5 compatibility + 82 Pi = 87.
 # Owner visibility step 1, remeasured after the v4.2 corrections:
@@ -148,7 +150,12 @@
 # Account switcher A1: +15 cases for seven sign-in paths, old cookies and Try keys,
 # concurrent sign-ins, unusable cookies, failed login, and single-revocation step-up.
 # Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 15812 (2026-10-21).
-pytest = 15812
+# Plan deletion review round 1: +3 (inactive session App returns to its person; disabled-person App; same-as-person blocker) -> 15572.
+# Retired eight image workflows and the Ideogram prompt tests (-30), then +2 Klein 9B parity cases; --collect-only -q on 2026-10-21: 15539.
+# Train r88: 15797 + 5 (review-gap and plan-deletion cases) - 28 (retired legacy image workflows, +2 Klein 9B parity) = 15774.
+# Train r88 test gaps: +2 plan-deletion blockers (enabled-App-only, sign-in-rule-only) -> 15776.
+# A1 merged with r88: collection will verify the combined count.
+pytest = 15791
 vitest = 3068
 playwright = 502
 

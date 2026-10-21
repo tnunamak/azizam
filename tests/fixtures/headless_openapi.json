@@ -238,6 +238,9 @@
                     "$ref": "#/components/schemas/WorkflowInputs_image_generate_anima_turbo"
                   },
                   {
+                    "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+                  },
+                  {
                     "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b"
                   },
                   {
@@ -1378,6 +1381,56 @@
         "type": "object",
         "x-azizam-workflow-id": "image.analyze.face-likeness"
       },
+      "WorkflowInputs_image_edit_flux2_klein": {
+        "additionalProperties": false,
+        "description": "Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.",
+        "properties": {
+          "guidance": {
+            "maximum": 20,
+            "minimum": 0,
+            "type": "number"
+          },
+          "height": {
+            "description": "Picture height in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "mask": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. White areas change; black areas stay as they are.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "prompt": {
+            "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "source_image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "steps": {
+            "description": "More steps take longer.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Picture width in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "source_image"
+        ],
+        "title": "FLUX.2 Klein 9B Edit",
+        "type": "object",
+        "x-azizam-workflow-id": "image.edit.flux2-klein"
+      },
       "WorkflowInputs_image_edit_flux2_klein_4b": {
         "additionalProperties": false,
         "description": "Portable image edit contract bound to the existing ComfyUI workflow.",
@@ -1905,6 +1958,56 @@
         "title": "Anima Turbo (anime)",
         "type": "object",
         "x-azizam-workflow-id": "image.generate.anima-turbo"
+      },
+      "WorkflowInputs_image_generate_flux2_klein": {
+        "additionalProperties": false,
+        "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+        "properties": {
+          "batch_size": {
+            "description": "How many pictures to make at once.",
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "guidance": {
+            "maximum": 20,
+            "minimum": 0,
+            "type": "number"
+          },
+          "height": {
+            "description": "Picture height in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "prompt": {
+            "description": "Describe what you want to make.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Reuse this number and the same settings for a similar result.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "description": "More steps take longer.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Picture width in pixels.",
+            "maximum": 2048,
+            "minimum": 64,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "FLUX.2 Klein 9B",
+        "type": "object",
+        "x-azizam-workflow-id": "image.generate.flux2-klein"
       },
       "WorkflowInputs_image_generate_flux2_klein_4b": {
         "additionalProperties": false,
@@ -19967,6 +20070,9 @@
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_anima_turbo"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b"
                           },
                           {
@@ -26817,6 +26923,9 @@
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_anima_turbo"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b"
                           },
                           {
@@ -31745,6 +31854,86 @@
       "typical_seconds": 2.0
     },
     {
+      "aliases": [],
+      "description": "Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.",
+      "display_name": "FLUX.2 Klein 9B Edit",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "extensions_field": "extensions (JSON string)",
+          "fields": {
+            "guidance": {
+              "field": "guidance",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "form"
+            },
+            "mask": {
+              "field": "mask",
+              "in": "file"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "form"
+            },
+            "source_image": {
+              "field": "image",
+              "in": "file"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "form"
+            }
+          },
+          "method": "POST",
+          "model": "flux2-klein",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/edits"
+        }
+      },
+      "id": "image.edit.flux2-klein",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein"
+      },
+      "intent": "image.edit",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "short_id": "flux2-klein",
+      "typical_seconds": null
+    },
+    {
       "aliases": [
         "image-fast",
         "image-edit-fast"
@@ -32511,6 +32700,159 @@
       ],
       "short_id": "anima-turbo",
       "typical_seconds": 4.0
+    },
+    {
+      "aliases": [],
+      "description": "Portable image generation contract bound to the FLUX.2 Klein 9B txt2img ComfyUI workflow.",
+      "display_name": "FLUX.2 Klein 9B",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "POST",
+            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}/content"
+          },
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "guidance": {
+              "field": "guidance",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "kind": "media_job",
+          "poll": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}"
+          },
+          "statuses": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ],
+          "submit": {
+            "body": {
+              "intent": "image.generate",
+              "request": "<the sync request body>"
+            },
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "flux2-klein",
+            "path": "/gateway/v1/media/jobs"
+          },
+          "terminal": [
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "recommended": "sync",
+        "sync": {
+          "content_type": "application/json",
+          "fields": {
+            "batch_size": {
+              "field": "batch_size",
+              "in": "extension"
+            },
+            "guidance": {
+              "field": "guidance",
+              "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            }
+          },
+          "method": "POST",
+          "model": "flux2-klein",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/generations"
+        }
+      },
+      "id": "image.generate.flux2-klein",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein"
+      },
+      "intent": "image.generate",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        }
+      ],
+      "short_id": "flux2-klein",
+      "typical_seconds": 6.0
     },
     {
       "aliases": [

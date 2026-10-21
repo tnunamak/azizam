@@ -83,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         files, directories, violations, errors = inspect(target, fix=args.fix)
         if not (files or directories or violations or errors):
             continue
-        action = "repaired" if args.fix else "need repair"
+        if not (violations or errors):
+            action = "ok"
+        else:
+            action = "repaired" if args.fix else "need repair"
         print(f"{label}: {files} files, {directories} directories, {violations} mode issues, errors={errors} ({action})")
         failed |= errors > 0 or (violations > 0 and not args.fix)
     return 1 if failed else 0
