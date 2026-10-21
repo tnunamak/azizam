@@ -192,7 +192,9 @@
 # measured 15952; npx vitest list measured 3091 (2026-10-21).
 # The merged public error-copy fixture adds one parameterized case.
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
-pytest = 15953
+# Remove-missing follow-ups: +2 (an unseen job removal refuses; a 64-char
+# non-hex id is never removed). Hermetic --collect-only -q measured 15955.
+pytest = 15955
 vitest = 3091
 playwright = 502
 
