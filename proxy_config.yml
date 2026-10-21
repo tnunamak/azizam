@@ -1003,6 +1003,43 @@ videos:
       frame_rate: 24
       length_step: 17
       length_offset: 5
+    # Keyframe variants: the clip starts on `input_reference`, ends on the manifest's
+    # `last_frame` asset (sent as extensions.com.azizam.workflow.last_frame) and, for
+    # the -mid variant, passes through `middle_frame`. `requires_extensions` makes the
+    # create route refuse a request that lacks a required asset. No chain workflow:
+    # these are single-segment clips.
+    video-ltx-2.5-keyframes:
+      file: workflows/videos/video-ltx-2.5-keyframes.json
+      requires_input_reference: true
+      requires_extensions: true
+      min_seconds: 1
+      max_seconds: 10
+      max_size: 1280x704
+      default_size: 960x512
+      size_multiple: 64
+      frame_rate: 24
+    video-minimax-h3-keyframes:
+      file: workflows/videos/video-minimax-h3-keyframes.json
+      requires_input_reference: true
+      requires_extensions: true
+      min_seconds: 2
+      max_seconds: 10
+      max_size: 1344x768
+      default_size: 960x544
+      frame_rate: 24
+      length_step: 17
+      length_offset: 5
+    video-minimax-h3-keyframes-mid:
+      file: workflows/videos/video-minimax-h3-keyframes-mid.json
+      requires_input_reference: true
+      requires_extensions: true
+      min_seconds: 2
+      max_seconds: 10
+      max_size: 1344x768
+      default_size: 960x544
+      frame_rate: 24
+      length_step: 17
+      length_offset: 5
     # Video-conditioned workflows. Both need extension inputs (`source_video`,
     # and `reference_image` for character replace), so `requires_extensions`
     # makes the create route insist on them. `source_video_input` names the
@@ -1090,9 +1127,14 @@ videos:
     ltx-2.5: video-ltx-2.5-t2v
     ltx-2.5-t2v: video-ltx-2.5-t2v
     ltx-2.5-i2v: video-ltx-2.5-i2v
+    ltx-2.5-keyframes: video-ltx-2.5-keyframes
     minimax-h3: video-minimax-h3-t2v
     minimax-h3-t2v: video-minimax-h3-t2v
     minimax-h3-i2v: video-minimax-h3-i2v
+    minimax-h3-keyframes: video-minimax-h3-keyframes
+    minimax-h3-keyframes-mid: video-minimax-h3-keyframes-mid
+    h3-keyframes: video-minimax-h3-keyframes
+    h3-keyframes-mid: video-minimax-h3-keyframes-mid
     h3: video-minimax-h3-t2v
     minimax-h3-long: video-minimax-h3-long
     h3-long: video-minimax-h3-long

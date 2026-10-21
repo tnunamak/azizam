@@ -103,6 +103,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
         "flux2-klein": ("image", text_to_image),
         "flux2-klein-edit": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
+    keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid", "video-ltx-2.5-keyframes"}
+    expected_added.update({name: ("video", {"input_modalities": ["text", "image"], "output_modalities": ["video"]})
+                           for name in keyframes})
     added = set(expected_added)
     assert {name: (kind, architecture) for name, kind, architecture in model_surface if name in added} == expected_added
     model_surface = [row for row in model_surface if row[0] not in added]

@@ -359,7 +359,9 @@ from gateway.video_extensions import (
     merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
     STANDARD_VIDEO_EXTEND_FIELDS,
+    ROUTE_MANAGED_VIDEO_INPUTS,
     bind_video_workflow_extensions,
+    validate_video_workflow_extensions,
 )
 from gateway.openai_media_schemas import (
     AUDIO_GENERATE_OPENAPI,
@@ -10236,8 +10238,9 @@ async def _resolve_input_reference(
 class _VideoFormParseError(Exception):
     """Raised when an incoming multipart /v1/videos request can't be normalized."""
 
-
-_VIDEO_FORM_FILE_FIELDS = frozenset({"input_reference"})
+    def __init__(self, message: str, *, param: str | None = None):
+        super().__init__(message)
+        self.param = param
 
 
 async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
@@ -10249,8 +10252,9 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     as scalars, input_reference as asset id / URL / data: URI / base64). Here we
     flatten the form back into that shape so the downstream pipeline is unchanged.
 
-    File uploads for `input_reference` are converted to a data: URI so the
-    existing input_reference resolver can decode them without any new branch.
+    Accepted uploaded file parts (`input_reference`, `inputs[<name>]`, or
+    `extensions[com.azizam.workflow][<name>]`) are converted to a data: URI so the
+    existing asset resolvers can decode it without any new branch.
     """
     try:
         form = await request_forms.read_form(request, max_part_size=video_inputs.MAX_FORM_PART_BYTES)
@@ -10260,7 +10264,14 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     try:
         items: list[tuple[str, Any]] = []
         for name, value in form.multi_items():
-            if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
+            if hasattr(value, "read") and hasattr(value, "filename"):
+                workflow_file = re.fullmatch(
+                    rf"(?:extensions\[{re.escape(WORKFLOW_EXTENSION_NAMESPACE)}\]|inputs)\[[^\[\]]+\]",
+                    name,
+                )
+                if name != "input_reference" and workflow_file is None:
+                    reason = detect_unknown_top_level_fields({name: None}, ())[name]
+                    raise _VideoFormParseError(reason, param=name)
                 try:
                     raw = await value.read()
                 except Exception as exc:
@@ -10450,6 +10461,7 @@ async def _resolve_video_workflow_assets(
             and spec.get("type") == "asset"
             and spec.get("required")
             and name in binding_map
+            and name not in ROUTE_MANAGED_VIDEO_INPUTS  # e.g. `image`: sent as input_reference
             and name not in block
         ):
             raise _VideoAssetError(
@@ -10458,7 +10470,12 @@ async def _resolve_video_workflow_assets(
     assets: dict[str, tuple[bytes, str, str]] = {}
     for name, value in block.items():
         spec = specs.get(name)
-        if not isinstance(spec, Mapping) or spec.get("type") != "asset" or name not in binding_map:
+        if (
+            not isinstance(spec, Mapping)
+            or spec.get("type") != "asset"
+            or name not in binding_map
+            or name in ROUTE_MANAGED_VIDEO_INPUTS  # owned by standard route fields
+        ):
             continue
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(
@@ -10795,13 +10812,9 @@ async def proxy_graph_video_create(
         try:
             body = await _read_video_create_form_body(request)
         except _VideoFormParseError as exc:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": str(exc),
-                    "type": "invalid_request_error",
-                }}),
-                status_code=400,
-                media_type="application/json",
+            return _json_error(
+                400, str(exc), param=exc.param,
+                code="unknown_parameter" if exc.param else None,
             )
     else:
         try:
@@ -10962,7 +10975,20 @@ async def proxy_graph_video_create(
     staged_assets: dict[str, tuple[bytes, str, str]] = {}
     source_probe = None
     video_manifest = None
-    if workflow_cfg.get("requires_extensions"):
+    _workflow_block = (
+        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(body.get("extensions"), Mapping)
+        else body.get("extensions")
+    )
+    if isinstance(_workflow_block, Mapping):
+        # Gateway-level controls (metadata) are not workflow inputs.
+        _workflow_block = {
+            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
+        }
+    has_workflow_extensions = (
+        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
+    )
+    if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
         except ManifestError as e:
@@ -10984,16 +11010,32 @@ async def proxy_graph_video_create(
         try:
             body = merge_workflow_inputs(body)
             ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-            if isinstance(ext_block, Mapping):
+            if workflow_cfg.get("requires_extensions") and isinstance(ext_block, Mapping):
                 body["extensions"] = {
                     **body["extensions"],
                     WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
                         ext_block, video_manifest.get("inputs") or {}
                     ),
                 }
-            staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context, request=request,
-            )
+            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
+            rejected = {**validation.rejected, **unknown_fields}
+            # Preserve the required-picture errors before reporting other invalid inputs.
+            for name, reason in validation.rejected.items():
+                spec = (video_manifest.get("inputs") or {}).get(name) or {}
+                if reason == "required input missing" and spec.get("type") == "asset":
+                    message = f"{name} is required for this model"
+                    if name == workflow_cfg.get("source_video_input"):
+                        message += ": pass a video id, URL or data URI"
+                    raise _VideoAssetError(
+                        message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
+                    )
+            if rejected:
+                name, reason = next(iter(rejected.items()))
+                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
+                staged_assets, source_probe = await _resolve_video_workflow_assets(
+                    body, video_manifest, workflow_cfg, auth_context, request=request,
+                )
         except ExtensionError as e:
             return Response(
                 content=json.dumps({"error": {
@@ -11095,6 +11137,15 @@ async def proxy_graph_video_create(
     # short workflows; long-form overrides this further down.
     actual_seconds = length / frame_rate
     duration_adjustment_reason = None
+
+    # Picture assets do not affect duration or dimensions; validate those before fetching.
+    if workflow_cfg.get("requires_extensions") and not workflow_cfg.get("source_video_input"):
+        try:
+            staged_assets, source_probe = await _resolve_video_workflow_assets(
+                body, video_manifest, workflow_cfg, auth_context, request=request,
+            )
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
 
     # Inject parameters into a deep copy of the workflow.
     workflow = copy.deepcopy(workflow_template)
@@ -11310,19 +11361,6 @@ async def proxy_graph_video_create(
         body, upload_error = await _upload_video_workflow_assets(body, staged_assets, auth_context)
         if upload_error is not None:
             return upload_error
-    _workflow_block = (
-        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-        if isinstance(body.get("extensions"), Mapping)
-        else body.get("extensions")
-    )
-    if isinstance(_workflow_block, Mapping):
-        # Gateway-level controls (metadata) are not workflow inputs.
-        _workflow_block = {
-            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
-        }
-    has_workflow_extensions = (
-        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
-    )
     if has_workflow_extensions:
         try:
             manifest = video_manifest or _find_video_manifest(str(workflow_name), workflow_cfg)

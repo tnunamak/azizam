@@ -67,6 +67,14 @@ class RemixReplaceBase(unittest.TestCase):
 
 
 class RemixRouteTests(RemixReplaceBase):
+    def test_missing_source_video_retains_the_reference_hint(self) -> None:
+        response = self.client.post("/v1/videos", json={"model": "video-remix", "prompt": "p"})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["message"],
+                         "source_video is required for this model: pass a video id, URL or data URI")
+        self.assertEqual(self.comfy.uploads, [])
+        self.assertEqual(self.comfy.submitted, [])
+
     def test_remix_creates_a_new_job_that_points_at_the_source(self) -> None:
         r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "make it snowy"})
         self.assertEqual(r.status_code, 200, r.text)
@@ -279,6 +287,9 @@ class CharacterReplaceTests(RemixReplaceBase):
         r = self.client.post("/v1/videos", json=body)
         self.assertEqual(r.status_code, 400, r.text)
         self.assertIn("source_video", r.json()["error"]["param"])
+        self.assertEqual(r.json()["error"]["message"],
+                         "source_video is required for this model: pass a video id, URL or data URI")
+        self.assertEqual(self.comfy.uploads, [])
 
         r = self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "p"})
         self.assertEqual(r.status_code, 400, r.text)

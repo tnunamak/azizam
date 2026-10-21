@@ -126,7 +126,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Removing precisely these additions must recover the data-hygiene document,
     # which adds the reviewed missing/retryable output responses.
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo"}
+             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
+             "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
+             "video.generate.ltx-2.5-keyframes"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
