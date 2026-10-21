@@ -479,9 +479,17 @@ def conversation_row_visible(row: Mapping[str, Any] | None, scope: Mapping[str, 
         return False
     if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
         return False
-    if scope["app_id"]:
-        return row.get("app_id") == scope["app_id"]
-    return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+    if not scope["person_id"]:
+        # OWNER_VISIBILITY_STEP3: legacy personless chats currently match a
+        # personless caller on the same App/key. Self+App requires a person.
+        if scope["app_id"]:
+            return row.get("app_id") == scope["app_id"]
+        return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+    from gateway.content_access import ChatRecord, Own, Viewer, decide
+    viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"],
+                    key_hash=scope["owner_key_hash"] if not scope["app_id"] else None)
+    content = ChatRecord(row.get("person_id"), row.get("app_id"), row.get("owner_key_hash"))
+    return isinstance(decide(viewer, content, "read"), Own)
 
 
 # ------------------------------------------------------------------ the one writer

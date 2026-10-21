@@ -743,11 +743,13 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if not actor.owner:
             raise PublicFailure("owner_required", 403, param="person")
         if person == "all":
+            # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
             return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
     # Everyone starts with their own work; "everyone" is an explicit owner choice.
     scope = str(raw_scope or "me")
     if scope == "everyone":
+        # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
         if not actor.owner:
             raise PublicFailure("owner_required", 403, param="scope")
         return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
@@ -1367,24 +1369,32 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
         return {}
 
 
-def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
+def _record_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope, *, job: bool) -> bool:
     if scope.app_ids is None:
+        # OWNER_VISIBILITY_STEP3: delete owner-everyone / unscoped collection access.
         return True
-    if receipt is None:
+    if record is None:
         return False
-    if receipt.get("app_id"):
-        return str(receipt["app_id"]) in set(scope.app_ids)
-    owner_key = receipt.get("owner_key_hash")
-    return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
+    from gateway.content_access import JobRecord, Own, ReceiptRecord, Viewer, decide
+    readable = frozenset(f"app:{app_id}" for app_id in scope.app_ids) | (scope.owner_keys or frozenset())
+    if record.get("app_id"):
+        principals = frozenset({f"app:{record['app_id']}"})
+        # The existing Library scope treats an explicit App as authoritative.
+        readable = frozenset(f"app:{app_id}" for app_id in scope.app_ids)
+    else:
+        owner = record.get("owner_key_hash")
+        principals = frozenset({owner}) if isinstance(owner, str) else frozenset()
+        readable = scope.owner_keys or frozenset()
+    content = JobRecord(principals) if job else ReceiptRecord(principals)
+    return isinstance(decide(Viewer(person_id=scope.viewer_person_id, owner_keys=readable), content, "read"), Own)
+
+
+def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
+    return _record_in_scope(receipt, scope, job=False)
 
 
 def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
-    if scope.app_ids is None:
-        return True
-    if job.get("app_id"):
-        return str(job["app_id"]) in set(scope.app_ids)
-    owner_key = job.get("owner_key_hash")
-    return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
+    return _record_in_scope(job, scope, job=True)
 
 
 # Nothing recorded where the request came from.

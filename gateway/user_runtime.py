@@ -308,6 +308,7 @@ def build_user_activity_snapshot(
         limit=safe_limit,
         audience="client",
         viewer_person_id=str(user["id"]),
+        # OWNER_VISIBILITY_STEP3: remove owner-everyone activity scope.
         app_ids=None if owner else owned,
         path=receipts_path,
     )

@@ -6970,10 +6970,14 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
     owners_raw = _read_asset_metadata(asset_id).get("owner_key_hashes") or []
     owners = {str(owner) for owner in owners_raw if isinstance(owner, str)}
     if not owners:
+        # OWNER_VISIBILITY_STEP3: delete this no-identity cache exception.
         # Fail closed for authenticated callers when metadata is absent. Auth-
         # disabled local runs have no identity and keep the old cache behavior.
         return _asset_owner_key(auth_context) is None
-    return bool(owners.intersection(_asset_read_owner_keys(auth_context)))
+    from gateway.content_access import CreationRecord, Own, Viewer, decide
+    return isinstance(decide(
+        Viewer(owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
+        CreationRecord(asset_id, frozenset(owners)), "read"), Own)
 
 
 _CURRENT_MAKER = object()
@@ -9382,8 +9386,12 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
     record = _video_job_records.get(prompt_id)
     owner = record.get("owner_key_hash") if record is not None else None
     if not owner:
+        # OWNER_VISIBILITY_STEP3: delete the no-identity video-job exception.
         return _asset_owner_key(auth_context) is None
-    return owner in _asset_read_owner_keys(auth_context)
+    from gateway.content_access import JobRecord, Own, Viewer, decide
+    return isinstance(decide(
+        Viewer(owner_keys=frozenset(_asset_read_owner_keys(auth_context))),
+        JobRecord(frozenset({owner})), "read"), Own)
 
 
 def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
