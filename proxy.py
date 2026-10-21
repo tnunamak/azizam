@@ -10152,6 +10152,10 @@ async def _resolve_input_reference(
 class _VideoFormParseError(Exception):
     """Raised when an incoming multipart /v1/videos request can't be normalized."""
 
+    def __init__(self, message: str, *, param: str | None = None):
+        super().__init__(message)
+        self.param = param
+
 
 async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     """Normalize an openai-python multipart /v1/videos request into a JSON body.
@@ -10162,8 +10166,8 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     as scalars, input_reference as asset id / URL / data: URI / base64). Here we
     flatten the form back into that shape so the downstream pipeline is unchanged.
 
-    Every uploaded file part (`input_reference`, or a workflow asset input sent as
-    `extensions[com.azizam.workflow][<name>]`) is converted to a data: URI so the
+    Accepted uploaded file parts (`input_reference`, `inputs[<name>]`, or
+    `extensions[com.azizam.workflow][<name>]`) are converted to a data: URI so the
     existing asset resolvers can decode it without any new branch.
     """
     try:
@@ -10175,6 +10179,13 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
         items: list[tuple[str, Any]] = []
         for name, value in form.multi_items():
             if hasattr(value, "read") and hasattr(value, "filename"):
+                workflow_file = re.fullmatch(
+                    rf"(?:extensions\[{re.escape(WORKFLOW_EXTENSION_NAMESPACE)}\]|inputs)\[[^\[\]]+\]",
+                    name,
+                )
+                if name != "input_reference" and workflow_file is None:
+                    reason = detect_unknown_top_level_fields({name: None}, ())[name]
+                    raise _VideoFormParseError(reason, param=name)
                 try:
                     raw = await value.read()
                 except Exception as exc:
@@ -10715,13 +10726,9 @@ async def proxy_graph_video_create(
         try:
             body = await _read_video_create_form_body(request)
         except _VideoFormParseError as exc:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": str(exc),
-                    "type": "invalid_request_error",
-                }}),
-                status_code=400,
-                media_type="application/json",
+            return _json_error(
+                400, str(exc), param=exc.param,
+                code="unknown_parameter" if exc.param else None,
             )
     else:
         try:
@@ -10930,14 +10937,16 @@ async def proxy_graph_video_create(
             for name, reason in validation.rejected.items():
                 spec = (video_manifest.get("inputs") or {}).get(name) or {}
                 if reason == "required input missing" and spec.get("type") == "asset":
+                    message = f"{name} is required for this model"
+                    if name == workflow_cfg.get("source_video_input"):
+                        message += ": pass a video id, URL or data URI"
                     raise _VideoAssetError(
-                        f"{name} is required for this model",
-                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
+                        message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
                     )
             if rejected:
                 name, reason = next(iter(rejected.items()))
                 return _json_error(400, reason, param=name, code="invalid_workflow_extension")
-            if workflow_cfg.get("requires_extensions"):
+            if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
                 staged_assets, source_probe = await _resolve_video_workflow_assets(
                     body, video_manifest, workflow_cfg, auth_context, request=request,
                 )
@@ -11042,6 +11051,15 @@ async def proxy_graph_video_create(
     # short workflows; long-form overrides this further down.
     actual_seconds = length / frame_rate
     duration_adjustment_reason = None
+
+    # Picture assets do not affect duration or dimensions; validate those before fetching.
+    if workflow_cfg.get("requires_extensions") and not workflow_cfg.get("source_video_input"):
+        try:
+            staged_assets, source_probe = await _resolve_video_workflow_assets(
+                body, video_manifest, workflow_cfg, auth_context, request=request,
+            )
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
 
     # Inject parameters into a deep copy of the workflow.
     workflow = copy.deepcopy(workflow_template)
