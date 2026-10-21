@@ -5,12 +5,15 @@ tests/test_signin_who_can_enter.py). Sessions of any age are forged with the
 gateway's own signing key, then sent like a browser would.
 """
 import re
+import threading
 import time
 from dataclasses import replace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from gateway import accounts, admin_store, session_policy, step_up
+from gateway.admin_runtime import create_admin_service_account_key
 from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
 )
@@ -853,3 +856,86 @@ def test_a_session_claimed_with_an_admin_key_never_renews_and_ends_at_its_fixed_
     assert claimed.renewable is False
     assert decode_session_cookie(encode_session_cookie(claimed, signing_key=SIGNING_KEY), signing_key=SIGNING_KEY,
                                  now=time.time()).renewable is False
+
+
+# ---------------------------------------------------------------------------
+# Where a sign-in writes its session rows
+# ---------------------------------------------------------------------------
+
+SETUP_EMAIL = "local.owner@example.test"
+
+
+class _LoopWatch:
+    """The event loop thread of each request, and the thread that ran each session write."""
+
+    def __init__(self):
+        self.loop_threads: list[int] = []
+        self.writes: list[tuple[str, int]] = []
+
+    def clear(self):
+        self.loop_threads.clear()
+        self.writes.clear()
+
+    def client(self, g) -> TestClient:
+        async def serve(scope, receive, send):
+            if scope["type"] == "http":
+                self.loop_threads.append(threading.get_ident())
+            await g.proxy.app(scope, receive, send)
+        return TestClient(serve, base_url="https://ai.example", client=("127.0.0.1", 50000))
+
+
+def _claim_with_an_admin_key(g, client, watch):
+    admin_key, _, _ = create_admin_service_account_key("real-owner", path=g.path)
+    watch.clear()
+    return client.post("/setup/claim", data={"admin_key": admin_key}, follow_redirects=False)
+
+
+def _sign_in_as_a_local_owner(g, client, watch):
+    created = client.post("/setup/local-owner", data={
+        "email": SETUP_EMAIL, "password": PASSWORD, "password_confirm": PASSWORD,
+    }, follow_redirects=False)
+    assert created.status_code == 303, created.text
+    client.cookies.clear()
+    watch.clear()
+    return client.post("/setup/local-login", data={"email": SETUP_EMAIL, "password": PASSWORD},
+                       follow_redirects=False)
+
+
+def _sign_in_through_the_provider(g, client, watch):
+    watch.clear()
+    return g.sign_in(client, sub="trusted", email="trusted@example.test", groups=["/Trusted"])
+
+
+@pytest.mark.parametrize("sign_in", [
+    _claim_with_an_admin_key, _sign_in_as_a_local_owner, _sign_in_through_the_provider,
+], ids=["setup claim", "local login", "provider callback"])
+def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatch, sign_in):
+    """end_incoming and issue open and write SQLite. Both must leave the event loop.
+
+    An fsync on the loop stalls every request behind it, so the two writes run in a thread, in
+    this order: end the incoming session, then issue the new one.
+    """
+    from gateway import browser_sessions
+    real = {name: getattr(browser_sessions, name) for name in ("end_incoming", "issue")}
+    watch = _LoopWatch()
+
+    def recording(name):
+        def call(*args, **kwargs):
+            watch.writes.append((name, threading.get_ident()))
+            return real[name](*args, **kwargs)
+        return call
+
+    for name in real:
+        monkeypatch.setattr(browser_sessions, name, recording(name))
+    client = watch.client(sg)
+    try:
+        response = sign_in(sg, client, watch)
+    finally:
+        client.close()
+
+    assert response.status_code in (302, 303), response.text
+    assert [name for name, _ in watch.writes] == ["end_incoming", "issue"], (
+        "a sign-in must end the incoming session before it issues the new one")
+    assert watch.loop_threads, "no request reached the gateway"
+    on_loop = [name for name, thread in watch.writes if thread in watch.loop_threads]
+    assert not on_loop, f"{on_loop} wrote the session database on the event loop thread"
