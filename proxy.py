@@ -7332,12 +7332,14 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
         expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
         if session:
             expires = min(expires, int(session.expires_at), int(session.latest_expiry))
-        sig = _sign_asset_token(asset_id, expires, mode, family, subject)
+        sig = (_sign_asset_token(asset_id, expires, mode, family, subject) if session
+               else _sign_asset_token(asset_id, expires, mode))
         return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
     if session:
         expires = min(expires, int(session.expires_at), int(session.latest_expiry))
-    sig = _sign_asset_token(asset_id, expires, mode, family, subject)
+    sig = (_sign_asset_token(asset_id, expires, mode, family, subject) if session
+           else _sign_asset_token(asset_id, expires, mode))
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
 
 

@@ -1,5 +1,6 @@
 """Browser identity and hand-off responses must reach the server every time."""
 from starlette.datastructures import MutableHeaders
+from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
@@ -17,12 +18,25 @@ class BrowserCacheMiddleware:
         if scope["type"] != "http" or not (handoff or private_api):
             return await self.app(scope, receive, send)
 
+        started = False
+
         async def send_headers(message: Message) -> None:
+            nonlocal started
             if message["type"] == "http.response.start":
+                started = True
                 headers = MutableHeaders(scope=message)
                 headers["cache-control"] = "no-store"
                 if handoff:
                     headers["clear-site-data"] = '"cache"'
             await send(message)
 
-        await self.app(scope, receive, send_headers)
+        try:
+            await self.app(scope, receive, send_headers)
+        except Exception:
+            # Starlette's outer error handler sends outside user middleware.
+            # Match its default 500 here so even an unhandled /me/api error gets
+            # the rule above, then re-raise for the server's normal error logging.
+            if not started:
+                response = PlainTextResponse("Internal Server Error", status_code=500)
+                await response(scope, receive, send_headers)
+            raise

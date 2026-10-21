@@ -68,6 +68,10 @@ def test_key_minted_asset_urls_are_unaffected(media, mode):
     browser_sessions.end_everywhere(cookie_session(client), path=media.path)
     after = media.client().get(url)
     assert after.status_code == 200 and after.content == before.content
+    if mode == thumbnails.THUMB_MODE:
+        etag = before.headers["etag"]
+        assert media.client().get(url, headers={"if-none-match": etag}).status_code == 304
+        assert media.client().get(url, headers={"if-none-match": "W/" + etag}).status_code == 200
 
 
 @pytest.mark.parametrize("mode", ["none", thumbnails.THUMB_MODE])
@@ -121,7 +125,7 @@ def test_unregistered_service_session_urls_end_with_their_session(media):
     assert media.client().get(url).status_code == 403
 
 
-def test_no_store_survives_the_egress_gate_replacing_a_server_error():
+def test_no_store_includes_replaced_and_unhandled_server_errors():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from gateway.browser_cache import BrowserCacheMiddleware
@@ -133,11 +137,15 @@ def test_no_store_survives_the_egress_gate_replacing_a_server_error():
     def fail():
         raise RuntimeError("synthetic handler failure")
 
+    app.add_api_route("/admin/api/fail", fail)
+    app.add_api_route("/auth/api/fail", fail)
     app.add_middleware(EgressGate)
     app.add_middleware(BrowserCacheMiddleware)
-    response = TestClient(app).get("/me/api/fail")
-    assert response.status_code == 500
-    assert response.headers["cache-control"] == "no-store"
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for prefix in ("/me/api", "/admin/api", "/auth/api"):
+            response = client.get(prefix + "/fail")
+            assert response.status_code == 500
+            assert response.headers["cache-control"] == "no-store"
 
 
 def test_rotation_keeps_family_urls_and_invalidates_the_memo(media):
