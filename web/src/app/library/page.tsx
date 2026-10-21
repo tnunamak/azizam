@@ -3156,25 +3156,35 @@ export default function LibraryPage() {
         >
           {canChooseOwner ? (
             <>
-              <p>
-                Azizam needs you to confirm which folder holds the media, once. Missing items can&apos;t be removed until you do.
-                {folder.state === "mismatch"
-                  ? " This folder isn't the one Azizam recorded."
-                  : ""}
-              </p>
-              <p>
-                <code>{folder.path}</code>
-              </p>
               {folderUnverifiable ? (
-                <p>None of the Library&apos;s items can be checked against a file, so Azizam can&apos;t tell whether this is the media folder. Confirming it is your call.</p>
+                <p>
+                  Azizam can&apos;t check your Library&apos;s items against <code>{folder.path}</code>, so it can&apos;t tell
+                  whether this is the media folder. Before Azizam clears out missing items, confirm this is where
+                  your pictures and videos are kept.
+                </p>
+              ) : folderItems > 0 && !folderHere ? (
+                <p>
+                  None of your Library&apos;s files are in <code>{folder.path}</code>. Check that your media disk is
+                  connected, then try again.
+                </p>
+              ) : folder.state === "mismatch" ? (
+                <>
+                  <p>
+                    The media folder looks different from last time (<code>{folder.path}</code>). If you moved your
+                    media or changed disks, confirm this is the right folder. Until then, Azizam won&apos;t remove
+                    anything.
+                  </p>
+                  <p>{`${folderHere} of ${folderItems} Library items have their files here.`}</p>
+                </>
               ) : (
-                <p>{`${folderHere} of ${folderItems} Library items have their files here.`}</p>
+                <p>
+                  Some of your Library&apos;s files are missing from <code>{folder.path}</code>
+                  {` (${folderItems - folderHere} of ${folderItems} items)`}. Before Azizam clears out the missing
+                  ones, confirm this is where your pictures and videos are kept.
+                </p>
               )}
               {folderMostMissing ? (
-                <p>{`Only ${folderHere} of ${folderItems} items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.`}</p>
-              ) : null}
-              {folderItems > 0 && !folderHere ? (
-                <p>None of the Library&apos;s items have their files in this folder, so Azizam can&apos;t confirm it. Check that the media disk is mounted, then try again.</p>
+                <p>{`Only ${folderHere} of ${folderItems} items have their files here. If your media disk isn't connected right now, confirming would let Remove missing delete the others.`}</p>
               ) : null}
               {folderNeedsSecondClick && folderConfirmArmed ? (
                 <Button
@@ -3192,7 +3202,7 @@ export default function LibraryPage() {
                     ? setFolderConfirmArmed(true)
                     : confirmFolderMutation.mutate())}
                 >
-                  This is the right media folder
+                  Yes, this is my media folder
                 </Button>
               )}
             </>

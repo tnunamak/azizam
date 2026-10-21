@@ -92,11 +92,18 @@ clears the signed-in person's own entries whose file is gone:
   recorded identity is never regenerated, even after every entry is removed.
   The marker is created with `O_EXCL`, so a filesystem without hard links (FAT,
   exFAT, some SMB mounts) works.
-- Existing installs and intentional moves need the owner, once. The Library
+- An existing install with nothing recorded adopts its folder on the first
+  Library read when the folder holds the files of more than half of the
+  Library's checkable items (exactly half is not enough; an id that is not a
+  64-digit hash is not counted). The marker is written like the fresh-install
+  one (`O_EXCL`, checks repeated inside the write lock) and the adoption is
+  audited as `media.folder.self_confirm` with a system actor and the two counts.
+  A folder with a recorded identity that does not match (`mismatch`) is never
+  adopted this way. A confirmed folder is not counted on read.
+- Any other existing install, and intentional moves, need the owner, once. The Library
   read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`. Until
   the folder is confirmed, the owner sees a notice with the folder path, the
-  count "N of M Library items have their files here" and **This is the right
-  media folder** (`POST /me/api/media/confirm-folder`). Members see only that
+  count of missing items and **Yes, this is my media folder** (`POST /me/api/media/confirm-folder`). Members see only that
   the owner confirms the folder once. Confirmation refuses a folder that holds
   none of a non-empty Library (409 `media_folder_no_matches`), writes a new
   marker, records its ID and is audited as `media.folder.confirm`. It removes

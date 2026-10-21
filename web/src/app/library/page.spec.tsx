@@ -2381,7 +2381,9 @@ describe("Library items whose files are gone", () => {
     ...extra,
   });
   const NO_MATCHES = "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again.";
-  const UNVERIFIABLE = "None of the Library's items can be checked against a file, so Azizam can't tell whether this is the media folder. Confirming it is your call.";
+  const NONE_HERE = "None of your Library's files are in /mnt/media. Check that your media disk is connected, then try again.";
+  const UNVERIFIABLE = "Azizam can't check your Library's items against /mnt/media, so it can't tell whether this is the media folder. Before Azizam clears out missing items, confirm this is where your pictures and videos are kept.";
+  const CONFIRM = "Yes, this is my media folder";
   const UNCONFIRMED = "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Library.";
 
   test("the owner sees one notice with the folder, its count and the confirm action until it is confirmed", async () => {
@@ -2405,10 +2407,11 @@ describe("Library items whose files are gone", () => {
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
     expect(within(notice).getByText("/mnt/media")).toBeVisible();
-    expect(within(notice).getByText("3 of 5 Library items have their files here.")).toBeVisible();
-    expect(within(notice).getByText(/confirm which folder holds the media/)).toBeVisible();
+    expect(notice).toHaveTextContent(
+      "Some of your Library's files are missing from /mnt/media (2 of 5 items). Before Azizam clears out the missing ones, confirm this is where your pictures and videos are kept.",
+    );
     expect(notice.textContent).not.toMatch(/installs made before/);
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    fireEvent.click(within(notice).getByRole("button", { name: CONFIRM }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].init).toMatchObject({
       method: "POST",
@@ -2441,9 +2444,8 @@ describe("Library items whose files are gone", () => {
     }) : undefined));
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText("0 of 5 Library items have their files here.")).toBeVisible();
-    expect(within(notice).getByRole("button", { name: "This is the right media folder" })).toBeDisabled();
-    expect(within(notice).getByText(NO_MATCHES)).toBeVisible();
+    expect(notice).toHaveTextContent(NONE_HERE);
+    expect(within(notice).getByRole("button", { name: CONFIRM })).toBeDisabled();
   });
 
   test("a folder that holds under half the Library asks for a second, explicit confirmation", async () => {
@@ -2465,9 +2467,9 @@ describe("Library items whose files are gone", () => {
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
     expect(within(notice).getByText(
-      "Only 2 of 5 items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.",
+      "Only 2 of 5 items have their files here. If your media disk isn't connected right now, confirming would let Remove missing delete the others.",
     )).toBeVisible();
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    fireEvent.click(within(notice).getByRole("button", { name: CONFIRM }));
     expect(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" })).toBeVisible();
     expect(calls).toHaveLength(0);
     fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" }));
@@ -2504,9 +2506,9 @@ describe("Library items whose files are gone", () => {
     }));
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText(UNVERIFIABLE)).toBeVisible();
+    expect(notice).toHaveTextContent(UNVERIFIABLE);
     expect(within(notice).queryByText(/0 of 0 Library items/)).toBeNull();
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    fireEvent.click(within(notice).getByRole("button", { name: CONFIRM }));
     expect(calls).toHaveLength(0);
     fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though nothing can be checked" }));
     await waitFor(() => expect(calls).toHaveLength(1));
@@ -2526,7 +2528,7 @@ describe("Library items whose files are gone", () => {
     }));
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    fireEvent.click(within(notice).getByRole("button", { name: CONFIRM }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(NO_MATCHES));
     expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
     expect(screen.getByRole("region", { name: "Media folder" })).toBeVisible();
@@ -2557,6 +2559,33 @@ describe("Library items whose files are gone", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(UNCONFIRMED));
     expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
     expect(await screen.findByRole("region", { name: "Media folder" })).toBeVisible();
+  });
+
+  test("a folder that does not match the one recorded says it looks different and that nothing will be removed", async () => {
+    session.viewer = { role: "owner", name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [] };
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
+      if (path === "/me/api/media/confirm-folder") {
+        calls.push(path);
+        return Response.json({ confirmed: true });
+      }
+      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
+        media_folder: folderState({ state: "mismatch", items_here: 4 }),
+      });
+      return Response.json({ assets: [], models: [], next_cursor: null });
+    }));
+    renderLibrary();
+    const notice = await screen.findByRole("region", { name: "Media folder" });
+    expect(notice).toHaveTextContent(
+      "The media folder looks different from last time (/mnt/media). If you moved your media or changed disks, confirm this is the right folder. Until then, Azizam won't remove anything.",
+    );
+    expect(notice).toHaveTextContent("4 of 5 Library items have their files here.");
+    expect(notice.textContent).not.toMatch(/Some of your Library's files are missing/);
+    fireEvent.click(within(notice).getByRole("button", { name: CONFIRM }));
+    await waitFor(() => expect(calls).toHaveLength(1));
   });
 
   test("a confirmed folder shows no notice", async () => {
