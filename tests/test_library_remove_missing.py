@@ -396,6 +396,7 @@ class RemoveMissingTests(unittest.TestCase):
                 prompt_memory.put(asset_id, self.alice["id"], f"prompt {index}", kept_until=None, path=self.prompt_db)
             self._receipt(self.app_a["id"], f"req_{index}")
             self._job(f"req_{index}", asset_id)
+        self.alice_jobs = media_jobs.recent(500, path=self.jobs_db)
         return ids
 
     def assert_not_recorded(self) -> None:
@@ -412,12 +413,18 @@ class RemoveMissingTests(unittest.TestCase):
             self.assertEqual(self.media_folder()["state"], "unconfirmed")
             self.assert_not_recorded()
         self.current_user = self.alice
-        self.refused_unconfirmed()
+        self.refuse_removal()
         self.assertEqual(len(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)), 4)
         self.assertIn(ids[3], {a["asset_id"] for job in media_jobs.recent(500, path=self.jobs_db) for a in job["assets"]})
 
+    def refuse_removal(self) -> None:
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
+        self.assertEqual(len(media_jobs.recent(500, path=self.jobs_db)), len(self.alice_jobs))
+
     def test_a_mismatched_folder_is_never_adopted_however_much_of_the_library_is_here(self) -> None:
-        self.library_of(stored=4, total=4)
+        self.library_of(stored=3, total=4)
         recorded = self.recorded_volume()
         marker = self.cache / ".azizam-media"
         foreign = json.dumps({"volume_id": "0" * 32, "created_at": 5})
@@ -429,7 +436,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(self.media_folder(), {"state": "mismatch"})
         self.assertFalse(marker.exists())
         self.assertEqual(self.recorded_volume(), recorded)
-        self.refused_unconfirmed()
+        self.refuse_removal()
 
     def test_a_confirmed_folder_and_a_member_read_are_not_counted(self) -> None:
         self.library_of(stored=3, total=4)
