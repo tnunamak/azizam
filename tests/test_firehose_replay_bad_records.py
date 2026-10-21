@@ -183,3 +183,62 @@ def test_append_survives_compaction_replace_race(tmp_path, monkeypatch):
     assert [row.get("name") for row in rows if row["kind"] == "request"] == ["fixture-app", "racing-app"]
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+
+def test_compaction_logs_drop_reasons_without_row_content(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(fm, "_LAST_REPLAY_SKIPPED", 7)
+    path = tmp_path / "activity.jsonl"
+    rows = [
+        "{private-malformed-marker",
+        json.dumps(["private-list-marker"]),
+        json.dumps(_request(ts="private-time-marker")),
+        json.dumps(_request(ts=1301)),
+        json.dumps(_request(ts=899)),
+        json.dumps(_request(ts=900)),
+        json.dumps(_request(ts=1300)),
+        "",
+    ]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    monkeypatch.setattr(fm, "time", SimpleNamespace(time=lambda: 1000))
+    assert fm.compact_log(window_s=100, path=path) == 2
+    output = capsys.readouterr().out
+    assert output.splitlines() == [
+        "[firehose] compaction kept=2 dropped_malformed=3 dropped_future=1 dropped_expired=1 replay_skipped=7"
+    ]
+    assert "private-" not in output
+    assert [json.loads(line)["ts"] for line in path.read_text().splitlines()] == [900, 1300]
+    assert fm.compact_log(window_s=100, path=path) == 2
+    assert capsys.readouterr().out.splitlines() == [
+        "[firehose] compaction kept=2 dropped_malformed=0 dropped_future=0 dropped_expired=0 replay_skipped=7"
+    ]
+
+
+def test_replay_logs_skipped_with_totals_without_row_content(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(fm, "_LAST_REPLAY_SKIPPED", 0)
+    path = tmp_path / "activity.jsonl"
+    path.write_text("\n".join([
+        "{private-replay-marker",
+        json.dumps(_request(ts=1301)),
+        json.dumps(_request(ts=999)),
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(fm, "time", SimpleNamespace(time=lambda: 1000))
+    monkeypatch.setattr(fm, "_KEY_ACTIVITY", defaultdict(_activity))
+    monkeypatch.setattr(fm, "_RECENT_EVENTS", deque(maxlen=200))
+    monkeypatch.setattr(fm, "_WINDOW_STARTED_AT", 1000)
+    assert fm.replay_persisted(window_s=100, path=path) == {
+        "requests_replayed": 1, "events_replayed": 0, "skipped": 2,
+    }
+    assert capsys.readouterr().out.splitlines() == [
+        "[firehose] replay requests_replayed=1 events_replayed=0 skipped=2"
+    ]
+    assert fm.compact_log(window_s=100, path=path) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "[firehose] compaction kept=1 dropped_malformed=1 dropped_future=1 dropped_expired=0 replay_skipped=2"
+    ]
+
+
+def test_missing_log_compaction_reports_zero_counts(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(fm, "_LAST_REPLAY_SKIPPED", 0)
+    assert fm.compact_log(path=tmp_path / "missing.jsonl") == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "[firehose] compaction kept=0 dropped_malformed=0 dropped_future=0 dropped_expired=0 replay_skipped=0"
+    ]
