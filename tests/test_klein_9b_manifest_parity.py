@@ -5,7 +5,6 @@ Before the manifests existed, both workflows ran through the manifest-less path
 the ComfyUI round and image encoding are replaced. Run only with the hermetic runner.
 """
 import copy
-import json
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -90,7 +89,8 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                 self.assertEqual(results[1][0]["27"]["inputs"]["width"], 768)
 
     async def test_edit_graph_is_identical_with_and_without_manifest(self):
-        for seed in (41, None):
+        # The edit manifest keeps seed route-owned, so callers never supply one.
+        for seed in (None,):
             with self.subTest(seed=seed):
                 results = []
                 for with_manifest in (False, True):
@@ -99,14 +99,11 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                         ("size", "768x512"),
                         ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
                     ]
-                    if seed is not None and with_manifest:
-                        items.append(("extensions", json.dumps({NAMESPACE: {"seed": seed}})))
-                    draws = [seed, seed + 1] if seed is not None else [101, 102]
-                    with patch.object(proxy.random, "randint", side_effect=draws):
+                    with patch.object(proxy.random, "randint", side_effect=[101, 102]):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_edit_request, _MultipartRequest(items),
                             with_manifest=with_manifest))
                 self.assertEqual(results[0], results[1])
                 seeds = [g["25"]["inputs"]["noise_seed"] for g in results[1]]
-                self.assertEqual(seeds, [41, 42] if seed is not None else [101, 102])
+                self.assertEqual(seeds, [101, 102])
                 self.assertEqual(results[1][0]["6"]["inputs"]["text"], "make it blue")
