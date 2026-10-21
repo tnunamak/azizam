@@ -127,7 +127,11 @@
 # +2 adaptive batch-limit cases, +1 invalid seed target, +1 identity-hash case,
 # and +1 legacy empty-round fixed-seed offset case.
 # Full hermetic --collect-only -q on 2026-10-21 measured 15373.
-pytest = 15327
+# Train r86: full hermetic collection measured 15567 on 2026-10-21,
+# including six MOSS/private-output/availability integration cases.
+# Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
+# Offline node:test runs: 5 compatibility + 82 Pi = 87.
+pytest = 15567
 vitest = 3068
 playwright = 502
 
