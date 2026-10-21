@@ -25850,6 +25850,12 @@ async def _start_receipts_maintenance(stop_event: asyncio.Event) -> asyncio.Task
     """Schedule retries before the first cleanup, including when startup cleanup fails."""
     task = asyncio.create_task(_receipts_maintenance_loop(stop_event), name="receipt-maintenance")
     try:
+        retained = await asyncio.to_thread(firehose_metrics.compact_log)
+        if retained is not None:
+            print(f"[proxy] firehose startup compaction retained {retained} records", flush=True)
+    except Exception as exc:
+        print(f"[proxy] firehose startup compaction failed: {type(exc).__name__}", flush=True)
+    try:
         pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path, fact_store_path=media_jobs.DB_PATH)
         print(f"[proxy] receipt startup maintenance pruned {pruned} receipts", flush=True)
     except Exception as exc:
@@ -25868,6 +25874,12 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
                                         fact_store_path=media_jobs.DB_PATH)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
+            try:
+                retained = await asyncio.to_thread(firehose_metrics.compact_log)
+                if retained is not None:
+                    print(f"[proxy] firehose hourly compaction retained {retained} records", flush=True)
+            except Exception as exc:
+                print(f"[proxy] firehose hourly compaction failed: {type(exc).__name__}", flush=True)
 
 
 def _responses_error(
