@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import proxy
 from gateway import admin_store, media_jobs
+from gateway import local_owner, secret_store
 from tests.test_private_modes import mode, permissive_umask  # noqa: F401
 from tests.test_prompt_memory_lifecycle import request
 
@@ -58,3 +59,18 @@ def test_stt_replay_creates_a_private_spool_directory(tmp_path, permissive_umask
         assert mode(tmp_path / "replay") == 0o700
     finally:
         body._file.close()
+
+
+def test_standalone_secret_schema_and_key_create_private_identity_state(tmp_path, permissive_umask):
+    database = tmp_path / "schema" / "admin.db"
+    secret_store.ensure_provider_secret_schema(database)
+    assert mode(database) == 0o600 and mode(database.parent) == 0o700
+    key = tmp_path / "keys" / "nested" / "provider.key"
+    secret_store.load_or_create_secret_key(key)
+    assert mode(key) == 0o600 and mode(key.parent) == mode(key.parent.parent) == 0o700
+
+
+def test_browser_signing_key_creates_private_parent_directories(tmp_path, permissive_umask):
+    path = tmp_path / "identity" / "nested" / "session.key"
+    local_owner.load_or_create_signing_key(path)
+    assert mode(path) == 0o600 and mode(path.parent) == mode(path.parent.parent) == 0o700
