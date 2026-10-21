@@ -123,6 +123,13 @@ MANIFESTLESS = ["flux-dev", "flux2-klein", "flux2-klein-edit", "ideogram4-fp8",
 @pytest.mark.parametrize("name", MANIFESTLESS)
 @pytest.mark.parametrize("fixed_seed", [41, None])
 def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypatch, name, fixed_seed):
+    operation = "image_edits" if name.endswith("-edit") else "images"
+    intent = "image.edit" if name.endswith("-edit") else "image.generate"
+    assert proxy.load_graph_workflow(name) is not None
+    assert proxy._find_image_manifest(intent, name) is None
+    assert proxy.resolve_model_for_operation(operation, name).effective_model == name
+    if intent == "image.edit":
+        assert proxy._select_edit_workflow(name, image_count=1, has_mask=False) == name
     graph = json.loads((ROOT / "workflows/images" / f"{name}.json").read_text())
     meta = graph.pop("_meta")
     field = "noise_seed" if name.endswith("-edit") else "seed"

@@ -7821,10 +7821,11 @@ async def _generate_images_with_adaptive_batching(
         # Build a per-round workflow copy. Re-seed each round so multiple rounds
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
+        round_offset = len(images_collected) if manifest is None else seed_offset
         try:
             round_workflow, round_seed = _reseed_image_workflow(
                 round_workflow, manifest, workflow_name,
-                fixed_seed + seed_offset if fixed_seed is not None else None,
+                fixed_seed + round_offset if fixed_seed is not None else None,
                 meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
             )
         except ManifestError:
