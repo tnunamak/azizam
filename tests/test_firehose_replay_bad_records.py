@@ -90,6 +90,21 @@ def test_compaction_keeps_only_finite_in_window_timestamps(tmp_path, monkeypatch
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+def test_compaction_reports_only_failure_class(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "activity.jsonl"
+    path.write_text(json.dumps(_request(ts=999)) + "\n", encoding="utf-8")
+
+    def fail_replace(*_args):
+        raise PermissionError("private path must not be logged")
+
+    monkeypatch.setattr(fm.os, "replace", fail_replace)
+
+    assert fm.compact_log(path=path) is None
+    output = capsys.readouterr().out
+    assert "PermissionError" in output
+    assert "private path" not in output
+
+
 def test_append_survives_compaction_replace_race(tmp_path, monkeypatch):
     import threading
 
