@@ -515,7 +515,7 @@ EXTRA_KEYS = ("likeness", "attempts", "refinements", "people", "warnings", "seco
 
 
 def scene_extras(result: ids.SceneResult) -> dict[str, Any]:
-    """Everything a client gets besides the image bytes; also stored on async jobs."""
+    """Everything a synchronous identity response gets besides the image bytes."""
     return {
         "likeness": result.report,
         "attempts": result.attempts,
