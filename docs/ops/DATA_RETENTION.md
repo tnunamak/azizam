@@ -166,9 +166,14 @@ below `data/` and `cache/`. It reports counts, without content filenames. Add
 `--fix` to set regular files to `0600` and directories to `0700`; symlinks are
 refused. Schedule this repair during an operator maintenance window.
 
-Run `scripts/check-missing-outputs --database /path/to/checkpointed/media_jobs.db
---media-dir /path/to/media` as one command against a stable, checkpointed SQLite
-snapshot. It reports missing successful-job output counts by media kind without
+Run this check against a stable, checkpointed SQLite snapshot:
+
+```sh
+scripts/check-missing-outputs --database /path/to/checkpointed/media_jobs.db \
+  --media-dir /path/to/media
+```
+
+The command reports missing successful-job output counts by media kind without
 identifiers or store changes. It refuses a nonempty WAL or a database that changes
 during inspection. Historical job success remains recorded if bytes are gone.
 Content requests return `410` for missing output and `503` with `Retry-After`
@@ -188,8 +193,7 @@ scripts/safe-restart
 
 Voice reference files (`voice_ref`) are private too. A backend that opens their
 paths must run under the gateway's same Unix UID; a different UID cannot read
-mode-`0600` references or traverse mode-`0700` directories. Use the existing
-uploaded-reference interface when the backend cannot share that UID.
+mode-`0600` references or traverse mode-`0700` directories.
 
 ## Open owner questions
 
