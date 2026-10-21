@@ -104,7 +104,9 @@ test("Try names the signed-in account's plan, ignores a plan in the URL, and ref
   expect(screen.getByText(/Checking another plan does not change your access here/)).toBeVisible();
   planName = "Everything and categories";
   fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
-  expect(await screen.findByText("Your access plan: Everything and categories.")).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(
+    "Your access plan: Everything and categories. Access refresh complete.",
+  ));
   expect(mocks.tryKey).not.toHaveBeenCalled();
 });
 
