@@ -194,8 +194,10 @@
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
 # Remove-missing follow-ups: +2 (an unseen job removal refuses; a 64-char
 # non-hex id is never removed). Hermetic --collect-only -q measured 15955.
-pytest = 15955
-vitest = 3091
+# Remove-missing round 2: order-independent job count (+1 pytest); removal
+# announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
+pytest = 15956
+vitest = 3095
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
