@@ -655,7 +655,9 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         media_jobs.create(job, path=self.db)
 
-        with authenticated():
+        output = self.db.with_suffix(".png")
+        output.write_bytes(b"fixture output")
+        with authenticated(), patch.object(proxy, "asset_cache_path", return_value=output):
             response = await proxy.gateway_media_job_content(
                 job.job_id,
                 _StubJsonRequest({}),  # type: ignore[arg-type]
