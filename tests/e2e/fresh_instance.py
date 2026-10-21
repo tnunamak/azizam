@@ -368,8 +368,12 @@ def run(compose):
             code = str(error.get("code", "unknown"))
             if not re.fullmatch(r"[a-z_]{1,80}", code):
                 code = "upstream_error"
-            if response.status_code not in {502, 503} or code != "backend_unavailable" or time.monotonic() >= deadline:
-                raise RuntimeError(f"Chat failed with HTTP {response.status_code}, code {code}")
+            # Startup can check the Compose profile before the substrate is
+            # ready. Let its bounded refusal recheck run before declaring failure.
+            if response.status_code not in {502, 503} or code not in {"backend_unavailable", "litellm_content_unverified"} or time.monotonic() >= deadline:
+                slug = re.search(r"\((profile_check_unavailable|database_[a-z_]+)\)", str(error.get("message", "")))
+                problem = slug.group(1) if slug else "unavailable"
+                raise RuntimeError(f"Chat failed with HTTP {response.status_code}, code {code}, problem {problem}")
             time.sleep(1)
         content = response.json()["choices"][0]["message"]["content"]
         if content != ANSWER:
