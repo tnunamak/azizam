@@ -1381,6 +1381,38 @@
         "type": "object",
         "x-azizam-workflow-id": "image.analyze.face-likeness"
       },
+      "WorkflowInputs_image_edit_fibo_2_edit_turbo": {
+        "additionalProperties": false,
+        "description": "Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "seed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change. The result has the same shape at about one megapixel.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "steps": {
+            "default": 4,
+            "description": "This model is trained for 4 steps. More steps rarely help.",
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "source_image"
+        ],
+        "title": "FIBO 2 Edit Turbo",
+        "type": "object",
+        "x-azizam-workflow-id": "image.edit.fibo-2-edit-turbo"
+      },
       "WorkflowInputs_image_edit_flux2_klein": {
         "additionalProperties": false,
         "description": "Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.",
@@ -31855,6 +31887,73 @@
     },
     {
       "aliases": [],
+      "description": "Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.",
+      "display_name": "FIBO 2 Edit Turbo",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "extensions_field": "extensions (JSON string)",
+          "fields": {
+            "prompt": {
+              "field": "prompt",
+              "in": "form"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "extension"
+            },
+            "source_image": {
+              "field": "image",
+              "in": "file"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "extension"
+            }
+          },
+          "method": "POST",
+          "model": "fibo-2-edit-turbo",
+          "output": "data[].b64_json or data[].url",
+          "path": "/v1/images/edits"
+        }
+      },
+      "id": "image.edit.fibo-2-edit-turbo",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_image_edit_fibo_2_edit_turbo"
+      },
+      "intent": "image.edit",
+      "outputs": [
+        {
+          "media_type": "image/png",
+          "name": "image"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Number of images.",
+          "field": "n",
+          "in": "body",
+          "label": "number of results",
+          "maximum": 10,
+          "minimum": 1,
+          "name": "n",
+          "type": "integer"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "form",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "fibo-2-edit-turbo",
+      "typical_seconds": 7.0
+    },
+    {
+      "aliases": [],
       "description": "Portable image edit contract bound to the FLUX.2 Klein 9B edit ComfyUI workflow.",
       "display_name": "FLUX.2 Klein 9B Edit",
       "execution": {
@@ -31931,7 +32030,7 @@
         }
       ],
       "short_id": "flux2-klein",
-      "typical_seconds": null
+      "typical_seconds": 27
     },
     {
       "aliases": [
@@ -32852,7 +32951,7 @@
         }
       ],
       "short_id": "flux2-klein",
-      "typical_seconds": 6.0
+      "typical_seconds": 20
     },
     {
       "aliases": [

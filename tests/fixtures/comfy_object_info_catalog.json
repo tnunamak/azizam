@@ -7278,6 +7278,134 @@
   "python_module": "comfy_extras.nodes_ace",
   "search_aliases": null
  },
+ "TextEncodeFibo2": {
+  "api_node": false,
+  "category": "model/conditioning/fibo",
+  "deprecated": false,
+  "description": "Encode a Fibo 2.0 prompt, a structured JSON caption or plain text. With images, the prompt is the edit instruction, or a JSON caption of the result with an edit_instruction key, and the images become reference latents of both outputs when a vae is connected. Sample the latent output, the result's size the images are cropped for.",
+  "dev_only": false,
+  "display_name": null,
+  "essentials_category": null,
+  "experimental": false,
+  "has_intermediate_output": false,
+  "input": {
+   "optional": {
+    "vae": [
+     "VAE",
+     {}
+    ]
+   },
+   "required": {
+    "batch_size": [
+     "INT",
+     {
+      "default": 1,
+      "max": 4096,
+      "min": 1
+     }
+    ],
+    "clip": [
+     "CLIP",
+     {}
+    ],
+    "height": [
+     "INT",
+     {
+      "default": 0,
+      "max": 16384,
+      "min": 0,
+      "step": 16,
+      "tooltip": "Height of the result. 0 = the size Fibo 2.0 was trained at for the first image's aspect ratio, about 1 megapixel, or 1024 without images."
+     }
+    ],
+    "images": [
+     "COMFY_AUTOGROW_V3",
+     {
+      "template": {
+       "input": {
+        "required": {
+         "image": [
+          "IMAGE",
+          {}
+         ]
+        }
+       },
+       "min": 0,
+       "names": [
+        "image_1",
+        "image_2",
+        "image_3",
+        "image_4"
+       ]
+      },
+      "tooltip": "Images to edit, referred to as <image_1>, <image_2> and so on in the instruction. A single image is scaled and center cropped to the result's size, since the edit lines up with it pixel for pixel; several images each to their own trained size."
+     }
+    ],
+    "negative_prompt": [
+     "STRING",
+     {
+      "advanced": true,
+      "multiline": true,
+      "tooltip": "Empty is the null caption Fibo 2.0 was trained with for classifier-free guidance."
+     }
+    ],
+    "prompt": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ],
+    "width": [
+     "INT",
+     {
+      "default": 0,
+      "max": 16384,
+      "min": 0,
+      "step": 16,
+      "tooltip": "Width of the result. 0 = the size Fibo 2.0 was trained at for the first image's aspect ratio, about 1 megapixel, or 1024 without images."
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "optional": [
+    "vae"
+   ],
+   "required": [
+    "clip",
+    "prompt",
+    "negative_prompt",
+    "images"
+   ]
+  },
+  "is_input_list": false,
+  "name": "TextEncodeFibo2",
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ],
+  "output_is_list": [
+   false,
+   false,
+   false
+  ],
+  "output_matchtypes": null,
+  "output_name": [
+   "positive",
+   "negative",
+   "latent"
+  ],
+  "output_node": false,
+  "output_tooltips": [
+   null,
+   null,
+   null
+  ],
+  "price_badge": null,
+  "python_module": "comfy_extras.nodes_fibo2",
+  "search_aliases": null
+ },
  "TextEncodeQwenImage21": {
   "api_node": false,
   "category": "model/conditioning/qwen image",

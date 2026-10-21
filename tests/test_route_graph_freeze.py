@@ -122,11 +122,11 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # W5 adds GET /admin/api/engine-protocols for installed description metadata.
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
-    # The three MOSS and two FLUX.2 Klein workflows add catalog schemas, never routes or policy.
+    # The three MOSS, two FLUX.2 Klein and one FIBO workflow add catalog schemas, never routes or policy.
     # Removing precisely these additions must recover the data-hygiene document,
     # which adds the reviewed missing/retryable output responses.
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein"}
+             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
