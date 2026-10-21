@@ -100,7 +100,7 @@ def test_video_existing_submission_settles_failures_and_deadline(
                    metadata={"upstream_video_id": "video_fixture"})
     spool = write_spool(job.job_id)
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
-    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
+    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: SimpleNamespace(scope={}))
     # The worker checks its caller's plan before each poll: a caller whose plan allows video.
     monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     submit = AsyncMock(side_effect=AssertionError("resubmitted existing video"))
@@ -303,7 +303,7 @@ def test_image_attempt_cancellation_has_a_durable_terminal_receipt(jobs, tmp_pat
     monkeypatch.setattr(proxy, "start_image_route_receipt", lambda *a: receipt)
     monkeypatch.setattr(proxy, "_load_image_media_job_payload",
                         lambda _: {"body": {}, "created_at": 1})
-    monkeypatch.setattr(proxy, "_request_shim_from_image_job_payload", lambda _: object())
+    monkeypatch.setattr(proxy, "_request_shim_from_image_job_payload", lambda _: SimpleNamespace(scope={}))
     monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload",
                         lambda _: proxy.NO_AUTH_CONTEXT)
     monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)

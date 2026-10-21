@@ -402,6 +402,9 @@ def _request_kwargs(route, path, method, gateway=None):
         assert gateway is not None
         return {**kwargs, "json": dict(gateway.connection_test_body)}
 
+    if method == "POST" and path == "/me/api/media/remove-missing":
+        return {**kwargs, "json": {"expected_missing": 0}}
+
     body = {"model": "inventory-placeholder"}
     if path.endswith("/images/generations"):
         # A real workflow, so the request reaches the check after resolution.

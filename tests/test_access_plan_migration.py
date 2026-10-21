@@ -162,6 +162,7 @@ def test_schema_7_has_no_legacy_tables_columns_or_settings(migrated):
     def columns(table):
         return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
     assert "profile_id" not in columns("credentials")
+    assert "session_timing_json" in columns("credentials")
     assert {"default_profile_id", "owner_service_account_id"}.isdisjoint(columns("apps"))
     assert "profile_id" not in columns("account_access") | columns("account_links")
     assert conn.execute("SELECT 1 FROM operator_settings WHERE key='user_access_defaults'").fetchone() is None

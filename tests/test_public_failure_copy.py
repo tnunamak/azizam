@@ -192,6 +192,8 @@ GOLDEN = {
         "Input '{input}' of this workflow is set up incorrectly. Ask the owner to check the workflow."),
 }
 
+GOLDEN["media_folder_changed"] = ("library", "Your Library changed since you opened this. Review it again.")
+
 _VALUES = {"model": "m-1", "input": "cfg", "maximum": 5, "minimum": 2, "max_chars": 100, "max_images": 4}
 
 
