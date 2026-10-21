@@ -1,5 +1,6 @@
 """Restart and cancellation contracts against isolated durable stores."""
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -113,7 +114,7 @@ def test_video_restart_polls_existing_submission(store, monkeypatch):
     media_jobs.create(job, path=store)
     monkeypatch.setattr(proxy, "_video_media_job_semaphore", asyncio.Semaphore(1))
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
-    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
+    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: SimpleNamespace(scope={}))
     # The worker checks its caller's plan before each poll: a caller whose plan allows video.
     monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     submit = AsyncMock(side_effect=AssertionError("must not submit twice"))

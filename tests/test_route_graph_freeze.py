@@ -41,7 +41,7 @@ ADDED_PATHS: dict[str, str] = {
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
                                     "tests/test_library_remove_missing.py covers it",
-    "/me/api/media/confirm-folder": "Library 'This is the right media folder' (owner confirm of the media marker, D17), "
+    "/me/api/media/confirm-folder": "the owner's confirm of the media marker, called by Library 'Remove missing items' (D17), "
                                     "outside the OpenAPI schema; tests/test_library_remove_missing.py covers it",
     "/me/api/profile": "a person's avatar choice, the sign-in picture served from the gateway and the choices a "
                               "viewer may see, outside the OpenAPI schema; tests/test_me_avatar.py covers them",
@@ -122,11 +122,13 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # W5 adds GET /admin/api/engine-protocols for installed description metadata.
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
-    # The three MOSS, two FLUX.2 Klein and one FIBO workflow add catalog schemas, never routes or policy.
+    # MOSS, FLUX.2 Klein, FIBO and keyframe workflows add schemas, never routes or policy.
     # Removing precisely these additions must recover the data-hygiene document,
     # which adds the reviewed missing/retryable output responses.
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
-             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo"}
+             "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
+             "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
+             "video.generate.ltx-2.5-keyframes"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",

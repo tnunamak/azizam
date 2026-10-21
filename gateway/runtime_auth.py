@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Mapping
+from typing import TYPE_CHECKING, Iterable, Literal, Mapping
+
+if TYPE_CHECKING:
+    from gateway.admin_oidc import AdminSession
 
 from gateway.policy import (
     NO_ACCESS,
@@ -75,6 +78,8 @@ class RuntimeIdentity:
     connection_id: str | None = None
     trusted_address: str | None = None
     credential_id: str | None = None
+    # Keep derived media bound even if a credential is deleted while work is in flight.
+    browser_session: AdminSession | None = field(default=None, repr=False)
     auth_kind: Literal["session", "app_key", "mcp_grant", "trusted_address", "service_key"] = "app_key"
 
 

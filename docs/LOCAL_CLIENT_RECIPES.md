@@ -567,6 +567,27 @@ Seconds snap to the nearest valid frame count; `X-Duration-Adjusted` appears whe
 MiniMax H3 Community License excludes use in the US, EU, UK and South Korea. LTX-2.x Community
 License applies to LTX. An `*-i2v` model ID without `input_reference` returns 400.
 
+Clips that start and end on exact pictures. Three models take a last picture, and one also a
+middle picture: `ltx-2.5-keyframes`, `minimax-h3-keyframes` (alias `h3-keyframes`) and
+`minimax-h3-keyframes-mid`. The first picture is `input_reference`, as for image to video.
+Every other picture goes under `extensions["com.azizam.workflow"]` (or the top-level `inputs`
+block, which means the same): `last_frame`, and `middle_frame` for the `-mid` model. Each takes a
+URL, a data URI, base64 or an asset id; in a multipart request it can also be a file part named
+`extensions[com.azizam.workflow][last_frame]`. A request without `last_frame` returns 400 before
+anything is rendered. `last_frame_strength` (LTX only, 0-1, default 1) sets how hard the last
+picture is pinned; `image_strength` still sets the first picture on LTX. The MiniMax H3 nodes have
+no strength for either picture. The middle picture of `minimax-h3-keyframes-mid` lands on the
+middle frame of the clip, whatever `seconds` is. The same inputs are in the workflow catalog and
+the MCP `run` tool. The clips are normal video jobs: they show in `GET /v1/videos` and in the Library.
+
+```bash
+curl -s http://127.0.0.1:5000/v1/videos \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
+  -F model=minimax-h3-keyframes -F prompt="slow drift, camera still" -F seconds=5 \
+  -F input_reference=@first.png \
+  -F 'extensions[com.azizam.workflow][last_frame]=@last.png'
+```
+
 Retired LTX-2.3 names (kept so old clients work):
 
 | Old name | Now runs | Notes |

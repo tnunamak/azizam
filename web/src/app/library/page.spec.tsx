@@ -115,13 +115,14 @@ const audioAsset = {
   duration_s: 125,
 };
 
-function renderLibrary(onCommit: () => void = () => {}) {
+function renderLibrary(onCommit: () => void = () => {}, cachedRemoval = false) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+  if (cachedRemoval) queryClient.setQueryData(["library", "removal"], { media_folder: null, removal_plan: null });
   return {
     queryClient,
     ...render(
@@ -135,6 +136,9 @@ function renderLibrary(onCommit: () => void = () => {}) {
 }
 
 describe("LibraryPage batch J provenance", () => {
+  // These listing/player specs predate folder confirmation. Cache the independent
+  // removal state so their ordered response stubs remain about the listing.
+  const renderListingLibrary = (onCommit: () => void = () => {}) => renderLibrary(onCommit, true);
   beforeEach(() => {
     navigation.searchParams = new URLSearchParams();
     session.viewer = { role: "member", name: "Alex" };
@@ -159,7 +163,7 @@ describe("LibraryPage batch J provenance", () => {
   test("uses the loaded Library grid and square tile geometry while loading", async () => {
     let finish!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
-    renderLibrary();
+    renderListingLibrary();
     const loading = screen.getByRole("status", { name: "Loading library" });
     const grid = loading.querySelector(".grid")!;
     const gridClasses = grid.className;
@@ -186,7 +190,7 @@ describe("LibraryPage batch J provenance", () => {
       this.dispatchEvent(new Event("pause"));
     });
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       await screen.findByRole("button", { name: "Play Video A" });
       const [a, b] = Array.from(container.querySelectorAll("video"));
       const c = container.querySelector("audio")!;
@@ -214,7 +218,7 @@ describe("LibraryPage batch J provenance", () => {
       paused.push(this);
     });
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       await screen.findByRole("button", { name: (name) => name.startsWith("Open Viewer target, ") });
       const gridVideo = container.querySelector("video")!;
       fireEvent.play(gridVideo);
@@ -233,7 +237,7 @@ describe("LibraryPage batch J provenance", () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       const button = await screen.findByRole("button", { name: "Play Renew audio" });
       const audio = container.querySelector("audio")!;
       fireEvent.click(button);
@@ -258,7 +262,7 @@ describe("LibraryPage batch J provenance", () => {
     vi.mocked(fetch).mockImplementation(async (input) => Response.json(String(input).includes("cursor=next")
       ? { assets: [second, third], models: [], next_cursor: null }
       : { assets: [first], models: [], next_cursor: "next" }));
-    const { queryClient } = renderLibrary();
+    const { queryClient } = renderListingLibrary();
     const more = await screen.findByRole("button", { name: "Load more" });
     const status = screen.getByRole("status");
     more.focus();
@@ -276,7 +280,7 @@ describe("LibraryPage batch J provenance", () => {
   test("resets failed media on the first source-change commit", async () => {
     const commits: Array<string | null> = [];
     let capture = false;
-    const { queryClient } = renderLibrary(() => {
+    const { queryClient } = renderListingLibrary(() => {
       if (capture) {
         commits.push(screen.queryByRole("img", { name: /^Picture/ })?.getAttribute("src") ?? null);
       }
@@ -303,7 +307,7 @@ describe("LibraryPage batch J provenance", () => {
       );
       const commits: Array<{ label: string | null; text: string; error: boolean }> = [];
       let capture = false;
-      const { queryClient, container } = renderLibrary(() => {
+      const { queryClient, container } = renderListingLibrary(() => {
         if (capture) {
           const button = document.querySelector("[data-tile-cue='playback']");
           commits.push({
@@ -347,7 +351,7 @@ describe("LibraryPage batch J provenance", () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({ assets: [signed("one")], models: [], next_cursor: null }),
     );
-    const { queryClient, container } = renderLibrary();
+    const { queryClient, container } = renderListingLibrary();
     await screen.findByRole("button", { name: "Play Signed audio" });
     const audio = container.querySelector("audio")!;
     fireEvent.play(audio);
@@ -366,7 +370,7 @@ describe("LibraryPage batch J provenance", () => {
   });
 
   test("links the request receipt and omits an absent prompt", async () => {
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -403,7 +407,7 @@ describe("LibraryPage batch J provenance", () => {
         }),
       );
 
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
@@ -421,7 +425,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -445,7 +449,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -481,7 +485,7 @@ describe("LibraryPage batch J provenance", () => {
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -501,7 +505,7 @@ describe("LibraryPage batch J provenance", () => {
   });
 
   test("does not create its own main landmark inside the app shell", async () => {
-    renderLibrary();
+    renderListingLibrary();
 
     await waitFor(() => {
       expect(
@@ -519,7 +523,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     // The audio tile is quiet: the prompt is the tile's name and lives in
     // the viewer, not as text on the face.
@@ -545,7 +549,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("button", {
@@ -564,7 +568,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("button", {
@@ -585,7 +589,7 @@ describe("LibraryPage batch J provenance", () => {
     const play = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockRejectedValueOnce(new Error("blocked"));
-    renderLibrary();
+    renderListingLibrary();
 
     const playButton = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -615,7 +619,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -644,7 +648,7 @@ describe("LibraryPage batch J provenance", () => {
           next_cursor: null,
         }),
       );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(await screen.findByText("No creations yet")).toBeVisible();
     expect(screen.queryByText("No matching creations")).toBeNull();
@@ -670,7 +674,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     const audio = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -700,6 +704,7 @@ function routeFetch(route: Route) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: null });
       return (
         (await route(path)) ??
         (path.includes("/download?") ? Response.json({ download_url: "/renewed-media" }) : undefined) ??
@@ -1767,6 +1772,7 @@ describe("Library response and media boundaries", () => {
     expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(120);
     expect(within(grid).getByRole("button", { name: (name) => name.startsWith("Open First 0, ") })).toBeVisible();
     expect(requests.map((params) => params.get("cursor"))).toEqual([null, "next/+ &="]);
+    expect(requests.map((params) => params.get("removal_plan"))).toEqual([null, null]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
@@ -2331,11 +2337,71 @@ describe("Library items whose files are gone", () => {
           remaining = remaining.filter((asset) => asset.asset_id === "kept");
           return Response.json({ removed_assets: 2, removed_jobs: 1 });
         }
+        if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: { missing_items: remaining.length === 3 ? 2 : 0 } });
         if (path.startsWith("/me/api/media?")) return list(remaining);
         return Response.json({ assets: [], models: [], next_cursor: null });
       }),
     );
   }
+
+  test("Refresh library refreshes the viewer-wide removal plan", async () => {
+    const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
+    routeRemoval(removed);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("folder_state=1&removal_plan=1"))).toHaveLength(2));
+  });
+
+  test("retained listing retry refreshes the viewer-wide removal plan", async () => {
+    let listings = 0;
+    let plans = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input) => {
+      if (String(input).includes("folder_state=1")) {
+        plans += 1;
+        return Response.json({ removal_plan: { missing_items: 3 } });
+      }
+      listings += 1;
+      return listings === 2 ? new Response("failed", { status: 503 }) : list([newGone("gone", "Gone")]);
+    }));
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(plans).toBe(3));
+    await waitFor(() => expect(listings).toBe(3));
+  });
+
+  test("holds the filtered missing line until the whole Library check settles", async () => {
+    let resolvePlan!: (response: Response) => void;
+    const plan = new Promise<Response>((resolve) => { resolvePlan = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).includes("folder_state=1")
+      ? plan : list([newGone("gone", "Gone")])));
+    renderLibrary();
+    expect(await screen.findByText("Checking the whole Library…")).toBeVisible();
+    expect(screen.queryByText("1 file is unavailable.", { exact: false })).toBeNull();
+    await act(async () => resolvePlan(Response.json({ removal_plan: { missing_items: 3 } })));
+    expect(await screen.findByText("3 items missing across your Library.", { exact: false })).toBeVisible();
+  });
+
+  test("shows a whole Library check error with a Refresh recovery", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).includes("folder_state=1")
+      ? new Response("failed", { status: 503 }) : list([])));
+    renderLibrary();
+    expect(await screen.findByText("Couldn't check the whole Library. Try Refresh.", { exact: false })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh library" })).toBeVisible();
+  });
+
+  test("tile media retry refreshes the listing without requesting folder state", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("retry-tile", "Retry tile")]) : undefined);
+    const { queryClient } = renderLibrary();
+    const image = await screen.findByRole("img", { name: "Retry tile" });
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    fireEvent.error(image);
+    const before = vi.mocked(fetch).mock.calls.length;
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.slice(before).some(([path]) => String(path).startsWith("/me/api/media?"))).toBe(true));
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    expect(vi.mocked(fetch).mock.calls.slice(before).some(([path]) => String(path).includes("folder_state"))).toBe(false);
+  });
 
   test("Remove missing items asks first, then removes only the missing ones", async () => {
     const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
@@ -2346,14 +2412,14 @@ describe("Library items whose files are gone", () => {
     const dialog = await screen.findByRole("alertdialog").catch(() => screen.findByRole("dialog"));
     expect(within(dialog).getByText("Remove 2 missing items?")).toBeVisible();
     expect(
-      within(dialog).getByText(/Removes them and their prompts from your Library\. Receipts and every stored file stay\./),
+      within(dialog).getByText(/Removes them and their saved prompts from your Library\. Receipts and every stored file stay\./),
     ).toBeVisible();
     expect(removed.calls).toEqual([]);
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 2 items" }));
     await waitFor(() => expect(removed.calls).toHaveLength(1));
     expect(removed.calls[0].init?.method).toBe("POST");
-    expect(removed.calls[0].init?.headers).toEqual({ "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" });
+    expect(removed.calls[0].init?.headers).toEqual({ "content-type": "application/json", "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" });
     expect(await screen.findByText("Removed 2 missing items from your Library.")).toBeVisible();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull());
     expect(screen.getByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") })).toBeVisible();
@@ -2374,200 +2440,282 @@ describe("Library items whose files are gone", () => {
 
   const folderState = (extra: Record<string, unknown> = {}) => ({
     state: "unconfirmed",
-    path: "/mnt/media",
-    library_items: 5,
-    items_here: 3,
+    path: "cache/images",
+    library_items: 845,
+    items_here: 602,
     uncheckable_items: 0,
     ...extra,
   });
-  const NO_MATCHES = "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again.";
-  const UNVERIFIABLE = "None of the Library's items can be checked against a file, so Azizam can't tell whether this is the media folder. Confirming it is your call.";
-  const UNCONFIRMED = "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Library.";
+  const STALE = "Your Library changed since you opened this. Review it again.";
+  const CHANGED = "The media folder looks different from last time (cache/images). If you moved your media or changed disks, confirm this is the right folder before removing anything.";
+  const gone = (id: string) => ({
+    ...oldGone(id, `A lost ${id}`),
+    source: { id: "app:my-app", kind: "app", app_id: "my-app", person_id: "me", label: "My app" },
+  });
 
-  test("the owner sees one notice with the folder, its count and the confirm action until it is confirmed", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    let confirmed = false;
-    const calls: Array<{ path: string; init?: RequestInit }> = [];
+  // One owner or member Library: the folder as the gateway reports it, and every call the page makes.
+  function folderLibrary(
+    role: "owner" | "member",
+    folder: Record<string, unknown> | null,
+    assets: unknown[],
+    handlers: { confirm?: () => Response | Promise<Response>; remove?: () => Response; plan?: number; folder?: () => Record<string, unknown> | null } = {},
+  ) {
+    session.viewer = { role, name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [{ id: "my-app" }] };
+    const calls: string[] = [];
+    const seen = {
+      confirmHeaders: undefined as HeadersInit | undefined,
+      confirmBody: undefined as unknown,
+      removeBody: undefined as unknown,
+      mediaPaths: [] as string[],
+    };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
       if (path === "/me/api/media/confirm-folder") {
-        calls.push({ path, init });
-        confirmed = true;
-        return Response.json({ confirmed: true });
+        calls.push("confirm");
+        seen.confirmHeaders = init?.headers;
+        seen.confirmBody = JSON.parse(String(init?.body));
+        return handlers.confirm?.() ?? Response.json({ confirmed: true });
       }
-      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
-        media_folder: confirmed ? { state: "confirmed" } : folderState(),
-      });
-      return Response.json({ assets: [], models: [], next_cursor: null });
-    }));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText("/mnt/media")).toBeVisible();
-    expect(within(notice).getByText("3 of 5 Library items have their files here.")).toBeVisible();
-    expect(within(notice).getByText(/confirm which folder holds the media/)).toBeVisible();
-    expect(notice.textContent).not.toMatch(/installs made before/);
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0].init).toMatchObject({
-      method: "POST",
-      headers: { "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" },
-    });
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Media folder" })).toBeNull());
-    await screen.findByText("Media folder confirmed. Choose Remove missing items again when you are ready.");
-  });
-
-  test("a member is told only that the owner confirms the folder once", async () => {
-    session.viewer = { role: "member", name: "Sam", id: "sam" };
-    session.home = { receipts: [], user: { id: "sam" }, apps: [] };
-    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")], {
-      media_folder: folderState(),
-    }) : undefined));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText(
-      "Azizam's media folder needs the owner to confirm it once. Until then, missing items can't be removed.",
-    )).toBeVisible();
-    expect(within(notice).queryByRole("button")).toBeNull();
-    expect(within(notice).queryByText("/mnt/media")).toBeNull();
-  });
-
-  test("the owner cannot confirm a folder that holds none of a non-empty Library", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")], {
-      media_folder: folderState({ items_here: 0 }),
-    }) : undefined));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText("0 of 5 Library items have their files here.")).toBeVisible();
-    expect(within(notice).getByRole("button", { name: "This is the right media folder" })).toBeDisabled();
-    expect(within(notice).getByText(NO_MATCHES)).toBeVisible();
-  });
-
-  test("a folder that holds under half the Library asks for a second, explicit confirmation", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
-      if (path === "/me/api/media/confirm-folder") {
-        calls.push(path);
-        return Response.json({ confirmed: true });
-      }
-      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
-        media_folder: folderState({ items_here: 2 }),
-      });
-      return Response.json({ assets: [], models: [], next_cursor: null });
-    }));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText(
-      "Only 2 of 5 items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.",
-    )).toBeVisible();
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
-    expect(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" })).toBeVisible();
-    expect(calls).toHaveLength(0);
-    fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" }));
-    await waitFor(() => expect(calls).toHaveLength(1));
-  });
-
-  test("a folder that holds half the Library or more confirms on one click without the warning", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")], {
-      media_folder: folderState({ items_here: 3 }),
-    }) : undefined));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).queryByText(/Only \d+ of \d+ items have their files here/)).toBeNull();
-    expect(within(notice).queryByRole("button", { name: /Confirm, even though/ })).toBeNull();
-  });
-
-  test("a Library whose items cannot be checked against files says the folder is unverifiable and asks twice", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
-      if (path === "/me/api/media/confirm-folder") {
-        calls.push(path);
-        return Response.json({ confirmed: true });
-      }
-      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
-        media_folder: folderState({ library_items: 0, items_here: 0, uncheckable_items: 1 }),
-      });
-      return Response.json({ assets: [], models: [], next_cursor: null });
-    }));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    expect(within(notice).getByText(UNVERIFIABLE)).toBeVisible();
-    expect(within(notice).queryByText(/0 of 0 Library items/)).toBeNull();
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
-    expect(calls).toHaveLength(0);
-    fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though nothing can be checked" }));
-    await waitFor(() => expect(calls).toHaveLength(1));
-  });
-
-  test("a confirmation the gateway refuses says why, without a delete message", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
-      if (path === "/me/api/media/confirm-folder") {
-        return Response.json({ error: { code: "media_folder_no_matches", message: NO_MATCHES } }, { status: 409 });
-      }
-      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], { media_folder: folderState() });
-      return Response.json({ assets: [], models: [], next_cursor: null });
-    }));
-    renderLibrary();
-    const notice = await screen.findByRole("region", { name: "Media folder" });
-    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(NO_MATCHES));
-    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
-    expect(screen.getByRole("region", { name: "Media folder" })).toBeVisible();
-  });
-
-  test("a removal refused for an unconfirmed folder shows the gateway's reason and the notice", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [{ id: "my-app" }] };
-    const removals: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
       if (path === "/me/api/media/remove-missing") {
-        removals.push(path);
-        return Response.json({ error: { code: "media_folder_unconfirmed", message: UNCONFIRMED } }, { status: 503 });
+        calls.push("remove");
+        seen.removeBody = JSON.parse(String(init?.body));
+        return handlers.remove?.() ?? Response.json({ removed_assets: assets.filter((asset) => (asset as { available?: boolean }).available === false).length, removed_jobs: 0 });
       }
-      if (path.startsWith("/me/api/media?")) return list([{
-        ...oldGone("old", "An old fox"),
-        source: { id: "app:my-app", kind: "app", app_id: "my-app", person_id: "me", label: "My app" },
-      }], { media_folder: folderState() });
+      if (path.startsWith("/me/api/media?")) {
+        seen.mediaPaths.push(path);
+        return path.includes("folder_state=1") ? Response.json({ media_folder: handlers.folder?.() ?? folder,
+          removal_plan: { missing_items: handlers.plan ?? assets.filter((asset) => (asset as { available?: boolean }).available === false).length },
+        }) : list(assets);
+      }
       return Response.json({ assets: [], models: [], next_cursor: null });
     }));
-    renderLibrary();
+    const { queryClient } = renderLibrary();
+    return { calls, seen, queryClient };
+  }
+  const noFolderQuestion = () => {
+    expect(screen.queryByRole("region", { name: "Media folder" })).toBeNull();
+    expect(screen.queryByText(/confirm which folder holds the media/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /right media folder/ })).toBeNull();
+  };
+
+  test("changing kind then search reuses the viewer-wide removal query", async () => {
+    const { seen } = folderLibrary("owner", folderState(), [gone("a")], { plan: 3 });
+    await screen.findByRole("button", { name: "Remove missing items" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("kind=image"))).toBe(true));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search your creations" }), { target: { value: "lost" } });
+    await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("q=lost"))).toBe(true));
+    expect(seen.mediaPaths.filter((path) => /removal_plan|folder_state/.test(path))).toEqual([
+      "/me/api/media?folder_state=1&removal_plan=1",
+    ]);
+    expect(screen.getByText("3 items missing across your Library.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Remove missing items" }));
+    expect(within(await screen.findByRole("dialog")).getByText("Remove 3 missing items?")).toBeVisible();
+  });
+
+  test("a refetch during folder confirmation keeps the clicked removal count", async () => {
+    let finish!: (response: Response) => void;
+    const handlers = {
+      plan: 1,
+      folder: () => folderState({ items_here: handlers.plan === 1 ? 602 : 600 }),
+      confirm: () => new Promise<Response>((resolve) => { finish = resolve; }),
+    };
+    const { calls, seen, queryClient } = folderLibrary("owner", folderState(), [gone("a")], handlers);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(calls).toEqual(["confirm"]));
+    handlers.plan = 3;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["library"] }); });
+    expect(await within(screen.getByRole("dialog")).findByText("Remove 3 missing items?")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText(/245 of 845 checked items are missing/)).toBeVisible();
+    await act(async () => { finish(Response.json({ confirmed: true })); });
+    await waitFor(() => expect(calls).toEqual(["confirm", "remove"]));
+    expect(seen.confirmBody).toEqual({ items_here: 602, library_items: 845 });
+    expect(seen.removeBody).toEqual({ expected_missing: 1 });
+  });
+
+  test("a search showing one missing item uses the viewer-wide plan and the removal's actual toast count", async () => {
+    navigation.searchParams = new URLSearchParams("q=lost");
+    folderLibrary("owner", { state: "confirmed" }, [gone("a")], {
+      plan: 3, remove: () => Response.json({ removed_assets: 2, removed_jobs: 2 }),
+    });
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(removals).toHaveLength(1));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(UNCONFIRMED));
-    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
-    expect(await screen.findByRole("region", { name: "Media folder" })).toBeVisible();
+    expect(screen.getByText("3 items missing across your Library.")).toBeVisible();
+    expect(within(dialog).getByText("Remove 3 missing items?")).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 3 items" }));
+    expect(await screen.findByText("Removed 2 missing items from your Library.")).toBeVisible();
   });
 
-  test("a confirmed folder shows no notice", async () => {
-    session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
-    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")], {
-      media_folder: { state: "confirmed" },
-    }) : undefined));
-    renderLibrary();
+  test("shared assets remain part of whole-Library evidence and the owner's removal plan", async () => {
+    const { seen } = folderLibrary("owner", folderState({ library_items: 4, items_here: 1 }), [gone("shared")], { plan: 1 });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 1 missing item?")).toBeVisible();
+    expect(within(dialog).getByText(
+      "Across the whole Library, 3 of 4 checked items are missing from cache/images, so only do this if your media disk is connected and cache/images is where your photos, videos and audio are kept.",
+    )).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Remove 1 item" })).toBeEnabled();
+    expect(seen.mediaPaths.filter((path) => path.includes("removal_plan=1"))).toHaveLength(1);
+  });
+
+  test("a positive plan offers removal even when filters show no missing tiles", async () => {
+    folderLibrary("owner", { state: "confirmed" }, [picture("kept", "A kept kite")], { plan: 3 });
+    expect(await screen.findByText("3 items missing across your Library.")).toBeVisible();
+    expect(screen.queryByText("Show them")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    expect(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 3 items" })).toBeEnabled();
+  });
+
+  test("an unconfirmed folder does not interrupt browsing; Remove missing asks, then confirms and removes in one action", async () => {
+    const { calls, seen } = folderLibrary("owner", folderState(), [gone("a"), gone("b"), picture("kept", "A kept kite")]);
     await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
-    expect(screen.queryByRole("region", { name: "Media folder" })).toBeNull();
+    noFolderQuestion();
+    expect(screen.queryByText(/looks different from last time/)).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 2 missing items?")).toBeVisible();
+    expect(within(dialog).getByText(
+      "2 of your items have no file in cache/images. Removing them deletes their Library entries and saved prompts; the stored files are not touched.",
+    )).toBeVisible();
+    expect(within(dialog).getByText(
+      "Across the whole Library, 243 of 845 checked items are missing from cache/images, so only do this if your media disk is connected and cache/images is where your photos, videos and audio are kept.",
+    )).toBeVisible();
+    expect(within(dialog).queryByText(CHANGED)).toBeNull();
+    expect(calls).toEqual([]);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 2 items" }));
+    await waitFor(() => expect(calls).toEqual(["confirm", "remove"]));
+    expect(seen.confirmHeaders).toEqual({ "content-type": "application/json", "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" });
+    expect(seen.confirmBody).toEqual({ items_here: 602, library_items: 845 });
+    expect(seen.removeBody).toEqual({ expected_missing: 2 });
+    expect(await screen.findByText("Removed 2 missing items from your Library.")).toBeVisible();
+  });
+
+  test("cancelling the unconfirmed-folder question records and removes nothing", async () => {
+    const { calls } = folderLibrary("owner", folderState(), [gone("a")]);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 1 missing item?")).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(calls).toEqual([]);
+  });
+
+  test("a zero removal plan offers nothing to remove and asks nothing", async () => {
+    const { calls } = folderLibrary("owner", folderState({ items_here: 845 }), [gone("a"), picture("kept", "A kept kite")], { plan: 0 });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
+    noFolderQuestion();
+    expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  test("a Library whose items cannot be checked against files offers nothing to remove and asks nothing", async () => {
+    folderLibrary("owner", folderState({ library_items: 0, items_here: 0, uncheckable_items: 3 }), [gone("a"), picture("kept", "A kept kite")], { plan: 0 });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
+    noFolderQuestion();
+    expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull();
+  });
+
+  test("a folder that holds none of the checked items says to check the disk and cannot be confirmed", async () => {
+    const { calls } = folderLibrary("owner", folderState({ items_here: 0 }), [gone("a"), gone("b")]);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Can't remove missing items yet")).toBeVisible();
+    expect(within(dialog).getByText(
+      "Azizam can't find any of the Library's 845 checked items in cache/images. Check that your media disk is connected.",
+    )).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Remove 2 items" })).toBeDisabled();
+    expect(within(dialog).queryByText(/Only do this if/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(calls).toEqual([]);
+  });
+
+  test("a changed folder shows the warning where missing items are listed and again in the question", async () => {
+    const { calls } = folderLibrary("owner", folderState({ state: "mismatch" }), [gone("a"), picture("kept", "A kept kite")]);
+    expect(await screen.findByText(CHANGED)).toBeVisible();
+    noFolderQuestion();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(CHANGED)).toBeVisible();
+    expect(within(dialog).getByText(/^1 of your items has no file in cache\/images\. Removing it deletes its Library entry and saved prompt\.$/)).toBeVisible();
+    expect(within(dialog).getByText("The stored file is not touched.")).toBeVisible();
+    expect(within(dialog).getByText(/^Across the whole Library, 243 of 845 checked items are missing from cache\/images,/)).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(calls).toEqual(["confirm", "remove"]));
+  });
+
+  test("a changed folder with none of the checked items keeps the warning and blocks the removal", async () => {
+    folderLibrary("owner", folderState({ state: "mismatch", items_here: 0 }), [gone("a")]);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(CHANGED)).toBeVisible();
+    expect(within(dialog).getByText(/Azizam can't find any of the Library's 845 checked items/)).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Remove 1 item" })).toBeDisabled();
+  });
+
+  test("a changed folder that holds every checked item shows only the warning", async () => {
+    folderLibrary("owner", folderState({ state: "mismatch", items_here: 845 }), [gone("a")], { plan: 0 });
+    expect(await screen.findByText(CHANGED)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull();
+  });
+
+  test("a member is told nothing while browsing and that the owner must confirm when removing", async () => {
+    const { calls } = folderLibrary("member", { state: "unconfirmed" }, [gone("a"), picture("kept", "A kept kite")]);
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
+    noFolderQuestion();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Can't remove missing items yet")).toBeVisible();
+    expect(within(dialog).getByText("Azizam can't remove missing items until the owner confirms where the Library's files are kept.")).toBeVisible();
+    expect(within(dialog).queryByText(/cache\/images/)).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Remove 1 item" })).toBeDisabled();
+    expect(calls).toEqual([]);
+  });
+
+  test("a confirmation refusal refetches and updates the open dialog evidence", async () => {
+    let changed = false;
+    const { calls, seen } = folderLibrary("owner", folderState(), [gone("a")], {
+      folder: () => folderState({ items_here: changed ? 601 : 602 }),
+      confirm: () => { changed = true; return Response.json({ error: { code: "media_folder_changed", message: STALE } }, { status: 409 }); },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(STALE));
+    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
+    expect(calls).toEqual(["confirm"]);
+    expect(await within(screen.getByRole("dialog")).findByText(/244 of 845 checked items are missing/)).toBeVisible();
+    expect(within(screen.getByRole("dialog")).queryByText(/243 of 845 checked items are missing/)).toBeNull();
+    await waitFor(() => expect(seen.mediaPaths.length).toBeGreaterThan(1));
+  });
+
+  test("a removal the gateway refuses after the confirmation shows its reason", async () => {
+    const { calls, seen } = folderLibrary("owner", folderState(), [gone("a")], {
+      remove: () => Response.json({ error: { code: "media_folder_changed", message: STALE } }, { status: 409 }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(STALE));
+    expect(toast.error).not.toHaveBeenCalledWith("We couldn't delete this creation. Try again.");
+    expect(calls).toEqual(["confirm", "remove"]);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    await waitFor(() => expect(seen.mediaPaths.length).toBeGreaterThan(1));
+  });
+
+  test("a confirmed folder asks no folder question and removes in one call", async () => {
+    const { calls } = folderLibrary("owner", { state: "confirmed" }, [gone("a"), picture("kept", "A kept kite")]);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 1 missing item?")).toBeVisible();
+    expect(within(dialog).getByText("Removes it and its saved prompt from your Library. Receipts stay.")).toBeVisible();
+    expect(within(dialog).getByText("The stored file is not touched.")).toBeVisible();
+    expect(within(dialog).queryByText(/Only do this if/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 1 item" }));
+    await waitFor(() => expect(calls).toEqual(["remove"]));
   });
 
   test("a Library with nothing missing offers no removal", async () => {

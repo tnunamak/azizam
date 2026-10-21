@@ -157,14 +157,13 @@ def _reject_route_managed_inputs(
     return filtered, rejected
 
 
-def bind_video_workflow_extensions(
+def validate_video_workflow_extensions(
     request_body: Mapping[str, Any],
     manifest: Mapping[str, Any],
-    backend_request: Mapping[str, Any],
     *,
     namespace: str = WORKFLOW_EXTENSION_NAMESPACE,
-) -> VideoExtensionBinding:
-    """Validate video workflow extensions and bind accepted inputs to ComfyUI."""
+) -> tuple[ExtensionValidationResult, dict[str, str]]:
+    """Validate caller inputs without resolving assets or binding a graph."""
     normalized_body = _request_with_workflow_namespace(request_body, namespace)
     unknown_top_level = detect_unknown_top_level_fields(
         normalized_body,
@@ -193,6 +192,20 @@ def bind_video_workflow_extensions(
         supported_names=supported_names,
     )
     validation.rejected.update(route_managed_rejected)
+    return validation, unknown_top_level
+
+
+def bind_video_workflow_extensions(
+    request_body: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    backend_request: Mapping[str, Any],
+    *,
+    namespace: str = WORKFLOW_EXTENSION_NAMESPACE,
+) -> VideoExtensionBinding:
+    """Validate video workflow extensions and bind accepted inputs to ComfyUI."""
+    validation, unknown_top_level = validate_video_workflow_extensions(
+        request_body, manifest, namespace=namespace,
+    )
     binding = bind_backend_request(
         dict(manifest),
         "comfyui",

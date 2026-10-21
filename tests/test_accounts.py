@@ -341,7 +341,7 @@ def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_cl
     login = client.post("/auth/api/login", json={"email": "person@example.test", "password": PASSWORD})
     assert login.status_code == 200
     assert "set-cookie" in login.headers
-    assert len(rows(path, "SELECT * FROM account_sessions")) == 2
+    assert len(rows(path, "SELECT * FROM account_sessions")) == 1
 
 
 @pytest.mark.parametrize("password", ["", "x" * 1025])

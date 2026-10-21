@@ -643,6 +643,7 @@ CREATE TABLE credentials_v7 (
   revoked_at INTEGER,
   last_used_at INTEGER,
   session_id TEXT,
+  session_timing_json TEXT,
   FOREIGN KEY(app_id) REFERENCES apps(id)
 )"""
 _ACCOUNT_ACCESS_V7 = """
@@ -676,9 +677,9 @@ def _rebuild_tables(conn: sqlite3.Connection) -> None:
     if "profile_id" in _columns(conn, "credentials"):
         _swap(conn, "credentials", _CREDENTIALS_V7,
               "id, subject_kind, subject_id, app_id, hash, prefix, display_name, scopes_json, created_at, "
-              "created_by, expires_at, revoked_at, last_used_at, session_id",
+              "created_by, expires_at, revoked_at, last_used_at, session_id, session_timing_json",
               "id, subject_kind, subject_id, app_id, hash, prefix, display_name, scopes_json, created_at, "
-              "created_by, expires_at, revoked_at, last_used_at, session_id")
+              "created_by, expires_at, revoked_at, last_used_at, session_id, session_timing_json")
     if _table_exists(conn, "account_access") and "profile_id" in _columns(conn, "account_access"):
         _swap(conn, "account_access", _ACCOUNT_ACCESS_V7,
               "user_id, plan_id, disabled_at, removed_at, require_registered_session",
