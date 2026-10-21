@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import replace
 import json
+import sqlite3
 from unittest.mock import patch
 
 import httpx
@@ -347,11 +348,12 @@ def test_no_person_requires_explicit_store_and_durable_scope(responses_gateway, 
 
 
 def test_legacy_response_with_only_display_name_is_invisible(responses_gateway):
-    proxy.responses_store.save(
-        "old-response", created_at=1, model="default", previous_response_id=None,
-        request_json={"input": "old-private-prompt"}, response_json={"id": "old-response"},
-        api_key_name=responses_gateway["identity"].name,
-    )
+    # Seed the pre-attribution format directly; the current writer refuses it.
+    with sqlite3.connect(responses_gateway["responses_db"]) as conn:
+        conn.execute("INSERT INTO responses(id, created_at, model, request_json, response_json, api_key_name) "
+                     "VALUES (?, ?, ?, ?, ?, ?)",
+                     ("old-response", 1, "default", json.dumps({"input": "old-private-prompt"}),
+                      json.dumps({"id": "old-response"}), responses_gateway["identity"].name))
     client = responses_gateway["client"]
     headers = responses_gateway["headers"]
     for suffix in ("", "/input_items"):
