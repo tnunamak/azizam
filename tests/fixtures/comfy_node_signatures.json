@@ -618,6 +618,21 @@
    "LATENT"
   ]
  },
+ "LTXVDualCFGGuider": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio_cfg": "FLOAT",
+    "model": "MODEL",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING",
+    "video_cfg": "FLOAT"
+   }
+  },
+  "output": [
+   "GUIDER"
+  ]
+ },
  "LTXVEmptyLatentAudio": {
   "input": {
    "optional": {},
@@ -647,6 +662,19 @@
    "LATENT"
   ]
  },
+ "LTXVLatentUpsampler": {
+  "input": {
+   "optional": {},
+   "required": {
+    "samples": "LATENT",
+    "upscale_model": "LATENT_UPSCALE_MODEL",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
  "LTXVPreprocess": {
   "input": {
    "optional": {},
@@ -669,6 +697,17 @@
   "output": [
    "LATENT",
    "LATENT"
+  ]
+ },
+ "LatentUpscaleModelLoader": {
+  "input": {
+   "optional": {},
+   "required": {
+    "model_name": "COMBO"
+   }
+  },
+  "output": [
+   "LATENT_UPSCALE_MODEL"
   ]
  },
  "LoadImage": {
