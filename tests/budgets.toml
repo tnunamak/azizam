@@ -152,8 +152,9 @@
 # Retired eight image workflows and the Ideogram prompt tests (-30), then +2 Klein 9B parity cases; --collect-only -q on 2026-10-21: 15539.
 # Train r88: 15797 + 5 (review-gap and plan-deletion cases) - 28 (retired legacy image workflows, +2 Klein 9B parity) = 15774.
 # Train r88 test gaps: +2 plan-deletion blockers (enabled-App-only, sign-in-rule-only) -> 15776.
-# A4/r88 merge: provisional arithmetic ceiling; replace with hermetic collection measurement.
-pytest = 15823
+# A4/r88 merge and round 4: 12 message-version, revocation, dedicated-key and
+# policy-cache regressions; full hermetic --collect-only -q measured 15835 on 2026-10-21.
+pytest = 15835
 vitest = 3068
 playwright = 502
 
