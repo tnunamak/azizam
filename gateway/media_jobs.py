@@ -1260,6 +1260,7 @@ def append_event(
     bytes, request/response bodies, or secrets — the safety guard rejects
     those shapes before they reach disk.
     """
+    # OWNER_VISIBILITY_STEP3: close trusted event types; inventory freezes today's writers without changing accepted values here.
     if not event_type or not isinstance(event_type, str):
         raise ValueError("event_type must be a non-empty string")
     safe_payload = dict(payload or {})

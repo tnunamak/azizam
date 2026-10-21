@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from gateway.capability_ids import INTENT_CAPABILITIES
+from gateway.discovery_metadata import PUBLIC_PROTOCOLS
 from gateway.resource_decisions import CALLER_REASONS
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
@@ -22,6 +23,8 @@ Number = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Capability = Literal["chat", "image", "video", "speech", "transcribe", "music", "sfx", "audio", "decide", "embed", "rerank"]
 Status = Literal["queued", "running", "succeeded", "failed", "canceled", "unknown"]
 Terminal = Literal["cancelled", "completed", "connect_error", "disconnected", "failed", "idle_timeout", "internal_error", "read_error", "unknown"]
+_PROTOCOL_VALUES = frozenset({record["id"] for record in PUBLIC_PROTOCOLS} | {"mcp", "gateway", "unknown"})
+Protocol = Enum("Protocol", {value: value for value in sorted(_PROTOCOL_VALUES)}, type=str)
 ResourceCode = Enum("ResourceCode", {code: code for code in sorted(CALLER_REASONS)}, type=str)
 
 
@@ -88,7 +91,7 @@ class ReceiptView(Schema):
     person: NamedIdentity | None = None
     app: NamedIdentity | None = None
     source_kind: Literal["app_key", "session"] | None = None
-    protocol: Literal["openai", "anthropic", "ollama", "elevenlabs", "mcp", "gateway", "unknown"] = "unknown"
+    protocol: Protocol = Protocol("unknown")
     stream: bool = False
     capability: Capability | None = None
     model: CatalogIdentity = CatalogIdentity()
@@ -261,7 +264,7 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
     return ReceiptView(request_id=record.get("request_id"), job_id=record.get("job_id"), **common,
                        person=_identity(record.get("person_id"), names.people), app=_identity(record.get("app_id"), names.apps),
                        source_kind=_enum(record.get("source_kind"), {"app_key", "session"}),
-                       protocol=_enum(record.get("protocol"), {"openai", "anthropic", "ollama", "elevenlabs", "mcp", "gateway"}, "unknown"),
+                       protocol=Protocol(_enum(record.get("protocol"), _PROTOCOL_VALUES, "unknown")),
                        stream=record.get("stream") is True, route=route,
                        provider=_enum(record.get("provider"), names.providers),
                        status_code=status_code, terminal_reason=reason, layer=_layer(reason, status_code, route),
