@@ -74,7 +74,7 @@ async def run() -> None:
             {'id': 'stream', 'match': {'method': 'POST', 'path': '/v1/chat/completions', 'json': {'stream': True}},
              'response': {'status': 200, 'body': [
                 {'event': {'id': 'stream-response', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'canary',
-                    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': MARKER}, 'finish_reason': None}]}},
+                    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': MARKER, 'tool_calls': [{'index': 0, 'id': 'stream-call', 'type': 'function', 'function': {'name': TOOL_NAME, 'arguments': json.dumps({'argument': CONTENT_MARKERS['arguments']})}}]}, 'finish_reason': None}]}},
                 {'event': {'id': 'stream-response', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'canary',
                     'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}}},
@@ -170,7 +170,7 @@ async def run() -> None:
         assert success.json()['choices'][0]['message']['content'] == MARKER
         stream = await client.post('/v1/chat/completions', json={**payload, 'stream': True,
             'stream_options': {'include_usage': True}})
-        assert stream.status_code == 200 and MARKER in stream.text and '[DONE]' in stream.text
+        assert stream.status_code == 200 and MARKER in stream.text and TOOL_NAME in stream.text and '[DONE]' in stream.text
         embedding = await client.post('/v1/embeddings', json={'model': 'canary', 'input': MARKER, 'user': 'client-end-user'})
         assert embedding.status_code == 200, embedding.text
         assert embedding.json()['data'][0]['embedding'] == [0.1, 0.2]
@@ -195,11 +195,12 @@ async def run() -> None:
     await asyncio.wait_for(batch_done.wait(), timeout=5)
     assert {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}, updates
     assert all(item['response_cost'] >= 0 for item in updates), updates
-    assert sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key') >= 0.04
+    assert sum(item['response_cost'] for item in updates if item['entity_type'] == 'key') == 0.05
     # The pinned budget guard reads the counters still incremented by the
     # success logger even though per-request spend rows have been disabled.
     # Use actual queued cost as DB fallback, avoiding a fabricated spend value.
-    token.spend = sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key')
+    token.spend = sum(item['response_cost'] for item in updates if item['entity_type'] == 'key' and item['entity_id'] == 'fake-virtual-key')
+    assert token.spend == 0.04
     try:
         await _virtual_key_max_budget_check(token, ps.proxy_logging_obj, None)
     except litellm.BudgetExceededError:

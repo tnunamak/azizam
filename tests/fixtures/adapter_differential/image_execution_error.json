@@ -235,7 +235,7 @@
       },
       {
         "destination_id": "litellm",
-        "revision": "93cf537bd1c7b06367b072a0bae0ec6485a2ab37fa6247614c6c5292470378c3",
+        "revision": "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5",
         "source_id": "<req:1>",
         "source_kind": "receipt"
       }
@@ -368,14 +368,14 @@
           "control": "use the pinned no-content launcher and inspect accounting metadata; purge old accounting with the owner's database tools only after deciding how budgets should reset",
           "default": "on",
           "evidence_url": "https://github.com/tnunamak/azizam/blob/main/docs/verification/RETENTION_S3.md",
-          "holds": "numeric key, user and team spend counters; daily tag tables keep the User-Agent tag, model, endpoint and a per-day request_id; end-user tables keep the client-supplied user field",
+          "holds": "numeric key, user and team spend counters and aggregate cost and usage metadata; daily tag tables keep the User-Agent tag, model, endpoint and a per-day request_id; daily end-user tables keep the client-supplied user field",
           "how_long": "according to the owner's accounting database policy; the no-content profile does not expire aggregate counters",
           "id": "litellm-spend-cost-metadata",
           "reach": "LiteLLM administrators and anyone with access to its database",
           "where": "LiteLLM's accounting tables; not spend rows, error rows, ToolTable or spend index rows"
         },
         "first_seen": "<time>",
-        "revision": "93cf537bd1c7b06367b072a0bae0ec6485a2ab37fa6247614c6c5292470378c3"
+        "revision": "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
       }
     ]
   },
@@ -461,7 +461,7 @@
             "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
             "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
             "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
-            "93cf537bd1c7b06367b072a0bae0ec6485a2ab37fa6247614c6c5292470378c3"
+            "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
           ],
           "source_kind": "app",
           "source_label": "test-app",

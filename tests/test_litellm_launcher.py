@@ -61,6 +61,7 @@ def test_launcher_sets_effective_logger_levels_before_server(monkeypatch):
     import logging
     import sys
     from types import SimpleNamespace
+    monkeypatch.setattr(sys, 'argv', ['launcher-test'])
     names = ('LiteLLM', 'LiteLLM Router', 'LiteLLM Proxy')
     for name in names:
         monkeypatch.setattr(logging.getLogger(name), 'level', logging.WARNING)

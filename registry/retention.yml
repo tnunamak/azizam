@@ -106,7 +106,7 @@ system_facts:
         confidence: documented
 
       - id: litellm-spend-cost-metadata
-        holds: numeric key, user and team spend counters; daily tag tables keep the User-Agent tag, model, endpoint and a per-day request_id; end-user tables keep the client-supplied user field
+        holds: numeric key, user and team spend counters and aggregate cost and usage metadata; daily tag tables keep the User-Agent tag, model, endpoint and a per-day request_id; daily end-user tables keep the client-supplied user field
         where: LiteLLM's accounting tables; not spend rows, error rows, ToolTable or spend index rows
         how_long: according to the owner's accounting database policy; the no-content profile does not expire aggregate counters
         default: 'on'

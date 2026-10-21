@@ -94,7 +94,9 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
 # Retention slice 3: +39 profile, canary, restart, refusal and pinned-shim cases.
 # Full hermetic collection measured 15358 on 2026-10-21.
-pytest = 15358
+# Retention review follow-ups: +29 deterministic diagnosis, environment, read-only
+# rehearsal, worker-mode and isolated mutation cases; full collection = 15387.
+pytest = 15387
 vitest = 3051
 playwright = 492
 
