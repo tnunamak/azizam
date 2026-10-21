@@ -23,3 +23,7 @@ environment:
 # Existing spend history belongs to the owner. Do not silently delete it.
 # Proposed opt-in cleanup of old metadata: maximum_spend_logs_retention_period: 7d.
 # New spend rows are disabled regardless of this optional cleanup.
+
+legacy_spend_cleanup_proposal:
+  enabled: false
+  maximum_spend_logs_retention_period: 7d

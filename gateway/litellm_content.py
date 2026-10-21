@@ -34,6 +34,16 @@ def config_problem(config: Mapping[str, Any]) -> str | None:
                 return f"{section}.{key}"
     if "cache_params" in config.get("litellm_settings", {}):
         return "litellm_settings.cache_params"
+    allowed = {
+        "general_settings": set(profile()["general_settings"]) | {"litellm_key_header_name", "forward_client_headers_to_llm_api"},
+        "litellm_settings": set(profile()["litellm_settings"]) | {"drop_params"},
+        "router_settings": set(profile()["router_settings"]) | {"num_retries"},
+    }
+    for section, keys in allowed.items():
+        if set(config[section]) - keys:
+            return section + ".unexpected_setting"
+    if set(config) - {"model_list", *allowed}:
+        return "unexpected_section"
     return None
 
 
@@ -63,6 +73,7 @@ def write_launch_proof(path: Path, config_path: Path, env: Mapping[str, str]) ->
     payload = {"generation": process_generation(os.getpid()), "config": str(config_path.resolve()),
                "sha256": hashlib.sha256(config_path.read_bytes()).hexdigest()}
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as handle:
         json.dump(payload, handle)
 
@@ -108,12 +119,31 @@ async def database_problem(database_url: str) -> str | None:
         await client.disconnect()
 
 
+async def compose_database_unseen(base_url: str) -> bool:
+    import httpx
+    from gateway.backends.llm_execution import litellm_headers
+
+    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+        response = await client.get(base_url.rstrip("/") + "/health/readiness",
+            headers=litellm_headers({}, api_key=os.environ.get("AZIZAM_LITELLM_API_KEY", "")))
+        response.raise_for_status()
+        details = response.json()
+    # The pinned readiness endpoint distinguishes absent Prisma from an
+    # unreachable configured DB. Missing diagnostics are not proof of absence.
+    if details.get("db") != "Not connected":
+        return True
+    if details.get("log_level") != "CRITICAL" or details.get("cache") is not None or details.get("success_callbacks") != []:
+        raise ValueError("Compose effective runtime differs from profile")
+    return False
+
+
 class ContentGate:
     def __init__(self) -> None:
         self.checked: tuple[Any, ...] | None = None
         self.checked_at = 0.0
         self.problem: str | None = "not_checked"
         self.lock = asyncio.Lock()
+        self.unseen_database = False
 
     def mode(self, base_url: str) -> str:
         endpoint = urlsplit(base_url)
@@ -152,7 +182,11 @@ class ContentGate:
                 generation = self.generation(base_url)
                 if not force and generation == self.checked and time.monotonic() - self.checked_at < 3600:
                     return self.problem
-                problem = await asyncio.wait_for(database_problem(os.environ.get("DATABASE_URL", "")), timeout=10)
+                self.unseen_database = False
+                database_url = os.environ.get("DATABASE_URL", "")
+                if self.mode(base_url) == "compose" and not database_url:
+                    self.unseen_database = await compose_database_unseen(base_url)
+                problem = await asyncio.wait_for(database_problem(database_url), timeout=10)
                 if generation != self.generation(base_url):
                     raise ValueError("process restarted during check")
                 self.checked, self.checked_at, self.problem = generation, time.monotonic(), problem
@@ -163,10 +197,12 @@ class ContentGate:
 
     def status(self, base_url: str) -> dict[str, Any]:
         mode = self.mode(base_url)
+        if mode == "compose" and self.unseen_database:
+            return {"status": "unmanaged", "detail": "Azizam cannot check the database settings of the LiteLLM that runs chat for it."}
         if mode == "unmanaged":
             return {"status": mode, "detail": "LiteLLM, which runs chat for Azizam, is run outside Azizam. Azizam cannot confirm that it keeps nothing."}
         return {"status": "verified" if self.problem is None else "litellm_content_unverified",
-                "detail": "LiteLLM content capture is disabled." if self.problem is None else "LiteLLM content capture could not be ruled out. Check its launch profile, database config and key/team callbacks."}
+                "detail": "LiteLLM content capture is disabled." if self.problem is None else "LiteLLM content capture could not be ruled out. Use the no-content launch profile (disable_spend_logs, disable_error_logs and LITELLM_LOG=CRITICAL), disable database store_model_in_db and remove key/team logging callbacks. Retry after a successful check."}
 
 
 gate = ContentGate()

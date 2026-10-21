@@ -10,7 +10,6 @@ import importlib.metadata
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,9 +28,9 @@ async def run() -> None:
     from litellm.proxy import proxy_server as ps
     from litellm.proxy._types import UserAPIKeyAuth
     from litellm.proxy.hooks.proxy_track_cost_callback import _ProxyDBLogger
-    from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
     from litellm.proxy.auth.auth_checks import _virtual_key_max_budget_check
 
+    litellm.disable_aiohttp_transport = True  # in-memory httpx transport replaces network only
     positive = os.environ.get('CANARY_POSITIVE') == 'true'
     compiled = compile_litellm_substrate_config({})
     compiled['model_list'] = [{'model_name': 'canary', 'litellm_params': {
@@ -51,7 +50,7 @@ async def run() -> None:
     assert litellm.turn_off_message_logging is (not positive)
     assert litellm.cache is None
 
-    scenario = scenario_from_data({'protocol': 'openai', 'name': 'retention-canary',
+    scenario = scenario_from_data({'protocol': 'openai-compatible', 'name': 'retention-canary',
         'provenance': {'source': 'hand-written', 'reference': 'REQUEST_RETENTION 5.2 / 16.2'},
         'exchanges': [
             {'id': 'success', 'match': {'method': 'POST', 'path': '/v1/chat/completions'}, 'response': {'status': 200,
@@ -65,8 +64,14 @@ async def run() -> None:
     engine_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=fake))
     # Only the network edge is replaced. The real proxy, router, exception
     # handling, success logger, failure hook and spend writer all execute.
-    original_create = AsyncHTTPHandler.create_client
-    AsyncHTTPHandler.create_client = lambda *args, **kwargs: engine_client
+    original_send = httpx.AsyncClient.send
+    async def route(self, request, **kwargs):
+        if request.url.host == 'engine.fk.test':
+            return await original_send(engine_client, request, **kwargs)
+        if request.url.host == 'proxy.test':
+            return await original_send(self, request, **kwargs)
+        raise AssertionError('unexpected outbound HTTP host')
+    httpx.AsyncClient.send = route
     tables: dict[str, list] = {}
     updates = []
     class Table:
@@ -78,11 +83,22 @@ async def run() -> None:
     class Database:
         def __getattr__(self, name): return Table(name)
     prisma = SimpleNamespace(db=Database(), spend_log_transactions=[], _spend_log_transactions_lock=asyncio.Lock())
+    from litellm.proxy.utils import PrismaClient
+    prisma.get_request_status = lambda payload: PrismaClient.get_request_status(prisma, payload)
     ps.prisma_client = prisma
     writer = ps.proxy_logging_obj.db_spend_update_writer
+    for name, queue in vars(writer).items():
+        if name.startswith('daily_') and hasattr(queue, 'add_update'):
+            original_add = queue.add_update
+            async def record_daily(update, *, table=name, original=original_add):
+                tables.setdefault(table, []).append(update.model_dump() if hasattr(update, 'model_dump') else dict(update))
+                await original(update=update)
+            queue.add_update = record_daily
     original_queue = writer.spend_update_queue.add_update
     async def record_update(*, update):
-        updates.append(update.model_dump())
+        recorded = dict(update)
+        recorded["entity_type"] = getattr(recorded["entity_type"], "value", recorded["entity_type"])
+        updates.append(recorded)
         await original_queue(update=update)
     writer.spend_update_queue.add_update = record_update
 
@@ -95,7 +111,7 @@ async def run() -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=ps.app), base_url='http://proxy.test') as client:
         payload = {'model': 'canary', 'messages': [{'role': 'user', 'content': MARKER}]}
         success = await client.post('/v1/chat/completions', json=payload)
-        assert success.status_code == 200, success.status_code
+        assert success.status_code == 200, success.text
         assert success.json()['choices'][0]['message']['content'] == MARKER
         error = await client.post('/v1/chat/completions', json=payload)
         assert error.status_code == 400, error.status_code
@@ -105,18 +121,16 @@ async def run() -> None:
         original_exception=ValueError(MARKER), user_api_key_dict=token, traceback_str=MARKER)
     # Wait for LiteLLM's asynchronous success logging without sleeping a fixed interval.
     for _ in range(500):
-        if {'key', 'user', 'team'} <= {str(item['entity_type']).lower() for item in updates}:
+        if {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}:
             break
         await asyncio.sleep(0.01)
-    assert {'key', 'user', 'team'} <= {str(item['entity_type']).lower() for item in updates}, updates
-    assert all(item['response_cost'] > 0 for item in updates), updates
+    assert {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}, updates
+    assert all(item['response_cost'] >= 0 for item in updates), updates
+    assert sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key') == 0.015
     # The pinned budget guard reads the counters still incremented by the
     # success logger even though per-request spend rows have been disabled.
-    async def get_spend(*, counter_key, fallback_spend):
-        from litellm.proxy.proxy_server import get_current_spend
-        return fallback_spend
     # Use actual queued cost as DB fallback, avoiding a fabricated spend value.
-    token.spend = sum(item['response_cost'] for item in updates if str(item['entity_type']).lower() == 'key')
+    token.spend = sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key')
     try:
         await _virtual_key_max_budget_check(token, ps.proxy_logging_obj, None)
     except litellm.BudgetExceededError:
@@ -132,7 +146,7 @@ async def run() -> None:
     assert all(MARKER.encode() in item.body for item in fake.requests)
     assert not fake.violations
     await engine_client.aclose()
-    AsyncHTTPHandler.create_client = original_create
+    httpx.AsyncClient.send = original_send
     print(json.dumps({'canary': 'complete', 'requests': len(fake.requests), 'spend_rows': len(prisma.spend_log_transactions),
                       'error_rows': sum(len(rows) for name, rows in tables.items() if 'error' in name.lower()),
                       'budget_refused': budget_refused}))

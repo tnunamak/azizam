@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gateway import provider_configuration
+from gateway.litellm_content import profile
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.provider_sidecar import (
     build_sidecar_env,
@@ -425,7 +426,7 @@ def test_sidecar_resolver_failures_remove_stale_env_and_hide_details(
         result = build_sidecar_env(db_path=db_path, base_env=base_env)
 
         assert seen == [(secret_id, db_path, "https://provider.test:443")]
-        assert result == {"PATH": "/synthetic/bin"}
+        assert result == {"PATH": "/synthetic/bin", **profile()["environment"]}
         assert base_env[env_name] == "stale-value"
         output = capsys.readouterr()
         assert failure_type.__name__ in output.err
@@ -468,7 +469,7 @@ def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(
         db_path=db_path,
         base_env={"PATH": "/synthetic/bin", env_name: "stale-value"},
     )
-    assert after == {"PATH": "/synthetic/bin"}
+    assert after == {"PATH": "/synthetic/bin", **profile()["environment"]}
 
 
 def _write_registry_json(db_path: Path, registry: dict[str, object]) -> None:

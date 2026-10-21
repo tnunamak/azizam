@@ -183,3 +183,51 @@ def test_every_substrate_url_caller_is_classified():
         function = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
         source = ast.unparse(function)
         assert source.index('await execution_refusal(') < source.index('litellm_url(')
+
+
+def test_restart_during_check_cannot_reuse_approval(monkeypatch):
+    monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
+    gate = content.ContentGate()
+    generation = [1]
+    monkeypatch.setattr(gate, 'generation', lambda _: tuple(generation))
+    async def check(_):
+        generation[0] = 2
+        return None
+    monkeypatch.setattr(content, 'database_problem', check)
+    assert asyncio.run(gate.check('http://localhost:4011')) == 'profile_check_unavailable'
+    assert gate.checked is None
+
+
+def test_hourly_recheck_catches_new_callbacks(monkeypatch):
+    monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
+    gate = content.ContentGate()
+    monkeypatch.setattr(gate, 'generation', lambda _: ('same-process',))
+    clock = [1.0]
+    monkeypatch.setattr(content.time, 'monotonic', lambda: clock[0])
+    calls = []
+    async def check(_):
+        calls.append(1)
+        return None if len(calls) == 1 else 'database_key_unsafe'
+    monkeypatch.setattr(content, 'database_problem', check)
+    async def run():
+        assert await gate.check('http://localhost:4011') is None
+        clock[0] += 3601
+        assert await gate.check('http://localhost:4011') == 'database_key_unsafe'
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('unseen', [True, False])
+def test_compose_database_visibility_is_disclosed(monkeypatch, unseen):
+    monkeypatch.setenv('AZIZAM_LITELLM_COMPOSE_PROFILE', 'true')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    gate = content.ContentGate()
+    async def visibility(_): return unseen
+    monkeypatch.setattr(content, 'compose_database_unseen', visibility)
+    assert asyncio.run(gate.check('http://litellm:4000')) is None
+    assert gate.status('http://litellm:4000')['status'] == ('unmanaged' if unseen else 'verified')
+
+
+def test_unexpected_profile_sections_cannot_load_callbacks():
+    config = compile_litellm_substrate_config({})
+    config['environment_variables'] = {'STORE_MODEL_IN_DB': 'true'}
+    assert content.config_problem(config) == 'unexpected_section'
