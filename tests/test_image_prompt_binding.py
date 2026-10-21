@@ -94,13 +94,20 @@ def run_image(manifest):
     return asyncio.run(proxy.proxy_graph_image_edit_request(_MultipartRequest(items), proxy.NO_AUTH_CONTEXT))
 
 
-@pytest.mark.parametrize('path,manifest', MANIFESTS, ids=[p.stem for p, _ in MANIFESTS])
-def test_image_manifest_binds_prompt(path, manifest):
+# Outside this contract: flux2-klein-4b-seamless-tile is a gateway composition;
+# image-identity uses a gateway binding; seedvr2-upscale has no prompt input.
+PROMPT_MANIFESTS = [
+    (path, manifest) for path, manifest in MANIFESTS
+    if 'prompt' in manifest['inputs']
+    and manifest['bindings'].get('comfyui', {}).get('workflow')
+]
+
+
+def assert_manifest_binds_prompt(path, manifest):
     bindings = manifest['bindings']
     comfy = bindings.get('comfyui') or {}
     targets = comfy.get('map', {}).get('prompt')
-    binding = comfy or bindings.get('gateway', {})
-    graph = json.loads((ROOT / binding['workflow']).read_text())
+    graph = json.loads((ROOT / comfy['workflow']).read_text())
     advice = (f"{path.name}: add bindings.comfyui.map.prompt with a node/input target "
               "or set workflow _meta.prompt_node to a node with a text input")
     if targets:
@@ -109,6 +116,25 @@ def test_image_manifest_binds_prompt(path, manifest):
     else:
         node = graph.get(graph.get('_meta', {}).get('prompt_node'), {})
         assert 'text' in node.get('inputs', {}), advice
+
+
+@pytest.mark.parametrize('path,manifest', PROMPT_MANIFESTS,
+                         ids=[p.stem for p, _ in PROMPT_MANIFESTS])
+def test_image_manifest_binds_prompt(path, manifest):
+    assert_manifest_binds_prompt(path, manifest)
+
+
+def test_prompt_manifest_without_mapping_or_legacy_text_is_rejected(tmp_path):
+    workflow = tmp_path / 'unbound.json'
+    workflow.write_text(json.dumps({
+        '_meta': {'prompt_node': '1'},
+        '1': {'class_type': 'Fixture', 'inputs': {'prompt': 'default'}},
+    }))
+    manifest = {'inputs': {'prompt': {'type': 'string'}}, 'bindings': {
+        'comfyui': {'workflow': str(workflow), 'map': {}},
+    }}
+    with pytest.raises(AssertionError, match=r'unbound.yml: add bindings.comfyui.map.prompt'):
+        assert_manifest_binds_prompt(Path('unbound.yml'), manifest)
 
 
 @pytest.mark.parametrize('intent', ['image.generate', 'image.edit'])
