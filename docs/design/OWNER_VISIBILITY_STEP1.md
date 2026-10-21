@@ -23,22 +23,32 @@ are resolved by the existing trusted callers, outside the pure core.
 | debug_capture | Self/App-maker (R4) | Self/App-maker (R4) | Deny | Deny | Deny | Deny |
 
 This includes the lead's round-4 refinement on 2026-10-20, which supersedes the
-earlier blanket permission requirement and v3's chat Self+App restriction:
+earlier blanket permission requirement and v3's chat Self+App restriction. The
+creating-credential refinement for v4.2 distinguishes MCP from browser origins:
 
 - A session reads its own person's content across Apps without a privacy flag.
-- A delegated Viewer (App key or MCP grant) reads its person's content made by
-  its exact non-null App without the flag. Other App/session origins require
-  privacy_permission. The same identity rule applies to allowed delete/reuse
-  actions; debug_capture never permits reuse.
+- An App key reads its person's content made by its exact non-null App without
+  the flag. Keys within an App share that authority; key-level equality is not
+  needed. Other App origins require privacy_permission.
+- An MCP grant reads its person's content made through its exact non-null
+  connection_id without the flag. Browser rows on the shared session App, other
+  connections, and unattributed legacy rows require privacy_permission. Null or
+  empty connection ids never establish creating-credential equality.
+- The same identity rule applies to allowed delete/reuse actions; debug_capture
+  never permits reuse.
 - A row with no person belongs to its creator App. Only a caller with no person
   and the exact same non-null app_id satisfies App-maker; no person, including
   an accountable owner or a holder of privacy permission, may read that row.
 - Included prompt shares remain read-only. A delegated recipient needs privacy
   permission; a recipient session does not.
 
-Creator app_id is trusted submission attribution, never an inference from current
-App accountability or an intersection of readable owner keys. O6 still applies
-only to creations, voices, jobs and receipts. The new delegation/permission fields
+Creator app_id and connection_id are trusted submission attribution, never an
+inference from current App accountability or an intersection of readable owner
+keys. Viewer.delegation distinguishes App keys from MCP grants, including a grant
+whose connection id is missing. Step 3 must record connection/credential origin
+on new content writes and normalize legacy missing origins as browser-created
+for MCP access. This step adds typed attribution only; it changes no write path.
+O6 still applies only to creations, voices, jobs and receipts. The new delegation/permission fields
 have no credential storage or issuance surface in this step; no history/debug
 capture route is added.
 Shares are typed, supplied evidence in pure tests; there is no share store or
@@ -49,11 +59,11 @@ Denied even if a stale share exists. A prompt share selects its maker's row only
 
 | Source | Current main authority | Viewer identity and principal set | Privacy permission |
 |---|---|---|---|
-| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | Not needed (`delegated=False`) |
-| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Only cross-App/session person content needs it (`delegated=True`) |
-| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Person content requires Self and explicit privacy permission | Only cross-App/session person content needs it (`delegated=True`) |
+| Browser session | `admin_runtime.runtime_identity_for_session_app`; `me_media._member_media_scope` | Session person, surface App; every accountable App plus `user:<person>` and historical aliases | Not needed (`delegation=None`) |
+| App key | `admin_runtime.person_for_app_credential`, `runtime_identity_for_app_credential_hash`; `ownership.readable_owner_keys` | Its App only; a person only for a personal App whose key was made by its accountable person | Only cross-App/session person content needs it (`delegation="app_key"`) |
+| Appless key | `proxy._responses_scope`; `ownership.readable_owner_keys` | Trusted credential hash; no App. Person content requires Self and explicit privacy permission | Only cross-App/session person content needs it (`delegation="app_key"`) |
 | Trusted address | `admin_runtime.runtime_identity_for_trusted_address` (2457-2482 on main) | `app:<id>`, no person; never the shared network as a person | False; exact-App App-maker rows only |
-| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Cross-App/session person content needs explicit connection permission (`delegated=True`) |
+| MCP OAuth | `proxy._authenticate_mcp_access_token` (2425-2453), `_mcp_identity_for_person` | Grant person through that person's session App; session-like accountable principals. `connection_id` identifies the grant at the auth boundary | Only exact creating-connection rows bypass the flag; browser, other-connection and legacy rows need it (`delegation="mcp_grant"`) |
 | Control-plane service account | Runtime authentication rejects it on content routes | No content Viewer | False |
 | Missing identity | No trusted person, App, credential or principal | No content basis | False |
 
@@ -109,8 +119,8 @@ line references here name current-main symbols rather than stale v3 offsets.
 | Creator provenance | `_backfill_credential_creators` moved to 612 and still runs at initialization; unknown creators stay NULL rather than being uniformly rewritten to an empty string. Admin issuance still records the actor | Preserve NULL-safe handling. Key issuance and creator enforcement remain a prerequisite to the switch |
 | Key identity | `person_for_app_credential` moved to 2312; personal owner-created keys still get a person, service/personless keys do not. RuntimeIdentity now separates `person_id` from `accountable_person_id` | Never substitute the spending/accountable person for Self |
 | Trusted addresses | Keyless traffic can now authenticate as a configured App with no person, rather than all keyless traffic being absent identity | Keep that App's Own access; never give it prompt/chat/history/debug Self access |
-| MCP OAuth | OAuth grants use the person's session App and record `connection_id`; newer callback fields and tool visibility gates exist | Inventory the real callbacks, including optional ones. Resolve privacy permission from the delegated grant; do not treat OAuth as an unrestricted browser session |
-| Sensitive creator-App attribution | Current `asset_prompts` rows are keyed by asset/person and have no creator app_id. Older chat rows may use only a legacy key hash; future history/debug rows need creator attribution too | Step 3 must resolve or persist trusted creation origin. Do not use current App ownership as proof that an App made a person's prompt; unresolved origins cannot receive the no-flag delegated exemption |
+| MCP OAuth | OAuth grants and browser work share the person's session App; the grant has a `connection_id`. Newer callback fields and tool visibility gates exist | Same app_id does not prove that a grant created a row. Resolve privacy permission from the grant and compare trusted creating connection_id; absent/legacy origins require the flag |
+| Sensitive creating-credential attribution | Current `asset_prompts` rows are keyed by asset/person and have no creator app_id. Older chat rows may use only a legacy key hash; future history/debug rows need creator attribution too | Step 3 write paths must persist trusted app_id and connection/credential origin. App keys compare App identity; MCP grants compare creating connection_id. Unattributed legacy rows count as browser-created for MCP, even on its session App |
 | Receipt retention/D48 | `receipt_store._filter_for_audience` compares `maker_person_id` with `viewer_person_id`; non-makers get only retention kind/decision, even in admin audience. Receipt serialization now has closed retention kinds/decisions/reasons/parts | Keep this masking. The new owner projection uses the current closed retention vocabulary, without reason/deadline/parts |
 | Receipt admin fields | Admin receipts now include `client_address`, `api_key_name`, `connection_id`, `retention_facts`, and sanitized STT/decision metadata | Drop address/key-name and arbitrary metadata from the owner projection. They must not reappear through an envelope or nested map |
 | Retention ledger | REST current/request-specific ledgers, service/provider/system facts and MCP `requests(action=ledger)` did not exist in v3 | Current global facts are `none`; request-specific evidence requires Own. Management-role access is preserved only as a named exception |

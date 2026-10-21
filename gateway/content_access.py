@@ -27,7 +27,8 @@ class Viewer:
     owner_keys: frozenset[str] = frozenset()
     is_owner: bool = False
     privacy_permission: bool = False
-    delegated: bool = False  # App keys and MCP grants; sessions are not delegated
+    delegation: Literal["app_key", "mcp_grant"] | None = None  # sessions are not delegated
+    connection_id: str | None = None  # trusted MCP grant, never the shared session App
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class PromptRecord:
     shares: tuple[Share, ...] = ()
     app_id: str | None = None  # trusted creator App, not current accountability
     available: bool = True
+    connection_id: str | None = None  # trusted creating grant; legacy/browser rows have none
     kind: Literal["prompt"] = field(default="prompt", init=False)
 
 
@@ -68,6 +70,7 @@ class ChatRecord:
     app_id: str | None = None
     owner_key_hash: str | None = None
     available: bool = True
+    connection_id: str | None = None
     kind: Literal["chat"] = field(default="chat", init=False)
 
 
@@ -102,6 +105,7 @@ class RequestHistoryRecord:
     person_id: str | None
     app_id: str | None = None
     available: bool = True
+    connection_id: str | None = None
     kind: Literal["request_history"] = field(default="request_history", init=False)
 
 
@@ -110,6 +114,7 @@ class DebugCaptureRecord:
     person_id: str | None
     app_id: str | None = None
     available: bool = True
+    connection_id: str | None = None
     kind: Literal["debug_capture"] = field(default="debug_capture", init=False)
 
 
@@ -157,13 +162,15 @@ def _maker_access(
     viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord,
 ) -> bool:
     same_app = bool(viewer.app_id and record.app_id == viewer.app_id)
+    own_outputs = (bool(viewer.connection_id and record.connection_id == viewer.connection_id)
+                   if viewer.delegation == "mcp_grant" else same_app)
     if record.person_id is None:
         # An App-only row is never any person's content, including the App's
         # accountable person. A privacy grant cannot turn it into Self.
-        return viewer.person_id is None and same_app
+        return viewer.person_id is None and same_app and own_outputs
     if not viewer.person_id or record.person_id != viewer.person_id:
         return False
-    return not viewer.delegated or same_app or viewer.privacy_permission
+    return viewer.delegation is None or own_outputs or viewer.privacy_permission
 
 
 def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
@@ -192,7 +199,7 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
         if action in allowed_actions and _maker_access(viewer, record):
             return OWN
         if (isinstance(record, PromptRecord) and action == "read"
-                and (not viewer.delegated or viewer.privacy_permission)):
+                and (viewer.delegation is None or viewer.privacy_permission)):
             return _shared(viewer, record)
     return DENY
 

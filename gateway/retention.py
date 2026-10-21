@@ -491,9 +491,10 @@ def conversation_row_visible(row: Mapping[str, Any] | None, scope: Mapping[str, 
         return True
     from gateway.content_access import ChatRecord, Own, Viewer, decide
     # OWNER_VISIBILITY_STEP3: this old scope carries no delegation permission.
-    # Preserve its delegated/appless reads until the caller carries provenance.
+    # Preserve its delegated/appless reads until the caller carries creating
+    # connection provenance; same session App must not vouch for an MCP grant.
     viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"],
-                    privacy_permission=True, delegated=True,
+                    privacy_permission=True, delegation="app_key",
                     key_hash=scope["owner_key_hash"] if not scope["app_id"] else None)
     content = ChatRecord(row.get("person_id"), row.get("app_id"), row.get("owner_key_hash"))
     return isinstance(decide(viewer, content, "read"), Own)
