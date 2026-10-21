@@ -1482,7 +1482,6 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         assert not gateway.calls, (path, gateway.calls)
         responses[path] = response.content.decode()
     expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
-    print("@@FIX@@" + json.dumps(responses, indent=2) + "@@END@@")
     assert responses == expected
     # An active snapshot governing other identities must preserve the same bytes.
     from tests.test_category_enforcement import _activate, _snapshot
