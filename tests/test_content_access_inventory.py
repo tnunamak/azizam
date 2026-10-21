@@ -78,8 +78,7 @@ def _observed():
                       "actions": properties.get("action", {}).get("enum", [])})
     tree = ast.parse(Path(mcp_server.__file__).read_text())
     dispatch = {node.name: hashlib.sha256(ast.dump(node).encode()).hexdigest()
-                for node in ast.walk(tree) if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-}
+                for node in ast.walk(tree) if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
     dispatch["<module>"] = hashlib.sha256(ast.dump(tree).encode()).hexdigest()
     return {"mcp_dispatch": dispatch, "routes": routes, "mcp_fields": sorted(field.name for field in fields(mcp_server.McpDeps)),
             "mcp_tools": tools, "event_writers": _event_writers()}
