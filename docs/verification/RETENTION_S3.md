@@ -127,9 +127,10 @@ URL-encoded and base64 forms.
 
 Separate markers cover message text, tool arguments, descriptions, schemas and
 tool results. They must reach the fake engine and appear in no database sink,
-index table or output line. Tool names must also be absent from `LiteLLM_ToolTable`. The positive control
-leaves the shim off and must persist the name, proving that its sink is exercised. The leaky
-positive control enables spend/error logging and uses the default log level;
+index table or output line. Tool names must also be absent from
+`LiteLLM_ToolTable`. The positive control leaves the shim off and must persist
+the name, proving that its sink is exercised. It also enables spend/error
+logging and uses the default log level;
 it must expose content to both the database scanner and output scanner.
 
 Measured ceilings on 2026-10-21: pytest 15,358 (full hermetic collection),
@@ -144,4 +145,28 @@ The focused profile/canary/management run passed 44 cases. Endpoint/compiler
 and authenticated-ledger checks passed 72 cases. The rehearsal returned
 `profile_valid` with synthetic clean flags. It was not a live database check.
 
-Final full-suite results are recorded below after the run.
+The final full hermetic run used committed code `76456ccf`:
+
+```sh
+scripts/run-hermetic-pytest.sh --junit-xml-out /path/to/full-pass.xml \
+  -n 12 --dist worksteal --order-seed=20261020 -q --tb=short
+```
+
+Result: **15,354 passed, 3 skipped, 1 xfailed**, plus **3,583 passing subtests**,
+in 261.21 seconds. The runner exited 0. JUnit contains zero failures and errors.
+The adapter differential family (108 cases), route freeze (5), headless access
+(339), retention ledger headless (9), engine knowledge boundary (20), pinned
+canary (2) and launcher guards (4) all passed. The 56 changed differential
+fixtures were checked against the base: removing the new accounting fact
+restores the original JSON exactly.
+
+A preceding full run of the same code had one unrelated timing failure in
+`test_ci_local.py::test_the_critical_path_follows_the_web_build_when_it_is_slowest`:
+the fake `web-check` lane took longer than the fake browser lanes. The case
+passed in isolation and the unchanged full repeat passed. No timing assertion
+was weakened. Load15 was below 48 before each full launch.
+
+`git diff --check` passed. Run logs, ceiling listings and JUnit XML are under
+`~/.tmp/azizam-retention-s3/` on the implementation host. No live gateway,
+LiteLLM or PostgreSQL connection was used for this verification. The pinned
+Compose image was checked statically; a Compose container was not started.
