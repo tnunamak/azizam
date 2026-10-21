@@ -1615,6 +1615,10 @@ def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] 
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
             conn.execute("UPDATE account_links SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
             conn.execute("UPDATE account_access SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+        # Every App still on the plan is inactive here (disabled, or its person is
+        # disabled or removed). A null plan denies, so re-enabling one grants
+        # nothing until the owner assigns a plan.
+        conn.execute("UPDATE apps SET access_plan = NULL WHERE access_plan = ?", (plan_id,))
         conn.execute("DELETE FROM signin_rule_plans WHERE plan_id = ?", (plan_id,))
         conn.execute("DELETE FROM access_plans WHERE id = ?", (plan_id,))
         conn.commit()

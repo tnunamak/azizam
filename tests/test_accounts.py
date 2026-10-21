@@ -704,10 +704,18 @@ def test_plan_held_only_by_a_disabled_app_deletes(account_db):
     owner = admin_store.upsert_oidc_user("https://identity.example", "disabled-owner", email="disabled-owner@example.test", path=path)
     disabled = admin_store.create_app("Disabled only", kind="personal", owner_user_id=owner["id"], access_plan=plan["id"], path=path)
     admin_store.disable_app(disabled["id"], path=path)
+    gone = admin_store.upsert_oidc_user("https://identity.example", "removed-owner", email="removed-owner@example.test", path=path)
+    accounts.change_person(gone["id"], "owner", plan_id=plan["id"], path=path)
+    orphan = admin_store.create_app("Removed owner's", kind="personal", owner_user_id=gone["id"], access_plan=plan["id"], path=path)
+    accounts.change_person(gone["id"], "owner", remove=True, path=path)
     deleted = admin_store.delete_access_plan(plan["id"], path=path)
     assert deleted is not None
     assert deleted["id"] == plan["id"]
     assert admin_store.get_access_plan(plan["id"], path=path) is None
+    # Re-enabling the App later must not bring back the deleted plan's access.
+    admin_store.enable_app(disabled["id"], path=path)
+    assert admin_store.get_app(disabled["id"], path=path)["access_plan"] is None
+    assert admin_store.get_app(orphan["id"], path=path)["access_plan"] is None
 
 
 def test_deleting_a_plan_clears_it_from_removed_people(account_db):
