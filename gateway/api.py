@@ -118,7 +118,7 @@ def _resolve_request_audience(
 # One response serializer per resource. ``internal`` is the operator tier: it adds
 # the raw ``metadata`` bag to the admin shape, nothing else. Owner and input
 # identifiers are never in an API body, whatever the audience.
-def _job_body(row: Mapping[str, Any], resolver=None) -> dict[str, Any]:
+def _job_body(row: Mapping[str, Any], resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
     return output_availability.project(
         {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata"}}, resolver)
 
@@ -127,7 +127,8 @@ def _receipt_body(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k in _receipts.OPERATOR_VISIBLE_FIELDS}
 
 
-def _record_body(kind: str, row: Mapping[str, Any], resolver=None) -> dict[str, Any]:
+def _record_body(kind: str, row: Mapping[str, Any],
+                 resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
     return _receipt_body(row) if kind == "receipt" else _job_body(row, resolver)
 
 

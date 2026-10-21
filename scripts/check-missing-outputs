@@ -7,6 +7,7 @@ silently omitting it or letting SQLite create sidecars beside an operator store.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -30,7 +31,7 @@ def inventory(database: Path, media_dir: Path) -> dict:
     counts = {kind: {"jobs": 0, "outputs": 0} for kind in ("image", "audio", "video")}
     successful_jobs = 0
     invalid_assets = 0
-    with sqlite3.connect(database.resolve().as_uri() + "?mode=ro&immutable=1", uri=True) as conn:
+    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)) as conn:
         for (raw,) in conn.execute("SELECT job_json FROM media_jobs WHERE status = 'succeeded'"):
             successful_jobs += 1
             job = json.loads(raw)

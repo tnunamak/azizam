@@ -1,6 +1,5 @@
 """Missing retained bytes must be visible without changing historical job facts."""
 import json
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
