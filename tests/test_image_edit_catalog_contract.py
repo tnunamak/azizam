@@ -19,6 +19,7 @@ EDIT_RECORDS = [record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
                 if record.intent == "image.edit"
                 and _execution(record, None)["sync"]["path"] == "/v1/images/edits"]
 assert EDIT_RECORDS, "no image.edit manifests discovered"
+SELECT_EDIT_WORKFLOW = proxy._select_edit_workflow
 
 
 def example_request(record):
@@ -37,6 +38,7 @@ def image_names(record):
 
 @pytest.mark.parametrize("record", EDIT_RECORDS, ids=lambda record: record.id)
 def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fake_upstreams, monkeypatch):
+    monkeypatch.setattr(proxy, "_select_edit_workflow", SELECT_EDIT_WORKFLOW)
     example = example_request(record)
     names = image_names(record)
     # Distinct names from the fake upload endpoint make a swapped binding visible.
