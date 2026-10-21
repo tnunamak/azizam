@@ -277,3 +277,9 @@ The full Python suite was collected; the affected suites above were executed.
 CANARY_POSITIVE switch remains in the affected files. Follow-up logs,
 collection listings and JUnit XML are in `~/.tmp/azizam-retention-s3/` with
 filenames starting with `followups-`.
+
+## Round-2 review notes (2026-10-20)
+
+- Three settings have no single-flag positive control: `turn_off_message_logging=false` alone and `redact_messages_in_exceptions=false` alone leaked nothing the canary can see, and `disable_error_logs=false` alone created no rows. They stay on as defence in depth; the controls that do leak on their own are the tool-inventory shim, `LITELLM_LOG`, `disable_spend_logs` and `store_prompts_in_spend_logs`.
+- "Never prints the URL" holds for the rehearsal script itself. On a database failure, Prisma's own stderr shows the database user, database name and host or port. It never shows the password, the URL or any row.
+- Lower-case proxy variables (`http_proxy`, `https_proxy`, `no_proxy`, `all_proxy`, `ALL_PROXY`) and `CURL_CA_BUNDLE` now pass to LiteLLM, and `DEFAULT_NUM_WORKERS_LITELLM_PROXY` is refused like `NUM_WORKERS`.
