@@ -699,6 +699,17 @@ def test_plan_delete_error_lists_every_kind_of_user(account_db):
     assert admin_store.get_access_plan(plan["id"], path=path) is not None
 
 
+def test_plan_held_only_by_a_disabled_app_deletes(account_db):
+    path, plan = account_db
+    owner = admin_store.upsert_oidc_user("https://identity.example", "disabled-owner", email="disabled-owner@example.test", path=path)
+    disabled = admin_store.create_app("Disabled only", kind="personal", owner_user_id=owner["id"], access_plan=plan["id"], path=path)
+    admin_store.disable_app(disabled["id"], path=path)
+    deleted = admin_store.delete_access_plan(plan["id"], path=path)
+    assert deleted is not None
+    assert deleted["id"] == plan["id"]
+    assert admin_store.get_access_plan(plan["id"], path=path) is None
+
+
 def test_deleting_a_plan_clears_it_from_removed_people(account_db):
     path, plan = account_db
     person = admin_store.upsert_oidc_user("https://identity.example", "gone", email="gone@example.test", path=path)
