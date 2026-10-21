@@ -869,8 +869,8 @@ class _LoopWatch:
     """The event loop thread of each request, and the thread that ran each session write."""
 
     def __init__(self):
-        self.loop_threads: list[int] = []
-        self.writes: list[tuple[str, int]] = []
+        self.loop_threads: list[int] = []                  # one ident per request, in order
+        self.writes: list[tuple[str, int, int]] = []       # (call, thread, request index)
 
     def clear(self):
         self.loop_threads.clear()
@@ -921,7 +921,8 @@ def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatc
 
     def recording(name):
         def call(*args, **kwargs):
-            watch.writes.append((name, threading.get_ident()))
+            # The request being served right now, so a reused thread ident cannot confuse the check.
+            watch.writes.append((name, threading.get_ident(), len(watch.loop_threads) - 1))
             return real[name](*args, **kwargs)
         return call
 
@@ -934,8 +935,8 @@ def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatc
         client.close()
 
     assert response.status_code in (302, 303), response.text
-    assert [name for name, _ in watch.writes] == ["end_incoming", "issue"], (
+    assert [name for name, _, _ in watch.writes] == ["end_incoming", "issue"], (
         "a sign-in must end the incoming session before it issues the new one")
-    assert watch.loop_threads, "no request reached the gateway"
-    on_loop = [name for name, thread in watch.writes if thread in watch.loop_threads]
+    assert all(index >= 0 for _, _, index in watch.writes), "a session write ran outside a request"
+    on_loop = [name for name, thread, index in watch.writes if thread == watch.loop_threads[index]]
     assert not on_loop, f"{on_loop} wrote the session database on the event loop thread"
