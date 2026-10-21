@@ -3,9 +3,9 @@
 The checked-in fixture contains field names only, never receipt values/content.
 """
 import json
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 
 import gateway.accounts  # initialize the same import order as the gateway
 from gateway import receipt_store

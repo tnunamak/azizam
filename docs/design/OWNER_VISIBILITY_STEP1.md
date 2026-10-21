@@ -151,16 +151,15 @@ recursive closed schemas. Receipt labels use the trusted maker_person_id when
 supplied with the internal stored record. That field is stored by RouteReceipt
 but omitted from client and admin serializers; those audiences have no person
 label. Step 3 must use the internal audience's stored maker attribution before
-serving this projection, without inferring it from the App's
-current owner. This step adds no receipt write path or audience field.
+serving this projection, without inferring it from the App's current owner. This step adds no receipt write path or audience field.
 The projection reads promoted terminal_reason and status_code from the admin
 audience, or sanitizes them from the internal metadata. Client receipts omit
 them, so those values stay unavailable.
 Route comes from remote, the provider path or provider-native protocol; provider
 comes from backend and a trusted provider lookup. Queue, execution and first-output
 durations come from the phase timestamps; absent or reversed phases stay unavailable.
-The fully populated synthetic writer fixture freezes keys only across all audiences;
-no stored content is checked in.
+The fully populated synthetic writer fixture freezes admin keys only. Audience
+tests cover the maker and terminal fields; no stored content is checked in.
 
 Person labels never use current accountability;
 model/workflow labels come from supplied catalog lookups, with no requested-model
@@ -171,12 +170,11 @@ No endpoint or MCP callback serves this projection in step 1.
 
 The registration inventory has 450 route-method entries, including registered
 HEAD and non-HTTP entries, all McpDeps fields, tool schemas/suboperations, whole-module and helper dispatch
-fingerprints and production event writers across root modules and gateway (including aliases, static getattr, callback arguments, functools.partial and the SQL sink). Its 12 event
-types are today's emitted/validated types, not a claim that append_event already
+fingerprints and production event writers across root modules and gateway, including aliases, static getattr, callback arguments, functools.partial
+and the SQL sink. Its 12 event types are today's emitted/validated types, not a claim that append_event already
 rejects all others. Classifications state the relevant core checks; they do not
 prove that every current route enforces them. Existing route graph and headless
 access tests remain separate behavior gates.
-
 
 Principal-only resources use decide_own with the Viewer's pre-stripped key set.
 The auth builder accepts either RuntimeIdentity or AuthContext; authentication

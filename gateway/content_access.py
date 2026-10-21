@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 from pathlib import Path
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 from gateway.public_failure import PublicFailure
 
@@ -52,6 +52,7 @@ def viewer_from_auth(
     """Normalize trusted authentication, preserving the caller's principal scope.
 
     Resolved scope keys may be supplied by a caller that already read aliases.
+    Legacy hash-only contexts supply no person or credential-origin authority.
     Privacy permission is not issued in step 1. Missing identity adds no authority.
     """
     from gateway import ownership
@@ -62,13 +63,13 @@ def viewer_from_auth(
         from types import SimpleNamespace
         owner_keys = ownership.readable_owner_keys(SimpleNamespace(identity=identity), path=path) if identity else ()
     return Viewer(
-        person_id=identity.person_id if identity else None,
-        app_id=identity.app_id if identity else None,
-        key_hash=identity.key_hash if identity and not identity.app_id else None,
-        owner_keys=frozenset(owner_keys), auth_kind=identity.auth_kind if identity else "app_key",
-        credential_id=identity.credential_id if identity else None,
-        trusted_address=identity.trusted_address if identity else None,
-        connection_id=identity.connection_id if identity else None,
+        person_id=getattr(identity, "person_id", None),
+        app_id=getattr(identity, "app_id", None),
+        key_hash=getattr(identity, "key_hash", None) if not getattr(identity, "app_id", None) else None,
+        owner_keys=frozenset(owner_keys), auth_kind=getattr(identity, "auth_kind", "app_key"),
+        credential_id=getattr(identity, "credential_id", None),
+        trusted_address=getattr(identity, "trusted_address", None),
+        connection_id=getattr(identity, "connection_id", None),
     )
 
 

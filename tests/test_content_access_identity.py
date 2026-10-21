@@ -4,7 +4,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import proxy
-from gateway import accounts, admin_runtime, admin_store, me_media, ownership
+from gateway import accounts, admin_runtime, admin_store, me_media
 from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
 from gateway.runtime_auth import hash_api_key
 from proxy import AuthContext
