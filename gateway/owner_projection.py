@@ -248,7 +248,7 @@ def _receipt_route(record):
         if not record.get("backend") and not any(record.get(key) is not None for key in (
                 "started_at_ms", "first_output_at_ms", "finished_at_ms")) and record.get("status") not in {
                     "succeeded", "failed", "canceled", "expired"}:
-            return "unknown"
+            return None  # never dispatched: the route is unknown, not local
         return "local"
     return None
 

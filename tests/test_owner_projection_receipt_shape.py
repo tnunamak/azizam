@@ -89,7 +89,8 @@ def test_projection_derives_fields_from_real_receipt_writer(tmp_path):
 
 @pytest.mark.parametrize("changes,route,provider", [
     ({"remote": False, "started_at_ms": 1}, "local", None),
-    ({"remote": False, "backend": None, "started_at_ms": None, "queued_at_ms": None}, "unknown", None),
+    ({"remote": False, "backend": None, "status": "rejected", "started_at_ms": None, "first_output_at_ms": None,
+      "finished_at_ms": None}, None, None),
     ({"path": "/gateway/v1/providers/provider:a/native", "remote": False}, "provider", "provider:a"),
     ({"path": "", "protocol": "provider-native", "remote": False}, "provider", "provider:a"),
     ({"backend": "unknown-provider"}, "provider", None),
