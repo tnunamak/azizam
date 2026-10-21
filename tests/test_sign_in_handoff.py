@@ -30,6 +30,8 @@ def test_sign_in_ends_the_session_the_browser_already_had(sg, via):
         put_cookie(client, encode_session_cookie(previous, signing_key=SIGNING_KEY))
     else:
         client = owner_client(sg)
+        if via == "invite-oidc":
+            client = helper_client(sg)  # no plan yet; the owner's seeded plan forbids accepting an invite
     previous = cookie_session(client)
     old_copy = sg.client()
     put_cookie(old_copy, client.cookies.get(COOKIE))
@@ -54,7 +56,7 @@ def test_sign_in_ends_the_session_the_browser_already_had(sg, via):
     else:
         plan = store_plan("Invited", path=sg.path, models=["test-model"])
         _, token = accounts.create_link("invite", previous.subject, plan_id=plan["id"], path=sg.path)
-        payload = {"token": token, "email": OWNER if via == "invite-oidc" else "new@example.test", "name": "Invited"}
+        payload = {"token": token, "email": HELPER if via == "invite-oidc" else "new@example.test", "name": "Invited"}
         if via == "invite-password":
             payload["password"] = PASSWORD
         response = client.post("/auth/api/invite/accept", json=payload,
@@ -103,7 +105,7 @@ def test_two_tabs_signing_in_together_end_the_old_session_and_leave_one_working_
     helper_client(sg)
     for email in (OWNER, HELPER):
         set_password(sg, email)
-    existing_families = {row["family_id"] for row in sg.rows("SELECT DISTINCT family_id FROM account_session_lineage")}
+    existing_sessions = {row["session_id"] for row in sg.rows("SELECT session_id FROM account_sessions")}
     previous = cookie_session(old_browser)
     tabs = [sg.client(), sg.client()]
     for tab in tabs:
@@ -144,9 +146,9 @@ def test_two_tabs_signing_in_together_end_the_old_session_and_leave_one_working_
     browser = sg.client()
     put_cookie(browser, settled[-1][0].cookies.get(COOKIE))  # last Set-Cookie received wins
     assert signed_in_state(browser)
-    live = sg.rows("SELECT DISTINCT family_id FROM account_session_lineage WHERE retired_at IS NULL")
-    # The helper's pre-existing session is on another device; this browser created only these two.
-    assert {row["family_id"] for row in live} - existing_families == families
+    live = sg.rows("SELECT session_id FROM account_sessions")
+    # Fresh sign-ins have family_id == session_id. The helper's other-device session stays separate.
+    assert {row["session_id"] for row in live} - existing_sessions == families
 
 
 @pytest.mark.parametrize("incoming", ["missing", "forged", "expired", "ended"])
