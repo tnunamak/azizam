@@ -360,6 +360,7 @@ from gateway.video_extensions import (
     STANDARD_VIDEO_EXTEND_FIELDS,
     ROUTE_MANAGED_VIDEO_INPUTS,
     bind_video_workflow_extensions,
+    validate_video_workflow_extensions,
 )
 from gateway.openai_media_schemas import (
     AUDIO_GENERATE_OPENAPI,
@@ -10548,7 +10549,7 @@ async def _resolve_video_workflow_assets(
             not isinstance(spec, Mapping)
             or spec.get("type") != "asset"
             or name not in binding_map
-            or name in ROUTE_MANAGED_VIDEO_INPUTS  # the binder refuses these with a hint
+            or name in ROUTE_MANAGED_VIDEO_INPUTS  # owned by standard route fields
         ):
             continue
         kind = "video" if name == source_input else "image"
@@ -11053,7 +11054,20 @@ async def proxy_graph_video_create(
     staged_assets: dict[str, tuple[bytes, str, str]] = {}
     source_probe = None
     video_manifest = None
-    if workflow_cfg.get("requires_extensions"):
+    _workflow_block = (
+        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(body.get("extensions"), Mapping)
+        else body.get("extensions")
+    )
+    if isinstance(_workflow_block, Mapping):
+        # Gateway-level controls (metadata) are not workflow inputs.
+        _workflow_block = {
+            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
+        }
+    has_workflow_extensions = (
+        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
+    )
+    if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
         except ManifestError as e:
@@ -11075,16 +11089,28 @@ async def proxy_graph_video_create(
         try:
             body = merge_workflow_inputs(body)
             ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-            if isinstance(ext_block, Mapping):
+            if workflow_cfg.get("requires_extensions") and isinstance(ext_block, Mapping):
                 body["extensions"] = {
                     **body["extensions"],
                     WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
                         ext_block, video_manifest.get("inputs") or {}
                     ),
                 }
-            staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context, request=request,
-            )
+            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
+            rejected = {**validation.rejected, **unknown_fields}
+            if rejected:
+                name, reason = next(iter(rejected.items()))
+                spec = (video_manifest.get("inputs") or {}).get(name) or {}
+                if reason == "required input missing" and spec.get("type") == "asset":
+                    raise _VideoAssetError(
+                        f"{name} is required for this model",
+                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
+                    )
+                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            if workflow_cfg.get("requires_extensions"):
+                staged_assets, source_probe = await _resolve_video_workflow_assets(
+                    body, video_manifest, workflow_cfg, auth_context, request=request,
+                )
         except ExtensionError as e:
             return Response(
                 content=json.dumps({"error": {
@@ -11401,19 +11427,6 @@ async def proxy_graph_video_create(
         body, upload_error = await _upload_video_workflow_assets(body, staged_assets, auth_context)
         if upload_error is not None:
             return upload_error
-    _workflow_block = (
-        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-        if isinstance(body.get("extensions"), Mapping)
-        else body.get("extensions")
-    )
-    if isinstance(_workflow_block, Mapping):
-        # Gateway-level controls (metadata) are not workflow inputs.
-        _workflow_block = {
-            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
-        }
-    has_workflow_extensions = (
-        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
-    )
     if has_workflow_extensions:
         try:
             manifest = video_manifest or _find_video_manifest(str(workflow_name), workflow_cfg)

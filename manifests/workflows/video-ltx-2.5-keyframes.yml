@@ -23,7 +23,7 @@ inputs:
   frame_rate:
     label: Frames per second
     help: How many frames the video shows each second.
-    type: number
+    type: integer
     minimum: 1
     maximum: 50
     default: 24

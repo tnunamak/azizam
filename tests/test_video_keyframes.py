@@ -338,13 +338,16 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
 
     def test_invalid_extensions_are_refused_before_asset_resolution(self) -> None:
         for model in (*KEYFRAME_MODELS, "video-minimax-h3-i2v", "video-ltx-2.5-i2v"):
-            for invalid in ({"unknown_input": 1}, {"image": _uri(PNG_FIRST)}, {"last_frame": 42}):
+            invalid_inputs = [{"unknown_input": 1}, {"image": _uri(PNG_FIRST)}, {"last_frame": 42}]
+            if model == "video-ltx-2.5-keyframes":
+                invalid_inputs.extend([{"last_frame_strength": 1.5}, {"last_frame_strength": []}])
+            for invalid in invalid_inputs:
                 with self.subTest(model=model, invalid=invalid):
                     body = self._body(model, middle_frame=_uri(PNG_MID))
                     if model != "video-minimax-h3-keyframes-mid":
                         del body["extensions"][NS]["middle_frame"]
                     body["extensions"][NS].update(invalid)
-                    with patch.object(proxy, "_resolve_input_reference", AsyncMock()) as resolve:
+                    with patch.object(proxy, "_resolve_input_reference", AsyncMock(wraps=proxy._resolve_input_reference)) as resolve:
                         r = self.client.post("/v1/videos", json=body)
                     self.assertEqual(r.status_code, 400, r.text)
                     self.assertEqual(r.json()["error"]["code"], "invalid_workflow_extension")
