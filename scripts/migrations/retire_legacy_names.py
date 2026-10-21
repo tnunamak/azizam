@@ -167,11 +167,9 @@ def apply_changes(path: Path, *, allow_running: bool) -> tuple[list[Change], boo
             # SQLite backup. It includes unrelated settings but never logs them.
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
             backup = path.with_name(path.name + ".bak.retire-legacy-names." + stamp)
-            with backup.open("xb"):
-                backup.chmod(0o600)
-            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
             private_io.create_private_file(backup)
-            with closing(sqlite3.connect(backup)) as target:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(backup)) as target:
                     source.backup(target)
             if not allow_running:
                 require_stopped()
