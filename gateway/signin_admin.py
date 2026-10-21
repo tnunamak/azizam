@@ -544,6 +544,7 @@ def apply_changes(
         if lost_admin and not person.is_owner:
             admin_store.reconcile_oidc_admin_roles_in(conn, person.id, set())
             accounts.revoke_person_sessions_in(conn, person.id)
+            tx.after_commit(accounts.invalidate_asset_families)
             revoked = kept = 0
             if person.id in keep:
                 kept = adopt_admin_keys_in(conn, person.admin_keys, owner_id)

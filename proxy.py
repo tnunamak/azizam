@@ -167,6 +167,7 @@ from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN,
     KEY_CLAIM_EMAIL,
     AdminRole,
+    AdminSession,
     IDTokenClaimsError,
     OIDCConfigError,
     PKCEPair,
@@ -6704,10 +6705,17 @@ def _sign_image_token(image_id: str, expires: int) -> str:
     return _sign_asset_token(image_id, expires)
 
 
-def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None) -> str:
+def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None,
+                      family: str | None = None, subject: str | None = None, timing: str | None = None) -> str:
     # ``metadata_mode`` is part of the signed message so a client cannot flip a
     # ``none`` URL to ``full`` (the signature covers it).
     suffix = f":md={metadata_mode}" if metadata_mode else ""
+    if family is not None or subject is not None or timing is not None:
+        suffix += ":b=2"
+    if family is not None or subject is not None:
+        suffix += ":session=" + json.dumps([family, subject], separators=(",", ":"))
+    if timing is not None:
+        suffix += ":lifetime=" + timing
     msg = f"{asset_id}:{expires}{suffix}".encode("utf-8")
     return hmac.new(_image_signing_secret(), msg, hashlib.sha256).hexdigest()
 
@@ -6717,12 +6725,87 @@ def verify_image_signature(image_id: str, expires: int, sig: str) -> bool:
     return verify_asset_signature(image_id, expires, sig)
 
 
-def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None) -> bool:
+def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None,
+                           family: str | None = None, subject: str | None = None, timing: str | None = None) -> bool:
     """Constant-time HMAC verification for signed asset URLs."""
     if expires < int(time.time()):
         return False
-    expected = _sign_asset_token(asset_id, expires, metadata_mode)
+    expected = _sign_asset_token(asset_id, expires, metadata_mode, family, subject, timing)
     return hmac.compare_digest(expected, str(sig or ""))
+
+
+def _asset_url_session(request: Request):
+    # App credentials take precedence over a coincidentally present cookie.
+    # Try credentials retain their family even without cookies (e.g. job shims).
+    def binding():
+        identity = getattr(getattr(request, "scope", {}).get("auth_context"), "identity", None)
+        bound = getattr(identity, "browser_session", None)
+        api_key = _resolve_client_api_key(request)
+        credential = (admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
+                      if api_key and identity is None else None)
+        family = bound.family_id if bound else credential.get("session_id") if credential else None
+        if not family and (api_key or (identity and identity.key_hash.startswith("sha256:"))):
+            return None
+        raw = getattr(request, "cookies", {}).get(_browser_admin_cookie_config().name)
+        key = _browser_admin_session_signing_key()
+        if raw and key:
+            try:
+                # Never drop a binding when sign-out races the mint.
+                session = decode_session_cookie(raw, signing_key=key, now=0)
+                if not family or (session.family_id == family and session.subject == (bound.subject if bound else credential.get("created_by"))):
+                    return session
+            except SessionError:
+                pass
+        if bound is not None:
+            return bound
+        if family:
+            # Pre-upgrade Try keys have no timing facts: their derived URLs fail
+            # closed until a matching cookie supplies them or a new key is minted.
+            timing = json.loads(credential.get("session_timing_json") or
+                                '{"issued_at":0,"renewed_at":0,"expires_at":0}')
+            return AdminSession(subject=credential.get("created_by") or "", email="", role="none",
+                                session_id=family, **timing)
+        return None
+    return request_connections.memo(("asset-url-session", id(request)), binding)
+
+
+def _signed_asset_request_allowed(asset_id: str, expires: int, request: Request, mode: str | None) -> bool:
+    from gateway import session_policy
+    family, subject = request.query_params.get("family"), request.query_params.get("subject")
+    timing = request.query_params.get("session")
+    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), mode, family, subject, timing):
+        return False
+    if family is None and subject is None and timing is None:
+        return True
+    if not family or not subject or not timing or expires <= time.time():
+        return False
+    try:
+        session = AdminSession(subject=subject, email="", role="none", session_id=family, **json.loads(timing))
+        if not session_policy.is_usable(session, session_policy.load_asset_policy(ADMIN_STORE.path), time.time()):
+            return False
+    except (ValueError, TypeError):
+        return False
+    return accounts.asset_family_allowed(subject, family, path=ADMIN_STORE.path)
+
+
+def _session_asset_cache_headers(request: Request, asset_id: str, *, variant: str) -> dict[str, str]:
+    """The stored content digest and delivery recipe identify a representation.
+
+    Bump the recipe version when an encoder/metadata transform changes its bytes.
+    No media-sized hashing belongs on this per-request path.
+    """
+    if "family" not in request.query_params:
+        return {}
+    identity = f"asset-delivery-v1:{asset_id}:{variant}".encode()
+    return {"Cache-Control": "private, no-cache", "ETag": '"' + hmac.new(_image_signing_secret(), identity, hashlib.sha256).hexdigest() + '"'}
+
+
+def _asset_not_modified(request: Request, etag: str) -> bool:
+    if "family" not in request.query_params:
+        return request.headers.get("if-none-match") == etag
+    # GET uses weak comparison, even though our representation validator is strong.
+    return any(tag.strip().removeprefix("W/") in {etag, "*"}
+               for tag in request.headers.get("if-none-match", "").split(","))
 
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
@@ -7111,15 +7194,26 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     mode = metadata_mode or provenance.METADATA_NONE
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    session = _asset_url_session(request)
+    family, subject = (session.family_id, session.subject) if session else (None, None)
+    from gateway import session_policy
+    timing = json.dumps(session_policy.lifetime_claims(session), separators=(",", ":")) if session else None
+    binding = "&" + urlencode({"family": family, "subject": subject, "session": timing}) if session else ""
     if mode == thumbnails.THUMB_MODE:
         # The expiry steps once per TTL, so the URL is the same all window long
         # and the browser can keep the preview between visits.
         expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
-        sig = _sign_asset_token(asset_id, expires, mode)
-        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}"
+        if session:
+            expires = min(expires, int(session.expires_at), int(session.latest_expiry))
+        sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
+               else _sign_asset_token(asset_id, expires, mode))
+        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(asset_id, expires, mode)
-    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}"
+    if session:
+        expires = min(expires, int(session.expires_at), int(session.latest_expiry))
+    sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
+           else _sign_asset_token(asset_id, expires, mode))
+    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
 
 
 def build_signed_image_url(request: Request, image_id: str, metadata_mode: str | None = None) -> str:
@@ -7128,12 +7222,9 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     Honors `X-Forwarded-Proto` and the request's Host header so the URL works
     regardless of which Traefik route the client came in on.
     """
-    mode = metadata_mode or provenance.METADATA_NONE
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(image_id, expires, mode)
-    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
+    return build_signed_asset_url(request, image_id, metadata_mode).replace(
+        f"/v1/assets/{image_id}/", f"/v1/images/{image_id}/", 1,
+    )
 
 
 
@@ -15018,6 +15109,7 @@ async def _identity_submit_job(
     job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
+    shim.scope["auth_context"] = auth_context
     task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
     _identity_job_tasks.add(task)
     task.add_done_callback(_identity_job_tasks.discard)
@@ -15333,6 +15425,7 @@ def _end_provider_access_in(tx: admin_store.Transaction, person_id: str) -> None
     accounts.record_signin_refusal_in(tx.conn, person_id)
     admin_store.reconcile_oidc_admin_roles_in(tx.conn, person_id, set())
     accounts.revoke_person_sessions_in(tx.conn, person_id)
+    tx.after_commit(accounts.invalidate_asset_families)
     tx.after_commit(lambda: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused"))
 
 
@@ -21460,6 +21553,7 @@ async def _run_image_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             "image.generate", count_queue=False, auth_context=auth_context,
         )
@@ -22148,6 +22242,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
         )
@@ -22641,6 +22736,7 @@ async def _run_video_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         video_id = (job.get("metadata") or {}).get("upstream_video_id")
         if not video_id:
             # Admission is re-checked only before submitting new work; a job
@@ -23600,7 +23696,7 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     except ValueError:
         return refuse(400, "expires must be an integer")
     # Only a thumbnail-signed URL passes: a content URL's signature covers md=none|full.
-    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), thumbnails.THUMB_MODE):
+    if not _signed_asset_request_allowed(asset_id, expires, request, thumbnails.THUMB_MODE):
         return refuse(403, "Invalid or expired signature")
     source = asset_cache_path(asset_id)
     if source is None:
@@ -23611,9 +23707,13 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     stat = made.stat()
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
     headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
-    if request.headers.get("if-none-match") == etag:
+    headers.update(_session_asset_cache_headers(
+        request, asset_id, variant=f"thumb:{thumbnails.THUMB_EDGE}:{thumbnails.THUMB_MEDIA_TYPE}:{thumbnails.THUMB_RECIPE}:md=none:{stat.st_mtime_ns}:{stat.st_size}",
+    ))
+    if _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
-    return Response(content=made.read_bytes(), media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
+    return Response(content=made.read_bytes(),
+                    media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
 
 
 @app.get("/gateway/v1/assets/{asset_id}/content")
@@ -23662,7 +23762,7 @@ def _signed_asset_content_response(
             status_code=403,
             media_type="application/json",
         )
-    if not verify_asset_signature(asset_id, expires, sig, md_raw):
+    if not _signed_asset_request_allowed(asset_id, expires, request, md_raw):
         return Response(
             content=json.dumps({"error": {"message": "Invalid or expired signature", "type": "invalid_request_error"}}),
             status_code=403,
@@ -23694,7 +23794,8 @@ def _signed_asset_content_response(
             media_type="application/json",
         )
 
-    data = cache_path.read_bytes()
+    stat = cache_path.stat() if "family" in request.query_params else None
+    metadata_identity = ""
     if md_raw == provenance.METADATA_FULL:
         person_id: str | None = None
         if auth_context is None:
@@ -23714,6 +23815,17 @@ def _signed_asset_content_response(
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+        # The public validator is keyed: predictable prompt metadata must not be guessable from it.
+        metadata_identity = hmac.new(_image_signing_secret(), json.dumps(record["metadata"], sort_keys=True).encode(),
+                                     hashlib.sha256).hexdigest()
+    headers = _session_asset_cache_headers(
+        request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:"
+        f"{metadata_identity}:{stat.st_mtime_ns}:{stat.st_size}:{media_delivery.encoder_revision()}",
+    ) if stat is not None else {}
+    if headers and _asset_not_modified(request, headers["ETag"]):
+        return Response(status_code=304, headers=headers)
+    data = cache_path.read_bytes()
+    if md_raw == provenance.METADATA_FULL:
         data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
     try:
         data = media_delivery.deliver_bytes(
@@ -23726,12 +23838,15 @@ def _signed_asset_content_response(
             status_code=502,
             media_type="application/json",
         )
-    return media_delivery.ranged_delivery_response(
+    response = media_delivery.ranged_delivery_response(
         request,
         data,
         media_type=asset_media_type(asset_id, cache_path),
-        cache_control="private, max-age=3600",
+        cache_control=headers.get("Cache-Control", "private, max-age=3600"),
+        etag=headers.get("ETag"),
     )
+    response.headers.update(headers)
+    return response
 
 
 async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
@@ -31101,6 +31216,8 @@ from gateway.json_compression import JsonCompressionMiddleware
 app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
+from gateway.browser_cache import BrowserCacheMiddleware
+app.add_middleware(BrowserCacheMiddleware)
 # Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
 from gateway.noindex import NoIndexHeaderMiddleware
 app.add_middleware(NoIndexHeaderMiddleware)

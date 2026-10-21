@@ -9,11 +9,19 @@ ownership remain admin-plane actions.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import logging
+import os
+import secrets
+import stat
+import tempfile
+from functools import lru_cache
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway import admin_store, avatars, session_guard
+from gateway import admin_store, avatars, session_guard, session_policy
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -36,6 +44,45 @@ __all__ = [
 ]
 
 
+@lru_cache(maxsize=128)
+def _session_view_key(path: Path) -> bytes:
+    """A dedicated persistent key, purpose-separated once per process/store.
+
+    Publish a complete private file without replacing a concurrent winner.
+    Never follow a leaf symlink, including dangling links.
+    """
+    from gateway import private_io
+    private_io.ensure_private_dir(path.parent)
+    if not path.exists() and not path.is_symlink():
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".session-view-") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(secrets.token_bytes(32))
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                os.link(handle.name, path)
+            except FileExistsError:
+                pass
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("session view key must be a regular file")
+        os.fchmod(handle.fileno(), 0o600)
+        key = handle.read(33)
+    if len(key) != 32:
+        raise ValueError("session view key must contain 32 bytes")
+    return hmac.new(key, b"azizam.session-view.v1", hashlib.sha256).digest()
+
+
+def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
+    try:
+        key = _session_view_key(path.parent / ".session_view_secret")
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("Session view id omitted: dedicated key unavailable")
+        return {}
+    return {"session_view_id": hmac.new(key, session.family_id.encode(), hashlib.sha256).hexdigest()}
+
+
 class UserPortalError(ValueError):
     """Raised when a user-plane account action is not allowed."""
 
@@ -47,7 +94,7 @@ class UserPortalError(ValueError):
 
 
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
-    blocked = {"hash", "api_key", "key", "secret", "session_id"}
+    blocked = {"hash", "api_key", "key", "secret", "session_id", "session_timing_json"}
     out = {k: v for k, v in record.items() if k not in blocked}
     if "session_id" in record:
         # Name the binding, never the sign-in session it is bound to.
@@ -233,6 +280,8 @@ def build_user_portal_snapshot(
     person_id = str(user["id"])
     return {
         "authenticated": True,
+        # Public per-sign-in epoch, stable across renewal, distinct from every credential.
+        **_session_view_field(session, path),
         "user": {
             "id": user.get("id"),
             # The stable id the generated avatar is drawn from (a rename keeps the colour), and the
@@ -419,6 +468,7 @@ def mint_user_app_key(
             created_by=str(user["id"]),
             expires_at=expires_at,
             session_id=session_id,
+            session_timing=session_policy.lifetime_claims(session) if session_id else None,
             session=session_guard.BrowserSession.of(session, str(user["id"])),
             path=path,
         )

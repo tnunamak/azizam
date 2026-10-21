@@ -464,6 +464,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     if "session_id" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
         _revoke_unbound_try_keys(conn)
+    if "session_timing_json" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN session_timing_json TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
     lineage = {row[1] for row in conn.execute("PRAGMA table_info(account_session_lineage)")}
     if "used_at" not in lineage:
@@ -2187,6 +2189,7 @@ def create_credential_hash(
     created_by: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
+    session_timing: Mapping[str, float | None] | None = None,
     session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
@@ -2239,6 +2242,11 @@ def create_credential_hash(
             conn, subject_kind=subject_kind, subject_id=subject_id, app_id=app_id, hash=hash, prefix=prefix,
             display_name=display_name, scopes=scopes, created_by=created_by, expires_at=expires_at,
             session_id=session_id, ts=ts)
+        if session_id and session_timing is not None:
+            # Keep the minting cookie's lifetime facts for cookie-free Try requests.
+            timing_json = json.dumps(dict(session_timing), separators=(",", ":"))
+            conn.execute("UPDATE credentials SET session_timing_json=? WHERE id=?", (timing_json, record["id"]))
+            record["session_timing_json"] = timing_json
         conn.commit()
     return record
 
@@ -2489,6 +2497,7 @@ def runtime_access_row(
         row = conn.execute(
             "SELECT c.id AS cred_id, c.subject_kind AS cred_subject_kind, c.revoked_at AS cred_revoked_at, "
             "c.expires_at AS cred_expires_at, c.created_by AS cred_created_by, "
+            "c.session_id AS cred_session_id, c.session_timing_json AS cred_session_timing_json, "
             "c.display_name AS cred_display_name, q.* FROM credentials c "
             f"JOIN ({_RUNTIME_ACCESS_SELECT}) q ON q.app_id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
             "WHERE c.hash = ?", (key_hash,),
@@ -3223,6 +3232,9 @@ def put_operator_setting(
         except Exception:
             conn.rollback()
             raise
+    if str(key).strip() == "session_policy":
+        from gateway.session_policy import invalidate_asset_policy
+        invalidate_asset_policy()
     return record
 
 
@@ -3309,6 +3321,9 @@ def put_operator_setting_with_audit(
         except Exception:
             conn.rollback()
             raise
+    if str(key).strip() == "session_policy":
+        from gateway.session_policy import invalidate_asset_policy
+        invalidate_asset_policy()
     return record
 
 
