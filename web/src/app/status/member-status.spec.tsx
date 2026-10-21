@@ -56,7 +56,7 @@ const snapshot: Snapshot = {
       icon_key: "image",
       title: "Flux",
       recommended_model: "Flux",
-      use_names: ["image", "flux-dev"],
+      use_names: ["image", "flux2-klein-4b"],
       use_name: "image",
       summary: "Generate images with Flux.",
       intent: "image.generate",
@@ -117,8 +117,8 @@ describe("member Status diagnosis", () => {
     await user.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Flux", { exact: true })).toBeVisible();
     expect(screen.getByText(/Names you can use/)).toBeInTheDocument();
-    expect(screen.getByText("image, flux-dev", { exact: true })).toBeVisible();
-    expect(screen.queryByText("image, flux-dev, image")).toBeNull();
+    expect(screen.getByText("image, flux2-klein-4b", { exact: true })).toBeVisible();
+    expect(screen.queryByText("image, flux2-klein-4b, image")).toBeNull();
     expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
     expect(
       screen.queryByText(/GPU|VRAM|Raw probe data/),
