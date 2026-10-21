@@ -541,27 +541,44 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(states, ["confirmed"] * racers)
         self.assertEqual(len(self.self_confirm_rows()), 1)
 
-    def test_an_unrelated_empty_folder_is_not_adopted_and_removal_still_refuses(self) -> None:
-        self.seed()
-        self.unconfirm_folder()
+    def swap_in_an_unrelated_folder(self, *, with_a_file: bool) -> None:
         self.cache.rename(self.root / "cache-elsewhere")
         self.cache.mkdir()
-        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
-        self.assert_left_to_the_owner()
-        self.refused_unconfirmed()
+        if with_a_file:
+            (self.cache / ("f" * 64 + ".png")).write_bytes(b"someone else's picture")
 
-    def test_an_unrelated_empty_folder_in_place_of_an_adopted_one_still_refuses_removal(self) -> None:
+    def test_an_unrelated_folder_is_not_adopted_and_removal_still_refuses(self) -> None:
+        for with_a_file in (False, True):
+            with self.subTest(with_a_file=with_a_file):
+                self.seed()
+                self.unconfirm_folder()
+                self.swap_in_an_unrelated_folder(with_a_file=with_a_file)
+                self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+                self.assert_left_to_the_owner()
+                response = self.client.post(REMOVE, headers=VALID)
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(response.json()["error"]["code"],
+                                 "media_folder_unconfirmed" if with_a_file else "media_folder_unavailable")
+                self.assert_nothing_changed()
+                shutil.rmtree(self.cache)
+                (self.root / "cache-elsewhere").rename(self.cache)
+
+    def test_an_unrelated_folder_in_place_of_an_adopted_one_still_refuses_removal(self) -> None:
         self.library_of(stored=4, total=4)
         self.unconfirm_folder()
         self.assertEqual(self.media_folder(), {"state": "confirmed"})
-        self.cache.rename(self.root / "cache-elsewhere")
-        self.cache.mkdir()
-        self.assertEqual(self.media_folder(), {"state": "mismatch"})
-        response = self.client.post(REMOVE, headers=VALID)
-        self.assertEqual(response.status_code, 503, response.text)
-        self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
-        self.assertEqual(len(media_jobs.recent(500, path=self.jobs_db)), 4)
-        self.assertEqual(len(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)), 4)
+        for with_a_file in (False, True):
+            with self.subTest(with_a_file=with_a_file):
+                self.swap_in_an_unrelated_folder(with_a_file=with_a_file)
+                self.assertEqual(self.media_folder(), {"state": "mismatch"})
+                response = self.client.post(REMOVE, headers=VALID)
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(response.json()["error"]["code"],
+                                 "media_folder_unconfirmed" if with_a_file else "media_folder_unavailable")
+                self.assertEqual(len(media_jobs.recent(500, path=self.jobs_db)), 4)
+                self.assertEqual(len(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)), 4)
+                shutil.rmtree(self.cache)
+                (self.root / "cache-elsewhere").rename(self.cache)
 
     def test_later_pages_do_not_recount_the_folder(self) -> None:
         self.seed()

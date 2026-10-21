@@ -508,10 +508,18 @@ def _media_folder_view(
                                                 receipts_path=receipts_path)
     # More than half of the checkable Library is here: that is evidence enough, so the owner is not asked.
     # A mismatch (an identity is already recorded) never takes this path.
-    if state == "unconfirmed" and stored * 2 > total and _adopt_on_evidence(
-        storage.folder, storage.identity, stored, total, admin_path=admin_path, jobs_path=jobs_path,
-    ):
-        return {"state": "confirmed"}
+    if state == "unconfirmed" and stored * 2 > total:
+        if _adopt_on_evidence(storage.folder, storage.identity, stored, total, admin_path=admin_path, jobs_path=jobs_path):
+            return {"state": "confirmed"}
+        # A read that lost the race to adopt finds the folder confirmed now.
+        try:
+            state = prompt_memory.media_folder_state(
+                storage.folder, path=jobs_path, prompt_path=prompt_path, expected=storage.identity,
+            )
+        except PublicFailure:
+            return None
+        if state == "confirmed":
+            return {"state": state}
     if not actor.owner:
         return {"state": state}
     return {
