@@ -92,7 +92,11 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-pytest = 15319
+# Data hygiene: +68 regressions for private writers, activity retention and
+# fixture isolation, identity diagnostics, output availability and Response ownership.
+# Full hermetic collection: 15387; Vitest: 3051; Playwright: 471 + 3 + 18;
+# offline node:test: 5 compatibility + 82 Pi cases (2026-10-20).
+pytest = 15387
 vitest = 3051
 playwright = 492
 
