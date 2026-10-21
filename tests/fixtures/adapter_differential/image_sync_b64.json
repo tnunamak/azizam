@@ -334,13 +334,25 @@
       },
       {
         "destination_id": "litellm",
-        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
         "source_id": "<req:1>",
         "source_kind": "receipt"
       },
       {
         "destination_id": "litellm",
         "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
         "source_id": "<req:1>",
         "source_kind": "receipt"
       },
@@ -355,72 +367,9 @@
         "revision": "aac15b2ce1b019ef48b4129df3ffe61762380fb5dd67a44eff437490e690086f",
         "source_id": "<req:1>",
         "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "cc2add36f64dede2dfdf84a74e13733d728afd421e475be609c54ae1781b0e1c",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
       }
     ],
     "retention_fact_revisions": [
-      {
-        "fact_json": {
-          "checked": "2026-10-19",
-          "condition": "a LiteLLM or router cache is enabled",
-          "confidence": "documented",
-          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
-          "default": "off",
-          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
-          "holds": "requests and responses used for response reuse",
-          "how_long": "unknown; depends on the selected cache backend and its TTL",
-          "id": "litellm-cache",
-          "reach": "people authorized to read the selected cache backend",
-          "where": "LiteLLM exact or semantic cache backend"
-        },
-        "first_seen": "<time>",
-        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
-      },
-      {
-        "fact_json": {
-          "checked": "2026-10-19",
-          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
-          "confidence": "documented",
-          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
-          "default": "conditional",
-          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
-          "holds": "errors and metadata that may include request content",
-          "how_long": "unknown",
-          "id": "litellm-error-rows",
-          "reach": "LiteLLM administrators and downstream log readers",
-          "where": "LiteLLM error rows and downstream logs"
-        },
-        "first_seen": "<time>",
-        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
-      },
-      {
-        "fact_json": {
-          "checked": "2026-10-19",
-          "condition": "Lens ingestion or tracing integration is enabled",
-          "confidence": "documented",
-          "control": "inspect Lens ingestion and access settings independently from spend logging",
-          "default": "conditional",
-          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
-          "holds": "trace inputs, outputs and attributes",
-          "how_long": "unknown",
-          "id": "litellm-lens",
-          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
-          "where": "LiteLLM Lens traces"
-        },
-        "first_seen": "<time>",
-        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
-      },
       {
         "fact_json": {
           "checked": "2026-10-19",
@@ -440,37 +389,20 @@
       },
       {
         "fact_json": {
-          "checked": "2026-10-21",
-          "condition": "LiteLLM has a database; counters keep virtual-key budgets working while the pinned launcher suppresses unused tool discovery",
-          "confidence": "documented",
-          "control": "use the pinned no-content launcher and inspect accounting metadata; purge old accounting with the owner's database tools only after deciding how budgets should reset",
-          "default": "on",
-          "evidence_url": "https://github.com/tnunamak/azizam/blob/feat/retention-s3/docs/verification/RETENTION_S3.md",
-          "holds": "numeric key, user and team spend counters and aggregate cost and usage metadata",
-          "how_long": "according to the owner's accounting database policy; the no-content profile does not expire aggregate counters",
-          "id": "litellm-spend-cost-metadata",
-          "reach": "LiteLLM administrators and anyone with access to its database",
-          "where": "LiteLLM's accounting tables; not spend rows, error rows, ToolTable or spend index rows"
-        },
-        "first_seen": "<time>",
-        "revision": "aac15b2ce1b019ef48b4129df3ffe61762380fb5dd67a44eff437490e690086f"
-      },
-      {
-        "fact_json": {
           "checked": "2026-10-19",
-          "condition": "success, failure, general or service callbacks are configured",
+          "condition": "a permitted crash dump handled by systemd-coredump",
           "confidence": "documented",
-          "control": "inspect effective callback settings and message omission at each destination",
-          "default": "off",
-          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
-          "holds": "inputs and outputs sent to configured callbacks",
-          "how_long": "unknown; each destination has its own retention",
-          "id": "litellm-callbacks",
-          "reach": "people authorized at each configured callback destination",
-          "where": "callback destinations outside LiteLLM"
+          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "default": "conditional",
+          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
+          "holds": "a process-memory image that may contain request content",
+          "how_long": "according to the host's separate dump and journal cleanup settings",
+          "id": "gateway-crash-dumps",
+          "reach": "people who can read the host's crash dumps or journal",
+          "where": "systemd crash dump file and journal entry"
         },
         "first_seen": "<time>",
-        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
       },
       {
         "fact_json": {
@@ -492,19 +424,87 @@
       {
         "fact_json": {
           "checked": "2026-10-19",
-          "condition": "a permitted crash dump handled by systemd-coredump",
+          "condition": "error logging is enabled; whether a given error echoes content depends on the failure",
           "confidence": "documented",
-          "control": "review Storage and ProcessSizeMax in systemd-coredump and host core limits",
+          "control": "inspect disable_error_logs and effective diagnostic logging; check downstream collectors",
           "default": "conditional",
-          "evidence_url": "https://www.freedesktop.org/software/systemd/man/latest/systemd-coredump.html",
-          "holds": "a process-memory image that may contain request content",
-          "how_long": "according to the host's separate dump and journal cleanup settings",
-          "id": "gateway-crash-dumps",
-          "reach": "people who can read the host's crash dumps or journal",
-          "where": "systemd crash dump file and journal entry"
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/config_settings",
+          "holds": "errors and metadata that may include request content",
+          "how_long": "unknown",
+          "id": "litellm-error-rows",
+          "reach": "LiteLLM administrators and downstream log readers",
+          "where": "LiteLLM error rows and downstream logs"
         },
         "first_seen": "<time>",
-        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392"
+        "revision": "4461ff1dbedfc2c70a3d1c93e67fb6857d73a3c9aa5b37725566c11ce5c99497"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "success, failure, general or service callbacks are configured",
+          "confidence": "documented",
+          "control": "inspect effective callback settings and message omission at each destination",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/logging",
+          "holds": "inputs and outputs sent to configured callbacks",
+          "how_long": "unknown; each destination has its own retention",
+          "id": "litellm-callbacks",
+          "reach": "people authorized at each configured callback destination",
+          "where": "callback destinations outside LiteLLM"
+        },
+        "first_seen": "<time>",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "a LiteLLM or router cache is enabled",
+          "confidence": "documented",
+          "control": "inspect both LiteLLM and router cache settings and remove existing cache entries separately",
+          "default": "off",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/caching",
+          "holds": "requests and responses used for response reuse",
+          "how_long": "unknown; depends on the selected cache backend and its TTL",
+          "id": "litellm-cache",
+          "reach": "people authorized to read the selected cache backend",
+          "where": "LiteLLM exact or semantic cache backend"
+        },
+        "first_seen": "<time>",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-19",
+          "condition": "Lens ingestion or tracing integration is enabled",
+          "confidence": "documented",
+          "control": "inspect Lens ingestion and access settings independently from spend logging",
+          "default": "conditional",
+          "evidence_url": "https://docs.litellm.ai/docs/proxy/lens/api",
+          "holds": "trace inputs, outputs and attributes",
+          "how_long": "unknown",
+          "id": "litellm-lens",
+          "reach": "administrators and viewers of all traces; other permitted users may read their own or team traces",
+          "where": "LiteLLM Lens traces"
+        },
+        "first_seen": "<time>",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e"
+      },
+      {
+        "fact_json": {
+          "checked": "2026-10-21",
+          "condition": "LiteLLM has a database; counters keep virtual-key budgets working while the pinned launcher suppresses unused tool discovery",
+          "confidence": "documented",
+          "control": "use the pinned no-content launcher and inspect accounting metadata; purge old accounting with the owner's database tools only after deciding how budgets should reset",
+          "default": "on",
+          "evidence_url": "https://github.com/tnunamak/azizam/blob/feat/retention-s3/docs/verification/RETENTION_S3.md",
+          "holds": "numeric key, user and team spend counters and aggregate cost and usage metadata",
+          "how_long": "according to the owner's accounting database policy; the no-content profile does not expire aggregate counters",
+          "id": "litellm-spend-cost-metadata",
+          "reach": "LiteLLM administrators and anyone with access to its database",
+          "where": "LiteLLM's accounting tables; not spend rows, error rows, ToolTable or spend index rows"
+        },
+        "first_seen": "<time>",
+        "revision": "aac15b2ce1b019ef48b4129df3ffe61762380fb5dd67a44eff437490e690086f"
       }
     ]
   },
