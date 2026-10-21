@@ -10,7 +10,7 @@ import pytest
 
 from gateway.content_access import (
     ChatRecord, CreationRecord, Deny, JobRecord, Own, PromptRecord,
-    ReceiptRecord, Share, Shared, Viewer, VoiceRecord, decide, operational, require,
+    ReceiptRecord, RequestHistoryRecord, DebugCaptureRecord, Share, Shared, Viewer, VoiceRecord, decide, operational, require,
 )
 from gateway.public_failure import PublicFailure
 
@@ -23,12 +23,17 @@ MATRIX = {
     "voice": {"read": {"Own"}, "delete": {"Own"}, "reuse": {"Own"}},
     "receipt": {"read": {"Own"}},
     "job": {"read": {"Own"}, "cancel": {"Own"}},
+    "request_history": {"read": {"PrivateSelf"}, "delete": {"PrivateSelf"}},
+    "debug_capture": {"read": {"PrivateSelf"}, "delete": {"PrivateSelf"}},
 }
 ACTIONS = ("read", "delete", "reuse", "share", "link", "cancel")
 KEYS = frozenset({"app:a", "old:a"})
 ACTORS = {
-    "maker-session": (Viewer("a", "a", owner_keys=KEYS), {"Own", "Self", "SelfApp", "Maker"}),
+    "maker-session": (Viewer("a", "a", owner_keys=KEYS, privacy_permission=True), {"Own", "Self", "SelfApp", "Maker", "PrivateSelf"}),
     "maker-key": (Viewer("a", "a", owner_keys=KEYS), {"Own", "Self", "SelfApp", "Maker"}),
+    "maker-key-with-privacy": (Viewer("a", "a", owner_keys=KEYS, privacy_permission=True), {"Own", "Self", "SelfApp", "Maker", "PrivateSelf"}),
+    "mcp-session-grant": (Viewer("a", "a", owner_keys=KEYS, privacy_permission=True), {"Own", "Self", "SelfApp", "Maker", "PrivateSelf"}),
+    "trusted-address": (Viewer(None, "a", owner_keys=KEYS), {"Own"}),
     "same-app-different-person": (Viewer("b", "a", owner_keys=KEYS), {"Own"}),
     "same-person-different-app": (Viewer("a", "b", owner_keys=frozenset({"app:b"})), {"Self"}),
     "service-app-key": (Viewer(None, "a", owner_keys=KEYS), {"Own"}),
@@ -55,6 +60,8 @@ def records(*, active=True, include_prompt=False, available=True, legacy=False):
         "voice": VoiceRecord(owners, available=available),
         "receipt": ReceiptRecord(owners, available=available),
         "job": JobRecord(owners, available=available),
+        "request_history": RequestHistoryRecord("a", available=available),
+        "debug_capture": DebugCaptureRecord("a", available=available),
     }
 
 
@@ -71,7 +78,7 @@ def test_every_kind_action_basis_cell(kind, action):
             access = decide(replace(viewer, is_owner=role), records(
                 active=active, include_prompt=include_prompt, available=available, legacy=legacy)[kind], action)
             expected = (Shared if "Own" not in basis and "Self" not in basis
-                        and "SelfApp" not in basis else Own) if allowed else Deny
+                        and "SelfApp" not in basis and "PrivateSelf" not in basis else Own) if allowed else Deny
             assert isinstance(access, expected), (kind, action, actor, active, include_prompt, available, legacy, role)
             if isinstance(access, Shared):
                 assert (access.share_id, access.include_prompt) == ("share:1", include_prompt)
@@ -128,7 +135,7 @@ def test_require_has_the_same_not_found_for_unavailable_and_foreign():
     for available in (False, True):
         with pytest.raises(PublicFailure) as caught:
             require(viewer, records(available=available)["creation"], "read")
-        errors.append((caught.value.code, caught.value.status))
+        errors.append((caught.value.code, caught.value.status_code))
     assert errors == [("not_found", 404)] * 2
     assert isinstance(require(ACTORS["maker-session"][0], records()["creation"], "read"), Own)
 

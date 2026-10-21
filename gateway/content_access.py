@@ -6,12 +6,12 @@ Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
 from gateway.public_failure import PublicFailure
 
-Kind = Literal["creation", "prompt", "chat", "voice", "receipt", "job"]
+Kind = Literal["creation", "prompt", "chat", "voice", "receipt", "job", "request_history", "debug_capture"]
 Action = Literal["read", "delete", "reuse", "share", "link", "cancel"]
 
 
@@ -22,6 +22,7 @@ class Viewer:
     key_hash: str | None = None  # appless credentials only
     owner_keys: frozenset[str] = frozenset()
     is_owner: bool = False
+    privacy_permission: bool = False  # sessions set true; delegated credentials must opt in
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class CreationRecord:
     app_id: str | None = None
     shares: tuple[Share, ...] = ()
     available: bool = True
-    kind: Literal["creation"] = "creation"
+    kind: Literal["creation"] = field(default="creation", init=False)
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class PromptRecord:
     person_id: str | None
     shares: tuple[Share, ...] = ()
     available: bool = True
-    kind: Literal["prompt"] = "prompt"
+    kind: Literal["prompt"] = field(default="prompt", init=False)
 
 
 @dataclass(frozen=True)
@@ -61,14 +62,14 @@ class ChatRecord:
     app_id: str | None = None
     owner_key_hash: str | None = None
     available: bool = True
-    kind: Literal["chat"] = "chat"
+    kind: Literal["chat"] = field(default="chat", init=False)
 
 
 @dataclass(frozen=True)
 class VoiceRecord:
     owner_keys: frozenset[str] = frozenset()
     available: bool = True
-    kind: Literal["voice"] = "voice"
+    kind: Literal["voice"] = field(default="voice", init=False)
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ class ReceiptRecord:
     app_id: str | None = None
     request_id: str | None = None
     available: bool = True
-    kind: Literal["receipt"] = "receipt"
+    kind: Literal["receipt"] = field(default="receipt", init=False)
 
 
 @dataclass(frozen=True)
@@ -87,10 +88,24 @@ class JobRecord:
     app_id: str | None = None
     job_id: str | None = None
     available: bool = True
-    kind: Literal["job"] = "job"
+    kind: Literal["job"] = field(default="job", init=False)
 
 
-ContentRecord: TypeAlias = CreationRecord | PromptRecord | ChatRecord | VoiceRecord | ReceiptRecord | JobRecord
+@dataclass(frozen=True)
+class RequestHistoryRecord:
+    person_id: str | None
+    available: bool = True
+    kind: Literal["request_history"] = field(default="request_history", init=False)
+
+
+@dataclass(frozen=True)
+class DebugCaptureRecord:
+    person_id: str | None
+    available: bool = True
+    kind: Literal["debug_capture"] = field(default="debug_capture", init=False)
+
+
+ContentRecord: TypeAlias = CreationRecord | PromptRecord | ChatRecord | VoiceRecord | ReceiptRecord | JobRecord | RequestHistoryRecord | DebugCaptureRecord
 
 
 @dataclass(frozen=True)
@@ -166,6 +181,10 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
                                   and record.owner_key_hash == viewer.key_hash)
             if same_scope:
                 return OWN
+    elif isinstance(record, (RequestHistoryRecord, DebugCaptureRecord)):
+        if (viewer.privacy_permission and viewer.person_id
+                and record.person_id == viewer.person_id and action in {"read", "delete"}):
+            return OWN
     return DENY
 
 
