@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from gateway import private_tmp
+from gateway import private_io, private_tmp
 
 VIDEO_SUFFIXES = (".mp4", ".webm", ".mov", ".mkv")
 _MIME_SUFFIX = {
@@ -73,9 +73,10 @@ def probe_video(data: bytes, suffix: str = ".mp4", *, workdir: Path | None = Non
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return None
-    workdir.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(workdir)
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         path = Path(tmp) / f"source{suffix}"
+        private_io.create_private_file(path)
         path.write_bytes(data)
         try:
             proc = subprocess.run(

@@ -21,6 +21,8 @@ import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gateway import private_io
+
 SAMPLE_RATE = 24000
 FRAME_SECONDS = 0.02
 FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_SECONDS)
@@ -84,6 +86,7 @@ def decode_pcm(data: bytes, *, max_seconds: float, denoise: bool = False) -> arr
     # A file, not a pipe: mp4/m4a often keep their index at the end and need a seekable input.
     with tempfile.TemporaryDirectory(prefix="voice-sample-") as tmp:
         source = Path(tmp) / "upload"
+        private_io.create_private_file(source)
         source.write_bytes(data)
         command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(source), "-vn",
