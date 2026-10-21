@@ -115,13 +115,14 @@ const audioAsset = {
   duration_s: 125,
 };
 
-function renderLibrary(onCommit: () => void = () => {}) {
+function renderLibrary(onCommit: () => void = () => {}, cachedRemoval = false) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+  if (cachedRemoval) queryClient.setQueryData(["library", "removal"], { media_folder: null, removal_plan: null });
   return {
     queryClient,
     ...render(
@@ -135,6 +136,9 @@ function renderLibrary(onCommit: () => void = () => {}) {
 }
 
 describe("LibraryPage batch J provenance", () => {
+  // These listing/player specs predate folder confirmation. Cache the independent
+  // removal state so their ordered response stubs remain about the listing.
+  const renderListingLibrary = (onCommit: () => void = () => {}) => renderLibrary(onCommit, true);
   beforeEach(() => {
     navigation.searchParams = new URLSearchParams();
     session.viewer = { role: "member", name: "Alex" };
@@ -159,7 +163,7 @@ describe("LibraryPage batch J provenance", () => {
   test("uses the loaded Library grid and square tile geometry while loading", async () => {
     let finish!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
-    renderLibrary();
+    renderListingLibrary();
     const loading = screen.getByRole("status", { name: "Loading library" });
     const grid = loading.querySelector(".grid")!;
     const gridClasses = grid.className;
@@ -186,7 +190,7 @@ describe("LibraryPage batch J provenance", () => {
       this.dispatchEvent(new Event("pause"));
     });
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       await screen.findByRole("button", { name: "Play Video A" });
       const [a, b] = Array.from(container.querySelectorAll("video"));
       const c = container.querySelector("audio")!;
@@ -214,7 +218,7 @@ describe("LibraryPage batch J provenance", () => {
       paused.push(this);
     });
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       await screen.findByRole("button", { name: (name) => name.startsWith("Open Viewer target, ") });
       const gridVideo = container.querySelector("video")!;
       fireEvent.play(gridVideo);
@@ -233,7 +237,7 @@ describe("LibraryPage batch J provenance", () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
     try {
-      const { container } = renderLibrary();
+      const { container } = renderListingLibrary();
       const button = await screen.findByRole("button", { name: "Play Renew audio" });
       const audio = container.querySelector("audio")!;
       fireEvent.click(button);
@@ -258,7 +262,7 @@ describe("LibraryPage batch J provenance", () => {
     vi.mocked(fetch).mockImplementation(async (input) => Response.json(String(input).includes("cursor=next")
       ? { assets: [second, third], models: [], next_cursor: null }
       : { assets: [first], models: [], next_cursor: "next" }));
-    const { queryClient } = renderLibrary();
+    const { queryClient } = renderListingLibrary();
     const more = await screen.findByRole("button", { name: "Load more" });
     const status = screen.getByRole("status");
     more.focus();
@@ -276,7 +280,7 @@ describe("LibraryPage batch J provenance", () => {
   test("resets failed media on the first source-change commit", async () => {
     const commits: Array<string | null> = [];
     let capture = false;
-    const { queryClient } = renderLibrary(() => {
+    const { queryClient } = renderListingLibrary(() => {
       if (capture) {
         commits.push(screen.queryByRole("img", { name: /^Picture/ })?.getAttribute("src") ?? null);
       }
@@ -303,7 +307,7 @@ describe("LibraryPage batch J provenance", () => {
       );
       const commits: Array<{ label: string | null; text: string; error: boolean }> = [];
       let capture = false;
-      const { queryClient, container } = renderLibrary(() => {
+      const { queryClient, container } = renderListingLibrary(() => {
         if (capture) {
           const button = document.querySelector("[data-tile-cue='playback']");
           commits.push({
@@ -347,7 +351,7 @@ describe("LibraryPage batch J provenance", () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({ assets: [signed("one")], models: [], next_cursor: null }),
     );
-    const { queryClient, container } = renderLibrary();
+    const { queryClient, container } = renderListingLibrary();
     await screen.findByRole("button", { name: "Play Signed audio" });
     const audio = container.querySelector("audio")!;
     fireEvent.play(audio);
@@ -366,7 +370,7 @@ describe("LibraryPage batch J provenance", () => {
   });
 
   test("links the request receipt and omits an absent prompt", async () => {
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -403,7 +407,7 @@ describe("LibraryPage batch J provenance", () => {
         }),
       );
 
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
@@ -421,7 +425,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -445,7 +449,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -481,7 +485,7 @@ describe("LibraryPage batch J provenance", () => {
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
-    renderLibrary();
+    renderListingLibrary();
 
     (
       await screen.findByRole("button", {
@@ -501,7 +505,7 @@ describe("LibraryPage batch J provenance", () => {
   });
 
   test("does not create its own main landmark inside the app shell", async () => {
-    renderLibrary();
+    renderListingLibrary();
 
     await waitFor(() => {
       expect(
@@ -519,7 +523,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     // The audio tile is quiet: the prompt is the tile's name and lives in
     // the viewer, not as text on the face.
@@ -545,7 +549,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("button", {
@@ -564,7 +568,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(
       await screen.findByRole("button", {
@@ -585,7 +589,7 @@ describe("LibraryPage batch J provenance", () => {
     const play = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockRejectedValueOnce(new Error("blocked"));
-    renderLibrary();
+    renderListingLibrary();
 
     const playButton = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -615,7 +619,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -644,7 +648,7 @@ describe("LibraryPage batch J provenance", () => {
           next_cursor: null,
         }),
       );
-    renderLibrary();
+    renderListingLibrary();
 
     expect(await screen.findByText("No creations yet")).toBeVisible();
     expect(screen.queryByText("No matching creations")).toBeNull();
@@ -670,7 +674,7 @@ describe("LibraryPage batch J provenance", () => {
         next_cursor: null,
       }),
     );
-    renderLibrary();
+    renderListingLibrary();
 
     const audio = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
@@ -2442,7 +2446,7 @@ describe("Library items whose files are gone", () => {
     await screen.findByRole("button", { name: "Remove missing items" });
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
     await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("kind=image"))).toBe(true));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "lost" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Search your creations" }), { target: { value: "lost" } });
     await waitFor(() => expect(seen.mediaPaths.some((path) => path.includes("q=lost"))).toBe(true));
     expect(seen.mediaPaths.filter((path) => /removal_plan|folder_state/.test(path))).toEqual([
       "/me/api/media?folder_state=1&removal_plan=1",

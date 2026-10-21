@@ -2617,7 +2617,7 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
-  // The folder's state comes with the first page of the Library, which every read starts with.
+  // Folder evidence is viewer-wide and cached independently of the filtered pages.
   const folder = removalState?.media_folder ?? null;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
