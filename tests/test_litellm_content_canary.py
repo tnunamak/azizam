@@ -1,8 +1,7 @@
-"""Pinned proxy canaries with a fresh process, cwd, environment and fake DB."""
+"""Single-protection mutations prove that the pinned sinks are exercised."""
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,38 +10,53 @@ import pytest
 
 from gateway.litellm_content import child_environment
 from gateway.log_scrub import forms
-from tests.support.litellm_content_canary import CONTENT_MARKERS, TOOL_NAME
+from tests.support.litellm_content_canary import CONTENT_MARKERS
 
 
-@pytest.mark.parametrize('positive', [False, True], ids=['no-content-profile', 'leaky-positive-control'])
-def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, positive):
+@pytest.mark.parametrize('mutation', ['none', 'tool_inventory', 'default_log', 'spend_content', 'error_rows'])
+def test_pinned_proxy_keeps_no_content_and_still_meters(tmp_path, mutation):
     root = Path(__file__).resolve().parents[1]
     private = tmp_path / 'scratch'
     private.mkdir()
-    env = child_environment({'PATH': '/usr/bin:/bin', 'HOME': str(private), 'TMPDIR': str(private)}, declared=set())
-    env.update({'PYTHONPATH': str(root), 'PYTHONDONTWRITEBYTECODE': '1', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
-                'NO_PROXY': '*', 'CANARY_POSITIVE': str(positive).lower()})
-    if positive:
-        env.pop('LITELLM_LOG')  # measured default-level echoed error is a positive control
-    # Keep interpreter library discovery only. No host service/key/DB environment.
+    env = child_environment({'PATH': '/usr/bin:/bin', 'HOME': str(private), 'TMPDIR': str(private),
+        'LITELLM_LOCAL_MODEL_COST_MAP': 'True', 'NO_PROXY': '*'}, declared=set())
+    env.update({'PYTHONPATH': str(root), 'PYTHONDONTWRITEBYTECODE': '1', 'CANARY_MUTATION': mutation})
+    if mutation == 'default_log':
+        env.pop('LITELLM_LOG')
     result = subprocess.run([sys.executable, '-m', 'tests.support.litellm_content_canary'],
                             cwd=private, env=env, capture_output=True, timeout=75)
     assert result.returncode == 0, (result.stdout + result.stderr).decode(errors='replace')[-7000:]
     scans = {'stdout': result.stdout, 'stderr': result.stderr}
     scans.update({str(path.relative_to(private)): path.read_bytes() for path in private.rglob('*') if path.is_file()})
-    markers = [item.encode() for value in CONTENT_MARKERS.values() for item in forms(value)]
-    matches = {name for name, data in scans.items() if any(marker in data for marker in markers)}
+    def contains(data, marker):
+        return any(item.encode() in data for item in forms(CONTENT_MARKERS[marker]))
+    matches = {name for name, data in scans.items() if any(contains(data, marker) for marker in CONTENT_MARKERS)}
     tables = json.loads((private / 'database.json').read_text())
     budget = json.loads((private / 'budget.json').read_text())
     assert budget['budget_refused'] is True
-    assert bool(tables['LiteLLM_ToolTable']) is positive
+    assert bool(tables['LiteLLM_ToolTable']) is (mutation == 'tool_inventory')
     assert tables['LiteLLM_SpendLogGuardrailIndex'] == []
     assert {'key', 'user', 'team'} <= {row['entity_type'] for row in budget['updates']}
-    if positive:
-        assert matches & {'stdout', 'stderr'}, matches
-        assert 'database.json' in matches
-        assert len(tables['LiteLLM_SpendLogs']) > 0
+    if mutation == 'tool_inventory':
+        assert contains(json.dumps(tables['LiteLLM_ToolTable']).encode(), 'tool_name')
+        assert matches == {'database.json'}
+    elif mutation == 'default_log':
+        assert contains(result.stderr, 'prompt')
+        assert 'database.json' not in matches
+    elif mutation == 'spend_content':
+        spend = json.dumps(tables['LiteLLM_SpendLogs']).encode()
+        for marker in ('tool_name', 'arguments', 'description', 'schema'):
+            assert contains(spend, marker), marker
+        assert matches == {'database.json'}
+    elif mutation == 'error_rows':
+        errors = json.dumps({name: rows for name, rows in tables.items() if 'error' in name.lower()}).encode()
+        assert contains(errors, 'prompt')
+        assert matches == {'database.json'}
     else:
         assert not matches, matches
         assert tables['LiteLLM_SpendLogs'] == []
         assert not any(rows for name, rows in tables.items() if 'error' in name.lower())
+        daily = json.dumps({name: rows for name, rows in tables.items() if name.startswith('daily_')})
+        for term in ('canary-user-agent', 'client-end-user', 'request_id', 'canary', '/v1/chat/completions'):
+            assert term in daily, term
+        assert any('client-end-user' in json.dumps(rows) for name, rows in tables.items() if 'end_user' in name)

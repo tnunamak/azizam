@@ -78,7 +78,7 @@ def test_database_check_is_read_only_and_only_returns_flags(monkeypatch, flag):
     monkeypatch.setitem(sys.modules, 'prisma', SimpleNamespace(Prisma=Client))
     result = asyncio.run(content.database_problem('offline-test-only'))
     assert result == ('database_check_unavailable' if flag == 'malformed' else f'database_{flag}' if flag else None)
-    assert calls == ['connect', 'SET TRANSACTION READ ONLY', content.DB_CHECK_SQL, 'disconnect']
+    assert calls == ['connect', 'SET TRANSACTION READ ONLY', "SET LOCAL statement_timeout = '5000ms'", content.DB_CHECK_SQL, 'disconnect']
     assert "metadata->'callback_settings'" in content.DB_CHECK_SQL
     assert 'callback_settings,' not in content.DB_CHECK_SQL
 
@@ -289,3 +289,101 @@ def test_compiled_callback_lists_cannot_mutate_the_expected_profile():
     compiled['litellm_settings']['callbacks'].append('log_file')
     assert content.config_problem(compiled) == 'litellm_settings.callbacks'
     assert compile_litellm_substrate_config({})['litellm_settings']['callbacks'] == []
+
+
+def test_refusal_clears_after_row_deleted_and_logs_only_state_slugs(monkeypatch, caplog):
+    gate = content.ContentGate()
+    monkeypatch.setattr(content, 'gate', gate)
+    monkeypatch.setattr(gate, 'mode', lambda _: 'managed')
+    monkeypatch.setattr(gate, 'generation', lambda _: ('same-process',))
+    clock = [100.0]
+    monkeypatch.setattr(content.time, 'monotonic', lambda: clock[0])
+    rows = [{'logging': 'private-row-content'}]
+    calls = []
+    async def check(_):
+        calls.append(1)
+        return 'database_key_unsafe' if rows else None
+    monkeypatch.setattr(content, 'database_problem', check)
+    async def run():
+        refusal = await content.execution_refusal('fixture')
+        assert refusal.status_code == 503
+        status = gate.status('fixture')
+        assert status['problem'] == 'database_key_unsafe'
+        assert 'metadata.logging' in status['fix']
+        assert 'database_key_unsafe' in refusal.body.decode()
+        assert status['fix'] in refusal.body.decode()
+        clock[0] += 29
+        await gate.check('fixture')
+        assert len(calls) == 1
+        rows.clear()
+        clock[0] += 1
+        assert await content.execution_refusal('fixture') is None
+        clock[0] += 3599
+        assert await gate.check('fixture') is None
+        assert len(calls) == 2
+    with caplog.at_level('WARNING'):
+        asyncio.run(run())
+    assert [record.getMessage() for record in caplog.records] == [
+        'litellm_content_state=database_key_unsafe', 'litellm_content_state=verified']
+    assert 'private-row-content' not in caplog.text
+
+
+def test_failed_database_checks_back_off_without_exception_contents(monkeypatch, caplog):
+    gate = content.ContentGate()
+    monkeypatch.setattr(gate, 'mode', lambda _: 'managed')
+    monkeypatch.setattr(gate, 'generation', lambda _: ('same-process',))
+    clock = [100.0]
+    monkeypatch.setattr(content.time, 'monotonic', lambda: clock[0])
+    calls = []
+    async def check(_):
+        calls.append(1)
+        raise OSError('private-connection-string')
+    monkeypatch.setattr(content, 'database_problem', check)
+    async def run():
+        for elapsed, count in [(0, 1), (29, 1), (30, 2), (89, 2), (90, 3), (149, 3), (150, 4)]:
+            clock[0] = 100 + elapsed
+            assert await gate.check('fixture') == 'profile_check_unavailable'
+            assert len(calls) == count
+    with caplog.at_level('WARNING'):
+        asyncio.run(run())
+    assert [r.getMessage() for r in caplog.records] == ['litellm_content_state=profile_check_unavailable']
+    assert 'private-connection-string' not in str(gate.status('fixture')) + caplog.text
+
+
+@pytest.mark.parametrize('name', ['LITELLM_LOCAL_MODEL_COST_MAP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'REQUESTS_CA_BUNDLE'])
+def test_operational_environment_survives_without_declaration(name):
+    assert content.child_environment({name: 'fixture-value'}, declared=set())[name] == 'fixture-value'
+
+
+@pytest.mark.parametrize('name', ['STORE_MODEL_IN_DB', 'STORE_PROMPTS_IN_SPEND_LOGS', 'DEBUG', 'DETAILED_DEBUG'])
+def test_content_environment_cannot_be_declared(name):
+    assert name not in content.child_environment({name: 'true'}, declared={name})
+
+
+def test_database_rehearsal_uses_real_checker_and_never_prints_url(tmp_path, monkeypatch, capsys):
+    import runpy
+    script = runpy.run_path(str(ROOT / 'scripts/rehearse-litellm-content'))
+    config = tmp_path / 'config.yaml'
+    config.write_text(yaml.safe_dump(compile_litellm_substrate_config({})))
+    monkeypatch.setenv('REHEARSAL_TEST_URL', 'private-url-never-print')
+    calls = []
+    async def check(url):
+        calls.append(url)
+        return 'database_team_unsafe'
+    script['main'].__globals__['database_problem'] = check
+    monkeypatch.setattr(sys, 'argv', ['rehearse', '--config', str(config), '--database-url-env', 'REHEARSAL_TEST_URL'])
+    assert script['main']() == 1
+    output = capsys.readouterr().out
+    assert json.loads(output)['setting'] == 'database_team_unsafe'
+    assert calls == ['private-url-never-print']
+    assert 'private-url' not in output
+
+
+def test_accounting_facts_disclose_legacy_rows_and_daily_identifiers():
+    facts = {f['id']: f for f in yaml.safe_load((ROOT / 'registry/retention.yml').read_text())['system_facts']['litellm']['facts']}
+    for name in ('litellm-error-rows', 'litellm-spend-content'):
+        assert 'rows written before this change remain until purged' in facts[name]['how_long']
+    fact = facts['litellm-spend-cost-metadata']
+    assert '/blob/main/' in fact['evidence_url']
+    for term in ('User-Agent', 'model', 'endpoint', 'per-day request_id', 'client-supplied user'):
+        assert term in fact['holds']

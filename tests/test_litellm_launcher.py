@@ -36,3 +36,22 @@ def test_changed_internal_implementation_refuses(monkeypatch, capsys):
     monkeypatch.setattr(DBSpendUpdateWriter, '_enqueue_tool_registry_upsert', changed)
     assert launcher.main(['--config', 'not-opened.yaml']) == 78
     assert 'version or tool queue changed' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('argv,workers', [(['--num_workers', '2'], None), (['--num_workers=3'], None),
+    (['--reload'], None), ([], '2'), (['--num_workers', '1', '--num_workers=2'], None)])
+@pytest.mark.parametrize('entrypoint', ['launcher', 'sidecar'])
+def test_spawn_modes_refused_before_imports_or_database(monkeypatch, capsys, argv, workers, entrypoint):
+    from gateway import provider_sidecar
+    monkeypatch.delenv('NUM_WORKERS', raising=False)
+    if workers:
+        monkeypatch.setenv('NUM_WORKERS', workers)
+    def must_not_run():
+        pytest.fail('shim imported before unsafe process mode refused')
+    monkeypatch.setattr(launcher, 'install_no_content_shim', must_not_run)
+    if entrypoint == 'launcher':
+        assert launcher.main(argv) == 78
+        assert 'single_process_required' in capsys.readouterr().err
+    else:
+        with pytest.raises(ValueError, match='single_process_required'):
+            provider_sidecar.main(['run', '--db', '/not-opened.db', '--', 'litellm', *argv])
