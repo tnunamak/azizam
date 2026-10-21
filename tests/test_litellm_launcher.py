@@ -20,14 +20,14 @@ def test_installed_version_and_patched_symbol_are_the_verified_pin(monkeypatch):
 def test_version_bump_fails_loudly_before_startup(monkeypatch, capsys):
     monkeypatch.setattr(launcher.importlib.metadata, 'version', lambda _: '1.86.3')
     assert launcher.main(['--config', 'not-opened.yaml']) == 78
-    assert 'version changed' in capsys.readouterr().err
+    assert 'version or tool queue changed' in capsys.readouterr().err
 
 
 def test_changed_internal_symbol_refuses_instead_of_silently_skipping(monkeypatch, capsys):
     from litellm.proxy.db.db_spend_update_writer import DBSpendUpdateWriter
     monkeypatch.setattr(DBSpendUpdateWriter, '_enqueue_tool_registry_upsert', None)
     assert launcher.main(['--config', 'not-opened.yaml']) == 78
-    assert 'symbol changed' in capsys.readouterr().err
+    assert 'version or tool queue changed' in capsys.readouterr().err
 
 
 def test_changed_internal_implementation_refuses(monkeypatch, capsys):
@@ -35,4 +35,4 @@ def test_changed_internal_implementation_refuses(monkeypatch, capsys):
     def changed(self, **kwargs): return None
     monkeypatch.setattr(DBSpendUpdateWriter, '_enqueue_tool_registry_upsert', changed)
     assert launcher.main(['--config', 'not-opened.yaml']) == 78
-    assert 'implementation changed' in capsys.readouterr().err
+    assert 'version or tool queue changed' in capsys.readouterr().err

@@ -57,8 +57,8 @@ def main(argv: list[str] | None = None) -> int:
 
             config_path = Path(cli_args[cli_args.index("--config") + 1])
             write_launch_proof(args.content_proof, config_path, os.environ)
-    except UnsupportedContentProfile as exc:
-        print(f"[litellm-content] {exc}", file=sys.stderr)
+    except UnsupportedContentProfile:
+        print("[litellm-content] LiteLLM version or tool queue changed. Re-verify the pinned no-content shim; refusing to start.", file=sys.stderr)
         return 78
     except Exception:
         print("[litellm-content] No-content startup check failed; refusing to start.", file=sys.stderr)

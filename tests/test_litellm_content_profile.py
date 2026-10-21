@@ -49,7 +49,8 @@ def test_compose_has_exact_profile_without_database():
     compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
     service = compose['services']['litellm']
     assert service['environment'] == {'LITELLM_MASTER_KEY': '${AZIZAM_LITELLM_API_KEY-sk-local-litellm}', **content.profile()['environment']}
-    assert '/app/data/litellm.config.yaml' in service['entrypoint'][-1]
+    assert 'python /app/azizam-litellm-launcher.py --config /app/data/litellm.config.yaml' in service['entrypoint'][-1]
+    assert './gateway/litellm_launcher.py:/app/azizam-litellm-launcher.py:ro' in service['volumes']
     assert 'DATABASE_URL' not in service['environment']
     assert compose['services']['gateway']['environment']['AZIZAM_LITELLM_COMPOSE_PROFILE'] == 'true'
 
