@@ -18,6 +18,7 @@ from urllib.parse import quote
 from typing import Any, Optional
 
 import httpx
+from gateway import private_io
 
 FAILURE_TTL = 60.0
 
@@ -49,10 +50,7 @@ def _disk_write(class_type: str, info: dict[str, Any]) -> None:
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(info))
-        tmp.replace(path)
+        private_io.atomic_write_text(path, json.dumps(info))
     except OSError:
         pass
 

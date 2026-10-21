@@ -104,7 +104,7 @@ from gateway import directory_index, loop_watchdog, request_connections, video_e
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
-from gateway import video_job_records, prompt_metadata_migration
+from gateway import video_job_records, prompt_metadata_migration, private_io
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -6849,11 +6849,10 @@ def _image_signing_secret() -> bytes:
         except Exception:
             pass
     # Generate and persist.
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     secret = secrets.token_urlsafe(48).encode("utf-8")
     try:
-        secret_path.write_bytes(secret)
-        os.chmod(secret_path, 0o600)
+        private_io.atomic_write_bytes(secret_path, secret)
     except Exception as e:
         print(f"[proxy] Could not persist image URL signing secret: {e}", flush=True)
     _image_url_signing_secret = secret
@@ -6937,11 +6936,10 @@ def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
     path = _asset_metadata_path(asset_id)
     if path is None:
         return
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     tmp = path.with_name(f"{path.name}.tmp")
     try:
-        tmp.write_text(json.dumps(dict(metadata), sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        private_io.atomic_write_text(path, json.dumps(dict(metadata), sort_keys=True))
     except Exception as e:
         print(f"[proxy] Could not persist asset metadata for {asset_id}: {e}", flush=True)
         try:
@@ -7094,16 +7092,11 @@ def _store_asset_bytes(
     content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
-    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    private_io.ensure_private_dir(IMAGE_CACHE_DIR)
     target = IMAGE_CACHE_DIR / f"{digest}{suffix}"
     with prompt_metadata_migration.CACHE_MUTATION_LOCK:
         if not target.exists():
-            tmp = target.with_suffix(f"{suffix}.tmp")
-            try:
-                tmp.write_bytes(content)
-                tmp.replace(target)
-            finally:
-                tmp.unlink(missing_ok=True)
+            private_io.atomic_write_bytes(target, content)
         _record_asset_owner(asset_id, owner_key_hash)
         person_id = (getattr(delivery, "person_id", None) or getattr(decision, "person_id", None)) if maker_person_id is _CURRENT_MAKER else maker_person_id
         metadata_sidecar = _read_asset_metadata(asset_id)
