@@ -159,15 +159,19 @@ def test_unverified_content_does_not_block_management_and_prevents_team_assignme
     monkeypatch.setattr(litellm_content.gate, 'check', unsafe)
     # Listing and deletion still perform their requests; deletion also reruns
     # the check so removing an offending key repairs execution immediately.
-    listing = _sidecar(fake_upstreams, 'GET', '/key/list', {'json': {'keys': []}},
-                       query={'page': '1', 'size': '100', 'return_full_object': 'true'})
+    fake = fake_upstreams.asgi(scenario_from_data({
+        'protocol': 'litellm-admin', 'name': 'repair-content-precondition', 'provenance': PROVENANCE,
+        'exchanges': [
+            {'id': 'list', 'match': {'method': 'GET', 'path': '/key/list'},
+             'response': {'json': {'keys': []}}},
+            {'id': 'delete', 'match': {'method': 'POST', 'path': '/key/delete'},
+             'response': {'json': {'deleted_keys': ['fixture']}}},
+        ]}), host='litellm.fk.test')
     assert asyncio.run(_client().list_keys()) == []
-    assert len(listing.requests) == 1
-    deleting = _sidecar(fake_upstreams, 'POST', '/key/delete', {'json': {'deleted_keys': ['fixture']}})
     assert asyncio.run(_client().delete_keys(keys=['fixture'])) == {'deleted_keys': ['fixture']}
-    assert len(deleting.requests) == 1
+    assert len(fake.requests) == 2
     with pytest.raises(LiteLLMAdminError) as error:
         asyncio.run(_client().generate_key({'team_id': 'unsafe-team'}))
     assert error.value.code == 'litellm_content_unverified'
-    assert len(deleting.requests) == 1
+    assert len(fake.requests) == 2
     assert checked == [{'force': True}, {'force': True}]

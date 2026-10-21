@@ -15,17 +15,17 @@ Paths below are relative to that installed `litellm/` directory.
 | `general_settings.disable_spend_logs` | `true` | `proxy/proxy_server.py:4312`; `proxy/db/db_spend_update_writer.py:160` |
 | `general_settings.disable_error_logs` | `true` | `proxy/hooks/proxy_track_cost_callback.py:407` (returns before constructing error text or traceback) |
 | `general_settings.store_model_in_db` | `false` | `proxy/proxy_server.py:7409` (environment and database can force it on) |
-| `litellm_settings.callbacks`, `success_callback`, `failure_callback` | `[]` | `proxy/proxy_server.py:3818` onward loads the module settings and callbacks |
+| `litellm_settings.callbacks`, `success_callback`, `failure_callback` | `[]` | `proxy/proxy_server.py:3935,3978,4010` initializes callbacks |
 | `litellm_settings.turn_off_message_logging` | `true` | `__init__.py:196`; `litellm_core_utils/redact_messages.py:156` |
 | `litellm_settings.redact_messages_in_exceptions` | `true` | `__init__.py:201` |
 | `litellm_settings.redact_user_api_key_info` | `true` | `__init__.py:202` |
-| `litellm_settings.cache` | `false`; no `cache_params` | `proxy/proxy_server.py:3818` onward handles cache configuration |
-| `router_settings.cache_responses` | `false` | `router.py` constructor's `cache_responses` argument |
+| `litellm_settings.cache` | `false`; no `cache_params` | `proxy/proxy_server.py:3813,3892` handles cache configuration |
+| `router_settings.cache_responses` | `false` | `router.py:251` |
 | `LITELLM_LOG` | `CRITICAL` | `_logging.py:86`; `proxy/proxy_server.py:6528` |
 | `LITELLM_MODE` | `PRODUCTION` | `__init__.py:19`; `proxy/proxy_cli.py:28` (prevents dotenv loading) |
 | `DISABLE_ADMIN_UI` | `true` | `proxy/management_endpoints/ui_sso.py:598` |
 | `NO_DOCS`, `NO_REDOC` | `true` | `proxy/utils.py:5761,5744` |
-| `maximum_spend_logs_retention_period` | owner opt-in recommendation `7d` | `proxy/proxy_server.py:7479`; `proxy/db/db_transaction_queue/spend_log_cleanup.py:31` onward |
+| `maximum_spend_logs_retention_period` | owner opt-in recommendation `7d` | `proxy/proxy_server.py:7479`; `proxy/db/db_transaction_queue/spend_log_cleanup.py:44` |
 
 `registry/litellm_no_content.yml` supplies the values to the config compiler
 and launcher. The child inherits only runtime basics and declared credential

@@ -15,6 +15,7 @@ import yaml
 
 from gateway import litellm_content as content
 from gateway.litellm_substrate import compile_litellm_substrate_config
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
