@@ -196,6 +196,44 @@ else
       *) [[ -e $checkout_root/${argument%%::*} ]] && workers=skip ;;
     esac
   done
+  # Host protection (2026-10-21, load 66 on 24 cores): cap xdist workers at min(8, nproc/3), halved when
+  # the 1-minute load exceeds nproc, and allow one full-suite run at a time across every checkout.
+  requested=; expect_n=0
+  for argument in "$@"; do
+    if ((expect_n)); then requested=$argument; expect_n=0; continue; fi
+    case $argument in -n|--numprocesses) expect_n=1 ;; -n[0-9]*) requested=${argument#-n} ;; --numprocesses=*) requested=${argument#--numprocesses=} ;; esac
+  done
+  if [[ $requested =~ ^[0-9]+$ ]]; then
+    cores=$(nproc); cap=$(( cores / 3 )); ((cap > 8)) && cap=8; ((cap < 1)) && cap=1
+    load1=$(cut -d' ' -f1 /proc/loadavg); load1=${load1%%.*}
+    ((load1 > cores)) && cap=$(( cap / 2 > 1 ? cap / 2 : 1 ))
+    if ((requested > cap)); then
+      echo "run-hermetic-pytest: capping xdist workers $requested -> $cap (nproc $cores, load1 $load1)" >&2
+      capped=(); expect_value=0
+      for argument in "$@"; do
+        if ((expect_value)); then capped+=("$cap"); expect_value=0; continue; fi
+        case $argument in
+          -n|--numprocesses) capped+=("$argument"); expect_value=1 ;;
+          -n[0-9]*) capped+=("-n$cap") ;;
+          --numprocesses=*) capped+=("--numprocesses=$cap") ;;
+          *) capped+=("$argument") ;;
+        esac
+      done
+      set -- "${capped[@]}"; [[ $workers =~ ^[0-9]+$ ]] && workers=$cap
+      test_command=("$python_bin" -m pytest -p no:cacheprovider -p xdist "$@")
+    fi
+  fi
+  full_run=1
+  for argument in "$@"; do
+    case $argument in --collect-only|--co) full_run=0 ;; -*) ;; *) [[ -e $checkout_root/${argument%%::*} ]] && full_run=0 ;; esac
+  done
+  if ((full_run)); then
+    exec {full_lock_fd}>"$state_root/azizam-hermetic-full-suite.lock"
+    if ! flock -n "$full_lock_fd"; then
+      echo "run-hermetic-pytest: another full-suite run is in progress; waiting for it to finish" >&2
+      flock "$full_lock_fd"
+    fi
+  fi
   if [[ ${AZIZAM_PYTEST_PREWARM:-1} != 0 && $workers =~ ^[0-9]+$ ]] && ((workers > 1)); then
     bwrap_args+=(--setenv HERMETIC_PREWARM_SLICES "$workers")
     test_command=(/bin/bash -c '"$0" scripts/hermetic_prewarm.py "$HERMETIC_PREWARM_SLICES"; exec "$@"' "$python_bin" "${test_command[@]}")
