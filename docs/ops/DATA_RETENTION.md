@@ -104,10 +104,11 @@ clears the signed-in person's own entries whose file is gone:
   offers **Remove N items**. That one choice calls
   `POST /me/api/media/confirm-folder` and then removes. A folder that holds none
   of a non-empty Library cannot be confirmed (409 `media_folder_no_matches`);
-  the dialog tells the owner to check the media disk instead. A folder that
+  the dialog tells the owner to check the media disk instead. The Library
   offers Remove missing only when the viewer-wide `removal_plan.missing_items`
   from `GET /me/api/media` is positive; filters and whole-Library folder evidence
-  do not decide this count. The removal selects again and reports the actual count. A `mismatch` also shows a warning in the
+  do not decide this count. The removal selects again and reports the actual
+  count. A `mismatch` also shows a warning in the
   owner's list of unavailable items. Members see no folder detail; if they
   choose Remove missing they are told Azizam can't remove missing items until
   the owner confirms where the Library's files are kept. So the owner does not

@@ -2447,6 +2447,8 @@ describe("Library items whose files are gone", () => {
 
   test("a positive plan offers removal even when filters show no missing tiles", async () => {
     folderLibrary("owner", { state: "confirmed" }, [picture("kept", "A kept kite")], { plan: 3 });
+    expect(await screen.findByText("3 items missing across your Library.")).toBeVisible();
+    expect(screen.queryByText("Show them")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     expect(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove 3 items" })).toBeEnabled();
   });

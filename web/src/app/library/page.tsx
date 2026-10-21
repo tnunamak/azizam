@@ -3160,7 +3160,9 @@ export default function LibraryPage() {
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <p className="text-meta" role="status">
-              {goneAssets.length === 1
+              {goneAssets.length === 0
+                ? `${itemCount(missingItemCount)} missing across your Library.`
+                : goneAssets.length === 1
                 ? goneConfirmed
                   ? "1 file is no longer stored."
                   : "1 file is unavailable."
@@ -3194,7 +3196,7 @@ export default function LibraryPage() {
               {folderChangedSentence(folder.path)}
             </p>
           ) : null}
-          <details
+          {goneAssets.length > 0 ? <details
             className="group mt-2"
             open={goneOpen}
             onToggle={(event) => setGoneOpen(event.currentTarget.open)}
@@ -3210,7 +3212,7 @@ export default function LibraryPage() {
             >
               {goneTiles}
             </div>
-          </details>
+          </details> : null}
         </section>
       ) : null}
       {updating ? (
