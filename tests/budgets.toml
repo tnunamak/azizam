@@ -145,8 +145,11 @@
 # full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
 # Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
 # Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
-pytest = 15797
-vitest = 3068
+# Media folder asked at Remove missing: +6 pytest cases (partial copy never adopted, mismatch never adopted,
+# no counting on confirmed or member reads, unrelated folder, two pinned-marker swap cases); Library spec 95 -> 98
+# cases by count. Measured 2026-10-21: pytest collect 15803, vitest list 3071.
+pytest = 15803
+vitest = 3071
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
