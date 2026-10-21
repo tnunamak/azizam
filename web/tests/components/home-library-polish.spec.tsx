@@ -337,7 +337,7 @@ describe("Home and Library polish", () => {
     );
     renderPage(<LibraryPage />, true);
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
-    expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
+    expect(requests).toContain("/me/api/media/poster1/download?scope=me");
     screen.getByRole("combobox", { name: "Person" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -345,10 +345,10 @@ describe("Home and Library polish", () => {
     });
     await userEvent.keyboard("{Enter}");
     await userEvent.click(
-      await screen.findByRole("option", { name: "Alex (you)" }),
+      await screen.findByRole("option", { name: "Everyone" }),
     );
     await waitFor(() =>
-      expect(requests).toContain("/me/api/media/poster1/download?scope=me"),
+      expect(requests).toContain("/me/api/media/poster1/download?scope=everyone"),
     );
   });
   it("does not invent an unknown duration and preserves kind filter requests", async () => {

@@ -92,6 +92,8 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
+# Library Mine default: remeasured 2026-10-20, Vitest 3051;
+# Playwright 471 + 3 + 18 = 492. Existing cases updated, no added cases.
 pytest = 15319
 vitest = 3051
 playwright = 492

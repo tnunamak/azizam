@@ -261,7 +261,7 @@ function buildMediaPath(filters: {
   search: string;
   owner: string;
   source: string;
-}, everyoneByDefault: boolean) {
+}) {
   const params = new URLSearchParams({ limit: "40" });
   if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
   if (filters.model !== "all") params.set("model", filters.model);
@@ -273,9 +273,8 @@ function buildMediaPath(filters: {
     );
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
-  // The API starts everyone on their own work, so the owner's default
-  // "Everyone" view asks for it.
-  if (filters.owner === "everyone" || (filters.owner === "default" && everyoneByDefault))
+  // The API defaults to the caller's own work for every role.
+  if (filters.owner === "everyone")
     params.set("scope", "everyone");
   else if (filters.owner === "mine") params.set("scope", "me");
   else if (filters.owner !== "default") params.set("person", filters.owner);
@@ -2330,7 +2329,7 @@ export default function LibraryPage() {
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
-  const instanceView = canChooseOwner && owner !== "mine";
+  const instanceView = canChooseOwner && !["default", "mine"].includes(owner);
   const debouncedSearch = useDebouncedValue(search, 250);
   // The payload also supplies identity/apps, so keep its initial read. Only
   // poll rapidly when running work can actually appear under these filters.
@@ -2358,7 +2357,7 @@ export default function LibraryPage() {
   });
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
-  const mediaPath = buildMediaPath(filters, canChooseOwner);
+  const mediaPath = buildMediaPath(filters);
   const deepLinkedAssetId = searchParams?.get("asset") ?? "";
   function clearFilters() {
     setKind("all");
@@ -2744,15 +2743,13 @@ export default function LibraryPage() {
   const personOptions = canChooseOwner
     ? [
         { value: "everyone", label: "Everyone" },
-        ...(viewerPerson
-          ? [{ value: "mine", label: `${viewerPerson} (you)` }]
-          : [{ value: "mine", label: "You" }]),
+        { value: "mine", label: "Mine" },
         ...people
           .filter((person) => person.name !== viewerPerson)
           .map((person) => ({ value: person.id, label: person.name })),
       ]
     : [];
-  const ownerValue = owner === "default" ? "everyone" : owner;
+  const ownerValue = owner === "default" ? "mine" : owner;
   // Kind and person: in the control row on wide screens, inside Filters on a
   // phone. One function so both places stay the same control.
   const personPicker = (place: "row" | "sheet") => (

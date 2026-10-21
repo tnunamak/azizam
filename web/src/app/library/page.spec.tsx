@@ -835,6 +835,7 @@ describe("Library honesty and access", () => {
         : undefined,
     );
     renderLibrary();
+    await choosePerson("Everyone");
 
     fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") }));
     let dialog = await screen.findByRole("dialog");
@@ -857,9 +858,9 @@ describe("Library honesty and access", () => {
     ).toBeVisible();
   });
 
-  test("9 asks for everyone's work explicitly in the owner's default view", async () => {
+  test("9 starts every role on their own work", async () => {
     // The API starts every role on their own work (PF-183).
-    for (const [role, expected] of [["owner", "scope=everyone"], ["member", null]] as const) {
+    for (const role of ["owner", "member"] as const) {
       session.viewer = { role, name: "Alex" };
       session.home = { receipts: [], user: { id: "alex" }, apps: [] };
       const paths: string[] = [];
@@ -869,8 +870,8 @@ describe("Library honesty and access", () => {
       });
       const view = renderLibrary();
       await waitFor(() => expect(paths.length).toBeGreaterThan(0));
-      if (expected) expect(paths[0]).toContain(expected);
-      else expect(paths[0]).not.toContain("scope=");
+      expect(paths[0]).not.toMatch(/[?&](scope|person)=/);
+      if (role === "owner") expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Mine");
       view.unmount();
     }
   });
@@ -888,9 +889,10 @@ describe("Library honesty and access", () => {
       return list([picture("sam1", "Sam's lighthouse", { owner_name: "Sam" })]);
     });
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") });
 
-    await choosePerson("Alex (you)");
+    await choosePerson("Mine");
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     // Sam's result belongs to the previous filter: it is not shown or openable.
     expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") })).toBeNull();
@@ -1354,6 +1356,7 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Maker picture, ") });
     for (const [title, person] of [["Maker picture", "Sam"], ["Maker audio", "Sam"], ["Maker video", "Alex"]]) {
       const open = screen.getByRole("button", { name: (name) => name.startsWith(`Open ${title}, `) });
@@ -1389,6 +1392,7 @@ describe("Library media identity and tile playback", () => {
               : undefined,
       );
       const view = renderLibrary();
+      await choosePerson("Everyone");
       const key = await screen.findByRole("group", { name: "Creation makers" });
       const fill = (name: string) =>
         (within(key).getByRole("img", { name }).firstElementChild as HTMLElement).style.backgroundImage;
@@ -1417,6 +1421,7 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     const key = await screen.findByRole("group", { name: "Creation makers" });
     expect(within(key).getAllByRole("img")).toHaveLength(2);
     for (const name of ["Sam", "Alex"]) {
@@ -1430,7 +1435,7 @@ describe("Library media identity and tile playback", () => {
     expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Sam image, ") })).toBeVisible();
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
     expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
-    await choosePerson("Alex (you)");
+    await choosePerson("Mine");
     await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
   });
 
@@ -1443,6 +1448,7 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Stored picture, ") });
     expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
     fireEvent.click(screen.getByText("Show them"));
@@ -1478,6 +1484,7 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
+    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Morning birds, ") });
     for (const [title, duration, icon] of [["Morning birds", "2:05", "lucide-audio-lines"], ["Short film", "0:09", "lucide-video"]] as const) {
       const button = screen.getByRole("button", { name: `Play ${title}` });

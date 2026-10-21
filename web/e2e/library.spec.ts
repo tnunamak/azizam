@@ -233,7 +233,7 @@ test("library delete confirms before mutation", async ({ page }) => {
   });
   await page.goto("/library/");
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   const viewer = page.getByRole("dialog", {
     name: "A clean product render of a teal fish gateway on a desk",
@@ -291,6 +291,8 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await expect(
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toContainText("Mine");
+  expect(new URL(requests[0]).searchParams.has("scope")).toBe(false);
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(
     page.getByRole("button", { name: "Open Second page image" }),
@@ -307,11 +309,15 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await page.keyboard.press("Escape");
   const person = page.getByRole("combobox", { name: "Person", exact: true });
   await person.click();
-  await page.getByRole("option", { name: /\(you\)$|^You$/ }).click();
+  await page.getByRole("option", { name: "Everyone", exact: true }).click();
+  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
+  await person.click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
   await person.click();
   await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
+  await expect(person).toContainText("Everyone");
+  expect(requests.some((url) => url.includes("scope=everyone"))).toBe(true);
   await page
     .getByRole("button", { name: /Open A clean product render/ })
     .click();
@@ -408,7 +414,7 @@ test("library audio plays independently and video uses its recorded poster", asy
   const viewerAudio = detail.getByLabel("Generated audio");
   await expect(viewerAudio).toHaveAttribute("src", renewedAudioUrl);
   expect(audioRenewals).toHaveLength(1);
-  expect(new URL(audioRenewals[0]).searchParams.get("scope")).toBe("everyone");
+  expect(new URL(audioRenewals[0]).searchParams.get("scope")).toBe("me");
   await expect(audio).toHaveAttribute("src", "/test-audio.wav");
   await expect(detail.getByRole("slider", { name: "Position" })).toBeVisible();
   await detail
@@ -424,19 +430,16 @@ test("library audio plays independently and video uses its recorded poster", asy
   await expect(detail).toBeHidden();
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
-    .toContain("scope=everyone");
+    .toContain("scope=me");
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await page.getByRole("option", { name: "Everyone", exact: true }).click();
   await expect(
     page.getByRole("combobox", { name: "Person", exact: true }),
   ).toContainText("Everyone");
-  // The instance poster is already cached from the default owner view.
-  expect(posterRequests.some((url) => url.includes("scope=everyone"))).toBe(
-    true,
-  );
+  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=everyone");
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);
 });
