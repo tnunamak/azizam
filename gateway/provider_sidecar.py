@@ -219,6 +219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("run requires a command after --")
     if args.runtime_hash_file is not None and args.launch_config is None:
         parser.error("--runtime-hash-file requires --launch-config")
+    from gateway.litellm_launcher import require_single_process
+    require_single_process(exec_args[1:], os.environ)
     # Regenerate before exec: a retained artifact may refer to a retired env name.
     # Both the YAML and child env must come from this one registry snapshot.
     # Share SQLite's writer lock with registry edits. A newer generation cannot

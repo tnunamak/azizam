@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Check a copied generated config offline. Never starts services or opens a DB."""
+"""Check a copied config; optionally inspect DB flags read-only. Never starts services."""
 from __future__ import annotations
 
 import argparse
+import asyncio
+import os
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import yaml
-from gateway.litellm_content import config_problem, profile
+from gateway.litellm_content import config_problem, database_problem, profile
 
 
 def main() -> int:
@@ -18,21 +20,34 @@ def main() -> int:
     database = parser.add_mutually_exclusive_group()
     database.add_argument('--no-database', action='store_true', help='The deployment has no DATABASE_URL')
     database.add_argument('--database-check', type=Path, help='Offline JSON of config_unsafe/key_unsafe/team_unsafe boolean results')
+    database.add_argument('--database-url-env', metavar='NAME', help='Opt in to read-only DB_CHECK_SQL using the URL in environment variable NAME; never printed')
     args = parser.parse_args()
     try:
         problem = config_problem(yaml.safe_load(args.config.read_text()))
         if problem:
             print(json.dumps({'status': 'refused', 'setting': problem}))
             return 1
+        if args.database_url_env:
+            url = os.environ.get(args.database_url_env)
+            if not url:
+                print('{"status":"refused","setting":"database_url_missing"}')
+                return 1
+            try:
+                problem = asyncio.run(asyncio.wait_for(database_problem(url), timeout=10))
+            except Exception:
+                problem = 'database_check_unavailable'
+            if problem:
+                print(json.dumps({'status': 'refused', 'setting': problem}))
+                return 1
         if args.database_check:
             flags = json.loads(args.database_check.read_text())
             if set(flags) != {'config_unsafe', 'key_unsafe', 'team_unsafe'} or any(v is not False for v in flags.values()):
                 print('{"status":"refused","setting":"database_overrides"}')
                 return 1
-        print(json.dumps({'status': 'profile_valid' if args.no_database or args.database_check else 'config_valid_database_unchecked',
+        print(json.dumps({'status': 'profile_valid' if args.no_database or args.database_check or args.database_url_env else 'config_valid_database_unchecked',
                           'launch_environment': profile()['environment'],
-                          'note': 'Offline rehearsal only. Deployment rechecks the database and process generation.'}))
-        return 0 if args.no_database or args.database_check else 2
+                          'note': 'Deployment rechecks the database and process generation.'}))
+        return 0 if args.no_database or args.database_check or args.database_url_env else 2
     except Exception:
         print('{"status":"refused","setting":"unreadable_input"}')
         return 1

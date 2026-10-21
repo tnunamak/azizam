@@ -342,7 +342,8 @@ def run(compose):
             # Use the same gateway-generated configuration as Compose.
             wait_file(source / "data/litellm.config.yaml")
             substrate_socket.close()
-            sidecar = launch([str(Path(sys.executable).parent / "litellm"), "--config", "data/litellm.config.yaml",
+            sidecar = launch([sys.executable, '-m', 'gateway.provider_sidecar', 'run',
+                              '--db', 'data/admin.db', '--', 'litellm', '--config', 'data/litellm.config.yaml',
                               "--host", "127.0.0.1", "--port", str(substrate_port)])
             wait_litellm_ready(env["AZIZAM_LITELLM_BASE_URL"], env["AZIZAM_LITELLM_API_KEY"], sidecar)
         deadline = time.monotonic() + 120

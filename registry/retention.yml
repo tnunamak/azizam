@@ -52,7 +52,7 @@ system_facts:
       - id: litellm-spend-content
         holds: request and response content if spend-content storage is enabled
         where: LiteLLM spend rows
-        how_long: unknown; cleanup requires a separately configured retention period
+        how_long: unknown; cleanup requires a separately configured retention period; rows written before this change remain until purged
         default: 'off'
         condition: store_prompts_in_spend_logs or its environment override is enabled
         reach: LiteLLM administrators and anyone with access to its spend database
@@ -63,7 +63,7 @@ system_facts:
       - id: litellm-error-rows
         holds: errors and metadata that may include request content
         where: LiteLLM error rows and downstream logs
-        how_long: unknown
+        how_long: unknown; rows written before this change remain until purged
         default: conditional
         condition: error logging is enabled; whether a given error echoes content depends on the failure
         reach: LiteLLM administrators and downstream log readers
@@ -106,14 +106,14 @@ system_facts:
         confidence: documented
 
       - id: litellm-spend-cost-metadata
-        holds: numeric key, user and team spend counters and aggregate cost and usage metadata
+        holds: numeric key, user and team spend counters; daily tag tables keep the User-Agent tag, model, endpoint and a per-day request_id; end-user tables keep the client-supplied user field
         where: LiteLLM's accounting tables; not spend rows, error rows, ToolTable or spend index rows
         how_long: according to the owner's accounting database policy; the no-content profile does not expire aggregate counters
         default: 'on'
         condition: LiteLLM has a database; counters keep virtual-key budgets working while the pinned launcher suppresses unused tool discovery
         reach: LiteLLM administrators and anyone with access to its database
         control: use the pinned no-content launcher and inspect accounting metadata; purge old accounting with the owner's database tools only after deciding how budgets should reset
-        evidence_url: https://github.com/tnunamak/azizam/blob/feat/retention-s3/docs/verification/RETENTION_S3.md
+        evidence_url: https://github.com/tnunamak/azizam/blob/main/docs/verification/RETENTION_S3.md
         checked: '2026-10-21'
         confidence: documented
 # Evidence profiles for destinations that are not executable provider presets.

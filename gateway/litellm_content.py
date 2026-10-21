@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 from functools import lru_cache
@@ -49,7 +50,8 @@ def config_problem(config: Mapping[str, Any]) -> str | None:
 
 def child_environment(base: Mapping[str, str], *, declared: set[str]) -> dict[str, str]:
     basics = {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "DATABASE_URL",
-              "LITELLM_MASTER_KEY", "AZIZAM_INTERNAL_LITELLM_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+              "LITELLM_MASTER_KEY", "AZIZAM_INTERNAL_LITELLM_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+              "LITELLM_LOCAL_MODEL_COST_MAP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE"}
     # Never let a record turn a runtime control back on through an env reference.
     blocked = {"STORE_MODEL_IN_DB", "STORE_PROMPTS_IN_SPEND_LOGS", "DEBUG", "DETAILED_DEBUG"}
     allowed = basics | {name for name in declared if name not in blocked and not name.startswith(("LITELLM_", "OTEL_", "LANGFUSE_"))}
@@ -108,6 +110,7 @@ async def database_problem(database_url: str) -> str | None:
         await client.connect()
         async with client.tx() as transaction:
             await transaction.execute_raw("SET TRANSACTION READ ONLY")
+            await transaction.execute_raw("SET LOCAL statement_timeout = '5000ms'")
             rows = await transaction.query_raw(DB_CHECK_SQL)
         if len(rows) != 1 or set(rows[0]) != {"config_unsafe", "key_unsafe", "team_unsafe"}:
             return "database_check_unavailable"
@@ -138,6 +141,18 @@ async def compose_database_unseen(base_url: str) -> bool:
     return False
 
 
+# Fixed vocabulary: never interpolate exception text, URLs or database values.
+PROBLEM_FIXES = {
+    "not_checked": "Run the pinned no-content launcher and wait for the profile check.",
+    "profile_check_unavailable": "Check the pinned no-content launcher, generated config and DATABASE_URL connectivity, then retry.",
+    "database_check_unavailable": "Check DATABASE_URL permissions and the pinned database schema, then retry.",
+    "database_config_unsafe": "In LiteLLM_Config, disable store_model_in_db and store_prompts_in_spend_logs, enable disable_spend_logs and disable_error_logs, and remove callback and cache overrides.",
+    "database_key_unsafe": "Remove metadata.logging overrides from LiteLLM_VerificationToken rows, then retry.",
+    "database_team_unsafe": "Remove metadata.logging and metadata.callback_settings overrides from LiteLLM_TeamTable rows, then retry.",
+}
+logger = logging.getLogger(__name__)
+
+
 class ContentGate:
     def __init__(self) -> None:
         self.checked: tuple[Any, ...] | None = None
@@ -145,6 +160,8 @@ class ContentGate:
         self.problem: str | None = "not_checked"
         self.lock = asyncio.Lock()
         self.unseen_database = False
+        self.retry_seconds = 30
+        self.next_check_at = 0.0
 
     def mode(self, base_url: str) -> str:
         endpoint = urlsplit(base_url)
@@ -179,9 +196,13 @@ class ContentGate:
         if self.mode(base_url) == "unmanaged":
             return None
         async with self.lock:
+            previous = self.problem
             try:
+                # Unavailable process evidence also backs off; no content is admitted.
+                if not force and self.checked is None and time.monotonic() < self.next_check_at:
+                    return self.problem
                 generation = self.generation(base_url)
-                if not force and generation == self.checked and time.monotonic() - self.checked_at < 3600:
+                if not force and generation == self.checked and time.monotonic() < self.next_check_at:
                     return self.problem
                 self.unseen_database = False
                 database_url = os.environ.get("DATABASE_URL", "")
@@ -194,6 +215,14 @@ class ContentGate:
             except Exception:
                 self.checked = None
                 self.problem = "profile_check_unavailable"
+                self.checked_at = time.monotonic()
+            if self.problem not in PROBLEM_FIXES and self.problem is not None:
+                self.problem = "profile_check_unavailable"
+            if self.problem != previous:
+                logger.warning("litellm_content_state=%s", self.problem or "verified")
+                self.retry_seconds = 30
+            self.next_check_at = self.checked_at + (3600 if self.problem is None else self.retry_seconds)
+            self.retry_seconds = min(60, self.retry_seconds * 2) if self.problem else 30
             return self.problem
 
     def status(self, base_url: str) -> dict[str, Any]:
@@ -202,8 +231,12 @@ class ContentGate:
             return {"status": "unmanaged", "detail": "Azizam cannot check the database settings of the LiteLLM that runs chat for it."}
         if mode == "unmanaged":
             return {"status": mode, "detail": "LiteLLM, which runs chat for Azizam, is run outside Azizam. Azizam cannot confirm that it keeps nothing."}
+        problem = self.problem if self.problem in PROBLEM_FIXES else "profile_check_unavailable"
+        fix = PROBLEM_FIXES[problem] if self.problem else ""
         return {"status": "verified" if self.problem is None else "litellm_content_unverified",
-                "detail": "LiteLLM content capture is disabled." if self.problem is None else "LiteLLM content capture could not be ruled out. Use the no-content launch profile (disable_spend_logs, disable_error_logs and LITELLM_LOG=CRITICAL), disable database store_model_in_db and remove key/team logging callbacks. Retry after a successful check."}
+                "problem": problem if self.problem else None, "fix": fix,
+                "detail": "LiteLLM content capture is disabled." if self.problem is None else
+                    f"LiteLLM content capture could not be ruled out ({problem}). {fix}"}
 
 
 gate = ContentGate()

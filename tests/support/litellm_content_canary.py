@@ -41,8 +41,9 @@ async def run() -> None:
     from litellm.proxy.auth.auth_checks import _virtual_key_max_budget_check
 
     litellm.disable_aiohttp_transport = True  # in-memory httpx transport replaces network only
-    positive = os.environ.get('CANARY_POSITIVE') == 'true'
-    if not positive:
+    mutation = os.environ.get('CANARY_MUTATION', 'none')
+    if mutation != 'tool_inventory':
+
         from gateway.litellm_launcher import install_no_content_shim
         install_no_content_shim()
     compiled = compile_litellm_substrate_config({})
@@ -50,17 +51,19 @@ async def run() -> None:
         'model': 'openai/canary', 'api_base': 'http://engine.fk.test/v1', 'api_key': 'fake-only',
         'max_retries': 0, 'input_cost_per_token': 0.001, 'output_cost_per_token': 0.001}}]
     compiled['router_settings']['num_retries'] = 0
-    if positive:
+    if mutation in {'spend_without_prompts', 'spend_content'}:
         compiled['general_settings']['disable_spend_logs'] = False
-        compiled['general_settings']['disable_error_logs'] = False
+    if mutation == 'spend_content':
+        # Compared with spend_without_prompts, only this switch changes.
         compiled['general_settings']['store_prompts_in_spend_logs'] = True
-        compiled['litellm_settings']['turn_off_message_logging'] = False
+    if mutation == 'error_rows':
+        compiled['general_settings']['disable_error_logs'] = False
     config = Path('generated.yaml')
     config.write_text(yaml.safe_dump(compiled))
     await ps.initialize(config=str(config))
-    assert ps.disable_spend_logs is (not positive)
-    assert ps.general_settings['disable_error_logs'] is (not positive)
-    assert litellm.turn_off_message_logging is (not positive)
+    assert ps.disable_spend_logs is (mutation not in {'spend_without_prompts', 'spend_content'})
+    assert ps.general_settings['disable_error_logs'] is (mutation != 'error_rows')
+    assert litellm.turn_off_message_logging is True
     assert litellm.cache is None
 
     scenario = scenario_from_data({'protocol': 'openai-compatible', 'name': 'retention-canary',
@@ -70,8 +73,22 @@ async def run() -> None:
                 'json': {'id': 'canary-response', 'object': 'chat.completion', 'created': 1, 'model': 'canary',
                     'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': MARKER, 'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': TOOL_NAME, 'arguments': json.dumps({'argument': CONTENT_MARKERS['arguments']})}}]}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}}}},
-            {'id': 'error', 'repeat': True, 'match': {'method': 'POST', 'path': '/v1/chat/completions'},
+            {'id': 'stream', 'match': {'method': 'POST', 'path': '/v1/chat/completions', 'json': {'stream': True}},
+             'response': {'status': 200, 'body': [
+                {'event': {'id': 'stream-response', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'canary',
+                    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': MARKER}, 'finish_reason': None}]}},
+                {'event': {'id': 'stream-response', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'canary',
+                    'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}}},
+                {'done': True}]}},
+            {'id': 'embeddings', 'match': {'method': 'POST', 'path': '/v1/embeddings'},
+             'response': {'status': 200, 'json': {'object': 'list', 'model': 'canary',
+                'data': [{'object': 'embedding', 'index': 0, 'embedding': [0.1, 0.2]}],
+                'usage': {'prompt_tokens': 10, 'total_tokens': 10}}}},
+            {'id': 'error', 'match': {'method': 'POST', 'path': '/v1/chat/completions'},
              'response': {'status': 400, 'json': {'error': {'message': 'echo: ' + MARKER, 'type': 'invalid_request_error'}}}},
+            {'id': 'server-error', 'repeat': True, 'match': {'method': 'POST', 'path': '/v1/chat/completions'},
+             'response': {'status': 500, 'json': {'error': {'message': 'echo: ' + MARKER, 'type': 'server_error'}}}},
         ]})
     fake = FakeUpstream(scenario, VirtualClock(), 'engine')
     engine_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=fake))
@@ -117,9 +134,13 @@ async def run() -> None:
             queue.add_update = record_daily
     batch_done = asyncio.Event()
     original_batch = writer._batch_database_updates
+    completed_batches = 0
     async def batch(**kwargs):
+        nonlocal completed_batches
         await original_batch(**kwargs)
-        batch_done.set()
+        completed_batches += 1
+        if completed_batches >= 3:
+            batch_done.set()
     writer._batch_database_updates = batch
     original_queue = writer.spend_update_queue.add_update
     async def record_update(*, update):
@@ -135,8 +156,9 @@ async def run() -> None:
     ps.app.dependency_overrides[ps.user_api_key_auth] = authenticate
     logger = _ProxyDBLogger()
     litellm.callbacks.append(logger)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=ps.app), base_url='http://proxy.test') as client:
-        payload = {'model': 'canary', 'tools': [{'type': 'function', 'function': {
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=ps.app), base_url='http://proxy.test',
+                                 headers={'User-Agent': 'canary-user-agent'}) as client:
+        payload = {'model': 'canary', 'user': 'client-end-user', 'tools': [{'type': 'function', 'function': {
             'name': TOOL_NAME, 'description': CONTENT_MARKERS['description'],
             'parameters': {'type': 'object', 'properties': {'argument': {'type': 'string',
                 'description': CONTENT_MARKERS['schema']}}, 'required': ['argument']}}}],
@@ -148,8 +170,16 @@ async def run() -> None:
         success = await client.post('/v1/chat/completions', json=payload)
         assert success.status_code == 200, success.text
         assert success.json()['choices'][0]['message']['content'] == MARKER
+        stream = await client.post('/v1/chat/completions', json={**payload, 'stream': True,
+            'stream_options': {'include_usage': True}})
+        assert stream.status_code == 200 and MARKER in stream.text and '[DONE]' in stream.text
+        embedding = await client.post('/v1/embeddings', json={'model': 'canary', 'input': MARKER, 'user': 'client-end-user'})
+        assert embedding.status_code == 200, embedding.text
+        assert embedding.json()['data'][0]['embedding'] == [0.1, 0.2]
         error = await client.post('/v1/chat/completions', json=payload)
         assert error.status_code == 400, error.status_code
+        server_error = await client.post('/v1/chat/completions', json=payload)
+        assert server_error.status_code == 500, server_error.status_code
     # Exercise the actual failure hook with a traceback-bearing error. The
     # normal proxy error route invokes it too; this pins its DB opt-out seam.
     await logger.async_post_call_failure_hook(request_data={'model': 'canary', 'messages': payload['messages']},
@@ -157,7 +187,7 @@ async def run() -> None:
     await asyncio.wait_for(batch_done.wait(), timeout=5)
     assert {'key', 'user', 'team'} <= {getattr(item['entity_type'], 'value', item['entity_type']) for item in updates}, updates
     assert all(item['response_cost'] >= 0 for item in updates), updates
-    assert sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key') == 0.015
+    assert sum(item['response_cost'] for item in updates if getattr(item['entity_type'], 'value', item['entity_type']) == 'key') >= 0.04
     # The pinned budget guard reads the counters still incremented by the
     # success logger even though per-request spend rows have been disabled.
     # Use actual queued cost as DB fallback, avoiding a fabricated spend value.
@@ -175,15 +205,18 @@ async def run() -> None:
     from litellm.proxy.utils import update_spend_logs_job
     await update_spend_logs_job(prisma_client=prisma, db_writer_client=None, proxy_logging_obj=ps.proxy_logging_obj)
     assert prisma.spend_log_transactions == []
-    assert bool(tables['LiteLLM_ToolTable']) is positive
-    if not positive:
+    assert bool(tables['LiteLLM_ToolTable']) is (mutation == 'tool_inventory')
+    if mutation not in {'spend_without_prompts', 'spend_content'}:
         assert not tables['LiteLLM_SpendLogToolIndex']
     assert not tables['LiteLLM_SpendLogGuardrailIndex']
     # Persist only what reached a database write/queue, never the responses.
     Path('database.json').write_text(json.dumps(tables, default=str))
     Path('budget.json').write_text(json.dumps({'updates': updates, 'budget_refused': budget_refused}, default=str))
-    assert len(fake.requests) >= 2
-    assert all(all(value.encode() in item.body for value in CONTENT_MARKERS.values()) for item in fake.requests)
+    assert len(fake.requests) >= 5
+    for item in fake.requests:
+        assert MARKER.encode() in item.body
+        if item.path == '/v1/chat/completions':
+            assert all(value.encode() in item.body for value in CONTENT_MARKERS.values())
     assert not fake.violations
     await engine_client.aclose()
     httpx.AsyncClient.send = original_send

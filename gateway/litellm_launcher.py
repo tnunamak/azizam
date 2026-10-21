@@ -43,10 +43,33 @@ def install_no_content_shim() -> None:
     DBSpendUpdateWriter._enqueue_tool_registry_upsert = no_tool_inventory
 
 
+def require_single_process(argv, env) -> None:
+    """Spawned interpreters would import the unpatched upstream application."""
+    workers = [env.get("NUM_WORKERS", "1")]
+    for index, arg in enumerate(argv):
+        if arg == "--reload" or arg.startswith("--reload="):
+            raise ValueError("single_process_required: remove --reload and set NUM_WORKERS/--num_workers to 1")
+        if arg == "--num_workers":
+            workers.append(argv[index + 1] if index + 1 < len(argv) else "")
+        elif arg.startswith("--num_workers="):
+            workers.append(arg.partition("=")[2])
+    try:
+        valid = all(int(value) == 1 for value in workers)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("single_process_required: set NUM_WORKERS/--num_workers to 1 and remove --reload")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--content-proof", type=Path)
     args, cli_args = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
+    try:
+        require_single_process(cli_args, os.environ)
+    except ValueError as exc:
+        print(f"[litellm-content] {exc}", file=sys.stderr)
+        return 78
     try:
         install_no_content_shim()
         if args.content_proof is not None:
