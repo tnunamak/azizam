@@ -232,8 +232,8 @@ def seed(state: Path, port: int) -> dict[str, object]:
     private_io.atomic_write_text(state / "live-data-manifest.json", json.dumps(manifest))
     manifest_path = os.environ.get("LIVE_DATA_MANIFEST_PATH")
     if manifest_path:
-        target = Path(manifest_path)
-        private_io.atomic_write_text(target, json.dumps(manifest))
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(manifest_path), json.dumps(manifest))
     return manifest
 
 

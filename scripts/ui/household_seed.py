@@ -891,7 +891,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
     private_io.atomic_write_text(state / "household-manifest.json", json.dumps(manifest))
     target = os.environ.get("UI_HOUSEHOLD_MANIFEST_PATH")
     if target:
-        private_io.atomic_write_text(target, json.dumps(manifest))
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(target), json.dumps(manifest))
     return manifest
 
 

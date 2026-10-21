@@ -101,7 +101,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         manifest_path = Path(env.get('UI_HOUSEHOLD_MANIFEST_PATH', state / 'household-manifest.json'))
         manifest = json.loads(manifest_path.read_text())
         manifest['fixture_state'] = state.name
-        private_io.atomic_write_text(manifest_path, json.dumps(manifest))
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(manifest_path), json.dumps(manifest))
     # Extra top-level configuration for a disposable server that needs more than
     # the browser seed: JSON data merged into config.yml (web/e2e/fixtures/oracle.ts
     # adds a video workflow and a transcription alias), after any household seed.

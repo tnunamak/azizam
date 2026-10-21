@@ -262,4 +262,5 @@ def write_manifest(manifest: dict[str, object], state: Path) -> None:
     private_io.atomic_write_text(state / "live-data-manifest.json", json.dumps(manifest))
     target = os.environ.get("LIVE_DATA_MANIFEST_PATH")
     if target:
-        private_io.atomic_write_text(target, json.dumps(manifest))
+        # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
+        private_io.atomic_write_text(os.path.realpath(target), json.dumps(manifest))
