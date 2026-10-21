@@ -6,6 +6,7 @@ import os
 import stat
 import tempfile
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -84,9 +85,16 @@ def test_metadata_staging_is_private_even_for_a_public_asset(tmp_path, monkeypat
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def _age(path, seconds=3600):
+    """Make a stage old enough for the sweep; the sweep spares stages under 10 minutes old."""
+    old = time.time() - seconds
+    os.utime(path, (old, old), follow_symlinks=False)
+
+
 def test_metadata_migration_sweeps_orphans_even_in_a_bounded_selected_run(tmp_path):
     orphan = tmp_path / ".metadata-clean-orphan"
     orphan.write_bytes(b"retained request media")
+    _age(orphan)
     unrelated = tmp_path / "keep-me"
     unrelated.write_bytes(b"durable")
     result = migration.strip_cached_assets(tmp_path, tmp_path / "state.db", asset_ids=[], max_files=0)
@@ -101,6 +109,7 @@ def test_metadata_orphan_sweep_never_follows_symlinks(tmp_path):
     target = tmp_path / "keep"
     target.write_bytes(b"durable")
     (cache / ".metadata-clean-link").symlink_to(target)
+    _age(cache / ".metadata-clean-link")
     migration.strip_cached_assets(cache, tmp_path / "state.db")
     assert not (cache / ".metadata-clean-link").is_symlink()
     assert target.read_bytes() == b"durable"
@@ -109,6 +118,7 @@ def test_metadata_orphan_sweep_never_follows_symlinks(tmp_path):
 def test_metadata_orphan_unlink_failure_stays_pending(tmp_path, monkeypatch):
     orphan = tmp_path / ".metadata-clean-orphan"
     orphan.write_bytes(b"retained media")
+    _age(orphan)
     unlink = Path.unlink
 
     def refuse(path, *args, **kwargs):

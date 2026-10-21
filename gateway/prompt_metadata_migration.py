@@ -165,7 +165,7 @@ def strip_cached_assets(
             # Spare young stages that another process may still be replacing.
             if path.name.startswith(".metadata-clean-"):
                 try:
-                    if time.time() - path.stat().st_mtime >= 600:
+                    if time.time() - path.lstat().st_mtime >= 600:
                         path.unlink(missing_ok=True)
                 except OSError as exc:
                     result.pending += 1

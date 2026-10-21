@@ -683,14 +683,17 @@ def test_plan_delete_error_lists_every_kind_of_user(account_db):
     path, plan = account_db
     person = admin_store.upsert_oidc_user("https://identity.example", "plan-user", email="plan-user@example.test", display_name="Plan User", path=path)
     accounts.change_person(person["id"], "owner", plan_id=plan["id"], path=path)
-    app = admin_store.create_app("Disabled app", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
-    admin_store.disable_app(app["id"], path=path)
+    admin_store.create_app("Active app", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    disabled = admin_store.create_app("Disabled app", kind="personal", owner_user_id=person["id"], access_plan=plan["id"], path=path)
+    admin_store.disable_app(disabled["id"], path=path)
     accounts.create_link("invite", "owner", plan_id=plan["id"], path=path)
     with pytest.raises(ValueError) as error:
         admin_store.delete_access_plan(plan["id"], path=path)
     message = str(error.value)
     assert message.startswith("Member plan is used by ")
-    assert "1 app (Disabled app (disabled))" in message
+    # plan-category-visibility counts active holders only: a disabled app keeps no claim on the plan.
+    assert "1 app (Active app)" in message
+    assert "Disabled app" not in message
     assert "1 person (Plan User)" in message
     assert "1 open invitation" in message
     assert admin_store.get_access_plan(plan["id"], path=path) is not None
