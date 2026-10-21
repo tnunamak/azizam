@@ -97,7 +97,11 @@
 # Manifest-owned image reseeding: +8 batch/retry/input-name cases, +3 missing
 # binding cases, +11 byte-identical legacy graph cases and +1 generation-route case.
 # Full hermetic --collect-only -q measured 15348.
-pytest = 15348
+# MOSS followups: +20 manifest-less fixed/random seed and byte/record cases,
+# +2 adaptive batch-limit cases, +1 invalid seed target, +1 identity-hash case,
+# and +1 legacy empty-round fixed-seed offset case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15373.
+pytest = 15373
 vitest = 3051
 playwright = 492
 
