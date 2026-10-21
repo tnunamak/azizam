@@ -665,3 +665,19 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body.decode("utf-8"))
         self.assertEqual(payload["job_id"], job.job_id)
         self.assertEqual(payload["data"][0]["asset_id"], "img_" + "c" * 64)
+
+    async def test_content_route_reports_missing_outputs_instead_of_signing_broken_links(self) -> None:
+        for number, (intent, prefix) in enumerate((("image.generate", "img"),
+                                                 ("audio.generate", "aud"), ("video.generate", "vid"))):
+            job = media_jobs.create(media_jobs.MediaJob(
+                app_id="app_test", intent=intent, request_id=f"req_missing_{number}",
+                status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": prefix + "_" + "f" * 64,
+                         "url": "https://fixture.invalid/missing"}]), path=self.db)
+            with authenticated(), patch.object(proxy, "asset_cache_path", return_value=None):
+                response = await proxy.gateway_media_job_content(job.job_id, _StubJsonRequest({}))
+            payload = json.loads(response.body)
+            self.assertEqual(response.status_code, 410, payload)
+            self.assertEqual(payload["error"]["code"], "media_job_outputs_missing")
+            self.assertEqual(payload["output_state"], "missing")
+            self.assertNotIn("url", payload["assets"][0])
