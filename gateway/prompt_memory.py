@@ -181,7 +181,7 @@ def effective(member: Mapping[str, Any] | None, household: Mapping[str, Any] | N
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path or media_jobs.DB_PATH)
-    private_io.prepare_private_database(target)
+    private_io.ensure_private_dir(target.parent)
     conn = connect(target, timeout=5)
     conn.row_factory = sqlite3.Row
     media_jobs._apply_pragmas(conn)

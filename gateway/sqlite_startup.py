@@ -72,6 +72,8 @@ class _LockedConnection(sqlite3.Connection):
 def _admit(path: Path, target: str, uri: bool, kwargs: dict[str, Any]) -> sqlite3.Connection:
     if lock_path(path) in _held_locks():
         check_quarantine_pending(path)
+        if not uri:
+            private_io.prepare_private_database(path)
         return sqlite3.connect(target, uri=uri, **kwargs)
     try:
         lock = _open_lock(path)
@@ -81,6 +83,8 @@ def _admit(path: Path, target: str, uri: bool, kwargs: dict[str, Any]) -> sqlite
     try:
         fcntl.flock(lock, fcntl.LOCK_SH)
         check_quarantine_pending(path)
+        if not uri:
+            private_io.prepare_private_database(path)
         conn = sqlite3.connect(target, uri=uri, factory=_LockedConnection, **kwargs)
     except BaseException:
         lock.close()

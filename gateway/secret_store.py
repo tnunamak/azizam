@@ -113,7 +113,7 @@ def ensure_provider_secret_schema_on(conn: sqlite3.Connection) -> None:
 
 def ensure_provider_secret_schema(path: Path) -> None:
     from gateway import private_io
-    private_io.prepare_private_database(path)
+    private_io.ensure_private_dir(path.parent)
     with closing(sqlite_startup.connect(path)) as conn:
         ensure_provider_secret_schema_on(conn)
         conn.commit()

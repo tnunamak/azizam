@@ -61,7 +61,7 @@ def migrate(conn: sqlite3.Connection) -> bool:
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path) if path else Path(media_jobs.DB_PATH)
-    private_io.prepare_private_database(target)
+    private_io.ensure_private_dir(target.parent)
     conn = connect(target, timeout=5.0)
     try:
         media_jobs._apply_pragmas(conn)
