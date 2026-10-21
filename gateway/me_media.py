@@ -613,9 +613,9 @@ class _MediaScope:
 
     def __post_init__(self):
         # One immutable readable set per scope, reused across every receipt/job.
-        object.__setattr__(self, "_app_viewer", Viewer(auth_kind="service_key", person_id=self.viewer_person_id,
+        object.__setattr__(self, "_app_viewer", Viewer(auth_kind="session", person_id=self.viewer_person_id,
                            owner_keys=frozenset(f"app:{app_id}" for app_id in (self.app_ids or ()))))
-        object.__setattr__(self, "_key_viewer", Viewer(auth_kind="service_key", person_id=self.viewer_person_id,
+        object.__setattr__(self, "_key_viewer", Viewer(auth_kind="session", person_id=self.viewer_person_id,
                            owner_keys=self.owner_keys or frozenset()))
 
 
