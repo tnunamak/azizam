@@ -123,7 +123,8 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 # The route is reviewed above; the frozen digest includes its generated schema.
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # The three MOSS workflows add catalog schemas, never routes or policy.
-    # Removing precisely these additions must recover the original document.
+    # Removing precisely these additions must recover the data-hygiene document,
+    # which adds the reviewed missing/retryable output responses.
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
@@ -131,6 +132,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
-        assert route_graph.openapi_digest(proxy.app) == "a67a9cdf25f41ac573b5fcd09005d17d773de373fa91f84974bc993df19d1c5e"
+        assert route_graph.openapi_digest(proxy.app) == "b3ce70b7f551306adc31394399bf8ef633b6db2e332268153c796f634ef9836e"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
