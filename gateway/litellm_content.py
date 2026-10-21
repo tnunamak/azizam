@@ -122,10 +122,11 @@ async def database_problem(database_url: str) -> str | None:
 async def compose_database_unseen(base_url: str) -> bool:
     import httpx
     from gateway.backends.llm_execution import litellm_headers
+    from gateway.log_scrub import env_secret
 
     async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
         response = await client.get(base_url.rstrip("/") + "/health/readiness/details",
-            headers=litellm_headers({}, api_key=os.environ.get("AZIZAM_LITELLM_API_KEY", "")))
+            headers=litellm_headers({}, api_key=env_secret("AZIZAM_LITELLM_API_KEY")))
         response.raise_for_status()
         details = response.json()
     # The pinned readiness endpoint distinguishes absent Prisma from an

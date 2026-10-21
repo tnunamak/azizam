@@ -65,4 +65,11 @@ def test_every_seed_and_live_shaped_projection_compiler_and_public_wire_is_froze
     if os.environ.get('AZIZAM_UPDATE_GOLDEN')=='1':
         print('LEGACY_WIRE_JSON='+json.dumps(result,sort_keys=True,separators=(',',':')))
         return
+    from gateway.litellm_content import profile
+    # Check the intentional substrate additions, then compare every frozen wire.
+    for name in ('compiled', 'seeded_compiled'):
+        assert result[name].pop('router_settings') == profile()['router_settings']
+        for section in ('general_settings', 'litellm_settings'):
+            for key, value in profile()[section].items():
+                assert result[name][section].pop(key) == value
     assert result==json.loads(GOLDEN.read_text())

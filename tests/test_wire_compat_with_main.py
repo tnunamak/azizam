@@ -84,6 +84,12 @@ def test_a_native_call_goes_to_the_same_url_with_the_same_headers(migrated, monk
 
 def test_the_executable_router_config_is_the_same(migrated):
     compiled = litellm_runtime.compile_executable_config({"services": {"engine-a": migrated["engine-a"]}})
+    from gateway.litellm_content import profile
+    # Retention deliberately adds these settings; the engine wire stays frozen.
+    assert compiled.pop('router_settings') == profile()['router_settings']
+    for section in ('general_settings', 'litellm_settings'):
+        for key, value in profile()[section].items():
+            assert compiled[section].pop(key) == value
     assert json.loads(json.dumps(compiled)) == GOLDEN["litellm"]
 
 
