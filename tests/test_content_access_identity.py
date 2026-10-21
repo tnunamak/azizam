@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import proxy
 from gateway import accounts, admin_runtime, admin_store, me_media, ownership
-from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide, viewer_from_auth
+from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
 from gateway.runtime_auth import hash_api_key
 from proxy import AuthContext
 from starlette.requests import Request
@@ -14,6 +14,7 @@ from tests.test_mcp_oauth import RESOURCE, World
 
 
 def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
+    from gateway.content_access import viewer_from_auth
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     accounts.initialize(db)
@@ -61,6 +62,7 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
 
 
 def test_viewer_from_real_mcp_oauth_grant_auth(tmp_path):
+    from gateway.content_access import viewer_from_auth
     world = World(tmp_path)
     # The grant's person goes through the production session-App resolver.
     person = admin_store.upsert_oidc_user("https://idp.test", "mcp-person", email="m@example.test", path=world.db)["id"]

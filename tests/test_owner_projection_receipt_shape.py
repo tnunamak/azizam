@@ -37,7 +37,7 @@ def _stored_fixture(db):
                           refusal={"code": "budget_exceeded", "limit": {"period": "daily", "scope": "app"}},
                           resource_decision={"reasons": [{"code": "queue_full", "effect": "delay", "resource_class": "queue"}]},
                           retention=[{"kind": "conversation", "decision": "not_kept", "reason": "request_forget"}],
-                          retention_facts=["fact:a"], metadata={"terminal_reason": "completed", "status_code": 200},
+                          retention_facts=["d" * 64], metadata={"terminal_reason": "completed", "status_code": 200},
                           status="succeeded", policy_decision="allowed",
                           accepted_at_ms=1_700_000_000_000, updated_at_ms=1_700_000_000_050,
                           queued_at_ms=1_700_000_000_001, started_at_ms=1_700_000_000_002,
