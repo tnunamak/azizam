@@ -181,3 +181,12 @@ def test_manifest_identity_is_computed_once_for_multiround_request(batch, monkey
     monkeypatch.setattr(proxy, "manifest_identity", identity)
     batch({"a": {"inputs": {"seed": 0}}, "b": {"inputs": {"operator_seed": 0}}}, manifest_for("seed"))
     assert len(calls) == 1
+
+
+def test_manifestless_empty_round_preserves_main_fixed_seed_offset(batch):
+    seen = batch(
+        {"s": {"inputs": {"seed": 0}}}, None,
+        meta={"seed_node": "s"}, outcomes=[[], [b"a"], [b"b"]],
+    )
+    # Main advances fixed seeds by images collected, including zero-image rounds.
+    assert [graph["s"]["inputs"]["seed"] for graph in seen] == [41, 41, 42]
