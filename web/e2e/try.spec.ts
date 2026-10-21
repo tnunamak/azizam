@@ -1025,7 +1025,7 @@ for (const width of [390, 1440]) {
     try {
       await refresh.click();
       await expect(refresh).toBeFocused();
-      await expect(refresh).toBeEnabled();
+      await expect(refresh).toHaveJSProperty("disabled", false);
       await expect(refresh).toHaveAttribute("aria-disabled", "true");
       await expect(refresh).toHaveAttribute("aria-busy", "true");
       await expect(status).toHaveText("Checking your access plan…");
