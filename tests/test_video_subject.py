@@ -7,6 +7,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -164,6 +165,36 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
             r = self._create(**extra)
             self.assertEqual(r.status_code, 400, (extra, r.text))
             self.assertTrue(r.json()["error"]["param"].endswith(param), r.json())
+        self.assertEqual(self.comfy.submitted, [])
+
+    def test_an_index_that_is_not_a_person_number_is_refused_before_any_upload(self) -> None:
+        # The index is a string input, so only the route can refuse a value that is
+        # not a person number, and it must do so before the source video and the
+        # picture reach ComfyUI's input directory.
+        for index in ("left", "-1", "1.5", ""):
+            with self.subTest(index):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
+                self.assert_refused(self._create(subject_index=index), param="subject_index")
+
+    def test_half_a_point_is_refused_before_any_upload(self) -> None:
+        # One coordinate cannot select a person; the refusal must not wait for the
+        # uploads to finish.
+        for extra in ({"source_point_x": 0.5}, {"source_point_y": 0.5}):
+            with self.subTest(extra):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
+                self.assert_refused(self._create(**extra), param="source_point_x")
+
+    def test_a_full_queue_is_refused_before_any_upload(self) -> None:
+        # Queue depth is an admission fact the route reads on entry, before it
+        # touches ComfyUI: a full queue leaves no files and submits no prompt.
+        with patch.object(proxy, "_effective_media_job_admission_cfg", lambda: {"max_queue_depth": 1}), \
+                patch.object(proxy, "_operator_service_availability_overrides", lambda: {}), \
+                patch.object(proxy, "_media_job_queue_depth", lambda *a, **kw: 1):
+            r = self._create()
+        self.assertEqual(r.status_code, 503, r.text)
+        self.assertEqual(self.comfy.uploads, [])
         self.assertEqual(self.comfy.submitted, [])
 
     def test_finished_job_carries_the_warning(self) -> None:
