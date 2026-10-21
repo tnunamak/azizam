@@ -108,7 +108,13 @@ clears the signed-in person's own entries whose file is gone:
   holds every checked item, or a Library with nothing that can be checked,
   offers no Remove missing at all. A `mismatch` also shows a warning in the
   owner's list of unavailable items. Members see no folder detail; if they
-  choose Remove missing they are told the owner has to confirm first.
+  choose Remove missing they are told Azizam can't remove missing items until
+  the owner confirms where the Library's files are kept. So the owner does not
+  have to wait for their own missing items, Settings shows **Confirm the media
+  folder** (owner only, only while the folder is unconfirmed or changed). It
+  gives the same plain explanation with the whole-Library counts and calls the
+  same `confirm-folder` route, with the same refusal when the folder holds none
+  of the Library's items.
   Confirmation writes a new marker into the folder it checked (the marker is
   written relative to the opened directory, and refused if that directory is
   not the one that was listed), records its ID and is audited as

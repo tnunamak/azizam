@@ -2380,7 +2380,7 @@ describe("Library items whose files are gone", () => {
     uncheckable_items: 0,
     ...extra,
   });
-  const UNCONFIRMED = "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Library.";
+  const UNCONFIRMED = "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Settings.";
   const NO_MATCHES = "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is connected, then try again.";
   const CHANGED = "The media folder looks different from last time (cache/images). If you moved your media or changed disks, confirm this is the right folder before removing anything.";
   const gone = (id: string) => ({
@@ -2433,10 +2433,10 @@ describe("Library items whose files are gone", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Remove 2 missing items?")).toBeVisible();
     expect(within(dialog).getByText(
-      "Azizam can't find the files for 243 of the Library's 845 checked items in cache/images. Removing deletes the Library entries and saved prompts of your missing items; the files themselves are not touched.",
+      "2 of your items have no file in cache/images. Removing them deletes their Library entries and saved prompts; the files themselves are not touched.",
     )).toBeVisible();
     expect(within(dialog).getByText(
-      "Only do this if your media disk is connected and cache/images is where your photos, videos and audio are kept.",
+      "Across the whole Library, 243 of 845 checked items are missing from cache/images, so only do this if your media disk is connected and cache/images is where your photos, videos and audio are kept.",
     )).toBeVisible();
     expect(within(dialog).queryByText(CHANGED)).toBeNull();
     expect(calls).toEqual([]);
@@ -2494,7 +2494,8 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(CHANGED)).toBeVisible();
-    expect(within(dialog).getByText(/Azizam can't find the files for 243 of the Library's 845 checked items in cache\/images\./)).toBeVisible();
+    expect(within(dialog).getByText(/^1 of your items has no file in cache\/images\. Removing it deletes its Library entry and saved prompt;/)).toBeVisible();
+    expect(within(dialog).getByText(/^Across the whole Library, 243 of 845 checked items are missing from cache\/images,/)).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove 1 item" }));
     await waitFor(() => expect(calls).toEqual(["confirm", "remove"]));
   });
@@ -2521,7 +2522,7 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Can't remove missing items yet")).toBeVisible();
-    expect(within(dialog).getByText(/until the owner has confirmed the media folder/)).toBeVisible();
+    expect(within(dialog).getByText("Azizam can't remove missing items until the owner confirms where the Library's files are kept.")).toBeVisible();
     expect(within(dialog).queryByText(/cache\/images/)).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Remove 1 item" })).toBeDisabled();
     expect(calls).toEqual([]);

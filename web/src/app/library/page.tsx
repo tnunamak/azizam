@@ -106,6 +106,13 @@ import { markCreationOpened } from "@/components/jobs/opened-creations";
 import { api, queryKeys } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import {
+  folderChangedSentence,
+  folderToConfirm,
+  libraryEvidenceSentence,
+  noneHereSentence,
+  type MediaFolderView,
+} from "@/lib/media-folder";
+import {
   promptMemoryKey,
   promptNotSavedReason,
   tryKeepState,
@@ -166,15 +173,6 @@ interface MediaResponse {
   models?: string[];
   sources?: MediaSource[];
   media_folder?: MediaFolderView | null;
-}
-
-// The folder's confirmation state. Only the owner receives where the folder is and what it holds.
-interface MediaFolderView {
-  state: "confirmed" | "unconfirmed" | "mismatch";
-  path?: string;
-  library_items?: number;
-  items_here?: number;
-  uncheckable_items?: number;
 }
 
 interface MediaSource {
@@ -401,13 +399,6 @@ interface RemovalDialog {
 function itemCount(count: number) {
   return `${count} ${count === 1 ? "item" : "items"}`;
 }
-function checkedItems(count: number) {
-  return `${count} checked ${count === 1 ? "item" : "items"}`;
-}
-// The owner has something to confirm only when the folder is not confirmed and says what it holds.
-function folderToConfirm(folder: MediaFolderView | null) {
-  return folder && folder.state !== "confirmed" ? folder : null;
-}
 // With every checked item here, or nothing that can be checked, there is nothing Remove missing could remove.
 function removalOffered(folder: MediaFolderView | null) {
   const open = folderToConfirm(folder);
@@ -431,7 +422,7 @@ function removalDialog(folder: MediaFolderView | null, own: number, more: boolea
   if (open.library_items == null) {
     return {
       title: "Can't remove missing items yet",
-      body: "Azizam can't remove anything until the owner has confirmed the media folder. The owner is asked when they remove their own missing items.",
+      body: "Azizam can't remove missing items until the owner confirms where the Library's files are kept.",
       confirmLabel: label,
       blocked: true,
     };
@@ -439,9 +430,8 @@ function removalDialog(folder: MediaFolderView | null, own: number, more: boolea
   const path = open.path ?? "the media folder";
   const checked = open.library_items;
   const here = open.items_here ?? 0;
-  const missing = Math.max(checked - here, 0);
   const changed = open.state === "mismatch"
-    ? <span className="block">{`The media folder looks different from last time (${path}). If you moved your media or changed disks, confirm this is the right folder before removing anything.`}</span>
+    ? <span className="block">{folderChangedSentence(path)}</span>
     : null;
   if (checked > 0 && here === 0) {
     return {
@@ -449,22 +439,26 @@ function removalDialog(folder: MediaFolderView | null, own: number, more: boolea
       body: (
         <>
           {changed}
-          <span className="block">{`Azizam can't find any of the Library's ${checkedItems(checked)} in ${path}. Check that your media disk is connected.`}</span>
+          <span className="block">{noneHereSentence(path, checked)}</span>
         </>
       ),
       confirmLabel: label,
       blocked: true,
     };
   }
+  // The viewer's own count comes first and says it is theirs; the folder evidence is the whole Library's.
+  const yours = more
+    ? `Some of your items have no file in ${path}.`
+    : `${own} of your items ${own === 1 ? "has" : "have"} no file in ${path}.`;
   return {
     title,
     body: (
       <>
         {changed}
         <span className="block">
-          {`Azizam can't find the ${missing === 1 ? "file" : "files"} for ${missing} of the Library's ${checkedItems(checked)} in ${path}. Removing deletes the Library entries and saved prompts of your missing items; the files themselves are not touched.`}
+          {`${yours} Removing ${more || own !== 1 ? "them deletes their" : "it deletes its"} Library ${more || own !== 1 ? "entries" : "entry"} and saved ${more || own !== 1 ? "prompts" : "prompt"}; the files themselves are not touched.`}
         </span>
-        <span className="block">{`Only do this if your media disk is connected and ${path} is where your photos, videos and audio are kept.`}</span>
+        <span className="block">{libraryEvidenceSentence(path, checked, here)}</span>
       </>
     ),
     confirmLabel: label,
@@ -3203,7 +3197,7 @@ export default function LibraryPage() {
           </div>
           {folder?.state === "mismatch" && folder.path != null ? (
             <p className="text-meta text-muted-foreground mt-1">
-              {`The media folder looks different from last time (${folder.path}). If you moved your media or changed disks, confirm this is the right folder before removing anything.`}
+              {folderChangedSentence(folder.path)}
             </p>
           ) : null}
           <details
