@@ -6930,6 +6930,8 @@ def _session_asset_cache_headers(request: Request, data: bytes) -> dict[str, str
 
 
 def _asset_not_modified(request: Request, etag: str) -> bool:
+    if "family" not in request.query_params:
+        return request.headers.get("if-none-match") == etag
     # GET uses weak comparison, even though our representation validator is strong.
     return any(tag.strip().removeprefix("W/") in {etag, "*"}
                for tag in request.headers.get("if-none-match", "").split(","))
@@ -23815,14 +23817,16 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     made = thumbnails.thumbnail_for(source)
     if made is None:
         return refuse(404, "No preview for this asset")
-    data = made.read_bytes()
+    data = made.read_bytes() if "family" in request.query_params else None
     stat = made.stat()
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
     headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
-    headers.update(_session_asset_cache_headers(request, data))
+    if data is not None:
+        headers.update(_session_asset_cache_headers(request, data))
     if _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
-    return Response(content=data, media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
+    return Response(content=data if data is not None else made.read_bytes(),
+                    media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
 
 
 @app.get("/gateway/v1/assets/{asset_id}/content")
@@ -31315,7 +31319,7 @@ from gateway.json_compression import JsonCompressionMiddleware
 app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
-# Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
+# Whatever answers with a web page, the app, its 404 or an error, says "do not index".
 from gateway.noindex import NoIndexHeaderMiddleware
 app.add_middleware(NoIndexHeaderMiddleware)
 from gateway.browser_cache import BrowserCacheMiddleware
