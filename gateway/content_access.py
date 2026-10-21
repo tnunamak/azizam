@@ -167,11 +167,11 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
         elif own and action in {"read", "cancel"}:
             return OWN
     elif isinstance(record, (PromptRecord, ChatRecord)):
-        self = bool(viewer.person_id and record.person_id == viewer.person_id)
+        self = bool(viewer.privacy_permission and viewer.person_id and record.person_id == viewer.person_id)
         if isinstance(record, PromptRecord):
             if self and action in {"read", "delete", "reuse"}:
                 return OWN
-            if action == "read":
+            if action == "read" and viewer.privacy_permission:
                 return _shared(viewer, record)
         elif self and action in {"read", "delete", "reuse"}:
             if viewer.app_id:
@@ -183,7 +183,8 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
                 return OWN
     elif isinstance(record, (RequestHistoryRecord, DebugCaptureRecord)):
         if (viewer.privacy_permission and viewer.person_id
-                and record.person_id == viewer.person_id and action in {"read", "delete"}):
+                and record.person_id == viewer.person_id
+                and (action in {"read", "delete"} or (isinstance(record, RequestHistoryRecord) and action == "reuse"))):
             return OWN
     return DENY
 
@@ -197,3 +198,9 @@ def require(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
 
 def operational(viewer: Viewer) -> bool:
     return viewer.is_owner
+
+
+def project(kind, record, *, names=None):
+    """Unserved operational projection; content access and serialization are separate."""
+    from gateway.owner_projection import ProjectionNames, project as project_record
+    return project_record(kind, record, names=names if names is not None else ProjectionNames())

@@ -18,12 +18,12 @@ from gateway.public_failure import PublicFailure
 MATRIX = {
     "creation": {"read": {"Own", "Shared"}, "delete": {"Own"}, "reuse": {"Own"},
                  "share": {"Maker"}, "link": {"Own", "Shared"}},
-    "prompt": {"read": {"Self", "SharedPrompt"}, "delete": {"Self"}, "reuse": {"Self"}},
-    "chat": {"read": {"SelfApp"}, "delete": {"SelfApp"}, "reuse": {"SelfApp"}},
+    "prompt": {"read": {"PrivateSelf", "SharedPrompt"}, "delete": {"PrivateSelf"}, "reuse": {"PrivateSelf"}},
+    "chat": {"read": {"PrivateSelfApp"}, "delete": {"PrivateSelfApp"}, "reuse": {"PrivateSelfApp"}},
     "voice": {"read": {"Own"}, "delete": {"Own"}, "reuse": {"Own"}},
     "receipt": {"read": {"Own"}},
     "job": {"read": {"Own"}, "cancel": {"Own"}},
-    "request_history": {"read": {"PrivateSelf"}, "delete": {"PrivateSelf"}},
+    "request_history": {"read": {"PrivateSelf"}, "delete": {"PrivateSelf"}, "reuse": {"PrivateSelf"}},
     "debug_capture": {"read": {"PrivateSelf"}, "delete": {"PrivateSelf"}},
 }
 ACTIONS = ("read", "delete", "reuse", "share", "link", "cancel")
@@ -68,18 +68,22 @@ def records(*, active=True, include_prompt=False, available=True, legacy=False):
 @pytest.mark.parametrize("kind,action", product(MATRIX, ACTIONS))
 def test_every_kind_action_basis_cell(kind, action):
     for actor, (viewer, bases) in ACTORS.items():
-        for active, include_prompt, available, legacy, role in product((False, True), repeat=5):
-            basis = set(bases)
+        for active, include_prompt, available, legacy, role, privacy in product((False, True), repeat=6):
+            basis = set(bases) - {"PrivateSelf"}
+            if privacy and "Self" in basis:
+                basis.add("PrivateSelf")
+            if privacy and "SelfApp" in basis:
+                basis.add("PrivateSelfApp")
             if not active:
                 basis.discard("Shared")
-            if "Shared" in basis and include_prompt:
+            if "Shared" in basis and include_prompt and privacy:
                 basis.add("SharedPrompt")
             allowed = available and bool(MATRIX[kind].get(action, set()) & basis)
-            access = decide(replace(viewer, is_owner=role), records(
+            access = decide(replace(viewer, is_owner=role, privacy_permission=privacy), records(
                 active=active, include_prompt=include_prompt, available=available, legacy=legacy)[kind], action)
             expected = (Shared if "Own" not in basis and "Self" not in basis
                         and "SelfApp" not in basis and "PrivateSelf" not in basis else Own) if allowed else Deny
-            assert isinstance(access, expected), (kind, action, actor, active, include_prompt, available, legacy, role)
+            assert isinstance(access, expected), (kind, action, actor, active, include_prompt, available, legacy, role, privacy)
             if isinstance(access, Shared):
                 assert (access.share_id, access.include_prompt) == ("share:1", include_prompt)
 
@@ -93,7 +97,7 @@ def test_maker_requires_own_and_exactly_one_maker():
 
 
 def test_share_selects_only_its_asset_poster_and_maker_prompt_row():
-    viewer = ACTORS["recipient"][0]
+    viewer = replace(ACTORS["recipient"][0], privacy_permission=True)
     creation = records(include_prompt=True)["creation"]
     assert isinstance(decide(viewer, replace(creation, asset_id="poster:1"), "read"), Shared)
     assert isinstance(decide(viewer, replace(creation, asset_id="sibling:1"), "read"), Deny)
@@ -112,7 +116,7 @@ def test_null_self_never_matches_and_appless_chat_needs_exact_key():
     for action in ACTIONS:
         assert isinstance(decide(Viewer(), PromptRecord("a", None), action), Deny)
         assert isinstance(decide(Viewer(app_id="a"), ChatRecord(None, "a"), action), Deny)
-    viewer = Viewer("a", key_hash="old:a")
+    viewer = Viewer("a", key_hash="old:a", privacy_permission=True)
     chat = ChatRecord("a", owner_key_hash="old:a")
     assert isinstance(decide(viewer, chat, "read"), Own)
     assert isinstance(decide(viewer, replace(chat, owner_key_hash="old:b"), "read"), Deny)

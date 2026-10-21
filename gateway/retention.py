@@ -486,7 +486,9 @@ def conversation_row_visible(row: Mapping[str, Any] | None, scope: Mapping[str, 
             return row.get("app_id") == scope["app_id"]
         return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
     from gateway.content_access import ChatRecord, Own, Viewer, decide
-    viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"],
+    # OWNER_VISIBILITY_STEP3: delegated prompt/chat privacy permission is not
+    # enforced today. Remove this unconditional grant when credentials carry it.
+    viewer = Viewer(person_id=scope["person_id"], app_id=scope["app_id"], privacy_permission=True,
                     key_hash=scope["owner_key_hash"] if not scope["app_id"] else None)
     content = ChatRecord(row.get("person_id"), row.get("app_id"), row.get("owner_key_hash"))
     return isinstance(decide(viewer, content, "read"), Own)

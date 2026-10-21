@@ -14057,6 +14057,7 @@ def _gateway_retention_ledger(request: Request, request_id: str | None = None) -
     ctx = _require_admin(ADMIN_AUTH, request)
     if isinstance(ctx, Response):
         raise PermissionError("An owner or administrator management credential is required")
+    # OWNER_VISIBILITY_STEP3: replace management-role receipt access with Own.
     return _retention_ledger_view(request, request_id, viewer_person_id=ctx.subject)
 
 
@@ -14779,6 +14780,7 @@ def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -
     if not isinstance(auth, AuthContext) or not _retention_ledger_allowed(auth):
         raise PermissionError("An owner or administrator is required")
     request.scope["auth_context"] = auth
+    # OWNER_VISIBILITY_STEP3: replace MCP admin/owner receipt access with Own.
     return _retention_ledger_view(request, request_id)
 
 
