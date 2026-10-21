@@ -14,13 +14,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import proxy
 import pytest
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 NAMESPACE = "com.azizam.workflow"
 
 
 @pytest.fixture
 def _serve_upload(fake_upstreams, monkeypatch):
-    from tests.support.fake_upstream import load_scenario
     fake = fake_upstreams.asgi(load_scenario("comfyui/upload-ok-any"))
     monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
 
