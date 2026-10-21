@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from importlib.machinery import SourceFileLoader
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import importlib.util
@@ -23,6 +24,14 @@ import responses_store
 from gateway.engine_protocol import node_info
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_mode_checker(name: str):
+    loader = SourceFileLoader(name, str(ROOT / "scripts" / "check-private-modes"))
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def mode(path: Path) -> int:
@@ -287,10 +296,7 @@ def test_mode_fixer_does_not_follow_symlink_directories(tmp_path, permissive_uma
 
 
 def test_mode_report_contains_directory_errors_without_names(tmp_path, monkeypatch, capsys) -> None:
-    script = ROOT / "scripts" / "check-private-modes"
-    spec = importlib.util.spec_from_file_location("check_private_modes", script)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_mode_checker("check_private_modes")
     root = tmp_path / "fixture"
     denied = root / "data" / "sensitive-dir"
     denied.mkdir(parents=True)
@@ -310,10 +316,7 @@ def test_mode_report_contains_directory_errors_without_names(tmp_path, monkeypat
 
 
 def test_mode_report_handles_directory_replaced_by_symlink(tmp_path, monkeypatch, capsys) -> None:
-    script = ROOT / "scripts" / "check-private-modes"
-    spec = importlib.util.spec_from_file_location("check_private_modes_race", script)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_mode_checker("check_private_modes_race")
     root = tmp_path / "fixture"
     swapped = root / "cache" / "private-name"
     moved = root / "cache" / "moved"
