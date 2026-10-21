@@ -92,7 +92,9 @@
 # Full hermetic --collect-only -q on 2026-10-20 measured 15315.
 # D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
 # Full hermetic --collect-only -q on 2026-10-20 measured 15319.
-pytest = 15319
+# MOSS Image: three data-only workflows add six catalog UI-graph/payload cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15325.
+pytest = 15325
 vitest = 3051
 playwright = 492
 

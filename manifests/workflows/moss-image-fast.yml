@@ -1,0 +1,80 @@
+# License cards verified 2026-10-20:
+# https://huggingface.co/Comfy-Org/MOSS-Image
+# https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
+# https://huggingface.co/lodestones/Kromoss
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: image.generate.moss-image-fast
+intent: image.generate
+display_name: MOSS Image Fast
+purpose: Fast images with less memory
+description: Make a picture quickly with less memory. Uses about 9.6 GB of memory.
+source: local
+trusted: true
+typical_seconds: 5
+inputs:
+  prompt:
+    type: string
+    required: true
+    label: description
+    help: Describe what you want to make.
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  seed:
+    type: integer
+    minimum: 0
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/moss-image-fast.json
+    map:
+      prompt:
+      - node: '5'
+        input: text
+      width:
+      - node: '10'
+        input: width
+      height:
+      - node: '10'
+        input: height
+      seed:
+      - node: '9'
+        input: noise_seed
+      batch_size:
+      - node: '10'
+        input: batch_size
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/kromoss_int8_convrot.safetensors
+  - role: text_encoder
+    path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
+  - role: vae
+    path: vae/flux2-vae.safetensors
+  - role: lora
+    path: loras/kromoss-8steps-dmd-lora.safetensors
+license: Apache-2.0
