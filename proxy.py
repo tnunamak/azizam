@@ -14266,10 +14266,6 @@ async def _security_headers_middleware(request: Request, call_next):
     path = request.url.path
     if path in _BROWSER_AUTH_PATHS:
         _mark_browser_auth_response(response)
-    if any(path == prefix or path.startswith(prefix + "/") for prefix in ("/me/api", "/admin/api", "/auth/api")):
-        response.headers["cache-control"] = "no-store"
-    if path == "/logout" or path == "/auth/api/sign-out-everywhere":
-        response.headers["clear-site-data"] = '"cache"'
     is_html = any(ct.startswith(t) for t in _HTML_CONTENT_TYPES)
     is_ui_path = any(path == p or path.startswith(p + "/") or path.startswith(p + "?")
                      for p in _BROWSER_UI_PREFIXES)
@@ -31320,6 +31316,8 @@ app.add_middleware(ServerTimingMiddleware)
 # Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
 from gateway.noindex import NoIndexHeaderMiddleware
 app.add_middleware(NoIndexHeaderMiddleware)
+from gateway.browser_cache import BrowserCacheMiddleware
+app.add_middleware(BrowserCacheMiddleware)
 
 
 # =============================================================================
