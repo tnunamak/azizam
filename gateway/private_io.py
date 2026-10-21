@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 
@@ -10,6 +11,12 @@ from pathlib import Path
 def ensure_private_dir(path: Path | str) -> Path:
     """Create ``path`` with mode 0700 and tighten that directory if it exists."""
     path = Path(path)
+    for component in (path, *path.parents):
+        try:
+            if stat.S_ISLNK(component.lstat().st_mode):
+                raise NotADirectoryError(component)
+        except FileNotFoundError:
+            pass
     missing: list[Path] = []
     current = path
     while not current.exists():

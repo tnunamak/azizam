@@ -104,7 +104,7 @@ from gateway import directory_index, loop_watchdog, request_connections, video_e
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
-from gateway import video_job_records, prompt_metadata_migration, private_io
+from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -6833,6 +6833,7 @@ def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -
 
 def _image_signing_secret() -> bytes:
     """Resolve (and lazily generate) the HMAC secret used for signed image URLs."""
+    from gateway import private_io
     global _image_url_signing_secret
     if _image_url_signing_secret is not None:
         return _image_url_signing_secret
@@ -6933,6 +6934,7 @@ def _read_asset_metadata(asset_id: str) -> dict[str, Any]:
 
 
 def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
+    from gateway import private_io
     path = _asset_metadata_path(asset_id)
     if path is None:
         return
@@ -7070,6 +7072,7 @@ def _store_asset_bytes(
     maker_person_id: str | None | object = _CURRENT_MAKER,
 ) -> str:
     """Store clean media; any retained prompt lives only in asset_prompts."""
+    from gateway import private_io
     kind = str(kind).strip().lower()
     if kind not in {"img", "aud", "vid"}:
         raise ValueError("asset kind must be one of img, aud, vid")
