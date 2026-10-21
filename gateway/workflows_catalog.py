@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 from fastapi import APIRouter, Request, status
@@ -346,7 +346,10 @@ def _example_request(
     # Made-up local paths belong in the code examples only. The catalog's
     # `files` says which input each file part carries, never a path, so no
     # screen can show "./source-image.bin" as if it were helper text.
-    paths = {field: _example_file_for(part["input"], part.get("media_type")) for field, part in files.items()}
+    paths = [
+        (str(part.get("field") or name), _example_file_for(part["input"], part.get("media_type")))
+        for name, part in files.items()
+    ]
     curl = _curl_example(
         url, content_type=content_type, body=body, form=form, files=paths,
         binary_response=binary_response,
@@ -415,6 +418,13 @@ def _example_multipart_parts(
     *,
     model: str | None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """The form fields and file parts the example request carries.
+
+    ``files`` is keyed by input name, and each part names the multipart field
+    it travels in. Fields can repeat (the edit route takes every picture as an
+    ``image[]`` part), so the ordering is the manifest's and the key is the
+    input, never the wire field.
+    """
     mapping = request_mapping(record, "sync")
     rows = {str(item.get("name")): item for item in inputs}
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
@@ -435,10 +445,10 @@ def _example_multipart_parts(
             else:
                 form[field] = values[name]
         elif location == "file":
-            files[field] = _file_part(name, rows.get(name) or {})
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
         elif location == "file+extension":
-            files[field] = _file_part(name, rows.get(name) or {})
-            extension[field] = {"multipart_field": field}
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
+            extension[name] = {"multipart_field": field}
         elif location == "extension":
             extension[field] = values[name]
     for field, parts in combined.items():
@@ -506,7 +516,7 @@ def _curl_example(
     content_type: str,
     body: Mapping[str, Any],
     form: Mapping[str, Any],
-    files: Mapping[str, str],
+    files: Sequence[tuple[str, str]],
     binary_response: bool,
 ) -> str:
     lines = [
@@ -516,7 +526,7 @@ def _curl_example(
     if content_type == "multipart/form-data":
         for key, value in form.items():
             lines.append(f"  -F {_shell_single_quote(f'{key}={value}')} \\")
-        for key, path in files.items():
+        for key, path in files:
             lines.append(f"  -F {_shell_single_quote(f'{key}=@{path}')} \\")
         if binary_response:
             lines.append("  --output workflow-output.bin \\")
@@ -535,18 +545,18 @@ def _python_example(
     content_type: str,
     body: Mapping[str, Any],
     form: Mapping[str, Any],
-    files: Mapping[str, str],
+    files: Sequence[tuple[str, str]],
     binary_response: bool,
 ) -> str:
     if content_type == "multipart/form-data":
         file_lines = "\n".join(
-            f"    {key!r}: stack.enter_context(open({path!r}, 'rb')),"
-            for key, path in files.items()
+            f"        ({key!r}, stack.enter_context(open({path!r}, 'rb'))),"
+            for key, path in files
         )
         return (
             "import os\nfrom contextlib import ExitStack\nimport requests\n\n"
             "with ExitStack() as stack:\n"
-            f"    files = {{\n{file_lines}\n    }}\n"
+            f"    files = [\n{file_lines}\n    ]\n"
             f"    response = requests.request({method!r}, {url!r},\n"
             "        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n"
             f"        data={dict(form)!r}, files=files, timeout=300)\n"
@@ -578,7 +588,7 @@ def _javascript_example(
     content_type: str,
     body: Mapping[str, Any],
     form: Mapping[str, Any],
-    files: Mapping[str, str],
+    files: Sequence[tuple[str, str]],
     binary_response: bool,
 ) -> str:
     if content_type == "multipart/form-data":
@@ -592,7 +602,7 @@ def _javascript_example(
                     f"new Blob([await readFile({json.dumps(path)})]), "
                     f"{json.dumps(path.rsplit('/', 1)[-1])});"
                 )
-                for key, path in files.items()
+                for key, path in files
             ],
             f"const response = await fetch({json.dumps(url)}, {{",
             f"  method: {json.dumps(method)},",

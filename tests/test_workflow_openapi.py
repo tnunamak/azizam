@@ -242,8 +242,10 @@ class WorkflowOpenApiTests(unittest.TestCase):
         audio = self.catalog["audio.generate.sa3-small-sfx"]["execution"]["sync"]["fields"]
         self.assertEqual(audio["duration"], {"in": "body", "field": "duration"})
         edit = self.catalog["image.edit.qwen-image-2.1-edit-multiref"]["execution"]["sync"]["fields"]
-        self.assertEqual(edit["source_image"], {"in": "file", "field": "image"})
-        self.assertEqual(edit["reference_image_2"]["in"], "file+extension")
+        # Both pictures travel as repeated parts of the one field the edit
+        # route reads, in submission order; the second is not a field of its own.
+        self.assertEqual(edit["source_image"], {"in": "file", "field": "image[]"})
+        self.assertEqual(edit["reference_image_2"], {"in": "file", "field": "image[]"})
 
     def test_every_stable_alias_resolves_to_a_workflow(self) -> None:
         aliases = proxy._gateway_aliases_provider()

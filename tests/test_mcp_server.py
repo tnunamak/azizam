@@ -515,7 +515,8 @@ def test_run_image_edit_sends_multipart_with_the_asset_bytes(env):
     call(env, "run", {"target": "qwen-edit", "inputs": {"prompt": "red hat", "source_image": f"https://gw.test/v1/assets/{asset}/content?sig=1"}})
     _, _, kwargs = env.core.calls[-1]
     assert kwargs["data"]["model"] == "qwen-edit" and kwargs["data"]["response_format"] == "url"
-    name, content, mime = kwargs["files"]["image"]
+    assert [part for part, _ in kwargs["files"]] == ["image[]"]
+    _, (name, content, mime) = kwargs["files"][0]
     assert content == PNG and mime == "image/png"
 
 

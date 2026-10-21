@@ -11,10 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TryPage from "@/app/try/page";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import catalog from "./fixtures/workflows-image-edit.json";
+import multirefCatalog from "./fixtures/workflows-image-edit-multiref.json";
 
 // The real catalog row the gateway builds for "Flux2 Klein 4B Edit": its two
 // pictures are typed "string" with `asset: true`, and the recommended route
-// (multipart /v1/images/edits) sends them as the file parts "image" and
+// (multipart /v1/images/edits) sends them as the file parts "image[]" and
 // "mask". Each picture gets one picker; nothing shows a made-up path.
 const account = vi.hoisted(() => ({
   session: vi.fn(),
@@ -169,8 +170,8 @@ describe("a picture-edit workflow on Try", () => {
     const [url, init] = posts()[0];
     expect(String(url)).toContain("/v1/images/edits");
     const form = init.body as FormData;
-    expect(form.get("image")).toBeInstanceOf(File);
-    expect((form.get("image") as File).name).toBe("garden.png");
+    expect(form.get("image[]")).toBeInstanceOf(File);
+    expect((form.get("image[]") as File).name).toBe("garden.png");
     expect(form.get("prompt")).toBe("Make the sky purple");
     expect(form.has("source_image")).toBe(false);
     expect(form.has("mask")).toBe(false);
@@ -189,7 +190,7 @@ describe("a picture-edit workflow on Try", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     const form = posts()[0][1].body as FormData;
-    expect((form.get("image") as File).name).toBe("garden.png");
+    expect((form.get("image[]") as File).name).toBe("garden.png");
     expect(JSON.parse(form.get("extensions") as string)).toMatchObject({
       "com.azizam.prompts": { mode: "forget" },
     });
@@ -299,5 +300,51 @@ describe("a workflow with repeated image[] parts", () => {
         expect(code.match(/\("image\[\]", \(/g)).toHaveLength(2);
       }
     }
+  });
+});
+
+// The gateway's own catalog row, not a hand-built one: whatever the gateway
+// says about the multi-reference workflow, Try must send it correctly. This is
+// the row that used to name the second picture `reference_image_2`, a part the
+// edit route never reads.
+describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => {
+  beforeEach(() => {
+    activeCatalog = multirefCatalog;
+    account.params = new URLSearchParams(
+      "workflow=image.edit.qwen-image-2.1-edit-multiref",
+    );
+  });
+
+  it("sends both pictures as image[] parts in manifest order, with no reference_image_2 part", async () => {
+    await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
+    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture/ }), {
+      target: { value: "Put the ghost beside the boy" },
+    });
+    // Choose the second picture first: the wire order follows the manifest,
+    // which puts the main picture first.
+    const second = screen.getByRole("group", { name: /second picture/i });
+    await userEvent.upload(
+      second.querySelector<HTMLInputElement>("input[data-media-file-input]")!,
+      new File(["second"], "second.png", { type: "image/png" }),
+    );
+    const main = screen.getByRole("group", { name: /main picture/i });
+    await userEvent.upload(
+      main.querySelector<HTMLInputElement>("input[data-media-file-input]")!,
+      PNG,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    const [url, init] = posts()[0];
+    expect(String(url)).toContain("/v1/images/edits");
+    const form = init.body as FormData;
+    expect(form.get("model")).toBe("qwen-image-2.1-edit-multiref");
+    expect(form.getAll("image[]").map((file) => (file as File).name)).toEqual([
+      "garden.png",
+      "second.png",
+    ]);
+    expect(form.has("image")).toBe(false);
+    expect(form.has("reference_image_2")).toBe(false);
+    const extensions = JSON.parse(String(form.get("extensions")));
+    expect(extensions["com.azizam.workflow"]).not.toHaveProperty("reference_image_2");
   });
 });

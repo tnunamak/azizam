@@ -28,7 +28,7 @@
      "accepted": true,
      "ignored": false,
      "applies": "File upload",
-     "request_field": "image",
+     "request_field": "image[]",
      "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
      "help": "The picture you want to change.",
      "asset": true,
@@ -155,25 +155,27 @@
      "extensions": "{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}"
     },
     "files": {
-     "image": {
+     "source_image": {
       "input": "source_image",
       "required": true,
-      "media_type": "image/*"
+      "media_type": "image/*",
+      "field": "image[]"
      },
      "mask": {
       "input": "mask",
       "required": false,
-      "media_type": "image/*"
+      "media_type": "image/*",
+      "field": "mask"
      }
     },
-    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
-    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = {\n    'image': stack.enter_context(open('./source-image.png', 'rb')),\n    'mask': stack.enter_context(open('./mask.png', 'rb')),\n    }\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
-    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image[]=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n        ('mask', stack.enter_context(open('./mask.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
    },
    "examples": {
-    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
-    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = {\n    'image': stack.enter_context(open('./source-image.png', 'rb')),\n    'mask': stack.enter_context(open('./mask.png', 'rb')),\n    }\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
-    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image[]=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = [\n        ('image[]', stack.enter_context(open('./source-image.png', 'rb'))),\n        ('mask', stack.enter_context(open('./mask.png', 'rb'))),\n    ]\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image[]\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
    },
    "native_route": null,
    "native_passthrough_route": null,
@@ -252,7 +254,7 @@
        },
        "source_image": {
         "in": "file",
-        "field": "image"
+        "field": "image[]"
        },
        "mask": {
         "in": "file",

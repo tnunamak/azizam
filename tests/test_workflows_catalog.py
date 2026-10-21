@@ -424,8 +424,9 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertEqual(edit_inputs["n"]["label"], "number of results")
         self.assertNotIn("Reddit", json.dumps(edit_inputs))
         self.assertEqual(
-            edit["example_request"]["files"]["image"],
-            {"input": "source_image", "required": True, "media_type": "image/*"},
+            edit["example_request"]["files"],
+            {"source_image": {"input": "source_image", "field": "image[]",
+                              "required": True, "media_type": "image/*"}},
         )
         self.assertEqual(face["outputs"], [
             {"name": "report", "media_type": "application/json", "label": "a likeness score"},
@@ -556,11 +557,12 @@ class WorkflowsCatalogTests(unittest.TestCase):
         # screen could show as helper text.
         self.assertEqual(
             request["files"],
-            {"image": {"input": "source_image", "required": True, "media_type": "image/*"}},
+            {"source_image": {"input": "source_image", "field": "image[]",
+                              "required": True, "media_type": "image/*"}},
         )
         self.assertNotIn("./", json.dumps(request["files"]))
         self.assertIn(" -F 'prompt=", request["curl"])
-        self.assertIn(" -F 'image=@./source-image.png'", request["curl"])
+        self.assertIn(" -F 'image[]=@./source-image.png'", request["curl"])
         self.assertIn("await readFile(\"./source-image.png\")", request["javascript"])
         self.assertIn("new Blob", request["javascript"])
 
