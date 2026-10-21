@@ -1,5 +1,6 @@
 """Browser media is usable only during its sign-in; App links keep their contract."""
 import hashlib
+import importlib.util
 import time
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -8,10 +9,10 @@ import pytest
 from starlette.requests import Request
 
 import proxy
-from gateway import accounts, browser_sessions, thumbnails
+from gateway import accounts, browser_sessions, thumbnails, user_runtime
 from gateway.owner_openapi import walk_routes
 from tests.test_library_perf import _png
-from tests.test_session_lifecycle import cookie_session, csrf, owner_client, put_cookie
+from tests.test_session_lifecycle import cookie_session, csrf, owner_client, put_cookie, forge, set_policy
 from tests.test_signin_who_can_enter import OWNER, SIGNING_KEY, gateway  # noqa: F401
 from gateway.admin_oidc import encode_session_cookie
 
@@ -33,7 +34,7 @@ def mint(client, mode="none", *, key=False, image=False):
     if client.cookies:
         headers.append((b"cookie", ("opx_admin_session=" + client.cookies.get("opx_admin_session")).encode()))
     if key:
-        headers.append((b"authorization", b"Bearer test-app-credential"))
+        headers.append((b"authorization", ("Bearer " + (key if isinstance(key, str) else "test-app-credential")).encode()))
     request = Request({"type": "http", "scheme": "https", "server": ("ai.example", 443),
                        "headers": headers, "path": "/me/api/media", "query_string": b""})
     builder = proxy.build_signed_image_url if image else proxy.build_signed_asset_url
@@ -48,7 +49,7 @@ def test_signed_asset_url_dies_with_its_session_family(media, mode, image):
     response = anonymous.get(url)
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-cache"
-    assert response.headers["etag"] == '"' + hashlib.sha256(response.content).hexdigest() + '"'
+    assert response.headers["etag"].startswith('"') and not response.headers["etag"].startswith('W/')
     # A warm verdict and an ETag cannot authorize the first fetch after the end.
     assert client.post("/logout", headers=csrf(client), follow_redirects=False).status_code == 303
     ended = anonymous.get(url, headers={"if-none-match": response.headers["etag"]})
@@ -255,3 +256,98 @@ def test_session_view_id_is_public_stable_across_rotation_and_changes_on_new_sig
     assert client.get("/me/api/session").json()["session_view_id"] == view
     assert owner_client(media).get("/me/api/session").json()["session_view_id"] != view
     assert "session_view_id" not in media.client().get("/me/api/session").json()
+
+
+@pytest.mark.parametrize("mode", ["none", thumbnails.THUMB_MODE])
+@pytest.mark.parametrize("setting,age", [("absolute_lifetime_days", {"issued_ago": 3 * 86400}),
+                                          ("idle_timeout_days", {"issued_ago": 3 * 86400, "renewed_ago": 2 * 86400})])
+def test_current_lifetime_policy_rejects_previously_minted_urls(media, mode, setting, age):
+    client = owner_client(media)
+    forge(media, client, OWNER, **age)
+    url = mint(client, mode)
+    response = media.client().get(url)
+    assert response.status_code == 200
+    policy = {setting: 1}
+    if setting == "absolute_lifetime_days":
+        policy["idle_timeout_days"] = 1
+    set_policy(media, **policy)
+    # The family memo is warm; policy changes must apply on the very next fetch, even a 304.
+    refused = media.client().get(url, headers={"if-none-match": response.headers["etag"]})
+    assert refused.status_code == 403
+    assert client.get("/me/api/session").json()["authenticated"] is False
+
+
+def test_renewed_cookie_mints_urls_with_its_renewed_lifetime(media, monkeypatch):
+    client = owner_client(media)
+    forge(media, client, OWNER, issued_ago=10 * 86400, renewed_ago=8 * 86400)
+    old = cookie_session(client)
+    monkeypatch.setattr(proxy, "IMAGE_SIGNED_URL_TTL", 90 * 86400)
+    old_url = mint(client)
+    assert client.get("/me/api/session").json()["authenticated"] is True
+    renewed = cookie_session(client)
+    assert renewed.last_renewed > old.last_renewed
+    url = mint(client)
+    assert int(parse_qs(urlsplit(url).query)["expires"][0]) == int(renewed.expires_at)
+    monkeypatch.setattr(time, "time", lambda: old.expires_at + 1)
+    assert media.client().get(old_url).status_code == 403
+    assert media.client().get(url).status_code == 200
+
+
+def test_session_view_id_survives_module_restart_with_persistent_secret(media):
+    client = owner_client(media)
+    session = cookie_session(client)
+    before = user_runtime.build_user_portal_snapshot(session, path=media.path)["session_view_id"]
+    spec = importlib.util.spec_from_file_location("restarted_user_runtime", user_runtime.__file__)
+    restarted = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(restarted)
+    assert restarted.build_user_portal_snapshot(session, path=media.path)["session_view_id"] == before
+    other = cookie_session(owner_client(media))
+    assert restarted.build_user_portal_snapshot(other, path=media.path)["session_view_id"] != before
+
+
+@pytest.mark.parametrize("mode", ["none", thumbnails.THUMB_MODE])
+@pytest.mark.parametrize("with_cookie", [False, True])
+def test_try_key_urls_end_on_signout_but_app_urls_survive(media, mode, with_cookie):
+    client = owner_client(media)
+    session = cookie_session(client)
+    key = user_runtime.ensure_try_session_key(session, path=media.path)["api_key"]
+    url = mint(client if with_cookie else media.client(), mode, key=key)
+    app_url = mint(client, mode, key=True)
+    assert parse_qs(urlsplit(url).query)["family"] == [session.family_id]
+    response = media.client().get(url)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-cache"
+    assert client.post("/logout", headers=csrf(client), follow_redirects=False).status_code == 303
+    assert media.client().get(url).status_code == 403
+    assert media.client().get(app_url).status_code == 200
+
+
+@pytest.mark.parametrize("validator,expected", [("matching", 206), ("stale", 200), ("weak", 200),
+                                                ("Wed, 21 Oct 2015 07:28:00 GMT", 200)])
+def test_browser_asset_if_range_requires_the_strong_current_validator(media, validator, expected):
+    client = owner_client(media)
+    url = mint(client)
+    full = client.get(url)
+    etag = full.headers["etag"]
+    supplied = etag if validator == "matching" else "W/" + etag if validator == "weak" else validator
+    response = client.get(url, headers={"range": "bytes=0-9", "if-range": supplied})
+    assert response.status_code == expected
+    assert response.content == (full.content[:10] if expected == 206 else full.content)
+    assert response.headers["etag"] == etag
+
+
+def test_session_etags_hash_only_variant_identity_not_delivered_bytes(media, monkeypatch):
+    client = owner_client(media)
+    urls = [mint(client, mode) for mode in ("none", thumbnails.THUMB_MODE)]
+    responses = [client.get(url) for url in urls]
+    delivered = {response.content for response in responses}
+    original = hashlib.sha256
+    def bounded_hash(data=b"", **kwargs):
+        assert data not in delivered, "ETag must not hash delivered media"
+        return original(data, **kwargs)
+    monkeypatch.setattr(hashlib, "sha256", bounded_hash)
+    for url, response in zip(urls, responses):
+        again = client.get(url)
+        assert again.headers["etag"] == response.headers["etag"]
+        assert client.get(url, headers={"if-none-match": response.headers["etag"]}).status_code == 304
+    assert responses[0].headers["etag"] != responses[1].headers["etag"]
