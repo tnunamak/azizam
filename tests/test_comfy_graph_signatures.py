@@ -8,7 +8,12 @@ wrong type, a combo value that does not exist.
 `fixtures/comfy_node_signatures.json` is a snapshot of `/object_info` for the
 node classes these graphs use (ComfyUI with the LTX, KJ, SAM 3, SCAIL and H3 nodes
 installed, 2026-10-02; the two H3 Motion Context entries were read from the
-pinned pack's own `INPUT_TYPES`, because the pack is not loaded until ComfyUI restarts). Regenerate it when a node changes.
+pinned pack's own `INPUT_TYPES`, because the pack is not loaded until ComfyUI restarts).
+The FIBO additions were transcribed from local ComfyUI source on 2026-10-21:
+`comfy_extras/nodes_fibo2.py:TextEncodeFibo2.define_schema`,
+`nodes.py:KSampler/SaveImage/CLIPLoader`, `comfy/samplers.py`, and
+`custom_nodes/ComfyUI-RMBG/py/AILab_RMBG.py:RMBG.INPUT_TYPES`.
+No host file enumerations were added. Regenerate it when a node changes.
 """
 
 from __future__ import annotations
@@ -21,12 +26,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from test_klein_9b_manifest_parity import image_round  # noqa: F401
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401
+
 from gateway import video_extend as ve, video_extend_h3 as h3, video_subject as vs  # noqa: E402
 
 SIGNATURES = json.loads((ROOT / "tests/fixtures/comfy_node_signatures.json").read_text())
 # Combos that list files on the host: the value is checked at run time, not here.
 HOST_FILE_INPUTS = {"unet_name", "vae_name", "clip_name", "ckpt_name", "lora_name", "file", "image", "model_name"}
-PY_TYPES = {"INT": (int,), "FLOAT": (int, float), "STRING": (str,), "BOOLEAN": (bool,)}
+PY_TYPES = {"INT": (int,), "FLOAT": (int, float), "STRING": (str,), "BOOLEAN": (bool,), "COLORCODE": (str,)}
 
 
 def _type_matches(output_type: str, input_type: str) -> bool:
@@ -173,3 +181,33 @@ class CheckerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_fibo_template_passes_source_signatures():
+    graph = json.loads((ROOT / 'workflows/images/fibo-2-edit-turbo.json').read_text())
+    graph.pop('_meta')
+    assert check_graph(graph) == []
+
+
+def test_public_fibo_edit_submits_valid_graph(monkeypatch, image_round):
+    """The public route must bind the instruction and submit a valid node signature."""
+    import asyncio
+    from types import SimpleNamespace
+    import proxy
+    from test_klein_9b_manifest_parity import PROMPT
+    from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
+
+    monkeypatch.setattr(proxy, 'authenticate_request', lambda *args: proxy.NO_AUTH_CONTEXT)
+    monkeypatch.setattr(proxy, '_apply_image_route_policy', lambda *args, **kwargs: SimpleNamespace(denied=False))
+    request = _MultipartRequest([
+        ('model', 'fibo-2-edit-turbo'), ('prompt', PROMPT), ('background', 'opaque'),
+        ('image', _MultipartUpload('source.png', _png_bytes((1, 2, 3, 255)))),
+        ('extensions', json.dumps({'com.azizam.workflow': {'seed': 41}})),
+    ])
+    response = asyncio.run(proxy.images_edits(request))
+    assert response.status_code == 200, response.body
+    assert len(image_round) == 1
+    graph = image_round[0]
+    assert graph['6']['inputs']['prompt'] == PROMPT
+    assert 'text' not in graph['6']['inputs']
+    assert check_graph(graph) == []

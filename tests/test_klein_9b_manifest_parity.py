@@ -106,8 +106,8 @@ def test_every_image_manifest_matches_pre_fix_graph_bytes(path, manifest, image_
     assert response.status_code == 200, response.body
     assert image_round, path
     serialized = json.dumps(image_round, separators=(',', ':'), ensure_ascii=True)
-    record_property('baseline_graphs', json.dumps({path.name: image_round}))
-    expected = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+    expected = json.loads(BASELINE.read_text())
+    assert set(expected) == {p.name for p, _ in MANIFESTS}
     if path.name in expected:
         before = expected[path.name]
         if path.stem == 'fibo-2-edit-turbo':
