@@ -150,7 +150,9 @@ def test_video_existing_submission_settles_failures_and_deadline(
 def test_receipt_maintenance_retries_after_failure_then_stops(monkeypatch, tmp_path):
     calls = []
     maintain = Mock(side_effect=[RuntimeError("temporary store failure"), 3])
+    compact = Mock(return_value=0)
     monkeypatch.setattr(proxy.receipt_store, "maintain", maintain)
+    monkeypatch.setattr(proxy.firehose_metrics, "compact_log", compact)
     monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(path=tmp_path / "admin.db"))
 
     async def scenario():
@@ -179,7 +181,9 @@ def test_receipt_maintenance_retries_after_failure_then_stops(monkeypatch, tmp_p
 
     asyncio.run(scenario())
     assert maintain.call_count == 2
-    assert calls == [(maintain, (proxy.ADMIN_STORE.path,), {"fact_store_path": proxy.media_jobs.DB_PATH})] * 2
+    maintenance_call = (maintain, (proxy.ADMIN_STORE.path,), {"fact_store_path": proxy.media_jobs.DB_PATH})
+    assert calls == [maintenance_call, (compact, (), {})] * 2
+    assert compact.call_count == 2
 
 
 def test_receipt_maintenance_does_not_swallow_task_cancellation(monkeypatch, tmp_path):
