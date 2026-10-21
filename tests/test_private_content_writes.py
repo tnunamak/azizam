@@ -18,7 +18,7 @@ from gateway import (
     video_job_records, voice_audio,
 )
 from gateway.stt_samples import Licence, Rights, SampleSpec, Source
-from tests.support.fake_upstream import HandlerTransport
+from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401
 
 
 @pytest.fixture
