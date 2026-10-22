@@ -484,12 +484,13 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
 
     def test_frames_above_the_model_maximum_is_refused_before_upload(self) -> None:
         # An unbounded frame count would let any caller queue an arbitrarily long render.
-        for model, too_long in (("video-ltx-2.5-keyframes", 249), ("video-ltx-2.5-keyframes-mid", 249),
-                                ("video-minimax-h3-keyframes", 379), ("video-minimax-h3-keyframes-mid", 379)):
+        middle = {"mid_frame": _uri(PNG_FIRST)}, {"middle_frame": _uri(PNG_FIRST)}
+        for model, too_long, extra in (("video-ltx-2.5-keyframes", 249, {}), ("video-ltx-2.5-keyframes-mid", 249, middle[0]),
+                                       ("video-minimax-h3-keyframes", 379, {}), ("video-minimax-h3-keyframes-mid", 379, middle[1])):
             with self.subTest(model=model):
                 self.comfy.uploads.clear()
                 self.comfy.submitted.clear()
-                r = self.client.post("/v1/videos", json=self._body(model, frames=too_long))
+                r = self.client.post("/v1/videos", json=self._body(model, frames=too_long, **extra))
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertEqual(r.json()["error"]["param"], "frames")
                 self.assertEqual(self.comfy.uploads, [])
