@@ -80,10 +80,10 @@ test("menu: the keyboard opens the account menu, reaches Switch person, and Ente
 
   const switchPerson = member.page.getByRole("menuitem", { name: "Switch person" });
   await expect(switchPerson).toBeVisible();
-  // Arrow down until Switch person has focus. It sits above Sign out, so eight presses are more than enough.
-  for (let presses = 0; presses < 8 && !(await switchPerson.evaluate((el) => el === document.activeElement)); presses += 1) {
-    await member.page.keyboard.press("ArrowDown");
-  }
+  // End reaches the last item, Sign out; one arrow up is Switch person. Each step waits for the focus to move.
+  await member.page.keyboard.press("End");
+  await expect(member.page.getByRole("menuitem", { name: "Sign out" })).toBeFocused();
+  await member.page.keyboard.press("ArrowUp");
   await expect(switchPerson).toBeFocused();
   await member.page.keyboard.press("Enter");
 
