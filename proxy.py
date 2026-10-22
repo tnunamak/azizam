@@ -17839,12 +17839,21 @@ async def _provider_sign_out_address(cfg) -> str:
 async def provider_sign_out(request: Request):
     """Sign out at the provider, which then sends the browser back to the sign-in page. Azizam keeps no ID token,
     so none is sent as a hint; the provider may ask the person to confirm. A provider that publishes no sign-out
-    address answers 404 and redirects nowhere."""
-    cfg = oidc_config_for_public_base(
-        _effective_admin_oidc_config(),
-        instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
-    )
-    address = await _provider_sign_out_address(cfg) if cfg.enabled else ""
+    address answers 404 and redirects nowhere. Each request counts against the same per-address budget as sign-in
+    (throttle_oidc), because each one makes Azizam fetch the provider's discovery document."""
+    try:
+        client_ip = resolve_real_client_ip(request)
+        if client_ip is None:
+            raise accounts.AccountError("invalid_client_ip", "Cannot verify the sign-in client address.", 400)
+        accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
+        cfg = oidc_config_for_public_base(
+            _effective_admin_oidc_config(),
+            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+        )
+        address = await _provider_sign_out_address(cfg) if cfg.enabled else ""
+    except accounts.AccountError as exc:
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
+                            headers={"retry-after": "60"} if exc.status == 429 else {})
     if not address:
         return JSONResponse({"error": {"code": "provider_sign_out_unavailable",
                                        "message": "This sign-in provider publishes no sign-out address."}},
