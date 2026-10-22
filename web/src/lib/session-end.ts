@@ -37,7 +37,9 @@ export type SessionScreen =
   | { kind: "idle" }
   | { kind: "signing-out" }
   | { kind: "failed"; reason: FailureReason; tries: number; trying: boolean }
-  | { kind: "other-tab"; cause: OtherTabCause };
+  | { kind: "other-tab"; cause: OtherTabCause }
+  /** The restore check got no answer for a page that showed a person: nothing of that page shows until it is confirmed. */
+  | { kind: "unconfirmed" };
 
 /** What the gateway said about this browser's session. */
 export interface SessionView {
@@ -164,7 +166,12 @@ export async function checkPageShown(): Promise<void> {
   if (sessionIsClosed()) return;
   const record = readHandoff();
   if (seen === null) {
-    if (record?.state === "SIGNED_OUT") setOtherTab(causeOf(record.kind));
+    if (record?.state === "SIGNED_OUT") {
+      setOtherTab(causeOf(record.kind));
+      return;
+    }
+    // A page that showed a person is not revealed without a positive answer: it stays hidden until a check says so.
+    if (sessionEpoch() !== null) show({ kind: "unconfirmed" });
     return;
   }
   const cause: OtherTabCause = record?.state === "SIGNED_OUT" ? causeOf(record.kind) : "server";
@@ -176,7 +183,10 @@ export async function checkPageShown(): Promise<void> {
   }
   // A session exists. A page that showed no session has nothing to compare with; a page that did must still
   // be the same person, and a page whose person is no longer signed in is not shown.
-  if (sessionEpoch() === null) return;
+  if (sessionEpoch() === null) {
+    revealUnconfirmed();
+    return;
+  }
   if (!seen.authenticated && shownPerson !== null) {
     setOtherTab(cause);
     return;
@@ -186,6 +196,17 @@ export async function checkPageShown(): Promise<void> {
     return;
   }
   setSessionEpoch(seen.epoch);
+  revealUnconfirmed();
+}
+
+/** Asks again after an unconfirmed check (the cover's Try again). */
+export function retryPageCheck(): Promise<void> {
+  return checkPageShown();
+}
+
+/** A positive answer for the person shown: the page is shown again. */
+function revealUnconfirmed(): void {
+  if (screen.kind === "unconfirmed") show({ kind: "idle" });
 }
 
 /** Whether a snapshot is still the person this page shows. A known person is compared as a person: the same

@@ -7,6 +7,7 @@ import { PRODUCT_NAME } from "@/lib/product";
 import {
   continueFromOtherTab,
   getSessionScreen,
+  retryPageCheck,
   retrySignOut,
   subscribeSession,
   type FailureReason,
@@ -39,7 +40,7 @@ export function SessionCoverFromStore({ header }: { header: ReactNode }) {
     <SessionCover
       screen={screen}
       header={header}
-      onRetry={() => void retrySignOut()}
+      onRetry={() => void (screen.kind === "unconfirmed" ? retryPageCheck() : retrySignOut())}
       onContinue={() => void continueFromOtherTab()}
     />
   );
@@ -59,7 +60,9 @@ export function SessionCover({
   const title =
     screen.kind === "other-tab"
       ? `This tab is signed out · ${PRODUCT_NAME}`
-      : `Signing out · ${PRODUCT_NAME}`;
+      : screen.kind === "unconfirmed"
+        ? `Checking your sign-in · ${PRODUCT_NAME}`
+        : `Signing out · ${PRODUCT_NAME}`;
   useEffect(() => {
     document.title = title;
   }, [title]);
@@ -72,6 +75,7 @@ export function SessionCover({
         {screen.kind === "other-tab" && (
           <OtherTab cause={screen.cause} onContinue={onContinue} />
         )}
+        {screen.kind === "unconfirmed" && <Unconfirmed onRetry={onRetry} />}
       </main>
     </div>
   );
@@ -140,6 +144,26 @@ function OtherTab({ cause, onContinue }: { cause: OtherTabCause; onContinue: () 
       <p className="text-muted-foreground mt-4">{OTHER_TAB_BODY[cause]}</p>
       <div className="mt-8">
         <Button onClick={onContinue}>Continue</Button>
+      </div>
+    </section>
+  );
+}
+
+/** The restore check got no answer for a page that showed a person: the page is held, and the check can be asked again. */
+function Unconfirmed({ onRetry }: { onRetry: () => void }) {
+  const heading = useFocusOnEntry();
+  return (
+    <section aria-labelledby="session-heading" className="py-12">
+      <h1 id="session-heading" ref={heading} tabIndex={-1} className="text-title text-balance">
+        Checking your sign-in…
+      </h1>
+      <div role="status">
+        <p className="text-muted-foreground mt-4">
+          Azizam can’t confirm yet that this page is still yours. Nothing of the previous page shows until it can.
+        </p>
+      </div>
+      <div className="mt-8">
+        <Button onClick={onRetry}>Try again</Button>
       </div>
     </section>
   );
