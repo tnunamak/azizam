@@ -201,6 +201,26 @@ password in the browser (setting one is also a confirmed action). An admin key d
 provider's administrator turns on `auth_time` for this client. Sign-ins by password or by an admin key
 are not affected: the sign-in itself is the proof.
 
+### Signing out at the provider (decision D54)
+
+When a sign-in is refused because the provider did not ask for a password just now, the sign-in page says so
+and offers **Sign out of {provider}**. That link goes to `/login/provider-sign-out`. The gateway reads the
+provider's discovery document and sends the browser to its `end_session_endpoint`, with the client ID and a
+return to `<origin>/sign-in/?after=provider-sign-out`. The link appears only when the provider publishes that
+address, and only an `https` address is used. Otherwise the route answers `404 provider_sign_out_unavailable`
+and the sign-in page tells the person to sign out of the provider another way.
+
+**Owner action:** register `<origin>/sign-in/?after=provider-sign-out` as a valid post-logout redirect URI in
+the identity provider's client settings, with `<origin>` being the public address of this gateway. Keycloak
+shows an HTTP 400 error page for a redirect URI the client does not list, so the person is stuck at the
+provider until the URI is registered.
+
+The sign-out route counts against the same per-address budget as sign-in (20 requests a minute), because each
+request makes the gateway fetch the discovery document. A fresh or step-up sign-in also asks the provider for
+`auth_time` as an essential claim (`claims={"id_token":{"auth_time":{"essential":true}}}`, OIDC Core 5.5).
+A provider that does not support that request still answers; one that omits `auth_time` is refused as
+described above.
+
 ### Making a credential after signing out (decision D41)
 
 Every credential a browser sign-in creates (an App key, an admin key, a Try key, a lasting MCP
