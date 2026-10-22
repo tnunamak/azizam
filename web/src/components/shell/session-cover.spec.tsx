@@ -142,3 +142,15 @@ describe("the other-tab screen", () => {
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the unconfirmed restore", () => {
+  it("says it is checking the sign-in, and offers Try again without showing the page", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(<SessionCover screen={{ kind: "unconfirmed" }} header={header} onRetry={onRetry} onContinue={noop} />);
+    expect(screen.getByRole("heading", { name: "Checking your sign-in…" })).toHaveFocus();
+    expect(screen.getByText(/Nothing of the previous page shows until it can/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});

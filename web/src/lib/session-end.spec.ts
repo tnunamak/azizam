@@ -472,3 +472,42 @@ describe("the sign-out while the session view key is down", () => {
     expect(replace).toHaveBeenCalledWith("/sign-in/");
   });
 });
+
+describe("a restored page that showed a person and gets no answer", () => {
+  it("probe P-B: is not revealed; the page asks again, and shows the check as unconfirmed", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    routes.set("GET /me/api/session", () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await sessionEnd.checkPageShown();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "unconfirmed" });
+  });
+
+  it("a 503 from the unreadable view key is no answer either", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    routes.set("GET /me/api/session", () =>
+      json({ error: { code: "session_view_unavailable", message: "Try again." }, csrf_token: "csrf-1" }, 503),
+    );
+    await sessionEnd.checkPageShown();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "unconfirmed" });
+  });
+
+  it("the check that is asked again reveals the page once the same person answers", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    routes.set("GET /me/api/session", () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await sessionEnd.checkPageShown();
+    routes.set("GET /me/api/session", () => json({ ...signedIn, user: { person_id: "person-1" } }));
+    await sessionEnd.retryPageCheck();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
+  });
+
+  it("a page that showed no person has nothing to protect: no answer reveals it as before", async () => {
+    routes.set("GET /me/api/session", () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await sessionEnd.checkPageShown();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
+  });
+});
