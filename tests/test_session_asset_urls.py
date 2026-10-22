@@ -696,6 +696,7 @@ def test_service_account_browser_session_still_carries_a_session_view_id(media):
 
 def test_a_session_whose_view_id_cannot_be_made_is_a_503_not_an_unidentified_snapshot(media, monkeypatch):
     client = owner_client(media)
+    csrf = client.get("/me/api/session").json()["csrf_token"]
 
     def unreadable(path):
         raise OSError("the view secret cannot be read")
@@ -705,3 +706,5 @@ def test_a_session_whose_view_id_cannot_be_made_is_a_503_not_an_unidentified_sna
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "session_view_unavailable"
     assert response.headers["cache-control"] == "no-store"
+    # The sign-out needs only the CSRF token, not the view id, so the unavailable answer still carries it.
+    assert response.json()["csrf_token"] == csrf

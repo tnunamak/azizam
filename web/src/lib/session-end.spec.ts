@@ -448,3 +448,27 @@ describe("the wipe does not wait on a cleanup step that hangs", () => {
     Reflect.deleteProperty(navigator, "serviceWorker");
   });
 });
+
+describe("the sign-out while the session view key is down", () => {
+  // The snapshot cannot be identified (503 session_view_unavailable), but it still carries the CSRF token: the
+  // sign-out must use it, since the logout itself does not need the view key.
+  const unavailable = () =>
+    json({ error: { code: "session_view_unavailable", message: "Your sign-in cannot be checked right now. Try again." }, csrf_token: "csrf-503" }, 503);
+
+  it("sign-out sends the token the unavailable snapshot carries and ends the session", async () => {
+    routes.set("GET /me/api/session", unavailable);
+    await sessionEnd.endSession("sign-out");
+    const [[, init]] = sent("POST /logout");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(replace).toHaveBeenCalledWith("/sign-in/");
+  });
+
+  it("sign out everywhere sends the token the unavailable snapshot carries and ends the session", async () => {
+    routes.set("GET /me/api/session", unavailable);
+    routes.set("POST /auth/api/sign-out-everywhere", () => json({ next: "/sign-in/" }));
+    await sessionEnd.endSession("sign-out-everywhere");
+    const [[, init]] = sent("POST /auth/api/sign-out-everywhere");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(replace).toHaveBeenCalledWith("/sign-in/");
+  });
+});
