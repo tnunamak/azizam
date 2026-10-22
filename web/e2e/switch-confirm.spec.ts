@@ -46,6 +46,20 @@ test("switch: discard and switch ends the session and the unsent message goes wi
   await expect(member.page).toHaveURL(/\/sign-in\/?$/);
 });
 
+test("switch: on a phone the buttons stack, with Discard and switch on top", async ({ isolated }) => {
+  const member = await isolated.member({ name: "Phone member" });
+  await member.page.setViewportSize({ width: 390, height: 844 });
+  await typeUnsentMessage(member.page);
+  await openAccountMenu(member.page);
+  await member.page.getByRole("menuitem", { name: "Switch person" }).click();
+
+  const dialog = member.page.getByRole("dialog", { name: "Switch person?" });
+  const discard = await dialog.getByRole("button", { name: "Discard and switch" }).boundingBox();
+  const keep = await dialog.getByRole("button", { name: "Keep working" }).boundingBox();
+  expect(discard && keep).toBeTruthy();
+  expect(discard!.y).toBeLessThan(keep!.y);
+});
+
 test("switch: no confirm when nothing is unsaved", async ({ isolated }) => {
   const member = await isolated.member({ name: "Quiet member" });
   await member.page.goto("/");
