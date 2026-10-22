@@ -61,12 +61,13 @@ class Gateway:
     def client(self) -> TestClient:
         return TestClient(self.proxy.app, base_url="https://ai.example", client=("127.0.0.1", 50000))
 
-    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now"):
+    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now", start=None):
         """Run the browser flow. Returns the callback response.
 
         The provider says the person signed in just now, as Keycloak does; ``auth_time=None`` is a provider
-        whose ID token carries no ``auth_time`` (decision D40: signed in, but not recent)."""
-        login = client.get("/login", params={"return_to": "/"}, follow_redirects=False)
+        whose ID token carries no ``auth_time`` (decision D40: signed in, but not recent). ``start`` adds query
+        parameters to the first request, such as ``remember=1`` from the sign-in page."""
+        login = client.get("/login", params={"return_to": "/", **(start or {})}, follow_redirects=False)
         if "redirect_uri=" not in login.headers["location"]:
             login = client.get(login.headers["location"], follow_redirects=False)
         state, record = list(self.proxy.ADMIN_OIDC_STATES.items())[-1]
