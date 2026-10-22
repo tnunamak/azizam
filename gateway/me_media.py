@@ -518,7 +518,7 @@ def _media_folder_view(
     }
 
 
-_HEX_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
+_HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def _folder_counts(

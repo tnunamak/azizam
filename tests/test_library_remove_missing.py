@@ -228,6 +228,21 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertIn(odd, {a["asset_id"] for job in media_jobs.recent(500, path=self.jobs_db) for a in job["assets"]})
         self.assertIn(odd, set(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)))
 
+    def test_an_uppercase_hex_id_is_neither_counted_nor_removed(self) -> None:
+        self.seed()
+        uppercase = asset("a").upper()
+        prompt_memory.put(uppercase, self.alice["id"], "prompt uppercase", kept_until=None, path=self.prompt_db)
+        self._receipt(self.app_a["id"], "req_uppercase")
+        self._job("req_uppercase", uppercase)
+
+        plan = self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()["removal_plan"]
+        self.assertEqual(plan, {"missing_items": 2}, "uppercase hex ids are not checkable digests")
+        response = self.remove_missing()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(len(self.job_ids("req_uppercase")), 1)
+        self.assertIn(uppercase, set(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)))
+
     def test_confirm_refuses_folder_swapped_after_the_read(self) -> None:
         self.seed()
         self.unconfirm_folder()

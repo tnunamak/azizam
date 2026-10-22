@@ -408,7 +408,9 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
   const open = folderToConfirm(folder);
   const label = `Remove ${own} ${own === 1 ? "entry" : "entries"}`;
   const title = own === 1 ? "Remove 1 entry with a missing file?" : `Remove ${own} entries with missing files?`;
-  const body = "Removes your entries for missing files, including saved job records whose media was already hidden or deleted. Receipts and stored files stay.";
+  const body = own === 1
+    ? "Removes your entry for a missing file and its saved prompt. Receipts and stored files stay."
+    : "Removes your entries for missing files and their saved prompts, including saved job records whose media was already hidden or deleted. Receipts and stored files stay.";
   if (!open) {
     return {
       title,
@@ -419,7 +421,7 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
   }
   if (open.library_items == null) {
     return {
-      title: "Can't remove missing items yet",
+      title: "Can't remove missing entries yet",
       body: "Azizam can't remove missing items until the owner confirms where the Library's files are kept.",
       confirmLabel: label,
       blocked: true,
@@ -433,7 +435,7 @@ function removalDialog(folder: MediaFolderView | null, own: number): RemovalDial
     : null;
   if (checked > 0 && here === 0) {
     return {
-      title: "Can't remove missing items yet",
+      title: "Can't remove missing entries yet",
       body: (
         <>
           {changed}
@@ -2718,7 +2720,7 @@ export default function LibraryPage() {
     )?.owner_user_id;
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
-  // Remove missing items clears the viewer's own entries, whoever is shown.
+  // Remove missing entries clears the viewer's own entries, whoever is shown.
   const missingItemCount = removalState?.removal_plan?.missing_items ?? 0;
   const removal = removalDialog(folder, missingItemCount);
   function returnFocus(assetId: string) {
@@ -3210,7 +3212,7 @@ export default function LibraryPage() {
                   className="h-auto min-h-6 min-w-6 px-0"
                   onClick={() => setConfirmingRemoval(true)}
                 >
-                  Remove missing items
+                  Remove missing entries
                 </Button>
               ) : null}
               <Button
