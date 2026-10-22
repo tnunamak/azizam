@@ -192,9 +192,12 @@
 # measured 15952; npx vitest list measured 3091 (2026-10-21).
 # The merged public error-copy fixture adds one parameterized case.
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
-# Workflow edit transport adds 19 collected cases; remeasure after merging r90.
+# Workflow edit transport: +8 manifest replays, +1 repeated-part contract,
+# +8 adapter-order checks and +2 real-catalog fixture checks. Full hermetic
+# --collect-only -q measured 15972 after merging r90 (2026-10-21).
 pytest = 15972
-# Try adds eight cases; remeasure the full Vitest list after merging r90.
+# Try adds eight repeated-part, real-catalog, filename and model-switch cases.
+# Full vitest list --json measured 3099 after merging r90 (2026-10-21).
 vitest = 3099
 playwright = 502
 
