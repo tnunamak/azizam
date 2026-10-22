@@ -161,7 +161,9 @@ class BuiltRequest:
     path: str
     json: dict[str, Any] | None = None
     data: dict[str, str] | None = None
-    files: dict[str, tuple[str, bytes, str]] | None = None
+    # httpx accepts a list, which is what keeps repeated part names (the edit
+    # route's `image[]`, one per picture) from collapsing into one.
+    files: list[tuple[str, tuple[str, bytes, str]]] | None = None
 
 
 def _combine_size(inputs: Mapping[str, Any], mapping: Mapping[str, Any], body: dict[str, Any]) -> None:
@@ -187,8 +189,9 @@ async def build_request(
     multipart = route.get("content_type", "").startswith("multipart")
     body: dict[str, Any] = {}
     ext: dict[str, Any] = {}
-    files: dict[str, tuple[str, bytes, str]] = {}
+    parts: list[tuple[int, str, tuple[str, bytes, str]]] = []
     consumed: set[str] = set()
+    order = {name: index for index, name in enumerate(mapping)}
     for name, value in inputs.items():
         m = mapping.get(name)
         if m is None:
@@ -204,7 +207,9 @@ async def build_request(
             raw, hint = await asset_bytes(read_asset, request, auth, name, value)
             media_type, suffix = sniff(raw, hint)
             part = m["field"] if where == "file" else name
-            files[part] = (f"{name}{suffix}", raw, media_type)
+            # Keep the request's part order matching the manifest's: the edit
+            # route binds pictures to workflow slots by submission order.
+            parts.append((order.get(name, len(order)), part, (f"{name}{suffix}", raw, media_type)))
             if where == "file+extension":
                 ext[m["field"]] = {"multipart_field": part}
         elif where == "extension":
@@ -223,6 +228,8 @@ async def build_request(
         body.setdefault("response_format", response_format)
     if ext:
         body["extensions"] = {WORKFLOW_EXTENSION_NAMESPACE: ext}
+
+    files = [(part, payload) for _, part, payload in sorted(parts, key=lambda item: item[0])]
 
     if wrap_intent:  # media-job submit
         return BuiltRequest("POST", route["path"], json={"intent": wrap_intent, "request": body})

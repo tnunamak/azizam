@@ -32069,7 +32069,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32148,7 +32148,7 @@
               "in": "form"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32235,7 +32235,7 @@
               "in": "form"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32331,7 +32331,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32529,7 +32529,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32600,8 +32600,8 @@
               "in": "form"
             },
             "reference_image_2": {
-              "field": "reference_image_2",
-              "in": "file+extension"
+              "field": "image[]",
+              "in": "file"
             },
             "reference_resolution": {
               "field": "reference_resolution",
@@ -32612,7 +32612,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32703,7 +32703,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             },
             "steps": {
@@ -32774,7 +32774,7 @@
               "in": "extension"
             },
             "source_image": {
-              "field": "image",
+              "field": "image[]",
               "in": "file"
             }
           },

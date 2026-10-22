@@ -67,6 +67,9 @@ _IMAGE_GENERATE_MANAGED = frozenset({"prompt", "source_image", "width", "height"
 _IMAGE_EDIT_MANAGED = frozenset(
     {"prompt", "source_image", "width", "height", "mask", "source_mask", "mask_asset"}
 )
+# The multipart part the OpenAI-compatible edit route reads pictures from. One
+# part per picture, in submission order; the field repeats.
+_IMAGE_EDIT_IMAGE_PART = "image[]"
 
 _JSON_TYPES = {
     "string": "string",
@@ -192,7 +195,8 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
       ``WIDTHxHEIGHT`` built from two inputs;
     * ``{"in": "extension", "field": name}``: a key under
       ``extensions["com.azizam.workflow"]``;
-    * ``{"in": "file", "field": f}``: a multipart file part;
+    * ``{"in": "file", "field": f}``: a multipart file part (repeat ``f``
+      once per input that names it);
     * ``{"in": "file+extension", ...}``: a multipart file part plus an
       extension value ``{"multipart_field": f}``;
     * ``{"in": "form", "field": name}``: a plain multipart form field (run route);
@@ -214,7 +218,18 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
             out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
         return out
 
+    # The OpenAI-compatible edit route takes every reference picture as a
+    # repeated ``image[]`` part, in submission order: the source picture first,
+    # then each input a backend binding marks ``route_bound_inputs``. Naming a
+    # second picture as its own part would describe a file that route never
+    # reads, so the catalog would teach a request that cannot work.
+    route_images = _native_route_image_inputs(record, is_asset) if intent == "image.edit" else []
+    for name in route_images:
+        out[name] = {"in": "file", "field": _IMAGE_EDIT_IMAGE_PART}
+
     for name in inputs:
+        if name in out:
+            continue
         if intent == "image.generate":
             managed = _IMAGE_GENERATE_MANAGED
             if name == "prompt":
@@ -229,7 +244,7 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
             if name == "prompt":
                 out[name] = {"in": "form", "field": "prompt"}
             elif name == "source_image":
-                out[name] = {"in": "file", "field": "image"}
+                out[name] = {"in": "file", "field": _IMAGE_EDIT_IMAGE_PART}
             elif name == "mask":
                 out[name] = {"in": "file", "field": "mask"}
             elif name in ("width", "height"):
@@ -268,6 +283,33 @@ def gateway_route(record: WorkflowRecord) -> str | None:
     binding = (record.manifest.get("bindings") or {}).get("gateway")
     route = binding.get("route") if isinstance(binding, Mapping) else None
     return route if isinstance(route, str) and route.startswith("/") else None
+
+
+def _native_route_image_inputs(
+    record: WorkflowRecord, is_asset: Mapping[str, bool]
+) -> list[str]:
+    """Asset inputs the native edit route carries as repeated ``image[]`` parts.
+
+    The source picture is the first part. Any backend binding's
+    ``route_bound_inputs`` adds the pictures the route reads itself, in the
+    manifest's order. Driven by manifest data only: no workflow id or engine
+    name appears here.
+    """
+    bound: set[str] = set()
+    bindings = record.manifest.get("bindings")
+    if isinstance(bindings, Mapping):
+        for binding in bindings.values():
+            if not isinstance(binding, Mapping):
+                continue
+            declared = binding.get("route_bound_inputs")
+            if isinstance(declared, list | tuple | set | frozenset):
+                bound.update(
+                    str(name) for name in declared if isinstance(name, str) and name
+                )
+    ordered = [name for name, asset in is_asset.items() if asset and name in bound and name != "source_image"]
+    if is_asset.get("source_image"):
+        ordered.insert(0, "source_image")
+    return ordered
 
 
 def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:

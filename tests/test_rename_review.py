@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from gateway import compat
 from gateway.extensions import extract_extension_namespace
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 # Extract the standalone generator without importing FastAPI or gateway stores.
 _tree = ast.parse((Path(__file__).resolve().parents[1] / 'gateway/workflows_catalog.py').read_text())
@@ -128,7 +128,7 @@ class RenameReviewTests(unittest.TestCase):
             def json(self): return {}
         for mime in ('application/json', 'multipart/form-data'):
             example = _python_example('POST', 'http://example.invalid', content_type=mime,
-                                      body={}, form={}, files={}, binary_response=False)
+                                      body={}, form={}, files=[], binary_response=False)
             self.assertNotIn('get_env', example)
             with patch.dict(os.environ, {'AZIZAM_API_KEY': 'offline'}, clear=True), patch.object(requests, 'request', return_value=Reply()) as request:
                 exec(example, {})
