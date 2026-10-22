@@ -28,12 +28,49 @@ function signInError(error: Error): string {
   return "Couldn’t sign you in. Check your connection and try again.";
 }
 
+// The name a person sees for their provider: the label the owner set, else a plain phrase.
+function providerNameFor(label: string | undefined): string {
+  return label && label !== "your identity provider"
+    ? label
+    : "your sign-in provider";
+}
+
+// A refused sign-in: the provider did not ask for a password just now, so no one is signed in. The way out is to sign
+// out at the provider. The link appears only when the gateway says the provider publishes a sign-out address.
+function NotFreshNotice({
+  provider,
+  signOut,
+}: {
+  provider: string;
+  signOut: boolean;
+}) {
+  return (
+    <p role="alert" className="text-body mb-6">
+      Azizam couldn’t confirm that {provider} just asked for your password.{" "}
+      {signOut ? (
+        <>
+          <a
+            className="text-link underline underline-offset-4"
+            href="/login/provider-sign-out"
+          >
+            Sign out of {provider}
+          </a>
+          , then try again.
+        </>
+      ) : (
+        <>Sign out of {provider}, then try again.</>
+      )}
+    </p>
+  );
+}
+
 export default function SignInPage() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [reset, setReset] = useState("");
   const [providerError, setProviderError] = useState<
-    "provider" | "no_sign_in_time" | null
+    "provider" | "no_sign_in_time" | "not_fresh" | null
   >(null);
+  const [providerSignOut, setProviderSignOut] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [ownerForm, setOwnerForm] = useState(false);
@@ -43,8 +80,13 @@ export default function SignInPage() {
     setReturnTo(params.get("return_to") || "/");
     const error = params.get("error");
     setProviderError(
-      error === "provider" || error === "no_sign_in_time" ? error : null,
+      error === "provider" ||
+        error === "no_sign_in_time" ||
+        error === "not_fresh"
+        ? error
+        : null,
     );
+    setProviderSignOut(params.get("provider_sign_out") === "1");
     setReset(
       new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
     );
@@ -97,6 +139,7 @@ export default function SignInPage() {
   const firstRun = setupData?.owner_exists === false && !reset;
   const data = optionsData;
   const provider = data?.oidc_label?.trim();
+  const providerName = providerNameFor(provider);
   const providerLabel =
     provider && provider !== "your identity provider"
       ? `Continue with ${provider}`
@@ -147,6 +190,12 @@ export default function SignInPage() {
             </div>
           ) : firstRun ? (
             <div className="space-y-6">
+              {providerError === "not_fresh" && (
+                <NotFreshNotice
+                  provider={providerName}
+                  signOut={providerSignOut}
+                />
+              )}
               <p className="text-muted-foreground text-body">
                 Create the first owner account to get started. If you were
                 invited, ask your host to finish setup.
@@ -172,6 +221,12 @@ export default function SignInPage() {
                   so Azizam can’t tell that you just confirmed. Confirm with your
                   Azizam password instead, or use an admin key for this action.
                 </p>
+              )}
+              {providerError === "not_fresh" && (
+                <NotFreshNotice
+                  provider={providerName}
+                  signOut={providerSignOut}
+                />
               )}
               {hasProvider && (
                 <Button
