@@ -354,6 +354,7 @@ function useGatewayHealth() {
   } = useQuery({
     queryKey: ["foundation", "reachability"],
     queryFn: async () => {
+      // eslint-disable-next-line no-restricted-globals -- /health: public liveness probe, read with no session
       const r = await fetch("/health");
       if (!r.ok) throw new Error("Gateway is unreachable");
       return r.json();
@@ -693,6 +694,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { data: instanceData } = useQuery({
     queryKey: ["foundation", "instance"],
     queryFn: async () => {
+      // eslint-disable-next-line no-restricted-globals -- /.well-known/azizam: public instance details, read before sign-in
       const response = await fetch("/.well-known/azizam");
       if (!response.ok) throw new Error("Instance details are unavailable");
       return response.json() as Promise<{

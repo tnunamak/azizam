@@ -50,5 +50,6 @@ export async function fetchEarly(url: string, init?: RequestInit): Promise<Respo
       /* fall through to a normal request */
     }
   }
+  // eslint-disable-next-line no-restricted-globals -- the fallback of fetchEarly, which only networkFetch calls
   return fetch(url, init);
 }

@@ -15,6 +15,15 @@
  * without BroadcastChannel reads the same record from the `storage` event.
  */
 import { navigate } from "@/lib/navigate";
+import { endingRequest } from "@/lib/network-error";
+import {
+  closeSession,
+  resetSessionGuardForTests,
+  sessionEpoch,
+  sessionIsClosed,
+  setSessionEpoch,
+} from "@/lib/session-guard";
+export { SessionEnded, sessionAccepts, sessionEpoch, sessionIsClosed, sessionSignal } from "@/lib/session-guard";
 
 export type EndKind = "switch" | "sign-out" | "sign-out-everywhere";
 export type FailureReason = "no-answer" | "gateway-error";
@@ -56,24 +65,12 @@ const KEEP_SESSION = ["azizam.handoff.last"];
 const END_KINDS: readonly EndKind[] = ["switch", "sign-out", "sign-out-everywhere"];
 const FAILURES: readonly FailureReason[] = ["no-answer", "gateway-error"];
 
-/** Rejects a request that the session ended before, or during, its answer. */
-export class SessionEnded extends Error {
-  readonly code = "session_ended";
-  constructor() {
-    super("This session has ended.");
-    this.name = "SessionEnded";
-  }
-}
-
 class GatewayStatus extends Error {
   constructor(readonly status: number) {
     super(`The gateway answered ${status}.`);
   }
 }
 
-let closed = false;
-let scope = new AbortController();
-let epoch: string | null = null;
 let shownPerson: string | null = null;
 let screen: SessionScreen = { kind: "idle" };
 let kind: EndKind = "sign-out";
@@ -82,24 +79,6 @@ let attempt: Promise<void> | null = null;
 let channel: BroadcastChannel | null = null;
 const listeners = new Set<() => void>();
 const stopHooks = new Set<() => void>();
-
-export function sessionIsClosed(): boolean {
-  return closed;
-}
-
-/** The abort signal every request of this page carries; it aborts when the session ends. */
-export function sessionSignal(): AbortSignal {
-  return scope.signal;
-}
-
-/** A response is current while this tab is open and the person it shows has not changed since the request began. */
-export function sessionAccepts(startedEpoch: string | null): boolean {
-  return !closed && (startedEpoch === null || startedEpoch === epoch);
-}
-
-export function sessionEpoch(): string | null {
-  return epoch;
-}
 
 /** Runs when this tab stops using its session (query caches and the CSRF token are dropped). */
 export function onSessionStopping(hook: () => void): () => void {
@@ -117,9 +96,8 @@ export function subscribeSession(listener: () => void): () => void {
 }
 
 function stop(): void {
-  if (closed) return;
-  closed = true;
-  scope.abort();
+  if (sessionIsClosed()) return;
+  closeSession();
   for (const hook of stopHooks) hook();
 }
 
@@ -139,7 +117,7 @@ function causeOf(end: EndKind): OtherTabCause {
 
 /** Switch person, Sign out and Sign out everywhere end the session here. A second call while this tab is already leaving is a no-op. */
 export function endSession(end: EndKind): Promise<void> {
-  if (closed) return attempt ?? Promise.resolve();
+  if (sessionIsClosed()) return attempt ?? Promise.resolve();
   kind = end;
   tries = 0;
   publish({ state: "LEAVING", since: Date.now(), kind: end, failure: null, tries: 0 });
@@ -181,9 +159,9 @@ export function resumeSignOut(): boolean {
 
 /** A page shown from the back/forward cache, or restored after a restart: check before anything paints. */
 export async function checkPageShown(): Promise<void> {
-  if (resumeSignOut() || closed) return;
+  if (resumeSignOut() || sessionIsClosed()) return;
   const seen = await readSessionNow();
-  if (closed) return;
+  if (sessionIsClosed()) return;
   const record = readHandoff();
   if (seen === null) {
     if (record?.state === "SIGNED_OUT") setOtherTab(causeOf(record.kind));
@@ -193,12 +171,12 @@ export async function checkPageShown(): Promise<void> {
   if (seen.epoch === null) {
     // No session view id: the browser holds no session now. A page that showed one must not stay on screen,
     // and neither may a page that a sign-out recorded in this browser (fail closed).
-    if (epoch !== null || record?.state === "SIGNED_OUT") setOtherTab(cause);
+    if (sessionEpoch() !== null || record?.state === "SIGNED_OUT") setOtherTab(cause);
     return;
   }
   // A session exists. A page that showed no session has nothing to compare with; a page that did must still
   // be the same person, and a page whose person is no longer signed in is not shown.
-  if (epoch === null) return;
+  if (sessionEpoch() === null) return;
   if (!seen.authenticated && shownPerson !== null) {
     setOtherTab(cause);
     return;
@@ -207,7 +185,7 @@ export async function checkPageShown(): Promise<void> {
     setOtherTab(cause);
     return;
   }
-  epoch = seen.epoch;
+  setSessionEpoch(seen.epoch);
 }
 
 /** Whether a snapshot is still the person this page shows. A known person is compared as a person: the same
@@ -216,7 +194,7 @@ export async function checkPageShown(): Promise<void> {
 function sameShownPerson(seen: SessionView): boolean {
   const person = seen.person ?? null;
   if (person !== null && shownPerson !== null) return person === shownPerson;
-  return seen.epoch === epoch;
+  return seen.epoch === sessionEpoch();
 }
 
 /**
@@ -225,9 +203,9 @@ function sameShownPerson(seen: SessionView): boolean {
  * same person in a new session is adopted without a screen.
  */
 export function observeViewer(seen: SessionView): void {
-  if (closed || seen.epoch === null) return;
-  if (epoch === null) {
-    epoch = seen.epoch;
+  if (sessionIsClosed() || seen.epoch === null) return;
+  if (sessionEpoch() === null) {
+    setSessionEpoch(seen.epoch);
     shownPerson = seen.person ?? null;
     return;
   }
@@ -235,7 +213,7 @@ export function observeViewer(seen: SessionView): void {
     setOtherTab("server");
     return;
   }
-  epoch = seen.epoch;
+  setSessionEpoch(seen.epoch);
 }
 
 /** A sign-in clears the record of an earlier sign-out (SECURITY.md section 3). */
@@ -310,9 +288,7 @@ function wipeTabStorage(): void {
 
 /** Test-only: forget this page's state between specs. */
 export function resetSessionStateForTests(): void {
-  closed = false;
-  scope = new AbortController();
-  epoch = null;
+  resetSessionGuardForTests();
   kind = "sign-out";
   tries = 0;
   attempt = null;
@@ -463,7 +439,7 @@ async function askGateway(end: EndKind, signal: AbortSignal): Promise<Answer> {
 }
 
 function post(path: string, token: string, signal: AbortSignal): Promise<Response> {
-  return fetch(path, {
+  return endingRequest(path, {
     method: "POST",
     credentials: "same-origin",
     headers: { "x-azizam-csrf": token, accept: "application/json" },
@@ -477,7 +453,7 @@ async function sessionStillLive(signal: AbortSignal): Promise<boolean> {
 }
 
 async function readSession(signal: AbortSignal): Promise<SessionView & { csrf: string | null }> {
-  const response = await fetch(SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
+  const response = await endingRequest(SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
   if (response.status === 401) return { authenticated: false, epoch: null, person: null, csrf: null };
   if (!response.ok) throw new GatewayStatus(response.status);
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -498,7 +474,7 @@ export function personOf(body: Record<string, unknown> | null): string | null {
 
 /** The owner's admin session, for a browser whose own snapshot has no CSRF token. Members get 403 here. */
 async function readAdmin(signal: AbortSignal): Promise<{ live: boolean; csrf: string | null }> {
-  const response = await fetch(ADMIN_SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
+  const response = await endingRequest(ADMIN_SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
   if (response.status === 401 || response.status === 403) return { live: false, csrf: null };
   if (!response.ok) throw new GatewayStatus(response.status);
   const body = (await response.json().catch(() => null)) as { actor?: { csrf_token?: unknown } } | null;

@@ -13,7 +13,7 @@ import {
   sessionEpoch,
   sessionIsClosed,
   sessionSignal,
-} from "@/lib/session-end";
+} from "@/lib/session-guard";
 export const NETWORK_FAILURE_MESSAGE =
   "Can’t reach Azizam. Check your connection, then try again.";
 
@@ -54,9 +54,13 @@ export async function networkFetch(
   const joined = joinSignals(init?.signal ?? undefined, sessionSignal());
   try {
     const request = { ...init, signal: joined.signal };
-    // `early`: a GET the document head may already have started (lib/early-fetch.ts).
+    // `early`: a GET the document head may already have started (lib/early-fetch.ts). Every helper's request
+    // goes through here.
     const response =
-      early && typeof input === "string" ? await fetchEarly(input, request) : await fetch(input, request);
+      early && typeof input === "string"
+        ? await fetchEarly(input, request)
+        : // eslint-disable-next-line no-restricted-globals -- this is the guarded wrapper itself
+          await fetch(input, request);
     if (!sessionAccepts(started)) throw new SessionEnded();
     return response;
   } catch (error) {
@@ -90,4 +94,14 @@ function joinSignals(
       session.removeEventListener("abort", abort);
     },
   };
+}
+
+/**
+ * A request that is part of ending the session: the sign-out's own calls. The guard must not refuse them, and
+ * the session's signal must not abort them, since ending the session is what aborts everything else. They carry
+ * only the caller's own signal (its time budget).
+ */
+export function endingRequest(input: string, init: RequestInit): Promise<Response> {
+  // eslint-disable-next-line no-restricted-globals -- the sign-out's own requests bypass the guard they end
+  return fetch(input, init);
 }
