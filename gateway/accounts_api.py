@@ -224,6 +224,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them."""
         same_origin(request)
         path, cookie = path_provider(), cookie_provider()
+        # TODO(A4, not this round): throttle_remembered writes through accounts.connection, and any write there
+        # invalidates the asset-family memo, so every list read resets it. Move the limiter off that path when A4 lands.
         accounts.throttle_remembered(client_ip(request), path=path)
         if remembered_people.memory_mode(path) != remembered_people.REMEMBER:
             return {"remember": False, "people": []}

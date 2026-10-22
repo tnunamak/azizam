@@ -137,7 +137,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
-        # nullable: true keeps a name, false takes it off, null leaves the list alone (review round 2).
+        # nullable: true keeps a name, false takes it off, null leaves the list alone.
         assert route_graph.openapi_digest(proxy.app) == "528b12f9c10bec73617c3f7e08a00985d8cee184301bac584a11ff23455cd60c"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

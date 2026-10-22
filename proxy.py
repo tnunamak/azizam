@@ -17825,7 +17825,7 @@ async def admin_oidc_callback(request: Request):
             if state.reauth and _provider_auth_time(claims) is None:
                 raise ProviderReportsNoSignInTime(NO_SIGN_IN_TIME_MESSAGE)
             # A tile sign-in is a fresh one too, and only for the person the tile named. Both are refused before any
-            # write, so a refusal leaves no session and no row (review round 2, F2).
+            # write, so a refusal leaves no session and no row.
             if (state.reauth or state.tile_person_id) and not _provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
             if state.tile_person_id:

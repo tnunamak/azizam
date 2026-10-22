@@ -501,7 +501,7 @@ def test_owner_setting_can_be_saved_back_to_remember(tls):
 
 
 # ---------------------------------------------------------------------------
-# The box: keep, forget, or leave the list alone (review round 2, F1)
+# The box: keep, forget, or leave the list alone
 # ---------------------------------------------------------------------------
 
 def device_rows(g, client):
@@ -583,7 +583,7 @@ def test_a_failed_sign_in_with_the_box_unticked_forgets_nobody(tls):
 
 
 # ---------------------------------------------------------------------------
-# A tile through the provider: fresh, and the same person (review round 2, F2 and F4)
+# A tile through the provider: fresh, and the same person
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("auth_time", [None, 1_700_000_000], ids=["no-auth-time", "auth-time-long-ago"])
@@ -619,7 +619,7 @@ def test_a_tile_sso_sign_in_that_returns_someone_else_is_refused_and_adds_no_nam
 
 
 # ---------------------------------------------------------------------------
-# Names that come from an address (review round 2, F3)
+# Names that come from an address
 # ---------------------------------------------------------------------------
 
 def test_two_names_from_one_address_local_part_on_different_domains_get_no_hints(tls):
@@ -637,7 +637,7 @@ def test_two_names_from_one_address_local_part_on_different_domains_get_no_hints
 
 
 # ---------------------------------------------------------------------------
-# What a sign-in may write (review round 2, F5 and F6)
+# What a sign-in may write
 # ---------------------------------------------------------------------------
 
 def test_keep_reads_the_owner_setting_inside_its_write_transaction(tls, monkeypatch):
@@ -702,7 +702,7 @@ def test_a_sign_in_sweeps_names_unused_for_ninety_days_from_every_browser(tls):
 
 
 # ---------------------------------------------------------------------------
-# The owner's password switch and the list (review round 2, F7)
+# The owner's password switch and the list
 # ---------------------------------------------------------------------------
 
 def test_with_password_sign_in_off_no_password_name_is_listed_not_even_the_owners(tls):
@@ -720,7 +720,7 @@ def test_with_password_sign_in_off_no_password_name_is_listed_not_even_the_owner
 
 
 # ---------------------------------------------------------------------------
-# The tile start does its lookup off the event loop (review round 2, F8)
+# The tile start looks the name up off the event loop
 # ---------------------------------------------------------------------------
 
 def test_the_tile_sign_in_start_looks_the_name_up_off_the_event_loop(tls, monkeypatch):
@@ -746,7 +746,7 @@ def test_the_tile_sign_in_start_looks_the_name_up_off_the_event_loop(tls, monkey
 
 
 # ---------------------------------------------------------------------------
-# Mutation-check gaps (review round 2): these pass on the fixed code too
+# Guards that pass on the fixed code too (mutation-check gaps)
 # ---------------------------------------------------------------------------
 
 def test_a_tile_from_another_device_is_refused_even_when_the_request_has_its_own_device_cookie(tls):

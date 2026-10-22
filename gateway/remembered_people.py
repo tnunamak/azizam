@@ -6,8 +6,8 @@ remembered person: an HMAC of the device key and the person id, under a key deri
 A tile is stable on its own device, useless on another, and does not show the id it stands for.
 
 A tile names a row, never a session. Signing in still needs the person's own password or their provider sign-in
-(gateway.accounts_api and proxy.py). A removed or disabled person's rows are deleted with the change. A row unused for 90
-days is swept by the next sign-in, and any row the list does not offer is deleted the first time the list reads it.
+(gateway.accounts_api and proxy.py). A removed or disabled person's rows are deleted with the change. A row unused
+for 90 days is swept by the next sign-in, and any row the list does not offer is deleted the first time the list reads it.
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def memory_mode(path: Path) -> str:
 
 
 def _memory_mode_in(conn) -> str:
-    """:func:`memory_mode` as an open write transaction sees it, so a switch to nobody cannot land between check and write."""
+    """:func:`memory_mode` as the open write transaction sees it, so a switch cannot land mid-write."""
     return _mode_of(admin_store.get_operator_setting_in(conn, SETTING_KEY))
 
 
@@ -125,7 +125,7 @@ def _live(conn, device: str, now_ms: int) -> list[dict[str, Any]]:
 
 
 def _name(row: Mapping[str, Any]) -> tuple[str, bool]:
-    """The name on the person's account, read now, so a rename shows without a new sign-in; and whether a provider gave it.
+    """The name on the person's account, read now (a rename shows without a new sign-in), and whether a provider gave it.
 
     A provider that sends no name leaves the address there instead, so an address is never the name: the part before
     the @ stands in for it, and that stand-in is not a provider's name.
@@ -230,7 +230,7 @@ def keep(*, path: Path, token: str | None, person_id: str, method: str, issuer: 
     ``remember`` is the sign-in page's box: True keeps the person's name on this browser, False takes it off, and None
     (not sent) leaves the list alone. ``from_tile`` marks a sign-in that started from one of this list's tiles: it
     refreshes the name the list already holds and never adds one. Every call also sweeps the names unused for 90 days,
-    on every browser. Returns a new device token only when it stored a name under it, which the caller sets as the cookie.
+    on every browser. Returns a new device token only if it stored a name under it; the caller sets it as the cookie.
     """
     if remember is None and not from_tile:
         return None
