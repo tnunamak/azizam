@@ -125,15 +125,17 @@ def _live(conn, device: str, now_ms: int) -> list[dict[str, Any]]:
 
 
 def _name(row: Mapping[str, Any]) -> tuple[str, bool]:
-    """The name on the person's account, read now (a rename shows without a new sign-in), and whether a provider gave it.
+    """The name on the person's account, read now (a rename shows without a new sign-in), and whether it may take a hint.
 
-    A provider that sends no name leaves the address there instead, so an address is never the name: the part before
-    the @ stands in for it, and that stand-in is not a provider's name.
+    A provider's name may take a hint unless it is the address's own local part: beside a hint, ``alice`` for
+    alice@corp.test would give the whole address away. A provider that sends no name leaves the address there instead, so
+    an address is never the name: the part before the @ stands in for it, and that stand-in takes no hint.
     """
     name = (row["display_name"] or "").strip()
+    local = (row["email"] or "").split("@", 1)[0].strip()
     if name and "@" not in name:
-        return name, True
-    return (row["email"] or "").split("@", 1)[0].strip() or "Person", False
+        return name, name.casefold() != local.casefold()
+    return local or "Person", False
 
 
 def _initial(name: str) -> str:
@@ -180,7 +182,7 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
     choices = avatars.get_many(names.keys(), path=path)
     people = []
     for row in rows:
-        name, from_provider = names[row["person_id"]]
+        name, may_hint = names[row["person_id"]]
         choice = choices[row["person_id"]]["choice"]
         people.append({
             "tile": tile_for(signing_key, device, row["person_id"]),
@@ -190,8 +192,8 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
             "method": row["method"],
             "provider": provider_label if row["method"] == "sso" else None,
             # Two provider names that match are told apart by the start of their address. A name taken from an
-            # address never shows one: that would give the address away.
-            "hint": _hint(row["email"]) if from_provider and counts[name.casefold()] > 1 else None,
+            # address, or one equal to its local part, never shows one: with the hint it would give the address away.
+            "hint": _hint(row["email"]) if may_hint and counts[name.casefold()] > 1 else None,
         })
     return people
 
