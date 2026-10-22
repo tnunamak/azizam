@@ -116,7 +116,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `GET /openai/v1/responses/{id}` | OpenAI Responses | Read back. |
 | `DELETE /openai/v1/responses/{id}` | OpenAI Responses | |
 | `POST /openai/v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. Honors `output_format`/`output_compression`/`background`/`quality`; see "Image output shape" below. |
-| `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. Accepts up to as many `image[]` reference images as the resolved workflow supports (every shipped workflow today: 1; more get a clear 400, not a silent drop). Same `output_format`/`output_compression`/`background`/`quality` handling as generations. |
+| `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. Accepts the number of repeated `image[]` parts supported by the resolved workflow: the multi-reference edit accepts two pictures, while single-image workflows reject extra pictures with a clear 400. Same `output_format`/`output_compression`/`background`/`quality` handling as generations. |
 | `POST /openai/v1/images/variations` | OpenAI Images | Routed through a configurable edit-capable workflow (`images.variations.default_workflow` in `proxy_config.yml`) with a fixed generic prompt -- there is no local model dedicated to variations. See "Image variations" below. |
 | `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |

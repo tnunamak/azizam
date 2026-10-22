@@ -23,7 +23,59 @@ EDIT_RECORDS = [record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
                 if record.intent == "image.edit"
                 and _execution(record, None)["sync"]["path"] == "/v1/images/edits"]
 assert EDIT_RECORDS, "no image.edit manifests discovered"
+EXPECTED_EDIT_MANIFEST_IDS = {
+    "image.edit.flux2-klein",
+    "image.edit.qwen-image-2.1-edit-multiref",
+}
 SELECT_EDIT_WORKFLOW = proxy._select_edit_workflow
+
+
+def validate_edit_manifest_contract(manifest):
+    """Raise a useful assertion when edit multipart ordering/requiredness drifts."""
+    inputs = manifest.get("inputs", {})
+    bindings = manifest.get("bindings", {}).values()
+    route_bound = [name for binding in bindings
+                   for name in binding.get("route_bound_inputs", [])]
+    for name in route_bound:
+        assert name in inputs and inputs[name].get("type") == "asset", (
+            f"{manifest.get('id')}: route_bound_inputs asset {name!r} must be declared as an asset input")
+        assert inputs[name].get("required") is True, (
+            f"{manifest.get('id')}: route_bound_inputs asset {name!r} must declare required: true")
+    asset_inputs = [name for name, spec in inputs.items() if spec.get("type") == "asset"]
+    expected_order = ["source_image", *route_bound]
+    assert asset_inputs[:len(expected_order)] == expected_order, (
+        f"{manifest.get('id')}: image.edit asset inputs must list source_image first, "
+        "then route_bound_inputs in declaration order")
+
+
+def test_manifest_contract_rejects_optional_route_bound_asset():
+    manifest = {"id": "synthetic.optional", "inputs": {
+        "source_image": {"type": "asset", "required": True},
+        "reference": {"type": "asset"},
+    }, "bindings": {"route": {"route_bound_inputs": ["reference"]}}}
+    with pytest.raises(AssertionError, match="must declare required: true"):
+        validate_edit_manifest_contract(manifest)
+
+
+def test_manifest_contract_rejects_wrong_asset_order():
+    manifest = {"id": "synthetic.order", "inputs": {
+        "reference": {"type": "asset", "required": True},
+        "source_image": {"type": "asset", "required": True},
+    }, "bindings": {"route": {"route_bound_inputs": ["reference"]}}}
+    with pytest.raises(AssertionError, match="source_image first"):
+        validate_edit_manifest_contract(manifest)
+
+
+def test_expected_edit_manifest_registry_is_complete():
+    actual = {record.id for record in EDIT_RECORDS}
+    assert actual == EXPECTED_EDIT_MANIFEST_IDS, (
+        f"image.edit manifest registry changed: expected {sorted(EXPECTED_EDIT_MANIFEST_IDS)}, "
+        f"found {sorted(actual)}")
+
+
+@pytest.mark.parametrize("record", EDIT_RECORDS, ids=lambda record: record.id)
+def test_edit_manifest_declares_route_assets_required_and_in_multipart_order(record):
+    validate_edit_manifest_contract(record.manifest)
 
 
 def example_request(record):
