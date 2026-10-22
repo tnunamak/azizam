@@ -202,7 +202,7 @@ describe("AppShell accessible names", () => {
     });
     await user.click(menus[0]);
     await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-    // The session is still live after the gateway's refusal and one retry: the cover says so.
+    // The session is still live after the gateway's refusal and one retry; the cover says so.
     expect(await screen.findByRole("heading", { name: "Couldn’t finish signing out" })).toBeVisible();
     expect(screen.getByText(/The gateway didn’t finish signing you out/)).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
