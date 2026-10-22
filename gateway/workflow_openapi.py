@@ -661,7 +661,7 @@ def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
         # The video route takes its own fields at the top level and refuses
         # them inside the extension namespace, so advertise the extension-only
         # input schema there. Other routes share one schema for both places.
-        prefix = EXTENSION_SCHEMA_PREFIX if record.intent == "video.generate" else SCHEMA_PREFIX
+        prefix = EXTENSION_SCHEMA_PREFIX if record.intent.startswith("video.") else SCHEMA_PREFIX
         return _ref(_schema_name(record, prefix))
 
     return {
@@ -717,7 +717,7 @@ def augment_openapi(
     components["MediaJobContent"] = copy.deepcopy(_MEDIA_JOB_CONTENT_SCHEMA)
     for record in records:
         components[_schema_name(record)] = advertised_inputs_schema(record)
-        if record.intent == "video.generate":
+        if record.intent.startswith("video."):
             components[_schema_name(record, EXTENSION_SCHEMA_PREFIX)] = extension_inputs_schema(record)
 
     paths = spec.setdefault("paths", {})

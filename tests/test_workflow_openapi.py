@@ -186,7 +186,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 "com.azizam.workflow"
             ]["anyOf"]
             wanted = {
-                (extension_schema_name(r.id) if r.intent == "video.generate" else schema_name(r.id))
+                (extension_schema_name(r.id) if r.intent.startswith("video.") else schema_name(r.id))
                 for r in self.registry.records()
                 if r.intent.startswith(intent)
             }

@@ -295,7 +295,9 @@ class WorkflowsCatalogTests(unittest.TestCase):
             schema["description"] for schema in spec["components"]["schemas"].values()
             if schema.get("x-azizam-workflow-id") == manifest["id"]
         ]
-        self.assertEqual(descriptions, [manifest["summary"], manifest["summary"]])
+        # The full input schema, the run form and the video route's
+        # extension-only schema all carry the summary.
+        self.assertEqual(descriptions, [manifest["summary"]] * 3)
         operation = next(iter(spec["paths"].values()))["post"]
         self.assertEqual(operation["description"], manifest["summary"])
         self.assertNotIn(manifest["description"], json.dumps(spec))
