@@ -61,7 +61,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("ends the menu with a separator, then Switch person, then Sign out", async () => {
+it("account menu has Switch person and Sign out as separate items, in that order, after a separator", async () => {
   render(<Menu />);
   await screen.findByRole("menuitem", { name: "Switch person" });
 
