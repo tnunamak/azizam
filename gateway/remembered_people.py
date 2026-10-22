@@ -229,8 +229,8 @@ def keep(*, path: Path, token: str | None, person_id: str, method: str, issuer: 
 
     ``remember`` is the sign-in page's box: True keeps the person's name on this browser, False takes it off, and None
     (not sent) leaves the list alone. ``from_tile`` marks a sign-in that started from one of this list's tiles: it
-    refreshes the name the list already holds and never adds one. Every call also sweeps the names unused for 90 days,
-    on every browser. Returns a new device token only if it stored a name under it; the caller sets it as the cookie.
+    refreshes the name the list already holds and never adds one. A call that writes also sweeps the names unused for 90
+    days, on every browser. Returns a new device token only if it stored a name under it; the caller sets it as the cookie.
     """
     if remember is None and not from_tile:
         return None
