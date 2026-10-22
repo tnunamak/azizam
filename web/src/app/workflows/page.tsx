@@ -10,6 +10,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { networkFetch } from "@/lib/network-error";
 import { capabilityLabels } from "@/lib/terms";
 import {
   MEDIA_NOUN,
@@ -80,7 +81,7 @@ const capabilityOrder: WorkflowCapability[] = [
 ];
 
 async function fetchWorkflows(): Promise<WorkflowsCatalog> {
-  const response = await fetch("/me/api/workflows", {
+  const response = await networkFetch("/me/api/workflows", {
     credentials: "same-origin",
   });
   if (!response.ok) {

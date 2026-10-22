@@ -52,6 +52,7 @@ describe("viewer fallback contract", () => {
     expect(fetch).toHaveBeenCalledExactlyOnceWith("/me/api/session", expect.objectContaining({
       credentials: "same-origin",
       cache: "no-store",
+      signal: expect.any(AbortSignal),
     }));
   });
 

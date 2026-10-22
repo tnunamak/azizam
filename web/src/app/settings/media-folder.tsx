@@ -12,6 +12,7 @@ import {
   noneHereSentence,
   type MediaFolderView,
 } from "@/lib/media-folder";
+import { networkFetch } from "@/lib/network-error";
 import { toast } from "@/lib/toast";
 
 const mediaFolderKey = ["settings", "media-folder"] as const;
@@ -20,7 +21,10 @@ const mediaFolderKey = ["settings", "media-folder"] as const;
 class Refused extends Error {}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...init });
+  const response = await networkFetch(path, {
+    credentials: "same-origin",
+    ...init,
+  });
   if (!response.ok) {
     const failure: { error?: { code?: unknown; message?: unknown } } | null =
       await response.json().catch(() => null);

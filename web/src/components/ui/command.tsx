@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { api, queryKeys } from "@/lib/api";
+import { networkFetch } from "@/lib/network-error";
 import { destinations } from "@/lib/product";
 import { useViewer } from "@/components/shell/session";
 import { formatAppName, formatPersonName } from "@/lib/format";
@@ -245,7 +246,7 @@ export function CommandPalette({
   } = useQuery({
     queryKey: ["foundation", "command-apps"],
     queryFn: async () => {
-      const r = await fetch("/me/api/session");
+      const r = await networkFetch("/me/api/session");
       if (!r.ok) throw new Error();
       const data = await r.json();
       if (!Array.isArray(data.apps)) throw new Error("Apps were not returned");
@@ -303,6 +304,7 @@ export function CommandPalette({
     setAddressError(false);
     setCopyAddress(null);
     try {
+      // eslint-disable-next-line no-restricted-globals -- public instance details and liveness, read with no session
       const response = await fetch("/.well-known/azizam");
       if (!response.ok) throw new Error();
       const discovery = await response.json();
@@ -325,6 +327,7 @@ export function CommandPalette({
   async function testConnection() {
     setBusy(true);
     try {
+      // eslint-disable-next-line no-restricted-globals -- public instance details and liveness, read with no session
       const response = await fetch("/health", { cache: "no-store" });
       if (!response.ok) {
         toast.error("The gateway responded, but reported a problem. View Status.");

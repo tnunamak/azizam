@@ -15,6 +15,7 @@ import {
 import { useViewer } from "@/components/shell/session";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { formatTimestamp } from "@/lib/format";
+import { networkFetch } from "@/lib/network-error";
 import { memberTerms, taskNames } from "@/lib/terms";
 import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
@@ -861,7 +862,7 @@ function ReceiptsList({
 class ReceiptUnavailable extends Error {}
 
 async function fetchReceipt(requestId: string): Promise<UsageReceipt> {
-  const response = await fetch(
+  const response = await networkFetch(
     `/me/api/receipts/${encodeURIComponent(requestId)}`,
     { credentials: "same-origin", cache: "no-store" },
   );
@@ -1046,7 +1047,7 @@ async function fetchUsageSummary(
   const params = new URLSearchParams({ period: "month" });
   if (person !== "default") params.set("person", person);
   if (source !== "all") params.set("source", source);
-  const response = await fetch(`/me/api/usage/summary?${params}`, {
+  const response = await networkFetch(`/me/api/usage/summary?${params}`, {
     credentials: "same-origin",
     cache: "no-store",
   });

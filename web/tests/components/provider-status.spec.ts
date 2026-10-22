@@ -66,10 +66,15 @@ describe("provider status contract", () => {
       vi.stubGlobal("fetch", fetchMock);
       await expect(fetchProviderStatus()).resolves.toEqual(payload);
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(fetchMock).toHaveBeenCalledWith("/admin/api/providers", {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
+      // The request also carries the session's abort signal (network-error.ts).
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/admin/api/providers",
+        expect.objectContaining({
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: expect.any(AbortSignal),
+        }),
+      );
     },
   );
 

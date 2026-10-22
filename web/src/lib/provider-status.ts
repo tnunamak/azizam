@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { networkFetch } from "@/lib/network-error";
 
 export type ProviderTone = "ok" | "warn" | "bad" | "neutral";
 export type ProviderKeyState = "set" | "missing" | "unknown";
@@ -184,7 +185,7 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
 export async function fetchProviderStatus(): Promise<
   unknown[] | { providers: unknown[] } | null
 > {
-  const response = await fetch("/admin/api/providers", {
+  const response = await networkFetch("/admin/api/providers", {
     credentials: "same-origin",
     cache: "no-store",
   });

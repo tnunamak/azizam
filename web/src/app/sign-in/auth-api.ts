@@ -17,6 +17,7 @@ export async function authFetch<T>(
   body?: object,
   headers?: Record<string, string>,
 ): Promise<T> {
+  // eslint-disable-next-line no-restricted-globals -- sign-in runs before a browser session exists, so there is no session to guard
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     credentials: "same-origin",

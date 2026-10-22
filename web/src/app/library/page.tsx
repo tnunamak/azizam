@@ -627,7 +627,7 @@ async function shareCreation(asset: MediaAsset, everyone: boolean) {
   const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
   let media: Response;
   try {
-    media = await fetch(payload.download_url);
+    media = await networkFetch(payload.download_url);
   } catch {
     throw new LibraryFailure("download", "unknown");
   }

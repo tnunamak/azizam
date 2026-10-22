@@ -1235,8 +1235,15 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     await act(async () => { pending.resolve(Response.json(gapCatalog())); });
     expect(await screen.findByRole("listitem", { name: workflows[0].title })).toBeVisible();
     expect(screen.queryByRole("status", { name: "Loading workflows" })).toBeNull();
+    // Each request also carries the session's abort signal (network-error.ts).
     expect(gapCatalogCalls(fetcher)).toEqual([
-      ["/me/api/workflows", { credentials: "same-origin" }],
+      [
+        "/me/api/workflows",
+        expect.objectContaining({
+          credentials: "same-origin",
+          signal: expect.any(AbortSignal),
+        }),
+      ],
     ]);
   });
 
@@ -1767,7 +1774,10 @@ describe("Workflows catalog, detail and API branch regressions", () => {
       ["workflow", workflows[0].id],
       ["limit", "5"],
     ]);
-    expect(init).toEqual({ credentials: "same-origin" });
+    expect(init).toEqual(expect.objectContaining({
+      credentials: "same-origin",
+      signal: expect.any(AbortSignal),
+    }));
     await act(async () => { pending.resolve(Response.json({ assets: [] })); });
     expect(await sheet.findByText("No creations yet. Open this workflow in Try.")).toBeVisible();
     expect(sheet.queryByRole("status", { name: "Loading recent creations" })).toBeNull();
@@ -2118,7 +2128,11 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     expect(await readJson<typeof payload>("/me/api/media?workflow=example&limit=5")).toEqual(payload);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith(
-      "/me/api/media?workflow=example&limit=5", { credentials: "same-origin" },
+      "/me/api/media?workflow=example&limit=5",
+      expect.objectContaining({
+        credentials: "same-origin",
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -2192,7 +2206,10 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     const fetcher = vi.fn(async () => Response.json(payload));
     vi.stubGlobal("fetch", fetcher);
     expect(await readRecentAssets("/me/api/media")).toEqual(payload);
-    expect(fetcher).toHaveBeenCalledWith("/me/api/media", { credentials: "same-origin" });
+    expect(fetcher).toHaveBeenCalledWith("/me/api/media", expect.objectContaining({
+      credentials: "same-origin",
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   // Protects workflow-api.ts:71-72 at f1cac8a.

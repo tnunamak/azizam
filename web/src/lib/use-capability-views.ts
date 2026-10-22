@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
+import { networkFetch } from "@/lib/network-error";
 import { engineShortName } from "@/lib/health-presentation";
 import { useOptionalProviderStatus } from "@/lib/provider-status";
 import {
@@ -61,7 +62,7 @@ export function useActivitySample(enabled: boolean) {
     queryKey: ["status", "recent-requests"],
     enabled,
     queryFn: async (): Promise<ActivityRecord[]> => {
-      const response = await fetch(
+      const response = await networkFetch(
         `/admin/api/activity/requests?limit=${ACTIVITY_SAMPLE}`,
         { credentials: "same-origin" },
       );

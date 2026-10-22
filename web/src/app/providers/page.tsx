@@ -54,6 +54,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { adminFetch, ApiError } from "@/lib/api";
+import { networkFetch } from "@/lib/network-error";
 import { useViewer } from "@/components/shell/session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/cn";
@@ -545,7 +546,7 @@ function modelPayload(models: ProviderModel[]) {
 }
 
 async function jsonFetch(path: string, init?: RequestInit) {
-  const response = await fetch(path, {
+  const response = await networkFetch(path, {
     credentials: "same-origin",
     cache: "no-store",
     ...init,
