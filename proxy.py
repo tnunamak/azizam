@@ -11161,7 +11161,7 @@ async def proxy_graph_video_create(
         )
     if requested_frames is not None:
         # An explicit frame count is exact; it overrides `seconds` and the
-        # seconds-derived snap (and may exceed the seconds cap by design).
+        # seconds-derived snap; the manifest bounds it (minimum, maximum, grid).
         length = requested_frames
     # `actual_seconds` is what the rendered mp4 will actually contain (within
     # codec/container rounding). It starts as the LTX 8N+1-snapped duration for

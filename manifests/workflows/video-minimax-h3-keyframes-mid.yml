@@ -48,12 +48,15 @@ inputs:
     help: Which frame the middle picture pins to; defaults to half the frame count.
     type: integer
     minimum: 1
+    maximum: 360
   frames:
     label: Length in frames
     help: Exact frame count on the 17N+5 grid; wins over `seconds`.
     type: integer
     step: 17
     offset: 5
+    minimum: 22
+    maximum: 362
 outputs:
   video:
     media_type: video/mp4

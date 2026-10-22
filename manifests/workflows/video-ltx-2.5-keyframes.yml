@@ -62,6 +62,8 @@ inputs:
     type: integer
     step: 8
     offset: 1
+    minimum: 9
+    maximum: 241
   img_compression:
     label: Guide compression
     help: Compression used for the guide pictures before they are encoded; 0 to 100.

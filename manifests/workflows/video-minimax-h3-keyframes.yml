@@ -44,6 +44,8 @@ inputs:
     type: integer
     step: 17
     offset: 5
+    minimum: 22
+    maximum: 362
 outputs:
   video:
     media_type: video/mp4

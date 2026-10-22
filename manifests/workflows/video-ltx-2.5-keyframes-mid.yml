@@ -66,6 +66,7 @@ inputs:
     help: Which frame the middle picture pins to; defaults to half the frame count.
     type: integer
     minimum: 1
+    maximum: 239
   mid_frame_strength:
     label: Middle picture influence
     help: Adjust how strongly the middle picture shapes its frame; 1 pins it.
@@ -79,6 +80,8 @@ inputs:
     type: integer
     step: 8
     offset: 1
+    minimum: 9
+    maximum: 241
   img_compression:
     label: Guide compression
     help: Compression used for the guide pictures before they are encoded; 0 to 100.
