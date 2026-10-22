@@ -345,9 +345,8 @@ type Answer = { ended: true; next: string } | { ended: false; reason: FailureRea
 
 /** One attempt, under one budget of ANSWER_MS for everything it asks. */
 async function gatewayAnswer(end: EndKind): Promise<Answer> {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return { ended: false, reason: "no-answer" };
-  }
+  // No navigator.onLine check here: it is a hint, and a browser can be wrong about it. The request
+  // itself decides; a dropped connection fails it as "no answer".
   const budget = new AbortController();
   const timer = setTimeout(() => budget.abort(), ANSWER_MS);
   try {

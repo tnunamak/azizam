@@ -41,12 +41,22 @@ afterEach(() => {
 });
 
 describe("R1 navigator.onLine is a hint, not a gate", () => {
+  // Corrected in W1 r2: the first attempt must fail because the connection drops (fetch rejects), not
+  // because of navigator.onLine. The original version expected onLine to fail the first attempt, which
+  // is the pre-check the finding is about. The POST count below also counts only the retry.
   it("Try again asks the gateway even when the browser says it is offline", async () => {
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    let connected = false;
+    routes.set("POST /logout", () => {
+      if (!connected) throw new TypeError("Failed to fetch");
+      return json({ next: "/sign-in/" });
+    });
     await sessionEnd.endSession("sign-out");
     expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "no-answer" });
+    // The connection is back, but the browser still reports offline.
+    connected = true;
+    vi.mocked(fetch).mockClear();
     await sessionEnd.retrySignOut();
-    // The gateway is reachable (fetch is stubbed to answer), so the sign-out must complete.
     expect(sent("POST /logout")).toHaveLength(1);
     expect(replace).toHaveBeenCalledWith("/sign-in/");
   });
