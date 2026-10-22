@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/api";
 import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { accountApi } from "@/lib/account-api";
-import { fetchEarly } from "@/lib/early-fetch";
+import { networkFetch } from "@/lib/network-error";
 import {
   productApi,
   type HomeCapability as SharedHomeCapability,
@@ -93,12 +93,13 @@ async function homeRequest<T>(
     headers.set("x-azizam-user-action", "1");
     headers.set("x-azizam-csrf", session.csrf_token);
   }
-  const response = await fetchEarly(path, {
+  // Through networkFetch, so the session guard applies; `true` keeps the head-start fast path.
+  const response = await networkFetch(path, {
     credentials: "same-origin",
     method: body === undefined ? "GET" : "POST",
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }, true);
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     if (
