@@ -35,6 +35,8 @@ export interface SessionView {
   authenticated: boolean;
   /** Public per-sign-in id (`session_view_id`); null when the gateway did not send one. */
   epoch: string | null;
+  /** The signed-in person's id; absent or null when the session has no person behind it (unknown). */
+  person?: string | null;
 }
 
 export const HANDOFF_KEY = "azizam.handoff";
@@ -72,6 +74,7 @@ class GatewayStatus extends Error {
 let closed = false;
 let scope = new AbortController();
 let epoch: string | null = null;
+let shownPerson: string | null = null;
 let screen: SessionScreen = { kind: "idle" };
 let kind: EndKind = "sign-out";
 let tries = 0;
@@ -186,8 +189,21 @@ export async function checkPageShown(): Promise<void> {
     if (record?.state === "SIGNED_OUT") setOtherTab(causeOf(record.kind));
     return;
   }
-  const changed = epoch !== null && (!seen.authenticated || (seen.epoch !== null && seen.epoch !== epoch));
-  if (changed) setOtherTab(record?.state === "SIGNED_OUT" ? causeOf(record.kind) : "server");
+  if (epoch === null) return;
+  if (!seen.authenticated || !sameShownPerson(seen)) {
+    setOtherTab(record?.state === "SIGNED_OUT" ? causeOf(record.kind) : "server");
+    return;
+  }
+  epoch = seen.epoch ?? epoch;
+}
+
+/** Whether a snapshot is still the person this page shows. A known person is compared as a person: the same
+ * person in a new session (a step-up renews the session id) is the same person. With no person on either
+ * side, only the same session id proves it. */
+function sameShownPerson(seen: SessionView): boolean {
+  const person = seen.person ?? null;
+  if (person !== null && shownPerson !== null) return person === shownPerson;
+  return seen.epoch === epoch;
 }
 
 /**
@@ -198,9 +214,15 @@ export function observeViewer(seen: SessionView): void {
   if (closed || !seen.authenticated || seen.epoch === null) return;
   if (epoch === null) {
     epoch = seen.epoch;
+    shownPerson = seen.person ?? null;
     return;
   }
-  if (seen.epoch !== epoch) setOtherTab("server");
+  if (!sameShownPerson(seen)) {
+    setOtherTab("server");
+    return;
+  }
+  // The same person in a new session: adopt the new id, and show nothing.
+  epoch = seen.epoch;
 }
 
 /** A sign-in clears the record of an earlier sign-out (SECURITY.md section 3). */
@@ -443,14 +465,22 @@ async function sessionStillLive(signal: AbortSignal): Promise<boolean> {
 
 async function readSession(signal: AbortSignal): Promise<SessionView & { csrf: string | null }> {
   const response = await fetch(SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
-  if (response.status === 401) return { authenticated: false, epoch: null, csrf: null };
+  if (response.status === 401) return { authenticated: false, epoch: null, person: null, csrf: null };
   if (!response.ok) throw new GatewayStatus(response.status);
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   return {
     authenticated: body?.authenticated === true,
     epoch: typeof body?.session_view_id === "string" ? body.session_view_id : null,
+    person: personOf(body),
     csrf: typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null,
   };
+}
+
+/** The signed-in person's id from a `/me/api/session` snapshot, or null when there is none. */
+export function personOf(body: Record<string, unknown> | null): string | null {
+  const user = body?.user as { person_id?: unknown; id?: unknown } | undefined;
+  const id = user?.person_id ?? user?.id;
+  return typeof id === "string" && id !== "" ? id : null;
 }
 
 /** The owner's admin session, for a browser whose own snapshot has no CSRF token. Members get 403 here. */
@@ -467,8 +497,8 @@ async function readSessionNow(): Promise<SessionView | null> {
   const budget = new AbortController();
   const timer = setTimeout(() => budget.abort(), ANSWER_MS);
   try {
-    const { authenticated, epoch: seenEpoch } = await readSession(budget.signal);
-    return { authenticated, epoch: seenEpoch };
+    const { authenticated, epoch: seenEpoch, person } = await readSession(budget.signal);
+    return { authenticated, epoch: seenEpoch, person };
   } catch {
     return null;
   } finally {

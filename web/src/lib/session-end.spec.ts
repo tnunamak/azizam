@@ -397,3 +397,17 @@ describe("the stores a session end clears", () => {
     await expect(prompt).resolves.toBe(false);
   });
 });
+
+describe("the same person in a new session", () => {
+  it("an epoch change for the same person is adopted, not shown as signed out", () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-b", person: "person-1" });
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
+  });
+
+  it("a different person still shows the other-tab screen", () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-b", person: "person-2" });
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "other-tab", cause: "server" });
+  });
+});

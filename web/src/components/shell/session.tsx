@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { networkFetch } from "@/lib/network-error";
-import { observeViewer } from "@/lib/session-end";
+import { observeViewer, personOf } from "@/lib/session-end";
 import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
@@ -40,6 +40,7 @@ export async function fetchViewer(): Promise<Viewer> {
   observeViewer({
     authenticated: snapshot.authenticated === true,
     epoch: typeof snapshot.session_view_id === "string" ? snapshot.session_view_id : null,
+    person: personOf(snapshot),
   });
   if (snapshot.authenticated && snapshot.user) {
     const role = snapshot.user.role;
