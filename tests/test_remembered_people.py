@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from gateway import accounts, admin_store, avatars
+from gateway import accounts, admin_store, avatars, remembered_people
 from gateway.admin_oidc import CookieConfig
 from gateway.session_policy import DAY
 from tests.test_session_lifecycle import (  # noqa: F401  (fixtures and their dependencies)
@@ -27,6 +27,7 @@ HELPER = "helper@example.test"
 MEMBER = "robin@example.test"
 MEMBER_NAME = "Robin Okafor"
 MEMBER_PASSWORD = "Robin's own password, long enough"
+TWIN = "robin.two@vivid.fish"
 NEIGHBOUR = "lea@example.test"
 NEIGHBOUR_NAME = "Léa Okafor"
 NEIGHBOUR_PASSWORD = "Léa's own password, long enough"
@@ -143,6 +144,8 @@ def test_sso_sign_in_is_remembered_only_when_asked(tls):
     tls.sign_in(browser, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
     [person] = listed(browser)["people"]
     assert person["method"] == "sso" and person["provider"] == "single sign-on"
+    # The provider sent no name, so the account's address stands in: the list never shows the address itself.
+    assert person["name"] == "helper" and person["avatar"]["initial"] == "H"
     assert HELPER not in browser.get("/auth/api/remembered").text
 
 
@@ -165,6 +168,13 @@ def test_a_tile_alone_never_signs_anyone_in(tls):
     assert session_cookies(no_password) == [] and session_cookies(empty_password) == []
     assert not signed_in_state(stranger)
 
+    # A tile for a provider sign-in starts the provider's own sign-in, asked again, and signs no one in here.
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+    provider_tile = next(person["tile"] for person in listed(client)["people"] if person["method"] == "sso")
+    start = same_device(tls, client).get("/login", params={"tile": provider_tile}, follow_redirects=False)
+    assert start.status_code == 302 and "prompt=login" in start.headers["location"]
+    assert session_cookies(start) == []
+
 
 def test_tile_login_resolves_the_person_from_the_device_not_the_request(tls):
     make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
@@ -182,7 +192,7 @@ def test_tile_login_resolves_the_person_from_the_device_not_the_request(tls):
     smuggled = here.post(LOGIN, json={"tile": tile, "password": MEMBER_PASSWORD,
                                       "user_id": person_id(tls, NEIGHBOUR)})
     assert both.status_code == 422 and smuggled.status_code == 422
-    assert not signed_in_state(here)
+    assert session_cookies(both) == [] and session_cookies(smuggled) == []
 
 
 def test_a_tile_sign_in_ends_the_session_the_browser_already_had(tls):
@@ -296,8 +306,9 @@ def test_owner_routes_expose_no_tile_or_device_data(tls):
     sign_in_with_password(browser, MEMBER, MEMBER_PASSWORD)
     tls.sign_in(browser, sub="owner", email=OWNER, start={"remember": "1"})  # the owner, on the same device
     device = browser.cookies.get(DEVICE)
-    secrets = [device, hashlib.sha256(device.encode()).hexdigest(), *[p["tile"] for p in listed(browser)["people"]]]
-    assert len(secrets) == 3
+    tiles = [person["tile"] for person in listed(browser)["people"]]
+    assert len(tiles) == 2  # Robin and the owner, both on this device's list
+    secrets = [device, hashlib.sha256(device.encode()).hexdigest(), *tiles]
 
     for path in ("/admin/api/people", "/admin/api/invites", "/admin/api/signin",
                  "/admin/api/settings/sessions", "/admin/api/settings/receipts"):
@@ -307,6 +318,46 @@ def test_owner_routes_expose_no_tile_or_device_data(tls):
             assert secret not in response.text, path
         keys = {str(key).lower() for key in keys_of(response.json())}
         assert not keys & {"tile", "tiles", "device", "device_hash", "remembered", "remembered_people"}, path
+
+
+def test_the_auto_avatar_and_initial_match_the_web_for_the_same_person():
+    # Vectors from web/src/components/product/person-avatar.tsx, run as written (node), so the disc is the same
+    # in the sign-in list and everywhere else the person's avatar shows.
+    assert remembered_people._auto_variant("user_6f1c0a9e2d4b7a1c3e5f7a9b") == "v7"
+    assert remembered_people._auto_variant("user_0000") == "v8"
+    assert remembered_people._auto_variant("owner-id") == "v7"
+    assert remembered_people._auto_variant("a") == "v5"
+    assert remembered_people._initial("Léa Okafor") == "L"
+    assert remembered_people._initial("3 cats") == "3"
+    assert remembered_people._initial("  ") == "?"
+
+
+def test_two_people_with_one_name_are_told_apart_by_the_start_of_their_address(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, TWIN, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
+    client = tls.client()
+    for email, password in ((MEMBER, MEMBER_PASSWORD), (TWIN, MEMBER_PASSWORD), (NEIGHBOUR, NEIGHBOUR_PASSWORD)):
+        sign_in_with_password(client, email, password)
+
+    people = listed(client)["people"]
+    assert sorted(person["hint"] for person in people if person["name"] == MEMBER_NAME) == [
+        "r…@example.test", "r…@vivid.fish"]
+    assert [person["hint"] for person in people if person["name"] == NEIGHBOUR_NAME] == [None]
+
+
+def test_switching_off_password_sign_in_hides_its_names_and_refuses_their_tiles(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)
+    tile = tile_for(client, MEMBER_NAME)
+    admin_store.put_operator_setting("sign_in", {"mode": "oidc"}, path=tls.path)
+
+    assert listed(client)["people"] == []
+    refused = same_device(tls, client).post(LOGIN, json={"tile": tile, "password": MEMBER_PASSWORD})
+    assert refused.status_code == 403 and refused.json()["error"]["code"] == "builtin_disabled"
+    assert session_cookies(refused) == []
+    assert len(kept_rows(tls)) == 1  # hidden, not deleted: the name returns when password sign-in does
 
 
 def test_remembered_list_is_rate_limited_per_ip(tls):

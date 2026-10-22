@@ -37,6 +37,8 @@ ADDED_PATHS: dict[str, str] = {
                                     "step-up window); tests/test_session_settings_api.py covers it",
     "/auth/api/reauth": "password confirmation for risky owner actions (step-up); tests/test_session_lifecycle.py covers it",
     "/auth/api/sign-out-everywhere": "ends all of a person's sessions; tests/test_session_lifecycle.py covers it",
+    "/auth/api/remembered": "the names a browser keeps for its sign-in list (GET) and the forget route (DELETE "
+                            "/auth/api/remembered/{tile}); tests/test_remembered_people.py covers them",
     "/admin/api/operator/service-registry/excluded": "fix or remove a record the registry leaves out (decision D22); "
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
@@ -135,6 +137,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
         # The edit transport now documents repeated image[] parts for pictures.
-        assert route_graph.openapi_digest(proxy.app) == "1025614a600fdd6c31146a1a1a9445977202d1c33912976f68dddc1b9fb8ba80"
+        assert route_graph.openapi_digest(proxy.app) == "945723f045817bf4201674464139a53a0a425e7cb7855415d9e4d6955f0a2123"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

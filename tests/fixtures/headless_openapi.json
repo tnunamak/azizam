@@ -369,12 +369,24 @@
         "additionalProperties": false,
         "properties": {
           "email": {
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "password": {
             "title": "Password",
             "type": "string"
+          },
+          "remember": {
+            "default": false,
+            "title": "Remember",
+            "type": "boolean"
           },
           "return_to": {
             "anyOf": [
@@ -386,10 +398,20 @@
               }
             ],
             "title": "Return To"
+          },
+          "tile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tile"
           }
         },
         "required": [
-          "email",
           "password"
         ],
         "title": "Login",
@@ -630,6 +652,21 @@
       "ProposalBody": {
         "additionalProperties": false,
         "properties": {
+          "memory": {
+            "anyOf": [
+              {
+                "enum": [
+                  "remember",
+                  "nobody"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory"
+          },
           "methods": {
             "$ref": "#/components/schemas/MethodsBody"
           },
@@ -15504,6 +15541,67 @@
           }
         },
         "summary": "Reauth",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/auth/api/remembered": {
+      "get": {
+        "description": "The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them.",
+        "operationId": "remembered_auth_api_remembered_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Remembered",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/auth/api/remembered/{tile}": {
+      "delete": {
+        "description": "Take one name off this browser's list. It does not sign anyone out or change their account.",
+        "operationId": "forget_remembered_auth_api_remembered__tile__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tile",
+            "required": true,
+            "schema": {
+              "title": "Tile",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forget Remembered",
         "tags": [
           "accounts"
         ]

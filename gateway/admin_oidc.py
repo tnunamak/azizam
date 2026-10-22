@@ -517,6 +517,10 @@ class StateRecord:
     test_id: str = ""
     # Set when the person is confirming a sign-in they already have (step-up).
     reauth: bool = False
+    # Set when the sign-in page asked the browser to keep the person's name (gateway.remembered_people).
+    remember: bool = False
+    # Set when the sign-in started from a tile on this browser's list.
+    from_tile: bool = False
 
 
 def record_state(
@@ -530,6 +534,8 @@ def record_state(
     browser_binding_hash: str = "",
     test_id: str = "",
     reauth: bool = False,
+    remember: bool = False,
+    from_tile: bool = False,
     state: str | None = None,
     now: float | None = None,
     max_age_seconds: int = 600,
@@ -553,6 +559,8 @@ def record_state(
         browser_binding_hash=browser_binding_hash,
         test_id=test_id,
         reauth=reauth,
+        remember=remember,
+        from_tile=from_tile,
     )
     store[record.state] = record
     return record

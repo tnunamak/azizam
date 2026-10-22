@@ -407,6 +407,10 @@ NOT_CREDENTIAL_TABLES = {
     "prompt_memory_erasure_intents", "prompt_memory_preferences", "prompt_metadata_migration",
     "prompt_metadata_migration_attempts", "prompt_purge_done", "prompt_purge_queue", "provider_spend",
     "receipt_history", "receipts", "schema_migration_steps", "schema_version", "signin_rule_plans",
+    # remembered_people: which people a browser keeps on its sign-in list, by a hash of the browser's device cookie.
+    # A row signs no one in: a tile names it, and the person's own password or provider sign-in still has to match
+    # (gateway/remembered_people.py). The cookie itself is never stored.
+    "remembered_people",
     # user_avatars: the choice of a generated or a sign-in picture and the picture's https URL the provider
     # shared. It holds no secret and moves none; the URL is only ever fetched by the SSRF-guarded fetcher
     # (decision D36 asks about credentials and where they are sent, so no step-up and no require_live here).

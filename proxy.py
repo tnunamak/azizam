@@ -77,6 +77,7 @@ from gateway import (
     audio_media_jobs,
     browser_sessions,
     avatars,
+    remembered_people,
     frontend_mount,
     media_jobs,
     me_prompt_memory,
@@ -15986,7 +15987,8 @@ app.include_router(create_account_router(
     session_reader=lambda request: _oidc_session_from_request(request),
     cookie_provider=_browser_admin_cookie_config,
     signing_key_provider=_browser_admin_session_signing_key,
-    oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name},
+    oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name,
+                           "issuer": cfg.issuer},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
@@ -16962,15 +16964,28 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         )
         callback = urlsplit(cfg.redirect_uri)
         # ASGI sees HTTP behind TLS ingress; only compare the host and port.
+        tile = request.query_params.get("tile") or ""
+        remember = request.query_params.get("remember") == "1"
         if not callback_host_matches(request, cfg.redirect_uri):
             return RedirectResponse(
                 f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}"
-                + ("&reauth=1" if request.query_params.get("reauth") == "1" else ""),
+                + ("&reauth=1" if request.query_params.get("reauth") == "1" else "")
+                + ("&remember=1" if remember else "")
+                + (f"&tile={quote(tile, safe='')}" if tile else ""),
                 status_code=302, headers={"cache-control": "no-store"},
             )
+        hint = None
+        if tile:
+            # The tile is resolved on this browser only; the email goes to the provider as a hint, never to the page.
+            person = remembered_people.resolve(
+                remembered_people.device_token(request, secure=_browser_admin_cookie_config().secure), tile,
+                path=ADMIN_STORE.path, signing_key=_browser_admin_session_signing_key())
+            if person is not None and person["method"] == "sso":
+                hint = person["email"]
         return begin_browser_login(
             cfg, ADMIN_OIDC_STATES, return_to=return_to,
             reauth=request.query_params.get("reauth") == "1",
+            remember=remember, from_tile=bool(tile), login_hint=hint,
         )
     except accounts.AccountError as exc:
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
@@ -17899,6 +17914,13 @@ async def admin_oidc_callback(request: Request):
         )
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
+        minted = await asyncio.to_thread(
+            remembered_people.keep, path=ADMIN_STORE.path,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=state.from_tile)
+        if minted:
+            remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         if previous is not None:
             # Confirming a sign-in replaces it: the one it confirms must not linger.
             await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)
