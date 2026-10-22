@@ -189,12 +189,25 @@ export async function checkPageShown(): Promise<void> {
     if (record?.state === "SIGNED_OUT") setOtherTab(causeOf(record.kind));
     return;
   }
-  if (epoch === null) return;
-  if (!seen.authenticated || !sameShownPerson(seen)) {
-    setOtherTab(record?.state === "SIGNED_OUT" ? causeOf(record.kind) : "server");
+  const cause: OtherTabCause = record?.state === "SIGNED_OUT" ? causeOf(record.kind) : "server";
+  if (seen.epoch === null) {
+    // No session view id: the browser holds no session now. A page that showed one must not stay on screen,
+    // and neither may a page that a sign-out recorded in this browser (fail closed).
+    if (epoch !== null || record?.state === "SIGNED_OUT") setOtherTab(cause);
     return;
   }
-  epoch = seen.epoch ?? epoch;
+  // A session exists. A page that showed no session has nothing to compare with; a page that did must still
+  // be the same person, and a page whose person is no longer signed in is not shown.
+  if (epoch === null) return;
+  if (!seen.authenticated && shownPerson !== null) {
+    setOtherTab(cause);
+    return;
+  }
+  if (!sameShownPerson(seen)) {
+    setOtherTab(cause);
+    return;
+  }
+  epoch = seen.epoch;
 }
 
 /** Whether a snapshot is still the person this page shows. A known person is compared as a person: the same
@@ -207,11 +220,12 @@ function sameShownPerson(seen: SessionView): boolean {
 }
 
 /**
- * A live tab learns what `/me/api/session` says. A different person (a new sign-in in another
- * tab) ends this tab's view. An expired session is left to the sign-in redirect, as before.
+ * A live tab learns what `/me/api/session` says. A session with no view id is nothing to observe: the expiry
+ * of a sign-in is left to the sign-in redirect, as before. A different person ends this tab's view, and the
+ * same person in a new session is adopted without a screen.
  */
 export function observeViewer(seen: SessionView): void {
-  if (closed || !seen.authenticated || seen.epoch === null) return;
+  if (closed || seen.epoch === null) return;
   if (epoch === null) {
     epoch = seen.epoch;
     shownPerson = seen.person ?? null;
@@ -221,7 +235,6 @@ export function observeViewer(seen: SessionView): void {
     setOtherTab("server");
     return;
   }
-  // The same person in a new session: adopt the new id, and show nothing.
   epoch = seen.epoch;
 }
 

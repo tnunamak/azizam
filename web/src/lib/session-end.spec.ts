@@ -411,3 +411,19 @@ describe("the same person in a new session", () => {
     expect(sessionEnd.getSessionScreen()).toEqual({ kind: "other-tab", cause: "server" });
   });
 });
+
+describe("a restored page fails closed", () => {
+  it("a page that showed a person's session and finds no session now shows the other-tab screen", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    route("GET /me/api/session", () => json({ authenticated: false }));
+    await sessionEnd.checkPageShown();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "other-tab", cause: "server" });
+  });
+
+  it("a page that showed a service-account session is shown as it was while that session is the same", async () => {
+    sessionEnd.observeViewer({ authenticated: false, epoch: "view-admin" });
+    route("GET /me/api/session", () => json({ authenticated: false, session_view_id: "view-admin" }));
+    await sessionEnd.checkPageShown();
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
+  });
+});
