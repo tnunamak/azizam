@@ -1071,7 +1071,7 @@ class RemoveMissingTests(unittest.TestCase):
 
     def test_a_file_stored_under_any_suffix_counts_as_stored(self) -> None:
         self.seed()
-        (self.cache / ("A" * 64 + ".bin")).write_bytes(b"unknown suffix")
+        (self.cache / ("a" * 64 + ".bin")).write_bytes(b"unknown suffix")
         self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(len(self.job_ids("req_a")), 1)
 
