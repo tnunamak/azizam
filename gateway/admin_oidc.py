@@ -761,9 +761,15 @@ def provider_auth_time(claims: Mapping[str, Any]) -> float | None:
 def provider_signed_in_again(claims: Mapping[str, Any], *, since: float) -> bool:
     """The provider must say, with ``auth_time``, that the person signed in after the flow began (``since``), give
     or take the clock-skew allowance. A reply without it proves nothing: a provider that ignored ``prompt=login``
-    and ``max_age=0``, or a request stripped of them on the way, would look exactly like this."""
+    and ``max_age=0``, or a request stripped of them on the way, would look exactly like this.
+
+    The time may not run ahead of the token's own ``iat`` by more than the allowance either. Both come from the
+    provider's clock, so ours does not enter that comparison. A token with no usable ``iat`` proves nothing."""
     auth_time = provider_auth_time(claims)
-    return auth_time is not None and auth_time >= since - AUTH_TIME_CLOCK_SKEW_SECONDS
+    iat = claims.get("iat")
+    if auth_time is None or not isinstance(iat, (int, float)) or isinstance(iat, bool):
+        return False
+    return since - AUTH_TIME_CLOCK_SKEW_SECONDS <= auth_time <= float(iat) + AUTH_TIME_CLOCK_SKEW_SECONDS
 
 
 def _iter_claim_strings(value: Any) -> Iterable[str]:

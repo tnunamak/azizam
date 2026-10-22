@@ -60,7 +60,7 @@ def sign_in(proxy, client, monkeypatch, **claims):
     async def verify(token, *, config):
         return {"iss": config.issuer, "aud": config.client_id, "sub": "owner", "email": "owner@example.test",
                 "email_verified": True, "name": "Olive Owner", "auth_time": int(time.time()), "nonce": record.nonce,
-                "exp": 4_000_000_000, "iat": 1_700_000_000, **claims}
+                "exp": 4_000_000_000, "iat": int(time.time()), **claims}
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
     monkeypatch.setattr(proxy, "_oidc_verify_id_token", verify)

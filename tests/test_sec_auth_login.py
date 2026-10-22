@@ -40,7 +40,7 @@ def login_claims(monkeypatch, client, *, subject, email, groups=()):
         return {"iss": config.issuer, "aud": config.client_id, "sub": subject,
                 "email": email, "email_verified": True, "groups": list(groups),
                 "auth_time": int(time.time()),
-                "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000}
+                "nonce": record.nonce, "exp": 4_000_000_000, "iat": int(time.time())}
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
     monkeypatch.setattr(proxy, "_oidc_verify_id_token", verify)

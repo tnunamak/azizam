@@ -356,7 +356,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
@@ -415,7 +415,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
@@ -473,7 +473,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         self.assertEqual(login.status_code, 302, login.text)
@@ -669,7 +669,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
@@ -724,7 +724,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
@@ -782,7 +782,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
@@ -1849,7 +1849,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
                 "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
-                "iat": 1_700_000_000,
+                "iat": int(time.time()),
             }
 
         with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(

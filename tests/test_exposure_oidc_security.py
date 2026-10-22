@@ -115,7 +115,7 @@ def _patch_oidc(monkeypatch: pytest.MonkeyPatch, record, calls: list[str]):
             "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
-            "iat": 1_700_000_000,
+            "iat": int(time.time()),
         }
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
@@ -146,7 +146,7 @@ def _patch_oidc_by_code(monkeypatch: pytest.MonkeyPatch, records_by_code, calls:
             "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
-            "iat": 1_700_000_000,
+            "iat": int(time.time()),
         }
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)

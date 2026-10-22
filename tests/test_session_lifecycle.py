@@ -626,7 +626,7 @@ def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_t
 
     async def verify(token, *, config):
         claims = {"iss": config.issuer, "aud": config.client_id, "sub": sub, "email": email, "email_verified": True,
-                  "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000 if iat is None else iat}
+                  "nonce": record.nonce, "exp": 4_000_000_000, "iat": int(time.time()) if iat is None else iat}
         if auth_time is not None:
             claims["auth_time"] = auth_time
         return claims
@@ -811,7 +811,7 @@ def test_the_same_refusal_in_json_names_the_provider_and_the_other_way_to_confir
 
     async def verify(token, *, config):
         return {"iss": config.issuer, "aud": config.client_id, "sub": "owner", "email": OWNER, "email_verified": True,
-                "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000}
+                "nonce": record.nonce, "exp": 4_000_000_000, "iat": int(time.time())}
 
     sg.monkeypatch.setattr(sg.proxy, "_oidc_verify_id_token", verify)
     callback = client.get("/admin/oidc/callback", params={"state": state, "code": "c"}, follow_redirects=False)

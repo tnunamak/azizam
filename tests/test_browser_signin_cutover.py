@@ -111,7 +111,7 @@ def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, 
     async def verify(token, *, config):
         return {"iss": config.issuer, "aud": config.client_id, "sub": "owner",
                 "email": "owner@example.test", "email_verified": True, "nonce": record.nonce,
-                "auth_time": int(time.time()), "exp": 4_000_000_000, "iat": 1_700_000_000}
+                "auth_time": int(time.time()), "exp": 4_000_000_000, "iat": int(time.time())}
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
     monkeypatch.setattr(proxy, "_oidc_verify_id_token", verify)

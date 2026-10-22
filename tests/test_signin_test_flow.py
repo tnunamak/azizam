@@ -63,7 +63,7 @@ def finish(g, client, test, *, sub="owner", email=OWNER, groups=None, name=None,
     async def verify(token, *, config):
         token_claims = {"iss": config.issuer, "aud": config.client_id, "sub": sub, "email": email,
                         "email_verified": email_verified, "nonce": record.nonce, "exp": 4_000_000_000,
-                        "iat": 1_700_000_000}
+                        "iat": int(time.time())}
         if name:
             token_claims["name"] = name
         if groups is not None:
