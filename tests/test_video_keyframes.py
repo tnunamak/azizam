@@ -736,23 +736,23 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
             ("video-ltx-2.5-keyframes", {
                 "5": {"text": "p"}, "20": {"value": 960}, "21": {"value": 512}, "22": {"value": 121},
                 "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
-                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_last_frame.png"},
+                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_input_reference.png"},
             }),
             ("video-minimax-h3-keyframes", {
                 "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
                 "17": {"fps": 24.0}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
-                "22": {"image": "up2_last_frame.png"},
+                "22": {"image": "up2_input_reference.png"},
             }),
             ("video-minimax-h3-keyframes-mid", {
                 "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
                 "17": {"fps": 24.0}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
-                "22": {"image": "up2_last_frame.png"}, "24": {"image": "up3_middle_frame.png"},
+                "22": {"image": "up2_input_reference.png"}, "24": {"image": "up3_input_reference.png"},
             }),
             ("video-ltx-2.5-keyframes-mid", {
                 "5": {"text": "p"}, "20": {"value": 960}, "21": {"value": 512}, "22": {"value": 121},
                 "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
-                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_last_frame.png"},
-                "120": {"image": "up3_mid_frame.png"},
+                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_input_reference.png"},
+                "120": {"image": "up3_input_reference.png"},
             }),
         ):
             with self.subTest(model=model):
