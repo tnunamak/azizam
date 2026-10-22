@@ -59,7 +59,7 @@ CATALOG = [
         "qwen-edit", "image.edit", aliases=["image", "image-edit"], required=["prompt", "source_image"],
         props={"prompt": {"type": "string"}, "source_image": {"type": "string"}},
         sync={"method": "POST", "path": "/v1/images/edits", "content_type": "multipart/form-data", "model": "qwen-edit",
-              "fields": {"prompt": {"in": "form", "field": "prompt"}, "source_image": {"in": "file", "field": "image"}}},
+              "fields": {"prompt": {"in": "form", "field": "prompt"}, "source_image": {"in": "file", "field": "image[]"}}},
     ),
     _entry(
         "sfx", "audio.generate", aliases=["sfx"], required=["prompt"], recommended="async",
@@ -515,7 +515,8 @@ def test_run_image_edit_sends_multipart_with_the_asset_bytes(env):
     call(env, "run", {"target": "qwen-edit", "inputs": {"prompt": "red hat", "source_image": f"https://gw.test/v1/assets/{asset}/content?sig=1"}})
     _, _, kwargs = env.core.calls[-1]
     assert kwargs["data"]["model"] == "qwen-edit" and kwargs["data"]["response_format"] == "url"
-    name, content, mime = kwargs["files"]["image"]
+    assert [part for part, _ in kwargs["files"]] == ["image[]"]
+    _, (name, content, mime) = kwargs["files"][0]
     assert content == PNG and mime == "image/png"
 
 

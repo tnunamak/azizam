@@ -134,6 +134,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
-        assert route_graph.openapi_digest(proxy.app) == "b3ce70b7f551306adc31394399bf8ef633b6db2e332268153c796f634ef9836e"
+        # The edit transport now documents repeated image[] parts for pictures.
+        assert route_graph.openapi_digest(proxy.app) == "1025614a600fdd6c31146a1a1a9445977202d1c33912976f68dddc1b9fb8ba80"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
