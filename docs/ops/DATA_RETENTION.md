@@ -130,6 +130,10 @@ clears the signed-in person's own entries whose file is gone:
 - A finished job entry is deleted only when every asset its record names is
   gone. Otherwise each gone asset is hidden as that job made it
   (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+  When every one of those assets is already gone from the viewer's Library, the
+  entry still goes, so `removal_plan.missing_items` includes it. The confirmation
+  count is gone files plus job records with nothing to show. If two job records
+  share one gone file, that file counts once but both records are removed.
 - A directory replacement after the final identity check but before the SQLite commit can still go undetected.
 - Prompts, hides and job deletions commit together in the media-jobs database or
   not at all. It never deletes a stored file or a receipt.

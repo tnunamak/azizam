@@ -185,10 +185,10 @@ def create_me_media_router(
                 )}
                 if request.query_params.get("removal_plan") == "1":
                     result["removal_plan"] = (
-                        {"missing_items": len(_viewer_removal(
+                        {"missing_items": _viewer_removal(
                             actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
                             receipts_path=receipt_path,
-                        ).gone_assets)} if storage is not None else None
+                        ).missing_count()} if storage is not None else None
                     )
                 return _json(result)
             result = _list_media(
@@ -364,7 +364,7 @@ def create_me_media_router(
                 actor.user_id, storage, admin_path=admin_path, jobs_path=jobs_path,
                 receipts_path=_resolve_path(receipts_path),
             )
-            if len(plan.gone_assets) > _expected_count(body, "expected_missing"):
+            if plan.missing_count() > _expected_count(body, "expected_missing"):
                 raise PublicFailure("media_folder_changed", 409)
             if (plan.gone_assets or plan.job_ids) and not storage.digests:
                 raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
@@ -518,7 +518,7 @@ def _media_folder_view(
     }
 
 
-_HEX_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
+_HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def _folder_counts(
@@ -561,10 +561,10 @@ def _is_stored(asset_id: str, storage: StorageSnapshot) -> bool:
     """Whether a file holds the asset's bytes. An id that cannot be checked counts as stored.
 
     A set lookup in the one listing; the folder is not scanned again for each asset. Removal uses this,
-    so an id that cannot be checked is never removed.
+    and the folder evidence counts use the same rule, so an id that cannot be checked is never removed
+    and never counted.
     """
-    digest = _digest_of(asset_id)
-    return len(digest) != 64 or digest in storage.digests
+    return not _is_checkable(asset_id) or _digest_of(asset_id) in storage.digests
 
 
 @dataclass(frozen=True)
@@ -572,6 +572,15 @@ class _Removal:
     gone_assets: tuple[str, ...]
     hides: tuple[tuple[str, str], ...]
     job_ids: tuple[str, ...]
+    unshown_jobs: tuple[str, ...] = ()
+
+    def missing_count(self) -> int:
+        """What the caller sees as removable: the gone items, plus a job entry no gone item covers.
+
+        A job whose assets are all already hidden or gone from the Library leaves no item to show, yet
+        its entry is deleted. The read-only plan and the action compare this one number.
+        """
+        return len(self.gone_assets) + len(self.unshown_jobs)
 
 
 def _viewer_removal(
@@ -605,6 +614,7 @@ def _plan_removal(
     gone_assets: dict[str, None] = {}
     hides: list[tuple[str, str]] = []
     job_ids: list[str] = []
+    unshown_jobs: list[str] = []
     for job, _receipt in jobs:
         if job.get("status") != media_jobs.STATUS_SUCCEEDED:
             continue
@@ -624,7 +634,9 @@ def _plan_removal(
                 hides.append((asset_id, job_id))
         if everything_gone:
             job_ids.append(job_id)
-    return _Removal(tuple(gone_assets), tuple(hides), tuple(job_ids))
+            if all(asset_id in deleted or (asset_id, job_id) in hidden for asset_id in gone):
+                unshown_jobs.append(job_id)
+    return _Removal(tuple(gone_assets), tuple(hides), tuple(job_ids), tuple(unshown_jobs))
 
 
 def _resolve_path(provider: PathProvider) -> Path:

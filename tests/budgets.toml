@@ -196,6 +196,11 @@
 # Hermetic --collect-only -q measured 15956 (2026-10-21).
 # Sign-in session writes off-loop: three cases (claim, local login, provider callback).
 # Hermetic --collect-only -q measured 15956 on 2026-10-21.
+# Remove-missing follow-ups: +2 (an unseen job removal refuses; a 64-char
+# non-hex id is never removed). Hermetic --collect-only -q measured 15955.
+# Remove-missing round 2: order-independent job count (+1 pytest); removal
+# announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
+# Lowercase-only digest check adds one uppercase-ID regression; full collection measured 15957.
 pytest = 15956
 vitest = 3091
 playwright = 502
