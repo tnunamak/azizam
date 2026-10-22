@@ -18529,12 +18529,13 @@ async def _firehose_request_counter(request: Request, call_next):
 
 @app.get("/health")
 async def health():
-    """Proxy service health. Public so external health checks do not need API keys. A broken session view key is
-    reported as degraded with its reason code only: signed-in accounts cannot be checked until it is fixed."""
+    """Proxy service health. Public so external health checks do not need API keys."""
     body = {
         "status": "healthy",
         "app_credentials_configured": active_app_credential_count(),
     }
+    # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
+    # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.
     if await asyncio.to_thread(session_view_key_problem, ADMIN_STORE.path):
         body = {**body, "status": "degraded", "reasons": ["session_view_key"]}
     return body
