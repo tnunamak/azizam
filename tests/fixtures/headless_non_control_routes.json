@@ -56,6 +56,7 @@
   ["GET", "/gateway/v1/workflows/{workflow_id}", "gateway.api.get_workflow"],
   ["GET", "/health", "proxy.health"],
   ["GET", "/llms.txt", "proxy.llms_txt"],
+  ["GET", "/login/provider-sign-out", "proxy.provider_sign_out"],
   ["GET", "/mcp", "gateway.mcp_server.mcp_no_stream"],
   ["GET", "/native/{engine_id}/{native_path:path}", "proxy.native_engine_request"],
   ["GET", "/oauth/authorize", "gateway.mcp_oauth.authorize"],
