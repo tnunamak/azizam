@@ -589,6 +589,18 @@
       "access": "own-account"
     },
     {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.remembered",
+      "method": "GET",
+      "path": "/auth/api/remembered",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.accounts_api.create_account_router.<locals>.forget_remembered",
+      "method": "DELETE",
+      "path": "/auth/api/remembered/{tile}",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.accounts_api.create_account_router.<locals>.remove_person",
       "method": "DELETE",
       "path": "/admin/api/people/{user_id}",
