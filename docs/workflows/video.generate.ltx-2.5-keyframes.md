@@ -11,8 +11,16 @@ is `video-ltx-2.5-i2v` with the last picture pinned.
   stage, pre-processed (compression 18) and added as a guide on frame -1 at both sampling stages.
   `last_frame_strength` (0 to 1, default 1) sets both guides. The guide frames are cropped away
   after each stage.
-- Derived from the working reference graph for first, middle and last guides; this workflow ships
-  first and last only.
+- `img_compression` (0 to 100, default 18) is one input bound to every `LTXVPreprocess` node in
+  the graph.
+- `frames` is an exact count on the 8N+1 grid (121 frames is 5 s at 24 fps); 240 is refused with
+  a 400 that names `frames`. It wins over `seconds` when both are sent. `seconds` keeps its 10 s
+  cap for requests that do not send `frames`.
+- `extensions.com.azizam.video.audio = false` removes the audio track from the stored clip and
+  the returned file. It is a gateway control, not a workflow input, and works on every video
+  model. Omitted or `true` leaves the bytes unchanged.
+- Derived from the working reference graph for first, middle and last guides; the
+  `video.generate.ltx-2.5-keyframes-mid` workflow adds the middle guide.
 
 ## Measurements (2026-10-21, 3090, 960x512, 121 frames, seed 11)
 

@@ -43,6 +43,17 @@ inputs:
     help: A picture the video passes through halfway, at half its frame count.
     type: asset
     required: true
+  mid_frame_index:
+    label: Middle picture frame
+    help: Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.
+    type: integer
+    minimum: 1
+  frames:
+    label: Length in frames
+    help: Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.
+    type: integer
+    step: 17
+    offset: 5
 outputs:
   video:
     media_type: video/mp4
@@ -68,6 +79,12 @@ bindings:
       middle_frame:
       - node: '24'
         input: image
+      mid_frame_index:
+      - node: '27'
+        input: frame_idx
+      frames:
+      - node: '8'
+        input: value
 requires:
   models:
   - role: diffusion_model

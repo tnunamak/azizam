@@ -261,6 +261,25 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
             return f"{name} must be >= {minimum}"
         if maximum is not None and value > maximum:
             return f"{name} must be <= {maximum}"
+        # Some engines accept only a grid of values, e.g. frames = step*k+offset.
+        # This is data on the input spec, not knowledge about a particular model.
+        step = spec.get("step")
+        if step is not None:
+            try:
+                step_value = float(step)
+            except (TypeError, ValueError):
+                return f"{name} has an invalid step"
+            if step_value <= 0:
+                return f"{name} has an invalid step"
+            offset = spec.get("offset", 0)
+            try:
+                remainder = (value - offset) % step_value
+            except (TypeError, ValueError):
+                return f"{name} has an invalid offset"
+            if remainder not in (0, step_value):
+                if offset:
+                    return f"{name} must be {offset} plus a multiple of {spec['step']}"
+                return f"{name} must be a multiple of {spec['step']}"
 
     return None
 

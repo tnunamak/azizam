@@ -38,6 +38,12 @@ inputs:
     help: The picture the video ends on.
     type: asset
     required: true
+  frames:
+    label: Length in frames
+    help: Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.
+    type: integer
+    step: 17
+    offset: 5
 outputs:
   video:
     media_type: video/mp4
@@ -60,6 +66,9 @@ bindings:
       last_frame:
       - node: '22'
         input: image
+      frames:
+      - node: '8'
+        input: value
 requires:
   models:
   - role: diffusion_model

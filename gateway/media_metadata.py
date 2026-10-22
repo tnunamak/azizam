@@ -495,6 +495,21 @@ def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
         return dst.read()
 
 
+def strip_audio(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
+    """Remove every audio stream from a video without re-encoding the picture.
+
+    A stream copy keeps the video frames byte-for-byte. Non-video kinds and
+    containers ffmpeg cannot mux are returned unchanged. ffmpeg failures raise
+    ``MediaMetadataError``: a caller that asked for no audio must not receive
+    bytes that still carry it.
+    """
+    if media_kind(suffix_or_mime) != "video":
+        return content
+    if _suffix(suffix_or_mime) not in _MUXER:
+        return content
+    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, ["-an"])
+
+
 def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
     """Remove metadata without touching pixel/stream payloads.
 

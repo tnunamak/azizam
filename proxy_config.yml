@@ -1018,6 +1018,16 @@ videos:
       default_size: 960x512
       size_multiple: 64
       frame_rate: 24
+    video-ltx-2.5-keyframes-mid:
+      file: workflows/videos/video-ltx-2.5-keyframes-mid.json
+      requires_input_reference: true
+      requires_extensions: true
+      min_seconds: 1
+      max_seconds: 10
+      max_size: 1280x704
+      default_size: 960x512
+      size_multiple: 64
+      frame_rate: 24
     video-minimax-h3-keyframes:
       file: workflows/videos/video-minimax-h3-keyframes.json
       requires_input_reference: true
@@ -1128,6 +1138,7 @@ videos:
     ltx-2.5-t2v: video-ltx-2.5-t2v
     ltx-2.5-i2v: video-ltx-2.5-i2v
     ltx-2.5-keyframes: video-ltx-2.5-keyframes
+    ltx-2.5-keyframes-mid: video-ltx-2.5-keyframes-mid
     minimax-h3: video-minimax-h3-t2v
     minimax-h3-t2v: video-minimax-h3-t2v
     minimax-h3-i2v: video-minimax-h3-i2v

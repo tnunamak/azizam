@@ -56,6 +56,19 @@ inputs:
     minimum: 0
     maximum: 1
     default: 1
+  frames:
+    label: Length in frames
+    help: Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.
+    type: integer
+    step: 8
+    offset: 1
+  img_compression:
+    label: Guide compression
+    help: Compression used for the guide pictures before they are encoded; 0 to 100.
+    type: integer
+    minimum: 0
+    maximum: 100
+    default: 18
 outputs:
   video:
     media_type: video/mp4
@@ -91,6 +104,18 @@ bindings:
       last_frame_strength:
       - node: '100'
         input: value
+      frames:
+      - node: '22'
+        input: value
+      img_compression:
+      - node: '72'
+        input: img_compression
+      - node: '75'
+        input: img_compression
+      - node: '103'
+        input: img_compression
+      - node: '107'
+        input: img_compression
 requires:
   models:
   - role: diffusion_model
