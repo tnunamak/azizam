@@ -75,8 +75,8 @@ def _session_view_key(path: Path) -> bytes:
 
 
 def session_view_key_problem(path: Path) -> str | None:
-    """Why the session view key cannot be used right now, or None when it can. Read on every call (no cache), so a
-    repaired file takes effect on the next request."""
+    """Why the session view key cannot be used right now, or None when it can. A key that cannot be read is not
+    cached, so the next call reads the file again and a repaired file takes effect on the next request."""
     try:
         _session_view_key(path.parent / ".session_view_secret")
     except (OSError, ValueError) as exc:
