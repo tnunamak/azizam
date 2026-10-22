@@ -13,6 +13,8 @@ import base64
 import contextlib
 import copy
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from starlette.datastructures import FormData
@@ -46,12 +49,19 @@ KEYFRAME_MODELS = {
     "video-minimax-h3-keyframes": ("video-minimax-h3-i2v", ("last_frame",)),
     "video-minimax-h3-keyframes-mid": ("video-minimax-h3-i2v", ("last_frame", "middle_frame")),
     "video-ltx-2.5-keyframes": ("video-ltx-2.5-i2v", ("last_frame",)),
+    "video-ltx-2.5-keyframes-mid": ("video-ltx-2.5-i2v", ("last_frame", "mid_frame")),
 }
 # Nodes of the parent graph that the keyframe graph rewires or renames, and nothing else.
 REWIRED = {
     "video-minimax-h3-keyframes": {"9", "18"},
     "video-minimax-h3-keyframes-mid": {"9", "13", "18"},
     "video-ltx-2.5-keyframes": {"12", "13", "41", "42", "43", "47", "60"},
+    "video-ltx-2.5-keyframes-mid": {"12", "13", "41", "42", "43", "47", "60"},
+}
+# Every preprocess node of an LTX keyframe graph is driven by one compression input.
+LTX_PREPROCESS = {
+    "video-ltx-2.5-keyframes": ("72", "75", "103", "107"),
+    "video-ltx-2.5-keyframes-mid": ("72", "75", "103", "107", "122", "124"),
 }
 
 
@@ -103,9 +113,12 @@ class KeyframeDataTests(unittest.TestCase):
             for name in ("image", *pictures):
                 self.assertEqual(inputs[name]["type"], "asset", (model, name))
                 self.assertTrue(inputs[name]["required"], (model, name))
-        strength = _manifest("video-ltx-2.5-keyframes")["inputs"]["last_frame_strength"]
-        self.assertEqual((strength["type"], strength["minimum"], strength["maximum"], strength["default"]),
-                         ("number", 0, 1, 1))
+        for model, name in (("video-ltx-2.5-keyframes", "last_frame_strength"),
+                            ("video-ltx-2.5-keyframes-mid", "last_frame_strength"),
+                            ("video-ltx-2.5-keyframes-mid", "mid_frame_strength")):
+            strength = _manifest(model)["inputs"][name]
+            self.assertEqual((strength["type"], strength["minimum"], strength["maximum"], strength["default"]),
+                             ("number", 0, 1, 1), (model, name))
 
     def test_id_follows_the_model_name_the_catalog_derives(self) -> None:
         for model in KEYFRAME_MODELS:
@@ -138,6 +151,7 @@ class KeyframeDataTests(unittest.TestCase):
             ("minimax-h3-keyframes-mid", "video-minimax-h3-keyframes-mid"),
             ("h3-keyframes-mid", "video-minimax-h3-keyframes-mid"),
             ("ltx-2.5-keyframes", "video-ltx-2.5-keyframes"),
+            ("ltx-2.5-keyframes-mid", "video-ltx-2.5-keyframes-mid"),
             *((m, m) for m in KEYFRAME_MODELS),
         ):
             self.assertEqual(proxy._resolve_video_workflow(alias)[0], model, alias)
@@ -215,6 +229,85 @@ class KeyframeDataTests(unittest.TestCase):
         self.assertEqual(g["_meta"]["image_strength_node"], "79")
         self.assertEqual(g["76"]["inputs"]["strength"], ["79", 0])
         self.assertEqual(g["79"]["inputs"]["value"], 0.7)
+
+    def test_ltx_mid_picture_is_a_guide_on_the_middle_frame_at_both_stages(self) -> None:
+        g = _graph("video-ltx-2.5-keyframes-mid")
+        self.assertEqual(g["125"]["class_type"], "PrimitiveFloat")
+        self.assertEqual(g["125"]["inputs"]["value"], 1.0)
+        # The omitted mid_frame_index defaults to half the frame count, like H3.
+        self.assertEqual(g["126"]["class_type"], "ComfyMathExpression")
+        self.assertEqual(g["126"]["inputs"], {"expression": "a // 2", "values.a": ["22", 0]})
+        for resize, pre, guide, crop, parent_resize, (last_guide, last_crop) in (
+            ("121", "122", "110", "105", "71", ("104", "105")),  # stage 1, half size
+            ("123", "124", "111", "109", "74", ("108", "109")),  # stage 2, full size
+        ):
+            expected = copy.deepcopy(g[parent_resize])
+            expected["inputs"]["image"] = ["120", 0]
+            self.assertEqual(g[resize], expected)
+            self.assertEqual(g[pre]["class_type"], "LTXVPreprocess")
+            self.assertEqual(g[pre]["inputs"], {"image": [resize, 0], "img_compression": 18})
+            inputs = g[guide]["inputs"]
+            self.assertEqual(g[guide]["class_type"], "LTXVAddGuide")
+            self.assertEqual(inputs["frame_idx"], ["126", 1])
+            self.assertEqual(inputs["strength"], ["125", 0])
+            self.assertEqual((inputs["image"], inputs["latent"]), ([pre, 0], [last_guide, 2]))
+            # The mid guide follows the last-frame guide; one crop removes both.
+            self.assertEqual((inputs["positive"], inputs["negative"]),
+                             ([last_guide, 0], [last_guide, 1]))
+            self.assertEqual(g[crop]["class_type"], "LTXVCropGuides")
+            self.assertEqual((g[crop]["inputs"]["positive"], g[crop]["inputs"]["negative"]),
+                             ([guide, 0], [guide, 1]))
+        self.assertEqual(g["120"]["class_type"], "LoadImage")
+        # the guided latents and conditioning feed the samplers
+        self.assertEqual(g["12"]["inputs"]["video_latent"], ["110", 2])
+        self.assertEqual(g["13"]["inputs"]["positive"], ["110", 0])
+        self.assertEqual(g["42"]["inputs"]["video_latent"], ["111", 2])
+        self.assertEqual(g["43"]["inputs"]["positive"], ["111", 0])
+        self.assertEqual(g["105"]["inputs"]["latent"], ["17", 0])
+        self.assertEqual(g["109"]["inputs"]["latent"], ["46", 0])
+        self.assertEqual(g["60"]["inputs"]["filename_prefix"], "video/ltx-2.5-keyframes-mid")
+
+    def test_every_ltx_preprocess_node_is_bound_to_img_compression(self) -> None:
+        for model, nodes in LTX_PREPROCESS.items():
+            manifest, graph = _manifest(model), _graph(model)
+            targets = manifest["bindings"]["comfyui"]["map"]["img_compression"]
+            self.assertEqual({t["node"] for t in targets}, set(nodes), model)
+            for node in nodes:
+                self.assertEqual(graph[node]["class_type"], "LTXVPreprocess", (model, node))
+                self.assertEqual(graph[node]["inputs"]["img_compression"], 18, (model, node))
+            spec = manifest["inputs"]["img_compression"]
+            self.assertEqual((spec["type"], spec["minimum"], spec["maximum"], spec["default"]),
+                             ("integer", 0, 100, 18), model)
+
+    def test_frames_is_bound_to_each_length_node_on_a_documented_grid(self) -> None:
+        for model, (node, step, offset, literal) in (
+            ("video-ltx-2.5-keyframes", ("22", 8, 1, 121)),
+            ("video-ltx-2.5-keyframes-mid", ("22", 8, 1, 121)),
+            ("video-minimax-h3-keyframes", ("8", 17, 5, 124)),
+            ("video-minimax-h3-keyframes-mid", ("8", 17, 5, 124)),
+        ):
+            manifest, graph = _manifest(model), _graph(model)
+            spec = manifest["inputs"]["frames"]
+            self.assertEqual((spec["type"], spec["step"], spec["offset"]),
+                             ("integer", step, offset), model)
+            self.assertEqual(manifest["bindings"]["comfyui"]["map"]["frames"],
+                             [{"node": node, "input": "value"}], model)
+            self.assertEqual(graph[node]["inputs"]["value"], literal, model)
+
+    def test_mid_frame_index_is_optional_and_the_graph_computes_the_default(self) -> None:
+        ltx = _manifest("video-ltx-2.5-keyframes-mid")
+        self.assertEqual(ltx["bindings"]["comfyui"]["map"]["mid_frame_index"],
+                         [{"node": "110", "input": "frame_idx"}, {"node": "111", "input": "frame_idx"}])
+        self.assertEqual(ltx["inputs"]["mid_frame_index"]["type"], "integer")
+        self.assertEqual(ltx["inputs"]["mid_frame_index"]["minimum"], 1)
+        h3 = _manifest("video-minimax-h3-keyframes-mid")
+        self.assertEqual(h3["bindings"]["comfyui"]["map"]["mid_frame_index"],
+                         [{"node": "27", "input": "frame_idx"}])
+        self.assertNotIn("default", h3["inputs"]["mid_frame_index"])
+        # Every keyframe model with a middle guide can set its strength except H3, whose
+        # guide node has no strength input.
+        self.assertEqual(ltx["inputs"]["mid_frame_strength"]["default"], 1)
+        self.assertNotIn("mid_frame_strength", h3["inputs"])
 
     def test_parent_i2v_files_are_untouched(self) -> None:
         # The keyframe graphs are derived, never edited in place: the parents still pin one frame only.
@@ -337,6 +430,84 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
         self.assertEqual(r.json()["error"]["code"], "invalid_workflow_extension")
         self.assertEqual(self.comfy.uploads, [])
         self.assertEqual(self.comfy.submitted, [])
+
+    def test_ltx_mid_picture_strength_and_index_override(self) -> None:
+        body = self._body("video-ltx-2.5-keyframes-mid", mid_frame=_uri(PNG_MID))
+        r = self.client.post("/v1/videos", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        g = self.graph
+        self.assertEqual([self.uploaded(n) for n in ("70", "101", "120")],
+                         [PNG_FIRST, PNG_LAST, PNG_MID])
+        self.assertEqual(g["125"]["inputs"]["value"], 1.0)
+        self.assertEqual(g["110"]["inputs"]["frame_idx"], ["126", 1])
+        self.assertEqual(g["111"]["inputs"]["frame_idx"], ["126", 1])
+        self.assertEqual(g["126"]["inputs"]["values.a"], ["22", 0])
+
+        self.comfy.submitted.clear()
+        self.comfy.uploads.clear()
+        body = self._body("video-ltx-2.5-keyframes-mid", mid_frame=_uri(PNG_MID),
+                          mid_frame_strength=0.35, mid_frame_index=30)
+        r = self.client.post("/v1/videos", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        g = self.graph
+        self.assertEqual(g["125"]["inputs"]["value"], 0.35)
+        self.assertEqual(g["110"]["inputs"]["frame_idx"], 30)
+        self.assertEqual(g["111"]["inputs"]["frame_idx"], 30)
+
+    def test_ltx_mid_index_out_of_range_or_off_grid_is_refused(self) -> None:
+        for invalid in ({"mid_frame_index": 0}, {"mid_frame_index": -1}, {"mid_frame_index": 1.5}):
+            with self.subTest(invalid=invalid):
+                body = self._body("video-ltx-2.5-keyframes-mid", mid_frame=_uri(PNG_MID), **invalid)
+                r = self.client.post("/v1/videos", json=body)
+                self.assert_refused(r, param="mid_frame_index")
+
+    def test_frames_accepts_the_grid_and_refuses_a_240_frame_request(self) -> None:
+        for model, valid, invalid, node in (
+            ("video-ltx-2.5-keyframes", 241, 240, "22"),
+            ("video-minimax-h3-keyframes", 243, 240, "8"),
+        ):
+            with self.subTest(model=model, valid=valid):
+                self.comfy.submitted.clear()
+                self.comfy.uploads.clear()
+                r = self.client.post("/v1/videos", json=self._body(model, frames=valid))
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(self.graph[node]["inputs"]["value"], valid)
+            with self.subTest(model=model, invalid=invalid):
+                r = self.client.post("/v1/videos", json=self._body(model, frames=invalid))
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertEqual(r.json()["error"]["param"], "frames")
+                self.assertIn("frames", r.json()["error"]["message"])
+                self.assertEqual(self.comfy.uploads, [])
+                self.assertEqual(self.comfy.submitted, [])
+
+    def test_frames_wins_over_seconds(self) -> None:
+        body = self._body("video-ltx-2.5-keyframes", frames=241)
+        body["seconds"] = 5
+        r = self.client.post("/v1/videos", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.graph["22"]["inputs"]["value"], 241)
+        self.assertEqual(r.json()["actual_seconds"], round(241 / 24, 4))
+
+    def test_img_compression_reaches_every_preprocess_node(self) -> None:
+        for model, nodes in LTX_PREPROCESS.items():
+            with self.subTest(model=model):
+                self.comfy.submitted.clear()
+                self.comfy.uploads.clear()
+                extras = {"img_compression": 7}
+                if model == "video-ltx-2.5-keyframes-mid":
+                    extras["mid_frame"] = _uri(PNG_MID)
+                r = self.client.post("/v1/videos", json=self._body(model, **extras))
+                self.assertEqual(r.status_code, 200, r.text)
+                g = self.graph
+                for node in nodes:
+                    self.assertEqual(g[node]["inputs"]["img_compression"], 7, (model, node))
+        for invalid in (101, -1, 1.5):
+            with self.subTest(invalid=invalid):
+                r = self.client.post("/v1/videos", json=self._body("video-ltx-2.5-keyframes", img_compression=invalid))
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertEqual(r.json()["error"]["param"], "img_compression")
+                self.assertEqual(self.comfy.uploads, [])
+                self.assertEqual(self.comfy.submitted, [])
 
     def test_invalid_extensions_are_refused_before_asset_resolution(self) -> None:
         for model in (*KEYFRAME_MODELS, "video-minimax-h3-i2v", "video-ltx-2.5-i2v"):
@@ -552,6 +723,43 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
+    def test_keyframe_graphs_are_byte_identical_when_new_fields_are_omitted(self) -> None:
+        for model, edits in (
+            ("video-ltx-2.5-keyframes", {
+                "5": {"text": "p"}, "20": {"value": 960}, "21": {"value": 512}, "22": {"value": 121},
+                "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
+                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_last_frame.png"},
+            }),
+            ("video-minimax-h3-keyframes", {
+                "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
+                "17": {"fps": 24.0}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
+                "22": {"image": "up2_last_frame.png"},
+            }),
+            ("video-minimax-h3-keyframes-mid", {
+                "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
+                "17": {"fps": 24.0}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
+                "22": {"image": "up2_last_frame.png"}, "24": {"image": "up3_middle_frame.png"},
+            }),
+            ("video-ltx-2.5-keyframes-mid", {
+                "5": {"text": "p"}, "20": {"value": 960}, "21": {"value": 512}, "22": {"value": 121},
+                "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
+                "70": {"image": "up1_input_reference.png"}, "101": {"image": "up2_last_frame.png"},
+                "120": {"image": "up3_mid_frame.png"},
+            }),
+        ):
+            with self.subTest(model=model):
+                self.comfy.submitted.clear()
+                self.comfy.uploads.clear()
+                body = {"model": model, "prompt": "p", "seconds": 5, "seed": 3,
+                        "input_reference": _uri(PNG_FIRST),
+                        "extensions": {NS: {"last_frame": _uri(PNG_LAST)}}}
+                if model.endswith("-mid"):
+                    body["extensions"][NS]["middle_frame" if model.startswith("video-minimax") else "mid_frame"] = _uri(PNG_MID)
+                r = self.client.post("/v1/videos", json=body)
+                self.assertEqual(r.status_code, 200, r.text)
+                expected = self._expected(model, edits)
+                self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
+
     def test_i2v_multipart_upload_still_works(self) -> None:
         r = self.client.post(
             "/v1/videos", data={"model": "video-minimax-h3-i2v", "prompt": "p", "seconds": "5"},
@@ -623,6 +831,124 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         self.assertTrue(job["assets"][0]["asset_id"].startswith("vid_"))
 
 
+HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+def _mp4_with_audio() -> bytes:
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "with-audio.mp4"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y",
+             "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.25:r=5",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=0.25",
+             "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(output)],
+            capture_output=True, check=True,
+        )
+        return output.read_bytes()
+
+
+def _audio_stream_count(content: bytes) -> int:
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "check.mp4"
+        source.write_bytes(content)
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(source)],
+            capture_output=True, check=True,
+        )
+    return len([line for line in result.stdout.decode().splitlines() if line.strip()])
+
+
+@pytest.mark.usefixtures("isolated_receipts")
+class VideoAudioControlTests(KeyframeRouteBase):
+    """`extensions["com.azizam.video"].audio = false` strips the track before storage."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.media_db = root / "media_jobs.db"
+        media_jobs.init_db(self.media_db)
+        for p in (
+            patch.object(media_jobs, "DB_PATH", self.media_db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", root / "cache"),
+            patch.object(proxy, "_image_url_signing_secret", b"keyframe-test-secret"),
+            patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content),
+        ):
+            self.stack.enter_context(p)
+
+    def _create(self, audio: object = None) -> dict:
+        controls = {} if audio is None else {"audio": audio}
+        body = {
+            "model": "video-minimax-h3-keyframes", "prompt": "a lighthouse", "seconds": 5,
+            "input_reference": _uri(PNG_FIRST),
+            "extensions": {NS: {"last_frame": _uri(PNG_LAST)}, "com.azizam.video": controls},
+        }
+        response = self.client.post("/v1/videos", json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def _finished(self, mp4: bytes) -> bytes:
+        self.comfy.history[NEW_PROMPT_ID] = succeeded_history("aud_00001_.mp4")
+        self.comfy.view_bytes["aud_00001_.mp4"] = mp4
+
+        async def fetch():
+            return await proxy.proxy_graph_video_content(NEW_ID, access_context(), metadata_mode="none")
+
+        response = anyio.run(fetch)
+        self.assertEqual(response.status_code, 200, getattr(response, "body", b"")[:200])
+        return bytes(response.body)
+
+    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
+    def test_audio_false_removes_the_track_from_the_stored_video(self) -> None:
+        mp4 = _mp4_with_audio()
+        self.assertEqual(_audio_stream_count(mp4), 1)
+        created = self._create(audio=False)
+        self.assertIs(proxy._video_job_records[created["id"].removeprefix("video_")].get("audio"), False)
+        stored = self._finished(mp4)
+        self.assertEqual(_audio_stream_count(stored), 0)
+        job = media_jobs.get_by_request_id(NEW_ID, path=self.media_db)
+        self.assertEqual(job["assets"][0]["media_type"], "video/mp4")
+
+    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
+    def test_absent_or_true_audio_leaves_the_bytes_identical(self) -> None:
+        mp4 = _mp4_with_audio()
+        for audio in (None, True):
+            with self.subTest(audio=audio):
+                self._create(audio=audio)
+                stored = self._finished(mp4)
+                self.assertEqual(stored, mp4)
+                proxy._video_job_records.clear()
+
+    def test_audio_must_be_a_boolean(self) -> None:
+        for invalid in ("no", 0, "false", []):
+            with self.subTest(invalid=invalid):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
+                response = self.client.post("/v1/videos", json={
+                    "model": "video-minimax-h3-keyframes", "prompt": "p", "seconds": 5,
+                    "input_reference": _uri(PNG_FIRST),
+                    "extensions": {NS: {"last_frame": _uri(PNG_LAST)},
+                                   "com.azizam.video": {"audio": invalid}},
+                })
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(response.json()["error"]["param"], "extensions.com.azizam.video.audio")
+                self.assertEqual(self.comfy.uploads, [])
+                self.assertEqual(self.comfy.submitted, [])
+
+    def test_unknown_video_control_is_refused(self) -> None:
+        response = self.client.post("/v1/videos", json={
+            "model": "video-minimax-h3-keyframes", "prompt": "p", "seconds": 5,
+            "input_reference": _uri(PNG_FIRST),
+            "extensions": {NS: {"last_frame": _uri(PNG_LAST)},
+                           "com.azizam.video": {"sound": False}},
+        })
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["param"], "extensions.com.azizam.video.sound")
+        self.assertEqual(self.comfy.uploads, [])
+
+
 class KeyframeCatalogTests(unittest.TestCase):
     """The workflow catalog, which the MCP tools read, describes the new inputs from the manifest."""
 
@@ -659,6 +985,32 @@ class KeyframeCatalogTests(unittest.TestCase):
                 self.assertTrue(schema["properties"][name]["x-azizam-asset"], (model, name))
                 self.assertIn(name, schema["required"], (model, name))
             self.assertTrue(schema["properties"]["image"]["x-azizam-asset"], model)
+
+    def test_extension_schema_never_lists_route_managed_inputs(self) -> None:
+        routes = []
+        for route_paths in (("/v1/videos", "/openai/v1/videos"),):
+            for path in route_paths:
+                routes.append(path)
+        schemas = self.spec["components"]["schemas"]
+        for path in routes:
+            options = self.spec["paths"][path]["post"]["requestBody"]["content"]["application/json"][
+                "schema"]["properties"]["extensions"]["properties"][NS]["anyOf"]
+            self.assertEqual(len(options), len({o["$ref"] for o in options}))
+            for option in options:
+                name = option["$ref"].rsplit("/", 1)[1]
+                properties = schemas[name]["properties"]
+                self.assertFalse(properties.keys() & {"image", "image_strength", "negative_prompt", "seed", "prompt"},
+                                 (path, name))
+        # The keyframe pictures and the new data inputs remain extension inputs.
+        for model in KEYFRAME_MODELS:
+            wid = self.entry(model)["id"]
+            extension_name = "WorkflowExtensionInputs_" + wid.replace(".", "_").replace("-", "_")
+            properties = schemas[extension_name]["properties"]
+            for name in _manifest(model)["inputs"]:
+                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength"):
+                    self.assertNotIn(name, properties, (model, name))
+                else:
+                    self.assertIn(name, properties, (model, name))
 
     def test_models_are_listed_for_video_generate(self) -> None:
         by_id = {e["id"]: e for e in proxy._build_workflow_model_entries()}
