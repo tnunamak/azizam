@@ -211,7 +211,12 @@
 # Train r92: r91 15963 + multi-picture edit contract and catalog cases = 15982 measured.
 # Slice A3 (remembered people, D54): +23 cases in tests/test_remembered_people.py. --collect-only -q measured 16005.
 # A3 review round 2 (F1-F8): +16 cases in tests/test_remembered_people.py (one parametrized twice). --collect-only -q measured 16021.
-pytest = 16021
+# LTX middle-guide workflow adds frame-grid, compression, audio and schema
+# coverage: 18 cases. Hermetic --collect-only -q measured 16000 (2026-10-21).
+# Keyframe frames maximum: +1 over-long refusal case = 16001 measured.
+# Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
+# Merge of origin/main into A3: 15982 + A3 39 + r93 30 = 16051 measured (--collect-only -q, 2026-10-22).
+pytest = 16051
 # Train r92: Try picture-upload specs, 3103 measured.
 vitest = 3103
 playwright = 502

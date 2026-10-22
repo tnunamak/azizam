@@ -885,43 +885,46 @@
               "com.azizam.workflow": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_t2v"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_t2v"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_video_generate_wan_2_2_ti2v_5b_q8"
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                   }
                 ],
                 "description": "Inputs of the workflow named by `model`."
@@ -957,6 +960,365 @@
           "prompt"
         ],
         "type": "object"
+      },
+      "WorkflowExtensionInputs_video_edit_bernini_r_remix": {
+        "additionalProperties": false,
+        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
+        "properties": {
+          "source_video": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to restyle.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "source_video"
+        ],
+        "title": "Bernini-R Remix",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
+      },
+      "WorkflowExtensionInputs_video_edit_rife_interpolate": {
+        "additionalProperties": false,
+        "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
+        "properties": {
+          "multiplier": {
+            "default": 2,
+            "description": "2 doubles the frames. 3 and 4 are less tested.",
+            "enum": [
+              2,
+              3,
+              4
+            ],
+            "type": "integer"
+          },
+          "source_video": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to make smoother.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "source_video"
+        ],
+        "title": "RIFE 2x Frame Interpolation",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.rife-interpolate"
+      },
+      "WorkflowExtensionInputs_video_edit_scail_2_replace": {
+        "additionalProperties": false,
+        "description": "Replace a person in a video with a character from a picture, keeping the original motion and scene.",
+        "properties": {
+          "reference_fit": {
+            "default": true,
+            "description": "Resize and position the new character to match the person being replaced.",
+            "type": "boolean"
+          },
+          "reference_image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture of who should appear in the video.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "reference_subject": {
+            "default": "person",
+            "description": "Describe the character to use from the picture.",
+            "type": "string"
+          },
+          "source_point_x": {
+            "description": "Select a person in the first frame using a horizontal position from 0 to 1.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "source_point_y": {
+            "description": "Select a person in the first frame using a vertical position from 0 to 1.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "source_subject": {
+            "default": "person",
+            "description": "Describe the person to replace in the video.",
+            "type": "string"
+          },
+          "source_video": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video whose character is replaced.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "subject_index": {
+            "default": "0",
+            "description": "Choose a tracked person, counting from zero; zero selects the largest person.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference_image",
+          "source_video"
+        ],
+        "title": "SCAIL-2 Character Replace",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.scail-2-replace"
+      },
+      "WorkflowExtensionInputs_video_generate_ltx_2_5_i2v": {
+        "additionalProperties": false,
+        "description": "Make a video with sound from a starting picture and a description.",
+        "properties": {},
+        "title": "LTX 2.5 Distilled I2V",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-i2v"
+      },
+      "WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes": {
+        "additionalProperties": false,
+        "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
+        "properties": {
+          "frames": {
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
+          "img_compression": {
+            "default": 18,
+            "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "last_frame"
+        ],
+        "title": "LTX 2.5 Distilled Keyframes",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes"
+      },
+      "WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid": {
+        "additionalProperties": false,
+        "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+        "properties": {
+          "frames": {
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
+          "img_compression": {
+            "default": 18,
+            "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "mid_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video passes through part-way.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "mid_frame_index": {
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+            "maximum": 239,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mid_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the middle picture shapes its frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "last_frame",
+          "mid_frame"
+        ],
+        "title": "LTX 2.5 Distilled Keyframes + Middle",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes-mid"
+      },
+      "WorkflowExtensionInputs_video_generate_ltx_2_5_long": {
+        "additionalProperties": false,
+        "description": "Make a longer video from a description.",
+        "properties": {},
+        "title": "LTX 2.5 Long",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-long"
+      },
+      "WorkflowExtensionInputs_video_generate_ltx_2_5_t2v": {
+        "additionalProperties": false,
+        "description": "Make a video with sound from a description or picture.",
+        "properties": {},
+        "title": "LTX 2.5",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-t2v"
+      },
+      "WorkflowExtensionInputs_video_generate_minimax_h3_i2v": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound from a starting picture and a description.",
+        "properties": {
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "title": "MiniMax H3 I2V",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-i2v"
+      },
+      "WorkflowExtensionInputs_video_generate_minimax_h3_keyframes": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
+        "properties": {
+          "frames": {
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "last_frame"
+        ],
+        "title": "MiniMax H3 Keyframes",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes"
+      },
+      "WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
+        "properties": {
+          "frames": {
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "mid_frame_index": {
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+            "maximum": 360,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "middle_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture the video passes through halfway, at half its frame count.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "last_frame",
+          "middle_frame"
+        ],
+        "title": "MiniMax H3 Keyframes + Middle",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-keyframes-mid"
+      },
+      "WorkflowExtensionInputs_video_generate_minimax_h3_long": {
+        "additionalProperties": false,
+        "description": "Make a longer video with sound from a description.",
+        "properties": {},
+        "title": "MiniMax H3 Long",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-long"
+      },
+      "WorkflowExtensionInputs_video_generate_minimax_h3_t2v": {
+        "additionalProperties": false,
+        "description": "Make a video with stereo sound from a description.",
+        "properties": {
+          "steps": {
+            "default": 8,
+            "description": "More steps take longer.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "title": "MiniMax H3 T2V",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
+      },
+      "WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8": {
+        "additionalProperties": false,
+        "description": "Make a short video from a description or picture.",
+        "properties": {
+          "cfg": {
+            "default": 5,
+            "description": "Adjust how closely the video follows your description.",
+            "maximum": 20,
+            "minimum": 0,
+            "type": "number"
+          },
+          "steps": {
+            "default": 20,
+            "description": "More steps take longer.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "title": "WAN 2.2 TI2V 5B Q8",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.wan-2.2-ti2v-5b-q8"
       },
       "WorkflowForm_video_edit_bernini_r_remix": {
         "additionalProperties": false,
@@ -2741,6 +3103,14 @@
         "additionalProperties": false,
         "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
         "properties": {
+          "frames": {
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -2752,6 +3122,13 @@
             "maximum": 1,
             "minimum": 0,
             "type": "number"
+          },
+          "img_compression": {
+            "default": 18,
+            "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
           },
           "last_frame": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
@@ -2787,6 +3164,91 @@
         "title": "LTX 2.5 Distilled Keyframes",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes"
+      },
+      "WorkflowInputs_video_generate_ltx_2_5_keyframes_mid": {
+        "additionalProperties": false,
+        "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+        "properties": {
+          "frames": {
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
+          "image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "image_strength": {
+            "default": 0.7,
+            "description": "Adjust how strongly the starting picture shapes the video.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "img_compression": {
+            "default": 18,
+            "description": "Compression used for the guide pictures before they are encoded; 0 to 100.",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "last_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the ending picture shapes the last frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "mid_frame": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video passes through part-way.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "mid_frame_index": {
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+            "maximum": 239,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mid_frame_strength": {
+            "default": 1,
+            "description": "Adjust how strongly the middle picture shapes its frame; 1 pins it.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "negative_prompt": {
+            "description": "Describe anything you want left out.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Describe the scene, action, and mood.",
+            "type": "string"
+          },
+          "seed": {
+            "description": "Use the same number to repeat a variation with the same settings.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "image",
+          "last_frame",
+          "mid_frame"
+        ],
+        "title": "LTX 2.5 Distilled Keyframes + Middle",
+        "type": "object",
+        "x-azizam-workflow-id": "video.generate.ltx-2.5-keyframes-mid"
       },
       "WorkflowInputs_video_generate_ltx_2_5_long": {
         "additionalProperties": false,
@@ -2885,6 +3347,14 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
         "properties": {
+          "frames": {
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -2925,6 +3395,14 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
         "properties": {
+          "frames": {
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -2934,6 +3412,12 @@
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video ends on.",
             "type": "string",
             "x-azizam-asset": true
+          },
+          "mid_frame_index": {
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
+            "maximum": 360,
+            "minimum": 1,
+            "type": "integer"
           },
           "middle_frame": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture the video passes through halfway, at half its frame count.",
@@ -21778,43 +22262,46 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_t2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_t2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_wan_2_2_ti2v_5b_q8"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                           }
                         ],
                         "description": "Inputs of the workflow named by `model`."
@@ -28707,43 +29194,46 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_long"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_t2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_i2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_keyframes_mid"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_long"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_minimax_h3_t2v"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_video_generate_wan_2_2_ti2v_5b_q8"
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                           }
                         ],
                         "description": "Inputs of the workflow named by `model`."
@@ -35013,6 +35503,10 @@
             "frame_rate": {
               "in": "none"
             },
+            "frames": {
+              "field": "frames",
+              "in": "extension"
+            },
             "image": {
               "field": "input_reference",
               "in": "body"
@@ -35020,6 +35514,10 @@
             "image_strength": {
               "field": "image_strength",
               "in": "body"
+            },
+            "img_compression": {
+              "field": "img_compression",
+              "in": "extension"
             },
             "last_frame": {
               "field": "last_frame",
@@ -35104,6 +35602,136 @@
       ],
       "short_id": "ltx-2.5-keyframes",
       "typical_seconds": 40.0
+    },
+    {
+      "aliases": [],
+      "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
+      "display_name": "LTX 2.5 Distilled Keyframes + Middle",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "DELETE",
+            "path": "/v1/videos/{video_id}"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}/content"
+          },
+          "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "frames": {
+              "field": "frames",
+              "in": "extension"
+            },
+            "image": {
+              "field": "input_reference",
+              "in": "body"
+            },
+            "image_strength": {
+              "field": "image_strength",
+              "in": "body"
+            },
+            "img_compression": {
+              "field": "img_compression",
+              "in": "extension"
+            },
+            "last_frame": {
+              "field": "last_frame",
+              "in": "extension"
+            },
+            "last_frame_strength": {
+              "field": "last_frame_strength",
+              "in": "extension"
+            },
+            "mid_frame": {
+              "field": "mid_frame",
+              "in": "extension"
+            },
+            "mid_frame_index": {
+              "field": "mid_frame_index",
+              "in": "extension"
+            },
+            "mid_frame_strength": {
+              "field": "mid_frame_strength",
+              "in": "extension"
+            },
+            "negative_prompt": {
+              "field": "negative_prompt",
+              "in": "body"
+            },
+            "prompt": {
+              "field": "prompt",
+              "in": "body"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "body"
+            }
+          },
+          "kind": "video",
+          "poll": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}"
+          },
+          "statuses": [
+            "queued",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "submit": {
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "video-ltx-2.5-keyframes-mid",
+            "path": "/v1/videos"
+          },
+          "terminal": [
+            "completed",
+            "failed"
+          ]
+        },
+        "recommended": "async",
+        "sync": null
+      },
+      "id": "video.generate.ltx-2.5-keyframes-mid",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_keyframes_mid"
+      },
+      "intent": "video.generate",
+      "limits": {
+        "default_size": "960x512",
+        "frame_rate": 24,
+        "max_seconds": 10,
+        "max_size": "1280x704",
+        "min_seconds": 1
+      },
+      "outputs": [
+        {
+          "media_type": "video/mp4",
+          "name": "video"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "ltx-2.5-keyframes-mid",
+      "typical_seconds": 45.0
     },
     {
       "aliases": [
@@ -35420,6 +36048,10 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frames": {
+              "field": "frames",
+              "in": "extension"
+            },
             "image": {
               "field": "input_reference",
               "in": "body"
@@ -35519,12 +36151,20 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frames": {
+              "field": "frames",
+              "in": "extension"
+            },
             "image": {
               "field": "input_reference",
               "in": "body"
             },
             "last_frame": {
               "field": "last_frame",
+              "in": "extension"
+            },
+            "mid_frame_index": {
+              "field": "mid_frame_index",
               "in": "extension"
             },
             "middle_frame": {

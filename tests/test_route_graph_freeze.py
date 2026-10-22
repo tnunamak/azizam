@@ -130,7 +130,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
-             "video.generate.ltx-2.5-keyframes"}
+             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
@@ -138,6 +138,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone.
-        assert route_graph.openapi_digest(proxy.app) == "528b12f9c10bec73617c3f7e08a00985d8cee184301bac584a11ff23455cd60c"
+        assert route_graph.openapi_digest(proxy.app) == "137bc145477e014b03dcbf5315f583b4aab13d30f5bc96505168cb0230b9d7ff"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

@@ -38,6 +38,14 @@ inputs:
     help: The picture the video ends on.
     type: asset
     required: true
+  frames:
+    label: Length in frames
+    help: Exact frame count on the 17N+5 grid; wins over `seconds`.
+    type: integer
+    step: 17
+    offset: 5
+    minimum: 22
+    maximum: 362
 outputs:
   video:
     media_type: video/mp4
@@ -60,6 +68,9 @@ bindings:
       last_frame:
       - node: '22'
         input: image
+      frames:
+      - node: '8'
+        input: value
 requires:
   models:
   - role: diffusion_model

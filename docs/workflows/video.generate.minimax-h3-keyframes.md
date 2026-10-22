@@ -13,9 +13,18 @@ License (not for use in the US, EU, UK or South Korea).
 - Last picture: `extensions.com.azizam.workflow.last_frame`, cropped to the canvas like the first
   picture and fed to the node's `last_frame` input.
 - Middle picture (`-mid` only): `extensions.com.azizam.workflow.middle_frame`, anchored by an
-  add-guide node at frame `length // 2`. A math node in the graph reads the length node, so the
-  index follows `seconds`.
-- The H3 nodes have no strength input for either guide, so there is no `last_frame_strength`.
+  add-guide node at `extensions.com.azizam.workflow.mid_frame_index`. When that input is omitted,
+  a math node in the graph reads the length node and the index is `length // 2`, exactly as
+  before; a supplied value replaces the link. The manifest requires a value of at least 1 and
+  documents the upper limit (`frames - 1`).
+- `frames` is an exact count on the 17N+5 grid (124 and 243 are accepted; 240 is refused with a
+  400 that names `frames`). It wins over `seconds` when both are sent. `seconds` keeps its 10 s
+  cap for requests that do not send `frames`.
+- `extensions.com.azizam.video.audio = false` removes the audio track from the stored clip and
+  the returned file. It is a gateway control, not a workflow input, and works on every video
+  model. Omitted or `true` leaves the bytes unchanged.
+- The H3 nodes have no strength input for either guide, so there is no `last_frame_strength` or
+  `mid_frame_strength`.
 
 ## Measurements (2026-10-21, 3090, 960x544, 124 frames, seed 11, ComfyUI at :7890)
 

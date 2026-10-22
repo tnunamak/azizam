@@ -21,6 +21,7 @@ from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.workflow_openapi import (  # noqa: E402
     ROOT_EXTENSION,
     augment_openapi,
+    extension_schema_name,
     match_alias_target,
     schema_name,
     short_id,
@@ -185,7 +186,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 "com.azizam.workflow"
             ]["anyOf"]
             wanted = {
-                schema_name(r.id)
+                (extension_schema_name(r.id) if r.intent.startswith("video.") else schema_name(r.id))
                 for r in self.registry.records()
                 if r.intent.startswith(intent)
             }

@@ -356,6 +356,7 @@ from gateway.manifests import (
     manifest_identity,
     validate_inputs,
 )
+from gateway import video_controls
 from gateway.video_extensions import (
     merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
@@ -10842,6 +10843,12 @@ async def proxy_graph_video_create(
             status_code=400,
             media_type="application/json",
         )
+    # Gateway-level controls (extensions.com.azizam.video) are not workflow inputs.
+    try:
+        video_control_values = video_controls.parse_video_controls(body)
+    except video_controls.VideoControlError as exc:
+        return _json_error(400, str(exc), param=exc.param, code="invalid_video_control")
+    audio_disabled = video_control_values.get(video_controls.AUDIO_CONTROL) is False
     _begin_media_delivery(auth_context, receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
@@ -10989,6 +10996,9 @@ async def proxy_graph_video_create(
     has_workflow_extensions = (
         bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
     )
+    # An explicit `frames` input, when the manifest declares one, is the
+    # authoritative length: it wins over the length derived from `seconds`.
+    requested_frames: int | None = None
     if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
@@ -11033,6 +11043,10 @@ async def proxy_graph_video_create(
             if rejected:
                 name, reason = next(iter(rejected.items()))
                 return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            if "frames" in ((video_manifest or {}).get("inputs") or {}):
+                supplied_frames = validation.accepted.get("frames")
+                if supplied_frames is not None:
+                    requested_frames = int(supplied_frames)
             if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
                 staged_assets, source_probe = await _resolve_video_workflow_assets(
                     body, video_manifest, workflow_cfg, auth_context, request=request,
@@ -11146,6 +11160,10 @@ async def proxy_graph_video_create(
                 or [length]
             ),
         )
+    if requested_frames is not None:
+        # An explicit frame count is exact; it overrides `seconds` and the
+        # seconds-derived snap; the manifest bounds it (minimum, maximum, grid).
+        length = requested_frames
     # `actual_seconds` is what the rendered mp4 will actually contain (within
     # codec/container rounding). It starts as the LTX 8N+1-snapped duration for
     # short workflows; long-form overrides this further down.
@@ -11438,8 +11456,13 @@ async def proxy_graph_video_create(
             "subject": str(block.get("source_subject") or "person"),
         }
 
+    record_extra: dict[str, Any] = {}
+    if subject_record:
+        record_extra["subject"] = subject_record
+    if audio_disabled:
+        record_extra["audio"] = False
     return await _submit_video_graph(
-        record_extra={"subject": subject_record} if subject_record else None,
+        record_extra=record_extra or None,
         workflow=workflow,
         auth_context=auth_context,
         workflow_name=workflow_name,
@@ -11638,6 +11661,11 @@ async def _submit_video_chain(
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`)."""
     extending = source is not None
+    try:
+        chain_controls = video_controls.parse_video_controls(body)
+    except video_controls.VideoControlError as exc:
+        return _json_error(400, str(exc), param=exc.param, code="invalid_video_control")
+    audio_disabled = chain_controls.get(video_controls.AUDIO_CONTROL) is False
     workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
     engine = video_extend.engine_for(workflow_cfg.get("builder"))
     try:
@@ -11785,7 +11813,8 @@ async def _submit_video_chain(
         remixed_from_video_id=source_video_id,
         duration_adjustment_reason=reason,
         record_extra={"chain": chain_info, "extended_from_video_id": source_video_id,
-                      "seconds": _seconds_text(total_seconds), "total_seconds": round(total_seconds, 3)},
+                      "seconds": _seconds_text(total_seconds), "total_seconds": round(total_seconds, 3),
+                      **({"audio": False} if audio_disabled else {})},
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
@@ -12108,6 +12137,20 @@ async def proxy_graph_video_content(
 
             video_bytes = view_resp.raw
             record = _video_job_records.get(prompt_id) or {}
+            if record.get("audio") is False:
+                # The request asked for a video-only asset: remove the track
+                # before the prompt metadata is captured, before storage, and
+                # before delivery, so the Library copy and the returned file
+                # agree.
+                try:
+                    video_bytes = await asyncio.to_thread(media_metadata.strip_audio, video_bytes, ext)
+                except media_metadata.MediaMetadataError as exc:
+                    print(f"[proxy] video audio strip failed: {log_scrub.describe_error(exc)}", flush=True)
+                    return Response(
+                        content=json.dumps({"error": {"message": "Could not remove the audio track from the video", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json",
+                    )
             person_id = record.get("person_id")
             saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
             # OWNER_VISIBILITY_STEP3: delegated prompt reads currently omit privacy_permission.
