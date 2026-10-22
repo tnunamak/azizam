@@ -178,6 +178,16 @@ def test_a_tile_alone_never_signs_anyone_in(tls):
     assert session_cookies(start) == []
 
 
+def test_an_unknown_tile_is_refused_before_any_provider_redirect(tls):
+    client = tls.client()
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+
+    unknown = same_device(tls, client).get("/login", params={"tile": "t_bogus"}, follow_redirects=False)
+
+    assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "tile_unknown"
+    assert "location" not in unknown.headers and session_cookies(unknown) == []
+
+
 def test_tile_login_resolves_the_person_from_the_device_not_the_request(tls):
     make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
     make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
@@ -618,6 +628,24 @@ def test_a_tile_sso_sign_in_that_returns_someone_else_is_refused_and_adds_no_nam
     assert device_rows(tls, client) == {helper}
 
 
+def test_a_tile_sso_sign_in_as_an_existing_other_person_is_refused_and_changes_nothing(tls):
+    client = tls.client()
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+    helper = person_id(tls, HELPER)
+    tile = next(person["tile"] for person in listed(client)["people"] if person["method"] == "sso")
+    tls.sign_in(tls.client(), sub="robin-sso", email="robin.sso@example.test", groups=["/Trusted"])
+    assert tls.user("robin.sso@example.test") is not None  # Robin already has an account: not a new person
+    rows_before = kept_rows(tls)
+    stranger = same_device(tls, client)
+
+    other = tls.sign_in(stranger, sub="robin-sso", email="robin.sso@example.test", groups=["/Trusted"],
+                        start={"tile": tile, "remember": "1"})
+
+    assert other.status_code == 303 and other.headers["location"].startswith("/sign-in/?error=provider")
+    assert session_cookies(other) == [] and not signed_in_state(stranger)
+    assert kept_rows(tls) == rows_before and device_rows(tls, client) == {helper}
+
+
 # ---------------------------------------------------------------------------
 # Names that come from an address
 # ---------------------------------------------------------------------------
@@ -634,6 +662,21 @@ def test_two_names_from_one_address_local_part_on_different_domains_get_no_hints
     assert [person["hint"] for person in people] == [None, None]
     text = client.get("/auth/api/remembered").text
     assert "alpha.example.test" not in text and "beta.example.test" not in text
+
+
+def test_a_provider_name_that_is_the_address_local_part_gets_no_hint(tls):
+    make_member(tls, "alice@corp.test", "alice", MEMBER_PASSWORD)
+    make_member(tls, "alice@other.test", "alice", MEMBER_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, "alice@corp.test", MEMBER_PASSWORD)
+    sign_in_with_password(client, "alice@other.test", MEMBER_PASSWORD)
+
+    people = listed(client)["people"]
+    assert [person["name"] for person in people] == ["alice", "alice"]
+    # "alice" beside a hint would give the whole address away: the hint adds the domain.
+    assert [person["hint"] for person in people] == [None, None]
+    text = client.get("/auth/api/remembered").text
+    assert "corp.test" not in text and "other.test" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +709,43 @@ def test_keep_reads_the_owner_setting_inside_its_write_transaction(tls, monkeypa
     reads = [index for index, (sql, parameters) in enumerate(statements)
              if "FROM operator_settings" in sql and parameters == (remembered_people.SETTING_KEY,)]
     assert reads and reads[0] > begin
+
+
+def test_a_tile_sign_in_adds_no_name_the_list_does_not_hold(tls):
+    person = make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    token = remembered_people.new_device_token()
+
+    minted = remembered_people.keep(path=tls.path, token=token, person_id=person, method="password", issuer=None,
+                                    remember=True, from_tile=True)
+
+    assert minted is None and kept_rows(tls) == []
+    # The same box from the sign-in form keeps the name, so the empty list is down to the tile.
+    remembered_people.keep(path=tls.path, token=token, person_id=person, method="password", issuer=None,
+                           remember=True, from_tile=False)
+    assert [row["person_id"] for row in kept_rows(tls)] == [person]
+
+
+def test_remember_sets_no_device_cookie_for_a_password_tile_or_under_nobody(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    browser = tls.client()
+    sign_in_with_password(browser, MEMBER, MEMBER_PASSWORD)
+    tile = tile_for(browser, MEMBER_NAME)
+
+    # The name is already on this browser: the tile sign-in refreshes it and mints no cookie.
+    again = browser.post(LOGIN, json={"tile": tile, "password": MEMBER_PASSWORD, "remember": True})
+    assert again.status_code == 200 and session_cookies(again) and device_cookies(again) == []
+
+    owner = owner_client(tls)
+    snapshot = owner.get("/admin/api/signin").json()
+    nobody = owner.put("/admin/api/signin", json={"proposal": {**proposal(snapshot), "memory": "nobody"},
+                                                  "test_id": None, "keep_admin_keys": [], "save_for_later": False},
+                       headers={**csrf(owner), "If-Match": snapshot["revision"]})
+    assert nobody.status_code == 200, nobody.text
+
+    # A browser with no device cookie yet: under "nobody" nothing is kept, so no cookie is set.
+    newcomer = sign_in_with_password(tls.client(), MEMBER, MEMBER_PASSWORD, remember=True)
+    assert newcomer.status_code == 200 and session_cookies(newcomer) and device_cookies(newcomer) == []
+    assert kept_rows(tls) == []
 
 
 def test_removing_or_disabling_a_person_forgets_their_names_on_every_browser(tls):
