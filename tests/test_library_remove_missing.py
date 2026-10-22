@@ -33,7 +33,7 @@ EMPTY = "Azizam's media folder is empty, which usually means it isn't mounted, s
 
 
 def asset(letter: str) -> str:
-    return "img_" + letter * 64
+    return "img_" + letter.lower() * 64
 
 
 class RemoveMissingTests(unittest.TestCase):
