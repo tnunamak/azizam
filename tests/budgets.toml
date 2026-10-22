@@ -209,7 +209,9 @@
 # Try adds eight repeated-part, real-catalog, filename and model-switch cases.
 # Full vitest list --json measured 3099 after merging r90 (2026-10-21).
 # Train r92: r91 15963 + multi-picture edit contract and catalog cases = 15982 measured.
-pytest = 15982
+# LTX middle-guide workflow adds frame-grid, compression, audio and schema
+# coverage: 18 cases. Hermetic --collect-only -q measured 16000 (2026-10-21).
+pytest = 16000
 # Train r92: Try picture-upload specs, 3103 measured.
 vitest = 3103
 playwright = 502
