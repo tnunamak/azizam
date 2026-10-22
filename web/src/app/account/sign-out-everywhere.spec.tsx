@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SessionCoverFromStore } from "@/components/shell/session-cover";
 import { navigate } from "@/lib/navigate";
 import { SignOutEverywhereSection } from "./sign-out-everywhere";
 
@@ -56,11 +57,19 @@ describe("sign out everywhere", () => {
     signOut = () =>
       Response.json({ error: { code: "csrf_required", message: "Refresh this page and try again." } }, { status: 403 });
     const user = userEvent.setup();
-    render(<SignOutEverywhereSection />);
+    render(
+      <>
+        <SignOutEverywhereSection />
+        <SessionCoverFromStore header={<span>Azizam</span>} />
+      </>,
+    );
     await user.click(screen.getByRole("button", { name: "Sign out everywhere" }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Sign out everywhere" }));
-    await waitFor(() => expect(replace).not.toHaveBeenCalled());
+    // The failure screen replaces the page, and says the gateway did not finish.
+    expect(await screen.findByRole("heading", { name: "Couldn’t finish signing out" })).toBeVisible();
+    expect(screen.getByText(/The gateway didn’t finish signing you out/)).toBeVisible();
+    expect(replace).not.toHaveBeenCalled();
     // The sign-out is the one retry with a fresh token, then the gateway's refusal stands.
     expect(sent.map((call) => call.path)).toEqual([
       "/auth/api/sign-out-everywhere",

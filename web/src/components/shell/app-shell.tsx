@@ -66,16 +66,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ReauthGate } from "./reauth-gate";
-import { SessionCover } from "./session-cover";
+import { SessionCoverFromStore } from "./session-cover";
 import { ToastGate } from "./toast-gate";
 import {
   checkPageShown,
-  continueFromOtherTab,
   forgetFinishedSignOut,
   getSessionScreen,
   onSessionStopping,
   resumeSignOut,
-  retrySignOut,
   revealPage,
   startSessionSync,
   subscribeSession,
@@ -1118,8 +1116,7 @@ function SessionBoundary({ children }: { children: React.ReactNode }) {
   }, [checked]);
   if (screen.kind === "idle") return children;
   return (
-    <SessionCover
-      screen={screen}
+    <SessionCoverFromStore
       header={
         <header className="flex items-center justify-between px-5 py-4 sm:px-8">
           <span className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight">
@@ -1131,8 +1128,6 @@ function SessionBoundary({ children }: { children: React.ReactNode }) {
           <ThemeToggle />
         </header>
       }
-      onRetry={() => void retrySignOut()}
-      onContinue={() => void continueFromOtherTab()}
     />
   );
 }

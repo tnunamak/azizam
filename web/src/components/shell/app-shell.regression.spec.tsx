@@ -211,6 +211,7 @@ describe("AppShell accessible names", () => {
         method: "POST",
         credentials: "same-origin",
         headers: { "x-azizam-csrf": "csrf", accept: "application/json" },
+        signal: expect.any(AbortSignal),
       }),
     );
   });

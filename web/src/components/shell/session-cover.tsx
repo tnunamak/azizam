@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CircleAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PRODUCT_NAME } from "@/lib/product";
-import type { FailureReason, OtherTabCause, SessionScreen } from "@/lib/session-end";
+import {
+  continueFromOtherTab,
+  getSessionScreen,
+  retrySignOut,
+  subscribeSession,
+  type FailureReason,
+  type OtherTabCause,
+  type SessionScreen,
+} from "@/lib/session-end";
 
 /** The copy of DESIGN.md 4.3, 4.4 and 7. Shown in place of the app while this tab's session has ended. */
 const SIGNING_OUT_DELAY_MS = 300;
@@ -22,6 +30,20 @@ const OTHER_TAB_BODY: Record<OtherTabCause, string> = {
   "sign-out": "You signed out in another tab.",
   server: "Azizam was signed out in another tab.",
 };
+
+/** The cover for this page's session, read from the session store: nothing while the session is live. */
+export function SessionCoverFromStore({ header }: { header: ReactNode }) {
+  const screen = useSyncExternalStore(subscribeSession, getSessionScreen, getSessionScreen);
+  if (screen.kind === "idle") return null;
+  return (
+    <SessionCover
+      screen={screen}
+      header={header}
+      onRetry={() => void retrySignOut()}
+      onContinue={() => void continueFromOtherTab()}
+    />
+  );
+}
 
 export function SessionCover({
   screen,

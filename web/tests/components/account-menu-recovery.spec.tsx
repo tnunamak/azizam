@@ -67,8 +67,24 @@ it("a sign-out that gets no answer leaves the failure screen; Try again reads a 
   await waitFor(() => expect(getSessionScreen()).toMatchObject({ kind: "failed", trying: false, tries: 1 }));
   await retrySignOut();
   expect(logout).toHaveBeenCalledTimes(3);
-  const tokens = logout.mock.calls.map(([init]) => new Headers((init as RequestInit).headers).get("x-azizam-csrf"));
-  expect(tokens).toEqual(["fixture-csrf-1", "fixture-csrf-2", "fixture-csrf-3"]);
+  expect(logout).toHaveBeenNthCalledWith(1, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "x-azizam-csrf": "fixture-csrf-1", accept: "application/json" },
+    signal: expect.any(AbortSignal),
+  });
+  expect(logout).toHaveBeenNthCalledWith(2, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "x-azizam-csrf": "fixture-csrf-2", accept: "application/json" },
+    signal: expect.any(AbortSignal),
+  });
+  expect(logout).toHaveBeenNthCalledWith(3, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "x-azizam-csrf": "fixture-csrf-3", accept: "application/json" },
+    signal: expect.any(AbortSignal),
+  });
   expect(replace).toHaveBeenCalledWith("/sign-in/");
 });
 
@@ -83,11 +99,12 @@ it("uses the admin session's token when the member snapshot has none", async () 
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/"));
-  expect(fetch).toHaveBeenCalledWith("/logout", expect.objectContaining({
+  expect(fetch).toHaveBeenCalledWith("/logout", {
     method: "POST",
     credentials: "same-origin",
     headers: { "x-azizam-csrf": "fixture-admin-csrf", accept: "application/json" },
-  }));
+    signal: expect.any(AbortSignal),
+  });
 });
 
 it("a snapshot that cannot be read sends no sign-out and leaves the gateway-error screen", async () => {
