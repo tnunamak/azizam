@@ -779,6 +779,8 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
                              "OR (subject_kind='user' AND subject_id=?)) AND revoked_at IS NULL", (ts, user_id, user_id))
                 conn.execute("UPDATE account_links SET revoked_at=? WHERE user_id=? AND used_at IS NULL", (ts, user_id))
                 conn.execute("UPDATE admin_role_assignments SET revoked_at=? WHERE subject_kind='user' AND subject_id=?", (ts, user_id))
+                # Their names leave every browser's sign-in list now, not when a list is next read (review round 2, F6).
+                conn.execute("DELETE FROM remembered_people WHERE person_id=?", (user_id,))
             if remove:
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
                 # Nothing the identity provider shared outlives the person: not the sign-in picture URL.

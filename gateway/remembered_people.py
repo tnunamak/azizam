@@ -6,8 +6,8 @@ remembered person: an HMAC of the device key and the person id, under a key deri
 A tile is stable on its own device, useless on another, and does not show the id it stands for.
 
 A tile names a row, never a session. Signing in still needs the person's own password or their provider sign-in
-(gateway.accounts_api and proxy.py). Removed, disabled and 90-day-old rows are not offered, and they are deleted the
-first time they are read.
+(gateway.accounts_api and proxy.py). A removed or disabled person's rows are deleted with the change. A row unused for 90
+days is swept by the next sign-in, and any row the list does not offer is deleted the first time the list reads it.
 """
 from __future__ import annotations
 
@@ -61,13 +61,27 @@ def device_key(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def memory_mode(path: Path) -> str:
-    """The owner's "On shared computers" choice. Nothing saved means remember; a value it does not know means nobody."""
-    record = admin_store.get_operator_setting(SETTING_KEY, path=path)
+def box_value(query: str | None) -> bool | None:
+    """The sign-in page's box as its query carries it: ``1`` ticked, ``0`` unticked, anything else not sent."""
+    return {"1": True, "0": False}.get(query or "")
+
+
+def _mode_of(record: Mapping[str, Any] | None) -> str:
+    """Nothing saved means remember; a value it does not know means nobody."""
     if record is None:
         return REMEMBER
     value = record["value"]
     return REMEMBER if isinstance(value, Mapping) and value.get("mode") == REMEMBER else NOBODY
+
+
+def memory_mode(path: Path) -> str:
+    """The owner's "On shared computers" choice."""
+    return _mode_of(admin_store.get_operator_setting(SETTING_KEY, path=path))
+
+
+def _memory_mode_in(conn) -> str:
+    """:func:`memory_mode` as an open write transaction sees it, so a switch to nobody cannot land between check and write."""
+    return _mode_of(admin_store.get_operator_setting_in(conn, SETTING_KEY))
 
 
 def forget_everyone_in(conn) -> None:
@@ -110,16 +124,16 @@ def _live(conn, device: str, now_ms: int) -> list[dict[str, Any]]:
     return live
 
 
-def _name(row: Mapping[str, Any]) -> str:
-    """The name on the person's account, read now, so a rename shows without a new sign-in.
+def _name(row: Mapping[str, Any]) -> tuple[str, bool]:
+    """The name on the person's account, read now, so a rename shows without a new sign-in; and whether a provider gave it.
 
     A provider that sends no name leaves the address there instead, so an address is never the name: the part before
-    the @ stands in for it.
+    the @ stands in for it, and that stand-in is not a provider's name.
     """
     name = (row["display_name"] or "").strip()
     if name and "@" not in name:
-        return name
-    return (row["email"] or "").split("@", 1)[0].strip() or "Person"
+        return name, True
+    return (row["email"] or "").split("@", 1)[0].strip() or "Person", False
 
 
 def _initial(name: str) -> str:
@@ -144,7 +158,7 @@ def _auto_variant(person_id: str) -> str:
 
 
 def _hint(email: str | None) -> str | None:
-    """Only two names that match need telling apart: the first letter of the address and its domain."""
+    """Two provider names that match need telling apart: the first letter of the address and its domain."""
     if not email or "@" not in email:
         return None
     local, domain = email.split("@", 1)
@@ -162,11 +176,11 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
         live = _live(conn, device, _now_ms() if now_ms is None else now_ms)
     rows = [row for row in live if offered(row)]
     names = {row["person_id"]: _name(row) for row in rows}
-    counts = Counter(name.casefold() for name in names.values())
+    counts = Counter(name.casefold() for name, _ in names.values())
     choices = avatars.get_many(names.keys(), path=path)
     people = []
     for row in rows:
-        name = names[row["person_id"]]
+        name, from_provider = names[row["person_id"]]
         choice = choices[row["person_id"]]["choice"]
         people.append({
             "tile": tile_for(signing_key, device, row["person_id"]),
@@ -175,8 +189,9 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
                        "initial": _initial(name)},
             "method": row["method"],
             "provider": provider_label if row["method"] == "sso" else None,
-            # Two people with the same name are told apart by the start of their address.
-            "hint": _hint(row["email"]) if counts[name.casefold()] > 1 else None,
+            # Two provider names that match are told apart by the start of their address. A name taken from an
+            # address never shows one: that would give the address away.
+            "hint": _hint(row["email"]) if from_provider and counts[name.casefold()] > 1 else None,
         })
     return people
 
@@ -209,35 +224,42 @@ def forget(token: str | None, tile: str, *, path: Path, signing_key: bytes | Non
 
 
 def keep(*, path: Path, token: str | None, person_id: str, method: str, issuer: str | None,
-         remember: bool, from_tile: bool) -> str | None:
-    """Record a successful sign-in on this browser's list, when the person asked for it or came from their tile.
+         remember: bool | None, from_tile: bool) -> str | None:
+    """Apply one successful sign-in to this browser's list, as the sign-in asked.
 
-    ``remember`` is the sign-in page's box, or the person's own choice. ``from_tile`` only refreshes a name the list
-    already holds: a tile sign-in keeps its row, and never adds one. Returns a new device token when one was minted,
-    which the caller sets as the cookie.
+    ``remember`` is the sign-in page's box: True keeps the person's name on this browser, False takes it off, and None
+    (not sent) leaves the list alone. ``from_tile`` marks a sign-in that started from one of this list's tiles: it
+    refreshes the name the list already holds and never adds one. Every call also sweeps the names unused for 90 days,
+    on every browser. Returns a new device token only when it stored a name under it, which the caller sets as the cookie.
     """
-    if not (remember or from_tile) or memory_mode(path) != REMEMBER:
+    if remember is None and not from_tile:
         return None
-    minted = None
+    fresh = None
     if token is None:
-        if not remember:
+        if remember is not True:
             return None
-        minted = token = new_device_token()
+        fresh = token = new_device_token()
     device = device_key(token)
     now = _now_ms()
+    kept = False
     with accounts.connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        known = conn.execute("SELECT 1 FROM remembered_people WHERE device_hash=? AND person_id=?",
-                             (device, person_id)).fetchone()
-        if known is not None:
-            conn.execute("UPDATE remembered_people SET method=?, provider_issuer=?, last_signed_in_at=? "
-                         "WHERE device_hash=? AND person_id=?", (method, issuer, now, device, person_id))
-        elif remember:
-            conn.execute("INSERT INTO remembered_people(device_hash, person_id, method, provider_issuer, "
-                         "last_signed_in_at, created_at) VALUES(?,?,?,?,?,?)",
-                         (device, person_id, method, issuer, now, now))
-            # At most MAX_PEOPLE names: the one used longest ago goes.
-            conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id NOT IN ("
-                         "SELECT person_id FROM remembered_people WHERE device_hash=? "
-                         "ORDER BY last_signed_in_at DESC, rowid DESC LIMIT ?)", (device, device, MAX_PEOPLE))
-    return minted
+        conn.execute("DELETE FROM remembered_people WHERE last_signed_in_at<?", (now - MAX_AGE_MS,))
+        if remember is False:
+            conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id=?", (device, person_id))
+        elif _memory_mode_in(conn) == REMEMBER:
+            known = conn.execute("SELECT 1 FROM remembered_people WHERE device_hash=? AND person_id=?",
+                                 (device, person_id)).fetchone()
+            if known is not None:
+                conn.execute("UPDATE remembered_people SET method=?, provider_issuer=?, last_signed_in_at=? "
+                             "WHERE device_hash=? AND person_id=?", (method, issuer, now, device, person_id))
+            elif remember and not from_tile:
+                conn.execute("INSERT INTO remembered_people(device_hash, person_id, method, provider_issuer, "
+                             "last_signed_in_at, created_at) VALUES(?,?,?,?,?,?)",
+                             (device, person_id, method, issuer, now, now))
+                kept = True
+                # At most MAX_PEOPLE names: the one used longest ago goes.
+                conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id NOT IN ("
+                             "SELECT person_id FROM remembered_people WHERE device_hash=? "
+                             "ORDER BY last_signed_in_at DESC, rowid DESC LIMIT ?)", (device, device, MAX_PEOPLE))
+    return fresh if kept else None

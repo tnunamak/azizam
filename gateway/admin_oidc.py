@@ -517,10 +517,12 @@ class StateRecord:
     test_id: str = ""
     # Set when the person is confirming a sign-in they already have (step-up).
     reauth: bool = False
-    # Set when the sign-in page asked the browser to keep the person's name (gateway.remembered_people).
-    remember: bool = False
-    # Set when the sign-in started from a tile on this browser's list.
-    from_tile: bool = False
+    # The sign-in page's box (gateway.remembered_people): True keeps the person's name, False takes it off this
+    # browser once the sign-in succeeds, None leaves the list alone.
+    remember: bool | None = None
+    # Set when the sign-in started from a tile on this browser's list: the person the tile named. The callback holds
+    # the provider to that person and to a fresh sign-in (proxy.admin_oidc_callback).
+    tile_person_id: str = ""
 
 
 def record_state(
@@ -534,8 +536,8 @@ def record_state(
     browser_binding_hash: str = "",
     test_id: str = "",
     reauth: bool = False,
-    remember: bool = False,
-    from_tile: bool = False,
+    remember: bool | None = None,
+    tile_person_id: str = "",
     state: str | None = None,
     now: float | None = None,
     max_age_seconds: int = 600,
@@ -560,7 +562,7 @@ def record_state(
         test_id=test_id,
         reauth=reauth,
         remember=remember,
-        from_tile=from_tile,
+        tile_person_id=tile_person_id,
     )
     store[record.state] = record
     return record

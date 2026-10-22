@@ -47,8 +47,9 @@ class Login(_Body):
     tile: str | None = None
     password: str
     return_to: str | None = None
-    # Keep the person's name on this browser's list (the sign-in page's box, unticked unless the person ticks it).
-    remember: StrictBool = False
+    # The sign-in page's box. True keeps the person's name on this browser's list, False takes it off, and omitted
+    # (null) leaves the list alone, as headless clients and pages that predate the box expect.
+    remember: StrictBool | None = None
 
     @model_validator(mode="after")
     def email_or_tile(self):
@@ -231,10 +232,11 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
 
         def offered(row) -> bool:
             # A name is offered only while its way of signing in is on: a provider name for another provider is not.
+            # With password sign-in off, no password name is offered, the owner's included: the list must not show
+            # who the owner is. The owner still signs in with a password from the email form.
             if row["method"] == "sso":
                 return bool(opts["oidc"]) and row["provider_issuer"] == oidc.get("issuer")
-            return bool(opts["built_in"]) or "owner" in admin_store.effective_admin_roles(
-                "user", row["person_id"], path=path)
+            return bool(opts["built_in"])
 
         people = remembered_people.listing(
             remembered_people.device_token(request, secure=cookie.secure), path=path,

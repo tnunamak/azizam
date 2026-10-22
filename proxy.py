@@ -16965,27 +16965,30 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         callback = urlsplit(cfg.redirect_uri)
         # ASGI sees HTTP behind TLS ingress; only compare the host and port.
         tile = request.query_params.get("tile") or ""
-        remember = request.query_params.get("remember") == "1"
+        remember = remembered_people.box_value(request.query_params.get("remember"))
         if not callback_host_matches(request, cfg.redirect_uri):
             return RedirectResponse(
                 f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}"
                 + ("&reauth=1" if request.query_params.get("reauth") == "1" else "")
-                + ("&remember=1" if remember else "")
+                + ("" if remember is None else f"&remember={int(remember)}")
                 + (f"&tile={quote(tile, safe='')}" if tile else ""),
                 status_code=302, headers={"cache-control": "no-store"},
             )
-        hint = None
+        tile_person_id = ""
         if tile:
-            # The tile is resolved on this browser only; the email goes to the provider as a hint, never to the page.
-            person = remembered_people.resolve(
+            # The tile names a person on this browser only. The callback holds the provider to that same person; no
+            # email goes to the provider or the page, so the provider is asked to sign in without a hint.
+            person = await asyncio.to_thread(
+                remembered_people.resolve,
                 remembered_people.device_token(request, secure=_browser_admin_cookie_config().secure), tile,
                 path=ADMIN_STORE.path, signing_key=_browser_admin_session_signing_key())
-            if person is not None and person["method"] == "sso":
-                hint = person["email"]
+            if person is None:
+                raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
+            tile_person_id = person["person_id"]
         return begin_browser_login(
             cfg, ADMIN_OIDC_STATES, return_to=return_to,
             reauth=request.query_params.get("reauth") == "1",
-            remember=remember, from_tile=bool(tile), login_hint=hint,
+            remember=remember, tile_person_id=tile_person_id,
         )
     except accounts.AccountError as exc:
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
@@ -17821,8 +17824,15 @@ async def admin_oidc_callback(request: Request):
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
             if state.reauth and _provider_auth_time(claims) is None:
                 raise ProviderReportsNoSignInTime(NO_SIGN_IN_TIME_MESSAGE)
-            if state.reauth and not _provider_signed_in_again(claims, since=state.created_at):
+            # A tile sign-in is a fresh one too, and only for the person the tile named. Both are refused before any
+            # write, so a refusal leaves no session and no row (review round 2, F2).
+            if (state.reauth or state.tile_person_id) and not _provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
+            if state.tile_person_id:
+                signed_in = await asyncio.to_thread(admin_store.find_oidc_user, cfg.issuer, str(claims["sub"]),
+                                                    path=ADMIN_STORE.path)
+                if signed_in is None or str(signed_in["id"]) != state.tile_person_id:
+                    raise ValueError("identity provider signed in someone other than the tile's person")
             decision, bootstrap_owner = await _decide_oidc_signin(cfg, claims)
             if not decision.outcome.admitted:
                 raise SignInRefused("sign-in rules do not let this person in")
@@ -17918,7 +17928,7 @@ async def admin_oidc_callback(request: Request):
             remembered_people.keep, path=ADMIN_STORE.path,
             token=remembered_people.device_token(request, secure=cfg.cookie.secure),
             person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
-            remember=state.remember, from_tile=state.from_tile)
+            remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         if previous is not None:

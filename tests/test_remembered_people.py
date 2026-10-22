@@ -768,10 +768,7 @@ def test_a_tile_from_another_device_is_refused_even_when_the_request_has_its_own
 
 def test_sixty_one_unknown_tiles_from_one_address_are_refused_with_429(tls):
     client = tls.client()
-    statuses = []
-    for index in range(61):
-        response = client.post(LOGIN, json={"tile": f"t_guess{index:02d}", "password": "a guess"})
-        statuses.append(response.status_code)
+    responses = [client.post(LOGIN, json={"tile": f"t_guess{index:02d}", "password": "a guess"}) for index in range(61)]
 
-    assert statuses[:60] == [404] * 60 and statuses[60] == 429
-    assert response.json()["error"]["code"] == "login_rate_limited"
+    assert [response.status_code for response in responses[:60]] == [404] * 60
+    assert responses[60].status_code == 429 and responses[60].json()["error"]["code"] == "login_rate_limited"
