@@ -19,7 +19,8 @@ and the two extra pictures' resize and preprocess nodes.
   count (`a // 2`) when the input is omitted, so the index follows `frames` or `seconds`; a
   supplied value replaces that link on both guide nodes. The manifest requires a value of at
   least 1; the graph has no way to reject an index at or above `frames - 1`, so the route
-  documents that limit in the input help instead of enforcing it.
+  documents that limit in the input help instead of enforcing it. The guide node rounds an
+  index down to the nearest multiple of 8, so 24 is exact for a 49-frame clip.
 - `img_compression` (0 to 100, default 18) is one input bound to every `LTXVPreprocess` node in
   the graph, including the two new middle-picture nodes.
 - Guide frames are cropped away after each stage, as in the two-picture workflow.
