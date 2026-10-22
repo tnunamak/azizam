@@ -17864,16 +17864,20 @@ async def provider_sign_out(request: Request):
     return RedirectResponse(f"{address}{'&' if '?' in address else '?'}{query}", status_code=302)
 
 
-def _browser_signin_failure(request: Request, *, return_to: str | None = None, reason: str = "provider"):
+def _browser_signin_failure(request: Request, *, return_to: str | None = None, reason: str = "provider",
+                            provider_sign_out: bool = False):
     """Give browser navigations a safe retry page; never forward provider detail.
 
-    ``reason`` is ours, never the provider's: ``provider`` (it did not finish) or ``no_sign_in_time``
-    (it finished but does not say when the person signed in, so a step-up cannot be confirmed)."""
+    ``reason`` is ours, never the provider's: ``provider`` (it did not finish), ``no_sign_in_time`` (it finished
+    but does not say when the person signed in, so a step-up cannot be confirmed), or ``not_fresh`` (it finished
+    without a sign-in from just now, so no one is signed in). ``provider_sign_out`` says the provider publishes a
+    sign-out address, so the sign-in page can offer the link to it."""
     if "text/html" not in request.headers.get("accept", ""):
         return None
     target = _safe_admin_return_to(return_to)
+    link = "&provider_sign_out=1" if provider_sign_out else ""
     return RedirectResponse(
-        f"/sign-in/?error={reason}&return_to={quote(target, safe='')}",
+        f"/sign-in/?error={reason}&return_to={quote(target, safe='')}{link}",
         status_code=303,
         headers={"cache-control": "no-store", "referrer-policy": "no-referrer"},
     )
@@ -18044,9 +18048,13 @@ async def admin_oidc_callback(request: Request):
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
         not_fresh = isinstance(failure, ProviderSignInNotFresh)
+        # A refused sign-in offers the way out: the sign-out link, when the provider publishes a sign-out address.
+        # `cfg` is bound here whenever the refusal is not_fresh, which is raised after the provider's config is read.
+        sign_out = not_fresh and bool(await _provider_sign_out_address(cfg))
         response = _browser_signin_failure(
             request, return_to=state.return_to if state else None,
             reason="no_sign_in_time" if no_time else "not_fresh" if not_fresh else "provider",
+            provider_sign_out=sign_out,
         )
         if response is None and no_time:
             response = JSONResponse({"error": {"code": "provider_no_sign_in_time", "message": NO_SIGN_IN_TIME_MESSAGE}},
