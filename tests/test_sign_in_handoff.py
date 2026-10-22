@@ -211,7 +211,7 @@ def test_failed_password_sign_in_keeps_the_incoming_session(sg):
     assert signed_in_state(client)
 
 
-def test_oidc_step_up_ends_the_previous_family_once_and_keeps_the_new_one(sg, monkeypatch):
+def test_oidc_step_up_keeps_the_family_and_rotates_its_session_id(sg, monkeypatch):
     client = owner_client(sg)
     previous = cookie_session(client)
     ended = []
@@ -225,6 +225,7 @@ def test_oidc_step_up_ends_the_previous_family_once_and_keeps_the_new_one(sg, mo
     _, response = through_provider(sg, client, reauth=True)
 
     assert response.status_code == 302
-    assert ended == [previous.family_id]
+    assert ended == []  # a step-up is the same sign-in, not a new one: no family ends
     assert signed_in_state(client)
-    assert cookie_session(client).family_id != previous.family_id
+    current = cookie_session(client)
+    assert current.family_id == previous.family_id and current.session_id != previous.session_id
