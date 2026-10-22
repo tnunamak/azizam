@@ -27,7 +27,8 @@ baseline's paths and its own. Only these differences are allowed:
   POST /auth/api/sign-out-everywhere are new (tests/test_session_lifecycle.py and
   tests/test_session_settings_api.py cover them); every other method falls to the catch-all as before;
 * GET /login/provider-sign-out is new (the sign-out redirect at the provider, A2;
-  tests/test_exposure_oidc_security.py covers it); its other methods answer 405 for it;
+  tests/test_exposure_oidc_security.py covers it); HEAD answers 405 and every other
+  method falls to the catch-all, as /login does;
 * POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
   PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
   leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
@@ -275,7 +276,12 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
         if kind == "provider_sign_out":
-            continue  # the sign-out redirect at the provider; tests/test_exposure_oidc_security.py covers it
+            # As /login: GET is the route, HEAD says 405 for it, and every other method falls to the catch-all.
+            expected = {"GET": "/login/provider-sign-out provider_sign_out",
+                        "HEAD": "405 allow=GET via /login/provider-sign-out provider_sign_out"}.get(
+                            _method_of(key), "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
         if kind == "retention_ledger" and key not in old:
             continue  # new offline ledger and fact editor routes
         if kind == "secret_entries" and key not in old:
