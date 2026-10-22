@@ -358,12 +358,40 @@ async function gatewayAnswer(end: EndKind): Promise<Answer> {
   }
 }
 
+/** What this sign-out sends: the member's own CSRF token, or the owner's admin session's. "ended" when no
+ * session is left to end; "refuse" when a session exists but no token can be had, so nothing is sent. */
+type TokenAnswer = { kind: "token"; token: string } | { kind: "ended" } | { kind: "refuse" };
+
+async function tokenFor(signal: AbortSignal): Promise<TokenAnswer> {
+  const seen = await readSession(signal);
+  if (seen.csrf) return { kind: "token", token: seen.csrf };
+  const admin = await readAdmin(signal);
+  if (admin.live) return admin.csrf ? { kind: "token", token: admin.csrf } : { kind: "refuse" };
+  return seen.authenticated ? { kind: "refuse" } : { kind: "ended" };
+}
+
 async function askGateway(end: EndKind, signal: AbortSignal): Promise<Answer> {
   const path = end === "sign-out-everywhere" ? SIGN_OUT_EVERYWHERE_PATH : LOGOUT_PATH;
-  let response = await send(path, signal);
-  if (response.status === 403) response = await send(path, signal);
+  let token = await tokenFor(signal);
+  if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH };
+  if (token.kind === "refuse") return { ended: false, reason: "gateway-error" };
+  let response = await post(path, token.token, signal);
+  if (response.status === 403) {
+    // A stale CSRF token: one retry with a fresh one (DESIGN.md 4.4).
+    token = await tokenFor(signal);
+    if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH };
+    if (token.kind === "refuse") return { ended: false, reason: "gateway-error" };
+    response = await post(path, token.token, signal);
+  }
   const body = await response.json().catch(() => null);
-  if (response.ok) return { ended: true, next: nextPage(body) };
+  if (response.ok) {
+    // Only the gateway's own JSON answer ends the session. Any other 2xx (a captive portal, a proxy
+    // page) is not an answer: the session decides.
+    if (body !== null) return { ended: true, next: nextPage(body) };
+    return (await sessionStillLive(signal))
+      ? { ended: false, reason: "gateway-error" }
+      : { ended: true, next: SIGN_IN_PATH };
+  }
   if (response.status === 401 && errorCode(body) === "login_required") {
     return { ended: true, next: SIGN_IN_PATH };
   }
@@ -376,9 +404,7 @@ async function askGateway(end: EndKind, signal: AbortSignal): Promise<Answer> {
   return { ended: false, reason: "gateway-error" };
 }
 
-async function send(path: string, signal: AbortSignal): Promise<Response> {
-  const seen = await readSession(signal);
-  const token = seen.csrf ?? (await readAdmin(signal)).csrf ?? "";
+function post(path: string, token: string, signal: AbortSignal): Promise<Response> {
   return fetch(path, {
     method: "POST",
     credentials: "same-origin",
