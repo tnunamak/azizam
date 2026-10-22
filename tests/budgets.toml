@@ -201,8 +201,10 @@
 # Remove-missing round 2: order-independent job count (+1 pytest); removal
 # announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
 # Lowercase-only digest check adds one uppercase-ID regression; full collection measured 15957.
-pytest = 15956
-vitest = 3091
+# Train r91: r90 15953 + video validation 3 + sign-in off the loop 3 + remove-missing follow-ups 4 = 15963 measured.
+pytest = 15963
+# Train r91: remove-missing copy and toast specs, 3095 measured.
+vitest = 3095
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
