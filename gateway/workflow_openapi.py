@@ -45,6 +45,7 @@ from gateway.video_limits import limits_for_workflow
 # Component names use only letters, digits and underscores: a dot in a name
 # makes code generators (datamodel-code-generator) treat it as a module path.
 SCHEMA_PREFIX = "WorkflowInputs_"
+EXTENSION_SCHEMA_PREFIX = "WorkflowExtensionInputs_"
 FORM_PREFIX = "WorkflowForm_"
 ROOT_EXTENSION = "x-azizam-workflows"
 SLOW_SECONDS = 30  # above this, prefer the async route when there is one
@@ -90,6 +91,11 @@ def schema_name(workflow_id: str, prefix: str = SCHEMA_PREFIX) -> str:
     return prefix + re.sub(r"[^A-Za-z0-9]+", "_", workflow_id).strip("_")
 
 
+def extension_schema_name(workflow_id: str) -> str:
+    """Component name for a workflow's extension-only input schema."""
+    return schema_name(workflow_id, EXTENSION_SCHEMA_PREFIX)
+
+
 def _schema_name(record: WorkflowRecord, prefix: str = SCHEMA_PREFIX) -> str:
     return schema_name(record.id, prefix)
 
@@ -120,6 +126,11 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     for key in ("minimum", "maximum", "enum", "default"):
         if key in spec:
             out[key] = copy.deepcopy(spec[key])
+    # A grid of accepted values (value = step * k + offset) is not expressible
+    # as JSON Schema `multipleOf`, so publish it as an extension keyword.
+    for key in ("step", "offset"):
+        if key in spec:
+            out[f"x-azizam-{key}"] = copy.deepcopy(spec[key])
     # The plain `help` line describes the input for people and API clients
     # alike; research provenance lives in docs/workflows/<id>.md, never here.
     note = spec.get("help") or spec.get("description")
@@ -165,6 +176,31 @@ def advertised_inputs_schema(record: WorkflowRecord) -> dict[str, Any]:
     owned = gateway_owned_inputs(record)
     schema["properties"] = {name: spec for name, spec in schema["properties"].items() if name not in owned}
     required = [name for name in schema.get("required") or [] if name not in owned]
+    if required:
+        schema["required"] = required
+    else:
+        schema.pop("required", None)
+    return schema
+
+
+def extension_inputs_schema(record: WorkflowRecord) -> dict[str, Any]:
+    """Extension-only view of a workflow's inputs.
+
+    The video route reads these fields from the top-level body and refuses them
+    inside ``extensions["com.azizam.workflow"]``, so the union advertised there
+    must not name them. A route that shares one schema for both places keeps
+    ``advertised_inputs_schema``.
+    """
+    schema = advertised_inputs_schema(record)
+    mapping = request_mapping(record, "async")
+    keep = {
+        name for name, where in mapping.items()
+        if where.get("in") in {"extension", "file+extension"}
+    }
+    schema["properties"] = {
+        name: spec for name, spec in schema["properties"].items() if name in keep
+    }
+    required = [name for name in schema.get("required") or [] if name in keep]
     if required:
         schema["required"] = required
     else:
@@ -621,6 +657,13 @@ def _by_intent(records: Iterable[WorkflowRecord], *prefixes: str) -> list[Workfl
 
 
 def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
+    def ref(record: WorkflowRecord) -> dict[str, str]:
+        # The video route takes its own fields at the top level and refuses
+        # them inside the extension namespace, so advertise the extension-only
+        # input schema there. Other routes share one schema for both places.
+        prefix = EXTENSION_SCHEMA_PREFIX if record.intent.startswith("video.") else SCHEMA_PREFIX
+        return _ref(_schema_name(record, prefix))
+
     return {
         "type": "object",
         "description": (
@@ -629,7 +672,7 @@ def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
         ),
         "properties": {
             WORKFLOW_EXTENSION_NAMESPACE: {
-                "anyOf": [_ref(_schema_name(r)) for r in records],
+                "anyOf": [ref(r) for r in records],
                 "description": "Inputs of the workflow named by `model`.",
             }
         },
@@ -674,6 +717,8 @@ def augment_openapi(
     components["MediaJobContent"] = copy.deepcopy(_MEDIA_JOB_CONTENT_SCHEMA)
     for record in records:
         components[_schema_name(record)] = advertised_inputs_schema(record)
+        if record.intent.startswith("video."):
+            components[_schema_name(record, EXTENSION_SCHEMA_PREFIX)] = extension_inputs_schema(record)
 
     paths = spec.setdefault("paths", {})
     errors = _errors()
