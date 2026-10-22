@@ -19,6 +19,7 @@ export default function SetupPage() {
     useQuery<SetupState>({
       queryKey: ["public", "setup"],
       queryFn: async () => {
+        // eslint-disable-next-line no-restricted-globals -- first-run setup endpoint, served before any account exists
         const response = await fetch("/setup/api/state", { cache: "no-store" });
         if (!response.ok) throw new Error("Setup state could not be loaded");
         return response.json();

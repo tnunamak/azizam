@@ -43,6 +43,7 @@ import { outputKindOf } from "./workflow-input-meta";
 import { costFrom } from "./result-cost";
 import { runImageJob } from "./image-job";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
+import { sessionIsClosed } from "@/lib/session-end";
 import { ReceiptLink } from "./receipt-link";
 import { VoicePicker, selectedVoice, type SpeechVoices } from "./voice-picker";
 import { ServiceNotice, serviceUnavailable } from "@/components/product/service-notice";
@@ -470,7 +471,7 @@ async function recentCreation(
 ) {
   if ((typeof prompt !== "string" || !prompt) && !jobId) return null;
   try {
-    const response = await fetch("/me/api/media?kind=image&limit=5&scope=me", {
+    const response = await networkFetch("/me/api/media?kind=image&limit=5&scope=me", {
       credentials: "same-origin",
     });
     if (!response.ok) return null;
@@ -586,7 +587,7 @@ async function checkReceipt(
   /** The id when its receipt exists; null when it does not. Throws on failure. */
   async function verify(requestId: string | null) {
     if (!requestId) return null;
-    const receipt = await fetch(
+    const receipt = await networkFetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
       { credentials: "same-origin" },
     );
@@ -602,7 +603,7 @@ async function checkReceipt(
   }
   for (const id of lookup.assetIds) {
     try {
-      const detail = await fetch(`/me/api/media/${encodeURIComponent(id)}`, {
+      const detail = await networkFetch(`/me/api/media/${encodeURIComponent(id)}`, {
         credentials: "same-origin",
       });
       if (!detail.ok) {
@@ -1619,7 +1620,7 @@ export default function TryPage() {
     if (section === "models") setCatalogPlan(undefined);
     setCatalogState((states) => ({ ...states, [section]: "loading" }));
     try {
-      const response = await fetch(
+      const response = await networkFetch(
         section === "models" ? "/me/api/models/catalog" : "/me/api/workflows",
         {
           credentials: "same-origin",
@@ -1641,7 +1642,7 @@ export default function TryPage() {
             ? { id: plan.id, name: plan.name }
             : undefined;
       } else if (secret) {
-        const fallback = await fetch("/openai/v1/models", {
+        const fallback = await networkFetch("/openai/v1/models", {
           headers: { authorization: `Bearer ${secret}` },
           signal: controller.signal,
         });
@@ -2144,7 +2145,8 @@ export default function TryPage() {
           }),
         isNetworkFailure,
         now: () => Date.now(),
-        stopped: () => !mounted.current,
+        // A picture stops when the page unmounts or the session ends (the Try key ends with it).
+        stopped: () => !mounted.current || sessionIsClosed(),
       });
       if (outcome.kind === "stopped") return null;
       if (outcome.kind === "failed") throw new Error(outcome.message);

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
 import { SNIFF_BYTES, sniffKinds } from "@/lib/media-sniff";
+import { networkFetch } from "@/lib/network-error";
 import {
   MEDIA_NOUN,
   withArticle,
@@ -509,7 +510,7 @@ async function libraryFile(
   if (pick.size_bytes && pick.size_bytes > MAX_MEDIA_BYTES) {
     throw new TooBigError(noun, pick.size_bytes);
   }
-  const link = await fetch(
+  const link = await networkFetch(
     `/me/api/media/${encodeURIComponent(pick.asset_id)}/download?scope=me`,
     { credentials: "same-origin", signal },
   );
@@ -518,7 +519,7 @@ async function libraryFile(
     download_url?: string | null;
   };
   if (!url) throw new Error("Library download has no link");
-  const response = await fetch(url, { signal });
+  const response = await networkFetch(url, { signal });
   if (!response.ok) throw new Error("Library download failed");
   // An error page must not become a picture: the type is the media's own, or
   // the gateway's declared type when the file comes back as plain bytes. The
@@ -609,7 +610,10 @@ function LibraryPicker({
     if (!open) return;
     const controller = new AbortController();
     const mine = ++generation.current;
-    fetch(pageUrl(), { credentials: "same-origin", signal: controller.signal })
+    networkFetch(pageUrl(), {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error("Library unavailable");
         const page = (await response.json()) as LibraryPage;
@@ -636,7 +640,7 @@ function LibraryPicker({
     const mine = generation.current;
     setMore("loading");
     try {
-      const response = await fetch(pageUrl(nextCursor), {
+      const response = await networkFetch(pageUrl(nextCursor), {
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("Library unavailable");

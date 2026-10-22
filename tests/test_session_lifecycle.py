@@ -639,17 +639,23 @@ def test_signing_in_through_the_provider_asks_it_to_log_the_person_in_again(sg):
     assert "prompt=login" not in plain.headers["location"]
 
 
-def test_confirming_through_the_provider_gives_a_fresh_session_and_ends_the_one_it_replaced(sg):
+def test_confirming_through_the_provider_rotates_the_session_id_inside_the_same_sign_in(sg):
+    """A provider confirmation rotates the session id inside the same sign-in, as a password confirmation does
+    (browser_sessions.confirm). The id it replaced works only inside the grace window, because its response may
+    have been lost; afterwards a copy of it ends the sign-in once the new id has been used (decision D35)."""
     stale = stale_owner(sg)
     old_cookie = stale.cookies.get(COOKIE)
+    before = cookie_session(stale)
 
     _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()))
 
     assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
     assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+    after = cookie_session(stale)
+    assert after.family_id == before.family_id and after.session_id != before.session_id
     replay = sg.client()
     put_cookie(replay, old_cookie)
-    assert not signed_in_state(replay)
+    assert signed_in_state(replay)
 
 
 def test_a_provider_that_reuses_its_own_old_login_does_not_confirm_anyone(sg):
@@ -940,3 +946,19 @@ def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatc
     assert all(index >= 0 for _, _, index in watch.writes), "a session write ran outside a request"
     on_loop = [name for name, thread, index in watch.writes if thread == watch.loop_threads[index]]
     assert not on_loop, f"{on_loop} wrote the session database on the event loop thread"
+
+
+def test_reauth_keeps_the_session_view_id_whichever_way_the_person_confirms(sg):
+    """The view id is the public face of a sign-in. A step-up keeps it: a password confirm and a provider confirm
+    both keep the sign-in's family, as the browser's other tabs rely on (web/src/lib/session-end.ts)."""
+    client = stale_owner(sg)
+    set_password(sg, OWNER)
+    view = client.get("/me/api/session").json()["session_view_id"]
+
+    confirmed = client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client))
+    assert confirmed.status_code == 200
+    assert client.get("/me/api/session").json()["session_view_id"] == view
+
+    _, callback = reauth_through_provider(sg, client, auth_time=int(time.time()))
+    assert callback.status_code == 302
+    assert client.get("/me/api/session").json()["session_view_id"] == view

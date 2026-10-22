@@ -4,7 +4,8 @@ import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
-import { fetchEarly } from "@/lib/early-fetch";
+import { networkFetch } from "@/lib/network-error";
+import { observeViewer, personOf } from "@/lib/session-end";
 import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
@@ -29,12 +30,18 @@ export const ViewerContext = createContext<Viewer>({
 export const useViewer = () => useContext(ViewerContext);
 
 export async function fetchViewer(): Promise<Viewer> {
-  const response = await fetchEarly("/me/api/session", {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+  const response = await networkFetch(
+    "/me/api/session",
+    { credentials: "same-origin", cache: "no-store" },
+    true,
+  );
   if (!response.ok) throw new Error("Your account could not be loaded.");
   const snapshot = await response.json();
+  observeViewer({
+    authenticated: snapshot.authenticated === true,
+    epoch: typeof snapshot.session_view_id === "string" ? snapshot.session_view_id : null,
+    person: personOf(snapshot),
+  });
   if (snapshot.authenticated && snapshot.user) {
     const role = snapshot.user.role;
     return {

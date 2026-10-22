@@ -48,10 +48,12 @@ describe("viewer fallback contract", () => {
       admin,
     });
     expect(api.session).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledExactlyOnceWith("/me/api/session", {
+    // The request also carries the session's abort signal (session-end.ts).
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("/me/api/session", expect.objectContaining({
       credentials: "same-origin",
       cache: "no-store",
-    });
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   it.each([401, 403])("treats only fallback HTTP %s as signed out", async (status) => {

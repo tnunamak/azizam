@@ -4,9 +4,7 @@ import { useState } from "react";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { signOutEverywhere } from "@/lib/api";
-import { navigate } from "@/lib/navigate";
-import { toast } from "@/lib/toast";
+import { endSession } from "@/lib/session-end";
 
 /** One person's sign-ins end together: every device, this one included. */
 export function SignOutEverywhereSection() {
@@ -29,18 +27,7 @@ export function SignOutEverywhereSection() {
         title="Sign out everywhere?"
         description="You will be signed out on every phone and computer, including this one. Sign in again to keep going."
         confirmLabel="Sign out everywhere"
-        onConfirm={async () => {
-          try {
-            navigate.to(await signOutEverywhere());
-          } catch (failure) {
-            toast.error(
-              failure instanceof Error && failure.message
-                ? failure.message
-                : "We couldn’t sign you out everywhere. Try again.",
-            );
-            throw failure;
-          }
-        }}
+        onConfirm={() => endSession("sign-out-everywhere")}
       />
     </SettingsSection>
   );

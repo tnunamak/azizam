@@ -26,6 +26,7 @@ import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
 import { Callout, DelayedSpinner, StateBadge } from "@/components/product/status-ui";
 import { formatTimestamp } from "@/lib/format";
+import { networkFetch } from "@/lib/network-error";
 import { requestCapability } from "@/lib/capability-state";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
@@ -232,7 +233,7 @@ export function Requests() {
       if (person) params.set("person_id", person);
       if (source !== "all") params.set("source", source);
       if (pageParam) params.set("before", pageParam);
-      const response = await fetch(`/admin/api/activity/requests?${params}`, {
+      const response = await networkFetch(`/admin/api/activity/requests?${params}`, {
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("Requests could not be loaded.");

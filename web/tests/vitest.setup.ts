@@ -57,11 +57,14 @@ const replaceable = (
   ([target, key]) => [target, key, Object.getOwnPropertyDescriptor(target, key)] as const,
 );
 
-afterEach(() => {
+afterEach(async () => {
   setRetentionContract(bundledContract);
   // The test files run without vitest globals, so Testing Library cannot
   // register its own cleanup; do it here for every spec.
   cleanup();
+  // A page whose session ended stays ended; each spec starts with a live page. Loaded here, not at the top:
+  // a static import would pin the real modules before a spec's vi.mock of one of them (e.g. navigate).
+  (await import("@/lib/session-end")).resetSessionStateForTests();
   sessionStorage.clear();
   localStorage.clear();
   for (const [target, key, original] of replaceable) {

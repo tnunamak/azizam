@@ -1,12 +1,10 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountMenuContent } from "@/components/shell/account-menu-content";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
-import { api } from "@/lib/api";
-import { toast } from "@/lib/toast";
-
-vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn() } }));
+import { navigate } from "@/lib/navigate";
+import { getSessionScreen, retrySignOut } from "@/lib/session-end";
 
 const viewer: Viewer = {
   authenticated: true,
@@ -29,10 +27,11 @@ function json(body: unknown, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
+let replace: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
+  replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   vi.stubGlobal("fetch", vi.fn());
-  vi.spyOn(api, "session").mockRejectedValue(new Error("Unexpected fallback"));
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}
@@ -41,107 +40,79 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-it("unlocks after failure and reads a new CSRF for the retry", async () => {
+it("a sign-out that gets no answer leaves the failure screen; Try again reads a new CSRF token each time", async () => {
   const user = userEvent.setup();
-  let rejectLogout!: (error: Error) => void;
-  const pending = new Promise<Response>((_resolve, reject) => {
-    rejectLogout = reject;
-  });
   let sessionReads = 0;
   const logout = vi.fn()
-    .mockReturnValueOnce(pending)
-    .mockResolvedValueOnce(json({}, 403));
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValueOnce(json({ error: { code: "csrf_required", message: "Refresh" } }, 403))
+    .mockResolvedValueOnce(json({ next: "/sign-in/" }));
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     if (String(input) === "/me/api/session") {
       sessionReads += 1;
-      return json({ csrf_token: "fixture-csrf-" + sessionReads });
+      return json({ authenticated: true, csrf_token: "fixture-csrf-" + sessionReads });
     }
     if (String(input) === "/logout") return logout(init);
     throw new Error("Unexpected URL: " + String(input));
   });
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-  const busy = await screen.findByRole("menuitem", { name: "Signing out…" });
-  expect(busy).toHaveAttribute("aria-disabled", "true");
-  fireEvent.click(busy);
-  expect(logout).toHaveBeenCalledTimes(1);
-  await act(async () => {
-    rejectLogout(new Error("fixture offline"));
-    await pending.catch(() => undefined);
-  });
-  const retry = await screen.findByRole("menuitem", { name: "Sign out" });
-  expect(retry).not.toHaveAttribute("aria-disabled", "true");
-  await user.click(retry);
-  await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
-  expect(sessionReads).toBe(2);
-  expect(logout).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(getSessionScreen()).toMatchObject({ kind: "failed", reason: "no-answer" }));
+  expect(replace).not.toHaveBeenCalled();
+
+  // The second and third sends happen inside one Try again: a 403, then a fresh token, then success.
+  await waitFor(() => expect(getSessionScreen()).toMatchObject({ kind: "failed", trying: false, tries: 1 }));
+  await retrySignOut();
+  expect(logout).toHaveBeenCalledTimes(3);
   expect(logout).toHaveBeenNthCalledWith(1, {
     method: "POST",
     credentials: "same-origin",
     headers: { "x-azizam-csrf": "fixture-csrf-1", accept: "application/json" },
+    signal: expect.any(AbortSignal),
   });
   expect(logout).toHaveBeenNthCalledWith(2, {
     method: "POST",
     credentials: "same-origin",
     headers: { "x-azizam-csrf": "fixture-csrf-2", accept: "application/json" },
+    signal: expect.any(AbortSignal),
   });
-  expect(api.session).not.toHaveBeenCalled();
-  expect(toast.error).toHaveBeenLastCalledWith(
-    "We couldn't confirm you were signed out. Refresh this page and try again.",
-  );
+  expect(logout).toHaveBeenNthCalledWith(3, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "x-azizam-csrf": "fixture-csrf-3", accept: "application/json" },
+    signal: expect.any(AbortSignal),
+  });
+  expect(replace).toHaveBeenCalledWith("/sign-in/");
 });
 
-it("uses the admin fallback token when the member snapshot has none", async () => {
+it("uses the admin session's token when the member snapshot has none", async () => {
   const user = userEvent.setup();
-  vi.mocked(api.session).mockResolvedValue({
-    actor: {
-      subject: "fixture-service",
-      kind: "service_account",
-      label: "Fixture service",
-      email: null,
-      roles: ["admin"],
-      csrf_token: "fixture-admin-csrf",
-    },
-  } as Awaited<ReturnType<typeof api.session>>);
   vi.mocked(fetch).mockImplementation(async (input) => {
-    if (String(input) === "/me/api/session") return json({});
-    if (String(input) === "/logout") return json({}, 403);
+    if (String(input) === "/me/api/session") return json({ authenticated: true });
+    if (String(input) === "/admin/api/session") return json({ actor: { csrf_token: "fixture-admin-csrf" } });
+    if (String(input) === "/logout") return json({ next: "/sign-in/" });
     throw new Error("Unexpected URL: " + String(input));
   });
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-  await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
-  expect(api.session).toHaveBeenCalledOnce();
-  expect(fetch).toHaveBeenCalledWith("/me/api/session", {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/"));
   expect(fetch).toHaveBeenCalledWith("/logout", {
     method: "POST",
     credentials: "same-origin",
     headers: { "x-azizam-csrf": "fixture-admin-csrf", accept: "application/json" },
+    signal: expect.any(AbortSignal),
   });
-  expect(screen.getByRole("menuitem", { name: "Sign out" }))
-    .not.toHaveAttribute("aria-disabled", "true");
 });
 
-it("does not submit logout after fallback failure and still permits retry", async () => {
+it("a snapshot that cannot be read sends no sign-out and leaves the gateway-error screen", async () => {
   const user = userEvent.setup();
-  vi.mocked(fetch).mockImplementation(async () => json({}));
+  vi.mocked(fetch).mockImplementation(async () => json({}, 500));
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-  await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
-  expect(fetch).toHaveBeenCalledTimes(1);
-  expect(api.session).toHaveBeenCalledOnce();
-  await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
-  await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
-  expect(fetch).toHaveBeenCalledTimes(2);
-  expect(api.session).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(fetch).mock.calls.every(([url]) =>
-    String(url) === "/me/api/session",
-  )).toBe(true);
+  await waitFor(() => expect(getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" }));
+  expect(fetch).not.toHaveBeenCalledWith("/logout", expect.anything());
+  expect(replace).not.toHaveBeenCalled();
 });

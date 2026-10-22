@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { networkFetch } from "@/lib/network-error";
 import { uiPages } from "@/lib/product";
 
 export interface SignInOptions {
@@ -17,7 +18,8 @@ export async function authFetch<T>(
   body?: object,
   headers?: Record<string, string>,
 ): Promise<T> {
-  const response = await fetch(path, {
+  // Session-bound like every other request: the answer can name the person who is signed in (signed_in_oidc).
+  const response = await networkFetch(path, {
     method: body ? "POST" : "GET",
     credentials: "same-origin",
     cache: "no-store",

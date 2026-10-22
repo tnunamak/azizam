@@ -10,6 +10,7 @@
  * No import from api.ts: api.ts imports this file. */
 
 import { useSyncExternalStore } from "react";
+import { onSessionStopping } from "@/lib/session-end";
 
 export const REAUTH_REQUIRED_CODE = "reauth_required";
 
@@ -118,3 +119,6 @@ function getPending(): ReauthInfo | null {
 export function usePendingReauth(): ReauthInfo | null {
   return useSyncExternalStore(subscribe, getPending, () => null);
 }
+
+// A session that ends closes a confirm-it's-you prompt that is still open: the person cannot confirm into it.
+onSessionStopping(() => settleReauth(false));

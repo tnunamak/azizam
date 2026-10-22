@@ -13,6 +13,7 @@
  * logged by this module. */
 
 import { networkFetch } from "./network-error";
+import { onSessionStopping } from "./session-end";
 import { parseReauth, requestReauth } from "./reauth";
 import { QueryClient } from "@tanstack/react-query";
 
@@ -635,6 +636,8 @@ export function resetSessionCache(): void {
   cachedSession = null;
   sessionInFlight = null;
 }
+// The CSRF token belongs to the session that is ending; no later request may reuse it.
+onSessionStopping(resetSessionCache);
 
 // ---------------------------------------------------------------------------
 // adminFetch
@@ -867,15 +870,6 @@ async function authPost(path: string, body?: unknown): Promise<unknown> {
 export async function confirmWithPassword(password: string): Promise<void> {
   await authPost("/auth/api/reauth", { password });
   resetSessionCache();
-}
-
-/** End every sign-in this person has, on every device including this one.
- * Resolves with the page to open next (the sign-in page). */
-export async function signOutEverywhere(): Promise<string> {
-  const payload = await authPost("/auth/api/sign-out-everywhere");
-  const next = (payload as { next?: unknown } | null)?.next;
-  // Only a path on this site; anything else goes to the sign-in page.
-  return typeof next === "string" && /^\/(?!\/)/.test(next) ? next : "/sign-in/";
 }
 
 /** Run a registry mutation against the latest known snapshot ETag. */

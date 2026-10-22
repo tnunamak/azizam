@@ -13,8 +13,8 @@ from gateway import accounts, admin_store, browser_sessions
 from gateway.admin_oidc import AdminSession, csrf_token_for_session, decode_session_cookie, encode_session_cookie
 from gateway.session_policy import DAY
 from tests.test_session_lifecycle import (  # noqa: F401  (sg is a fixture, and needs gateway)
-    OWNER, SIGNING_KEY, COOKIE, cookie_session, csrf, forge, gateway, owner_client, person_id, put_cookie,
-    registry, session_cookies, sg, signed_in_state,
+    OWNER, SIGNING_KEY, COOKIE, asks_again, cookie_session, csrf, forge, gateway, owner_client, person_id, put_cookie,
+    registry, session_cookies, sg, signed_in_state, stale_owner, through_provider,
 )
 
 SECOND_DEVICE = "second-device@example.test"
@@ -554,3 +554,34 @@ def test_lineage_tables_from_before_first_use_was_recorded_gain_the_columns_and_
         rows = {row["session_id"]: row for row in conn.execute("SELECT * FROM account_session_lineage")}
     assert rows["old"]["used_at"] == 100 and rows["current"]["used_at"] is not None
     assert rows["old"]["superseded"] == rows["current"]["superseded"] == 0
+
+
+def test_after_a_provider_step_up_the_replaced_cookie_gets_a_session_but_must_confirm_again(sg):
+    """Review probe (F2): inside the grace window the replaced copy still names the sign-in, but the sign-in is no
+    longer recently authenticated, so a sensitive route asks for the confirmation again."""
+    stale = stale_owner(sg)
+    old_cookie = stale.cookies.get(COOKIE)
+    _, callback = through_provider(sg, stale, auth_time=int(time.time()))
+    assert callback.status_code == 302
+    replay = sg.client()
+    put_cookie(replay, old_cookie)
+    assert signed_in_state(replay)
+    assert asks_again(replay.get("/admin/api/settings/effective/export"))
+
+
+def test_reusing_the_replaced_cookie_after_its_successor_was_used_ends_the_sign_in_and_is_audited(sg):
+    """Review probe (F2): once the grace window has passed and the new id has been used, a copy of the replaced id
+    is reuse. The family ends, and the reuse is audited (decision D35b)."""
+    stale = stale_owner(sg)
+    old_cookie = stale.cookies.get(COOKIE)
+    subject = cookie_session(stale).subject
+    _, callback = through_provider(sg, stale, auth_time=int(time.time()))
+    assert callback.status_code == 302
+    assert signed_in_state(stale)
+    age_retirement(sg, 120)
+    replay = sg.client()
+    put_cookie(replay, old_cookie)
+    assert not signed_in_state(replay)
+    assert not signed_in_state(stale)
+    actions = [row["action"] for row in admin_store.list_audit(actor_id=subject, path=sg.path)]
+    assert "account.session.reuse_detected" in actions

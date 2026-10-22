@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, CircleAlert, X } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
+import { networkFetch } from "@/lib/network-error";
 import { CREATION_OPENED, openedCreations } from "./opened-creations";
 
 export type LongJob = {
@@ -56,7 +57,7 @@ export async function jobRequest<T>(
   path: string,
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await networkFetch(path, {
     credentials: "same-origin",
     cache: "no-store",
     signal,

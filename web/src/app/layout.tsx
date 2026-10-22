@@ -1,6 +1,7 @@
 import type { Viewport } from "next";
 import { AppShell } from "@/components/shell/app-shell";
 import { EARLY_SCRIPT } from "@/lib/early-fetch";
+import { SESSION_HEAD_SCRIPT } from "@/lib/session-end";
 import { publicOrigin, siteMetadata } from "@/lib/site-metadata";
 import "./globals.css";
 
@@ -27,6 +28,8 @@ export default function RootLayout({
       <head>
         {/* Starts the viewer and Home requests before the JavaScript has loaded (lib/early-fetch.ts). */}
         <script dangerouslySetInnerHTML={{ __html: EARLY_SCRIPT }} />
+        {/* Hides a page that is entering the back/forward cache, or that opens during a pending sign-out (session-end.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: SESSION_HEAD_SCRIPT }} />
       </head>
       <body>
         <AppShell>{children}</AppShell>

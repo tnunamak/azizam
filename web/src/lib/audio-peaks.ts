@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { networkFetch } from "@/lib/network-error";
 
 /**
  * The real loudness shape of an audio file, for its cover. Peaks are measured
@@ -26,7 +27,7 @@ async function measure(src: string, bins: number): Promise<number[] | null> {
         (window as unknown as { webkitAudioContext?: typeof AudioContext })
           .webkitAudioContext);
   if (!AudioCtx) return null;
-  const response = await fetch(src);
+  const response = await networkFetch(src);
   if (!response.ok) return null;
   const buffer = await response.arrayBuffer();
   const context = new AudioCtx();

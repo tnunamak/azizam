@@ -104,6 +104,7 @@ import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
 import { markCreationOpened } from "@/components/jobs/opened-creations";
 import { api, queryKeys } from "@/lib/api";
+import { networkFetch } from "@/lib/network-error";
 import { accountApi } from "@/lib/account-api";
 import {
   folderChangedSentence,
@@ -471,7 +472,7 @@ async function mediaRequest<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { credentials: "same-origin", ...init });
+    response = await networkFetch(path, { credentials: "same-origin", ...init });
   } catch {
     throw new LibraryFailure(stage, "unknown");
   }
@@ -626,7 +627,7 @@ async function shareCreation(asset: MediaAsset, everyone: boolean) {
   const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
   let media: Response;
   try {
-    media = await fetch(payload.download_url);
+    media = await networkFetch(payload.download_url);
   } catch {
     throw new LibraryFailure("download", "unknown");
   }

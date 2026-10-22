@@ -4,4 +4,8 @@ export const navigate = {
   to(url: string) {
     window.location.assign(url);
   },
+  /** Replaces this page in history, so Back cannot return to the page the last person saw. */
+  replace(url: string) {
+    window.location.replace(url);
+  },
 };

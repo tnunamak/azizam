@@ -233,6 +233,7 @@ from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
     build_user_portal_snapshot,
+    session_view_key_problem,
     create_user_app,
     delete_user_app,
     ensure_try_session_key,
@@ -12905,6 +12906,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
     # Try deadline repair before serving; recurring maintenance retries failures.
@@ -16200,7 +16202,15 @@ app.include_router(create_home_router(
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
-    snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    try:
+        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
+        # nothing that could be taken for a signed-in person. The CSRF token still goes: a sign-out needs only the
+        # token, and the logout does not need the view key, so the sign-in can still be ended.
+        csrf = _csrf_token_for_oidc_session(session) if session is not None else ""
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}, "csrf_token": csrf},
+                            status_code=exc.status_code, headers={"cache-control": "no-store"})
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
@@ -17957,14 +17967,21 @@ async def admin_oidc_callback(request: Request):
         # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
         # "now": the session is signed in and never recent (decision D40).
         provider_time = _provider_auth_time(claims)
-        if not state.reauth:
-            await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                    signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-        session = await asyncio.to_thread(
-            browser_sessions.issue,
-            session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-            authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,
-        )
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
+            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
+            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
+                                              authenticated_at=authenticated_at)
+        else:
+            if not state.reauth:
+                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
+                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
+            session = await asyncio.to_thread(
+                browser_sessions.issue,
+                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
+                authenticated_at=authenticated_at,
+            )
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
         minted = await asyncio.to_thread(
@@ -17974,9 +17991,6 @@ async def admin_oidc_callback(request: Request):
             remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
-        if previous is not None:
-            # Confirming a sign-in replaces it: the one it confirms must not linger.
-            await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)
         return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
@@ -18516,10 +18530,25 @@ async def _firehose_request_counter(request: Request, call_next):
 @app.get("/health")
 async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
-    return {
+    body = {
         "status": "healthy",
         "app_credentials_configured": active_app_credential_count(),
     }
+    # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
+    # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.
+    if await asyncio.to_thread(session_view_key_problem, ADMIN_STORE.path):
+        body = {**body, "status": "degraded", "reasons": ["session_view_key"]}
+    return body
+
+
+def _report_session_view_key_problem() -> None:
+    """Named once at start, in the log, so the owner finds the cause: until the key is fixed, signed-in accounts
+    answer 503. No restart is needed once the file is repaired."""
+    problem = session_view_key_problem(ADMIN_STORE.path)
+    if problem:
+        logging.getLogger(__name__).error(
+            "Session view key problem (%s): signed-in accounts answer 503 until it is fixed. "
+            "Fix or remove data/.session_view_secret, then reload. No restart is needed.", problem)
 
 
 def _public_base_url(request: Request) -> str | None:

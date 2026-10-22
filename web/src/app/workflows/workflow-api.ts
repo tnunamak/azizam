@@ -1,3 +1,4 @@
+import { networkFetch } from "@/lib/network-error";
 import type { WorkflowAvailability } from "@/lib/workflow-availability";
 
 export interface WorkflowInput {
@@ -67,7 +68,7 @@ export interface RecentAsset {
 }
 
 export async function readJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin" });
+  const response = await networkFetch(path, { credentials: "same-origin" });
   if (!response.ok)
     throw new Error("Workflow data could not be loaded. Try again.");
   return response.json() as Promise<T>;

@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore, type ReactNode } from "react";
 import type { ExternalToast } from "sonner";
+import { onSessionStopping, sessionIsClosed } from "@/lib/session-end";
 
 type ToastMessage = ReactNode;
 type ToastMethod = "success" | "error" | "info" | "warning" | "loading";
@@ -19,6 +20,8 @@ let requested = false;
 let ready = false;
 let flushing = false;
 let nextId = 0;
+// The toaster once it has loaded, so a session end can dismiss what it shows.
+let shownToasts: { dismiss?: (id?: string | number) => void } | null = null;
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -49,6 +52,7 @@ function flush() {
   flushing = true;
   void import("sonner")
     .then(({ toast: sonnerToast }) => {
+      shownToasts = sonnerToast;
       while (pending.length > 0) {
         const item = pending.shift()!;
         sonnerToast[item.method](item.message, {
@@ -71,12 +75,22 @@ function enqueue(
   message: ToastMessage,
   options?: ExternalToast,
 ) {
+  // Nothing from a session that has ended may appear over the sign-out cover.
+  if (sessionIsClosed()) return;
   requestToaster();
   const id = options?.id ?? `azizam-toast-${++nextId}`;
   pending.push({ id, method, message, options });
   flush();
   return id;
 }
+
+/** The toasts of a session that has ended: drop the queued ones, and dismiss the shown ones. */
+export function clearToasts(): void {
+  pending.length = 0;
+  shownToasts?.dismiss?.();
+}
+// The toaster and its queue belong to the page's session, so the session's end clears them.
+onSessionStopping(clearToasts);
 
 export const toast = {
   success: (message: ToastMessage, options?: ExternalToast) =>

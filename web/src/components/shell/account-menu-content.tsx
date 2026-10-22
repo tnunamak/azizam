@@ -10,8 +10,7 @@ import {
   LogOut,
   UserRoundCog,
 } from "lucide-react";
-import { api } from "@/lib/api";
-import { toast } from "@/lib/toast";
+import { endSession } from "@/lib/session-end";
 import {
   AvatarPicker,
   PersonAvatar,
@@ -67,40 +66,12 @@ export function AccountMenuContent({
   avatarError?: string | null;
 }) {
   const viewer = useViewer();
-  const signingOutRef = useRef(false);
-  const [signingOut, setSigningOut] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const avatarDialogRequested = useRef(false);
   const canChangeAvatar = Boolean(
     viewer.authenticated && !viewer.serviceAdmin && avatarPersonId && onAvatarChange,
   );
-
-  async function signOut() {
-    if (signingOutRef.current) return;
-    signingOutRef.current = true;
-    setSigningOut(true);
-    try {
-      const member = await fetch("/me/api/session", {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const snapshot = await member.json();
-      const csrf =
-        snapshot.csrf_token || (await api.session()).actor.csrf_token;
-      const response = await fetch("/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "x-azizam-csrf": csrf, accept: "application/json" },
-      });
-      if (!response.ok) throw new Error("Sign out failed");
-      window.location.assign("/sign-in/");
-    } catch {
-      signingOutRef.current = false;
-      setSigningOut(false);
-      toast.error("We couldn't confirm you were signed out. Refresh this page and try again.");
-    }
-  }
 
   return (
     <>
@@ -183,14 +154,13 @@ export function AccountMenuContent({
             </DropdownMenuItem>
             {viewer.authenticated ? (
               <DropdownMenuItem
-                disabled={signingOut}
                 onSelect={(event) => {
                   event.preventDefault();
-                  void signOut();
+                  void endSession("sign-out");
                 }}
               >
                 <LogOut />
-                {signingOut ? "Signing out…" : "Sign out"}
+                Sign out
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem asChild>
