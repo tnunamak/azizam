@@ -629,7 +629,7 @@ def create_signin_api(
             status = signin_admin.load_status(path)
             if run is not None:
                 status["last_test"] = {"at": run.passed_at, "sig": sig, "groups_missing": not run.groups_seen,
-                                       "issuer": run.cfg.issuer}
+                                       "issuer": run.cfg.issuer, "fresh_login_supported": run.fresh_login_supported}
             elif not tested_before(path, sig):
                 status.pop("last_test", None)
             signin_admin.write_status_in(conn, status, updated_by=ctx.audit_actor_id)
