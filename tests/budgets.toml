@@ -212,7 +212,8 @@
 # LTX middle-guide workflow adds frame-grid, compression, audio and schema
 # coverage: 18 cases. Hermetic --collect-only -q measured 16000 (2026-10-21).
 # Keyframe frames maximum: +1 over-long refusal case = 16001 measured.
-pytest = 15993
+# Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
+pytest = 16012
 # Train r92: Try picture-upload specs, 3103 measured.
 vitest = 3103
 playwright = 502
