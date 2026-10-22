@@ -260,6 +260,39 @@ test("expired reset and provider failure each explain the next step", async ({
   );
 });
 
+test("a refused sign-in says the provider did not ask for a password just now, and links to the sign-out", async ({
+  page,
+}) => {
+  await page.route("**/auth/api/options*", (route) => fulfilJson(route, options));
+  await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1");
+  const main = page.getByRole("main");
+  await expect(main.getByRole("alert")).toContainText(
+    "Azizam couldn’t confirm that Household accounts just asked for your password.",
+  );
+  await expect(
+    main.getByRole("link", { name: "Sign out of Household accounts" }),
+  ).toHaveAttribute("href", "/login/provider-sign-out");
+});
+
+test("a refused first-owner sign-in explains itself beside the setup link", async ({
+  page,
+}) => {
+  await page.route("**/auth/api/options*", (route) => fulfilJson(route, options));
+  await page.route("**/setup/api/state", (route) =>
+    fulfilJson(route, { owner_exists: false }),
+  );
+  await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsetup%2F");
+  await expect(
+    page.getByRole("heading", { name: "Set up Azizam" }),
+  ).toBeVisible();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText(
+    "Azizam couldn’t confirm that Household accounts just asked for your password.",
+  );
+  await expect(
+    page.getByRole("link", { name: "Set up your gateway" }),
+  ).toHaveAttribute("href", "/setup/");
+});
+
 test("a new gateway offers setup before asking for a password", async ({
   page,
 }) => {
