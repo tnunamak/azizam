@@ -110,7 +110,29 @@ function show(next: SessionScreen): void {
 
 function setOtherTab(cause: OtherTabCause): void {
   stop();
+  wipeTabSession();
   show({ kind: "other-tab", cause });
+}
+
+/** A tab's own session storage holds the person it showed: a tab clears it when it stops showing that person.
+ * Shared browser storage is not touched here, since another person may already be using it. */
+function wipeTabSession(): void {
+  keepOnly(() => sessionStorage, KEEP_SESSION);
+}
+
+/** The per-person keys a tab holds (SECURITY.md section 4), which Continue clears. Browser-level preferences in
+ * the same tab are kept. */
+const PER_PERSON_SESSION_KEYS = [/^azizam:job-notices:v1:/, /^azizam:opened-creations:v1:/, /^gateway-invitation$/];
+
+function wipePerPersonSession(): void {
+  try {
+    const storage = sessionStorage;
+    for (const key of Object.keys(storage)) {
+      if (PER_PERSON_SESSION_KEYS.some((pattern) => pattern.test(key))) storage.removeItem(key);
+    }
+  } catch {
+    /* storage blocked: nothing to clear */
+  }
 }
 
 function causeOf(end: EndKind): OtherTabCause {
@@ -143,7 +165,7 @@ export async function continueFromOtherTab(): Promise<void> {
     return;
   }
   const seen = await readSessionNow();
-  wipeTabStorage();
+  wipePerPersonSession();
   navigate.replace(seen?.authenticated ? "/" : SIGN_IN_PATH);
 }
 
@@ -315,8 +337,8 @@ function withinBudget(work: Promise<void>): Promise<void> {
   });
 }
 
-/** Session storage belongs to one tab, so every tab clears its own when the session ends here (SECURITY.md
- * section 4). The keys that survive are the same in every tab. */
+/** The origin's clean-up for the sign-out it completed (SECURITY.md section 4): everything but the theme and the
+ * handoff record. Other tabs clear only their own session storage (wipeTabSession). */
 function wipeTabStorage(): void {
   keepOnly(() => localStorage, KEEP_LOCAL);
   keepOnly(() => sessionStorage, KEEP_SESSION);
@@ -376,7 +398,6 @@ function publish(record: Handoff): void {
 function applyRemote(record: Handoff | null): void {
   if (!record) return;
   if (record.state === "SIGNED_OUT") {
-    wipeTabStorage();
     setOtherTab(causeOf(record.kind));
     return;
   }
