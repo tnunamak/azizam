@@ -6,8 +6,10 @@ remembered person: an HMAC of the device key and the person id, under a key deri
 A tile is stable on its own device, useless on another, and does not show the id it stands for.
 
 A tile names a row, never a session. Signing in still needs the person's own password or their provider sign-in
-(gateway.accounts_api and proxy.py). A removed or disabled person's rows are deleted with the change. A row unused
-for 90 days is swept by the next sign-in, and any row the list does not offer is deleted the first time the list reads it.
+(gateway.accounts_api and proxy.py). Removing or disabling a person deletes their rows with the change. A row unused
+for 90 days is swept by the next sign-in that writes to the list. A row of someone who can no longer sign in is deleted
+the next time the list, a tile sign-in or a forget reads its rows; a row hidden only because its sign-in method is off
+stays stored.
 """
 from __future__ import annotations
 
