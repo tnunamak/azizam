@@ -139,11 +139,17 @@ def advance(session: AdminSession, *, path: Path, now: float | None = None) -> A
     return rotated
 
 
-def confirm(session: AdminSession, *, path: Path, now: float | None = None) -> AdminSession:
-    """The same sign-in, under a new session id, after the person proved who they are again."""
+def confirm(session: AdminSession, *, path: Path, now: float | None = None,
+            authenticated_at: float | None = None) -> AdminSession:
+    """The same sign-in, under a new session id, after the person proved who they are again.
+
+    ``authenticated_at`` is when the proof happened: a provider's ``auth_time`` (``AUTH_TIME_UNKNOWN`` when the
+    provider gave none, so the sign-in is never recent). By default the proof is now, as a password is."""
     current = time.time() if now is None else now
     policy = session_policy.load_policy(path)
     confirmed = session_policy.confirmed(session, policy, current)
+    if authenticated_at is not None:
+        confirmed = replace(confirmed, authenticated_at=min(authenticated_at, current))
     if _check(session, policy, current, path) == accounts.LOST:
         rotated = _reissue(session, confirmed, policy, current, path)
     else:

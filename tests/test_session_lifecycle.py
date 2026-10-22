@@ -639,17 +639,23 @@ def test_signing_in_through_the_provider_asks_it_to_log_the_person_in_again(sg):
     assert "prompt=login" not in plain.headers["location"]
 
 
-def test_confirming_through_the_provider_gives_a_fresh_session_and_ends_the_one_it_replaced(sg):
+def test_confirming_through_the_provider_rotates_the_session_id_inside_the_same_sign_in(sg):
+    """A provider confirmation rotates the session id inside the same sign-in, as a password confirmation does
+    (browser_sessions.confirm). The id it replaced works only inside the grace window, because its response may
+    have been lost; afterwards a copy of it ends the sign-in once the new id has been used (decision D35)."""
     stale = stale_owner(sg)
     old_cookie = stale.cookies.get(COOKIE)
+    before = cookie_session(stale)
 
     _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()))
 
     assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
     assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+    after = cookie_session(stale)
+    assert after.family_id == before.family_id and after.session_id != before.session_id
     replay = sg.client()
     put_cookie(replay, old_cookie)
-    assert not signed_in_state(replay)
+    assert signed_in_state(replay)
 
 
 def test_a_provider_that_reuses_its_own_old_login_does_not_confirm_anyone(sg):

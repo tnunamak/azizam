@@ -17963,14 +17963,21 @@ async def admin_oidc_callback(request: Request):
         # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
         # "now": the session is signed in and never recent (decision D40).
         provider_time = _provider_auth_time(claims)
-        if not state.reauth:
-            await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                    signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-        session = await asyncio.to_thread(
-            browser_sessions.issue,
-            session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-            authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,
-        )
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
+            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
+            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
+                                              authenticated_at=authenticated_at)
+        else:
+            if not state.reauth:
+                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
+                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
+            session = await asyncio.to_thread(
+                browser_sessions.issue,
+                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
+                authenticated_at=authenticated_at,
+            )
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
         minted = await asyncio.to_thread(
@@ -17980,9 +17987,6 @@ async def admin_oidc_callback(request: Request):
             remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
-        if previous is not None:
-            # Confirming a sign-in replaces it: the one it confirms must not linger.
-            await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)
         return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
