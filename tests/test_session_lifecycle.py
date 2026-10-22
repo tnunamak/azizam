@@ -946,6 +946,7 @@ def test_reauth_keeps_the_session_view_id_whichever_way_the_person_confirms(sg):
     """The view id is the public face of a sign-in. A step-up keeps it: a password confirm and a provider confirm
     both keep the sign-in's family, as the browser's other tabs rely on (web/src/lib/session-end.ts)."""
     client = stale_owner(sg)
+    set_password(sg, OWNER)
     view = client.get("/me/api/session").json()["session_view_id"]
 
     confirmed = client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client))
