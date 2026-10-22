@@ -65,6 +65,12 @@ class RemixReplaceBase(unittest.TestCase):
         self.assertEqual(len(self.comfy.submitted), 1, "expected one submitted graph")
         return self.comfy.submitted[0]
 
+    def assert_refused(self, response, *, param: str) -> None:
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertTrue(response.json()["error"]["param"].endswith(param), response.json())
+        self.assertEqual(self.comfy.uploads, [], "a refused request must leave no files in ComfyUI")
+        self.assertEqual(self.comfy.submitted, [])
+
 
 class RemixRouteTests(RemixReplaceBase):
     def test_missing_source_video_retains_the_reference_hint(self) -> None:

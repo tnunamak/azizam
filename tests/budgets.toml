@@ -192,7 +192,9 @@
 # measured 15952; npx vitest list measured 3091 (2026-10-21).
 # The merged public error-copy fixture adds one parameterized case.
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
-pytest = 15953
+# Video refuses a bad character-replace selection and a full queue before uploading: +3 route cases.
+# Hermetic --collect-only -q measured 15956 (2026-10-21).
+pytest = 15956
 vitest = 3091
 playwright = 502
 

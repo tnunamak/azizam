@@ -52,19 +52,40 @@ def explicit_selection(block: Mapping[str, Any]) -> bool:
     return ("source_point_x" in block) or (index not in ("", "0"))
 
 
-def apply_point(workflow: dict[str, Any], block: Mapping[str, Any], width: int, height: int) -> bool:
-    """Rewire the graph to track only the person under a point. Return True if applied."""
+def _point(block: Mapping[str, Any]) -> tuple[float, float] | None:
+    """The selection point as fractions, or None when the request names no point."""
     has_x, has_y = "source_point_x" in block, "source_point_y" in block
     if has_x != has_y:
         raise SubjectError("source_point_x and source_point_y go together", "source_point_x")
     if not has_x:
-        return False
+        return None
     for name in ("source_point_x", "source_point_y"):
         value = block[name]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
             raise SubjectError(f"{name} must be a number from 0 to 1", name)
-    x = int(round(float(block["source_point_x"]) * (width - 1)))
-    y = int(round(float(block["source_point_y"]) * (height - 1)))
+    return float(block["source_point_x"]), float(block["source_point_y"])
+
+
+def validate_selection(block: Mapping[str, Any]) -> None:
+    """Check the request's person selection without touching a graph.
+
+    The route calls this before it uploads the source video and the reference
+    picture, so a selection it refuses leaves no files in the graph engine's
+    input directory. `apply_point` reads the point through the same helper.
+    """
+    index_text = str(block.get("subject_index", "0")).strip()
+    if not re.fullmatch(r"\d+(,\d+)*", index_text):
+        raise SubjectError("subject_index must be a number like 0 or a list like 0,2", "subject_index")
+    _point(block)
+
+
+def apply_point(workflow: dict[str, Any], block: Mapping[str, Any], width: int, height: int) -> bool:
+    """Rewire the graph to track only the person under a point. Return True if applied."""
+    point = _point(block)
+    if point is None:
+        return False
+    x = int(round(point[0] * (width - 1)))
+    y = int(round(point[1] * (height - 1)))
     workflow[POINT_DETECT_NODE] = {
         "class_type": "SAM3_Detect",
         "inputs": {

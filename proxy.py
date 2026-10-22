@@ -11049,6 +11049,19 @@ async def proxy_graph_video_create(
         except _VideoAssetError as e:
             return _video_asset_error_response(e)
 
+    if workflow_cfg.get("subject_select"):
+        # Character replace: the person selection only edits the graph, so a bad
+        # one is refused here, before any picture or video reaches the engine's
+        # input directory. The rules live in video_subject, and the graph edit
+        # below reads the same point helper once the extensions are bound.
+        try:
+            video_subject.validate_selection(
+                ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+            )
+        except video_subject.SubjectError as exc:
+            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                               code="invalid_workflow_extension")
+
     # Validate / clamp request inputs.
     max_seconds = float(workflow_cfg.get("max_seconds", 8))
     min_seconds = float(workflow_cfg.get("min_seconds", 1))
@@ -11408,13 +11421,10 @@ async def proxy_graph_video_create(
     subject_record: dict[str, Any] | None = None
     if workflow_cfg.get("subject_select"):
         # Character replace: pick which person is replaced, and remember how to
-        # read how many were tracked once the job is done.
+        # read how many were tracked once the job is done. The selection itself
+        # was validated before the uploads; this rewires the bound graph.
         block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
-            index_text = str(block.get("subject_index", "0")).strip()
-            if not re.fullmatch(r"\d+(,\d+)*", index_text):
-                raise video_subject.SubjectError(
-                    "subject_index must be a number like 0 or a list like 0,2", "subject_index")
             video_subject.apply_point(workflow, block, width, height)
             if block.get("reference_fit", True) not in (False, "false", "False", 0):
                 video_subject.add_reference_fit(workflow)
