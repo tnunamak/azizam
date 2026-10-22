@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 from typing import MutableMapping
 from urllib.parse import urlsplit
@@ -15,6 +16,12 @@ from gateway.admin_oidc import (
     OIDCConfig, SessionError, StateRecord, authorization_url, consume_state,
     generate_nonce, generate_pkce_pair, generate_state, record_state,
 )
+
+
+# Asked alongside max_age on every flow that must prove a fresh sign-in. OIDC Core 5.5 makes the claims request optional,
+# and a provider that does not support it should still answer, so it costs nothing where it is ignored. Google returns
+# auth_time only when the request asks for it.
+FRESH_SIGN_IN_CLAIMS = json.dumps({"id_token": {"auth_time": {"essential": True}}}, separators=(",", ":"))
 
 
 def callback_host_matches(request: Request, redirect_uri: str) -> bool:
@@ -65,7 +72,8 @@ def begin_browser_login(
     )
     response = RedirectResponse(
         authorization_url(config, state=state.state, nonce=nonce, pkce=pkce,
-                          extra_params={"prompt": "login", "max_age": "0"} if reauth or fresh else None),
+                          extra_params={"prompt": "login", "max_age": "0", "claims": FRESH_SIGN_IN_CLAIMS}
+                          if reauth or fresh else None),
         status_code=302, headers={"cache-control": "no-store"},
     )
     response.set_cookie(
