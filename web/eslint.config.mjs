@@ -26,6 +26,27 @@ const eslintConfig = [
     },
   },
   {
+    // endingRequest is the sign-out's own request helper: it bypasses the session guard on purpose, so only the sign-out
+    // module may import it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/session-end.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          // A pattern, not a path: it catches "@/lib/network-error" and relative imports of the same module alike.
+          patterns: [
+            {
+              group: ["**/network-error"],
+              importNames: ["endingRequest"],
+              message: "endingRequest is the sign-out's own request helper and bypasses the session guard. Only src/lib/session-end.ts may import it.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: [
       "node_modules/**",
       ".next/**",
