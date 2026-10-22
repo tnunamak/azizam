@@ -511,3 +511,44 @@ describe("a restored page that showed a person and gets no answer", () => {
     expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
   });
 });
+
+describe("what each tab clears, and what it leaves alone", () => {
+  it("a tab that goes to the other-tab screen clears its own session storage", () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    sessionStorage.setItem("azizam:job-notices:v1:person-1", '["job-1"]');
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-b", person: "person-2" });
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "other-tab", cause: "server" });
+    expect(sessionStorage.getItem("azizam:job-notices:v1:person-1")).toBeNull();
+  });
+
+  it("a remote sign-out does not clear this browser's preferences", () => {
+    const stop = sessionEnd.startSessionSync();
+    localStorage.setItem("azizam:ui-density", "compact");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "azizam.handoff",
+        newValue: JSON.stringify({ state: "SIGNED_OUT", since: 1, kind: "sign-out" }),
+      }),
+    );
+    expect(sessionEnd.getSessionScreen()).toEqual({ kind: "other-tab", cause: "sign-out" });
+    expect(localStorage.getItem("azizam:ui-density")).toBe("compact");
+    stop();
+  });
+
+  it("Continue clears this tab's per-person session keys, and leaves browser preferences alone", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a", person: "person-1" });
+    routes.set("GET /me/api/session", () => json({ authenticated: false }));
+    await sessionEnd.checkPageShown();
+    localStorage.setItem("azizam:ui-density", "compact");
+    sessionStorage.setItem("azizam:job-notices:v1:person-1", '["job-1"]');
+    sessionStorage.setItem("azizam:opened-creations:v1:person-1", '["asset-1"]');
+    sessionStorage.setItem("gateway-invitation", "token");
+    sessionStorage.setItem("azizam.handoff.last", "{}");
+    await sessionEnd.continueFromOtherTab();
+    expect(localStorage.getItem("azizam:ui-density")).toBe("compact");
+    expect(sessionStorage.getItem("azizam:job-notices:v1:person-1")).toBeNull();
+    expect(sessionStorage.getItem("azizam:opened-creations:v1:person-1")).toBeNull();
+    expect(sessionStorage.getItem("gateway-invitation")).toBeNull();
+    expect(sessionStorage.getItem("azizam.handoff.last")).toBe("{}");
+  });
+});
