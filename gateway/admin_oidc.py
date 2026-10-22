@@ -44,6 +44,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import time
 import unicodedata
@@ -65,9 +66,12 @@ __all__ = [
     "PKCEPair",
     "SessionError",
     "SignInRefused",
+    "AUTH_TIME_CLOCK_SKEW_SECONDS",
     "StateRecord",
     "authorization_url",
     "access_names_from_oidc_claims",
+    "provider_auth_time",
+    "provider_signed_in_again",
     "bootstrap_admin_role",
     "consume_state",
     "canonical_oidc_group",
@@ -520,6 +524,9 @@ class StateRecord:
     # The sign-in page's box (gateway.remembered_people): True keeps the person's name, False takes it off this
     # browser once the sign-in succeeds, None leaves the list alone.
     remember: bool | None = None
+    # Set for a sign-in from the sign-in page (not a step-up): the provider must have signed the person in just now
+    # (prompt=login, max_age=0), and the callback refuses any reply that does not say so (proxy.admin_oidc_callback).
+    fresh: bool = False
     # Set when the sign-in started from a tile on this browser's list: the person the tile named. The callback holds
     # the provider to that person and to a fresh sign-in (proxy.admin_oidc_callback).
     tile_person_id: str = ""
@@ -536,6 +543,7 @@ def record_state(
     browser_binding_hash: str = "",
     test_id: str = "",
     reauth: bool = False,
+    fresh: bool = False,
     remember: bool | None = None,
     tile_person_id: str = "",
     state: str | None = None,
@@ -561,6 +569,7 @@ def record_state(
         browser_binding_hash=browser_binding_hash,
         test_id=test_id,
         reauth=reauth,
+        fresh=fresh,
         remember=remember,
         tile_person_id=tile_person_id,
     )
@@ -732,6 +741,29 @@ def validate_id_token_claims(
         raise SignInRefused("email not verified by IdP")
 
     return claims
+
+
+# How far before a sign-in began an ``auth_time`` may fall and still count as "signed in again". The provider's clock
+# and ours are not the same clock; 60 seconds is the usual allowance for skew (the OIDC libraries default to it).
+# Decision D40; docs/ops/SIGN_IN_SESSIONS.md.
+AUTH_TIME_CLOCK_SKEW_SECONDS = 60
+
+
+def provider_auth_time(claims: Mapping[str, Any]) -> float | None:
+    """When the provider says the person last really signed in (``auth_time``), if it says."""
+    try:
+        value = None if claims.get("auth_time") is None else float(claims["auth_time"])
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and math.isfinite(value) else None
+
+
+def provider_signed_in_again(claims: Mapping[str, Any], *, since: float) -> bool:
+    """The provider must say, with ``auth_time``, that the person signed in after the flow began (``since``), give
+    or take the clock-skew allowance. A reply without it proves nothing: a provider that ignored ``prompt=login``
+    and ``max_age=0``, or a request stripped of them on the way, would look exactly like this."""
+    auth_time = provider_auth_time(claims)
+    return auth_time is not None and auth_time >= since - AUTH_TIME_CLOCK_SKEW_SECONDS
 
 
 def _iter_claim_strings(value: Any) -> Iterable[str]:

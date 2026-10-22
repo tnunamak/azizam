@@ -331,6 +331,7 @@ def create_signin_api(
                 "redirect_uri": callback_url(request, cfg),
                 "tested_at": tested_at,
                 "groups_missing": bool(tested_at and last.get("groups_missing")),
+                "fresh_login_supported": bool(tested_at and last.get("fresh_login_supported")),
             },
             "rules": rules_json,
             "rule_matches": signin_admin.rule_matches(path, rules, with_names=is_owner),
@@ -461,7 +462,8 @@ def create_signin_api(
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
         if run.status != "waiting":
             return HTMLResponse(_CLOSE_PAGE, headers={"cache-control": "no-store"})
-        return begin_browser_login(run.cfg, states(), return_to="/settings/", test_id=run.id)
+        # Fresh, so the provider is asked for a new login and the test can report whether it gives one (A2).
+        return begin_browser_login(run.cfg, states(), return_to="/settings/", test_id=run.id, fresh=True)
 
     def test_status(path: Path, ctx: AdminContext, run: signin_trial.TestRun) -> dict[str, Any]:
         if run.status == "waiting":
@@ -474,6 +476,7 @@ def create_signin_api(
         return {
             "status": "passed",
             "tested_at": run.passed_at,
+            "fresh_login_supported": run.fresh_login_supported,
             "identity": {
                 "name": run.name, "email": run.claims.email, "email_verified": run.email_verified,
                 "groups": list(run.claims.groups), "roles": list(run.claims.roles),
@@ -711,14 +714,16 @@ def create_signin_api(
             else:
                 await signin_trial.finish(
                     run, code=code, error=error, error_description=error_description, nonce=state.nonce,
-                    pkce_verifier=state.pkce_verifier, exchange_code=exchange_code, verify_id_token=verify_id_token)
+                    pkce_verifier=state.pkce_verifier, exchange_code=exchange_code, verify_id_token=verify_id_token,
+                    flow_started_at=state.created_at)
             if run.status == "passed":
                 path = path_provider()
                 signin_admin.remember_test_values(path, run.claims)
                 if run.signature == saved_signature(oidc_config_provider()):
                     status = signin_admin.load_status(path)
                     status["last_test"] = {"at": run.passed_at, "sig": run.signature,
-                                           "groups_missing": not run.groups_seen, "issuer": run.cfg.issuer}
+                                           "groups_missing": not run.groups_seen, "issuer": run.cfg.issuer,
+                                           "fresh_login_supported": run.fresh_login_supported}
                     signin_admin.write_status(path, status)
         return HTMLResponse(_CLOSE_PAGE, headers={"cache-control": "no-store"})
 

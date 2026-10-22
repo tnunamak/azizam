@@ -35,15 +35,19 @@ def begin_browser_login(
     return_to: str,
     test_id: str = "",
     reauth: bool = False,
+    fresh: bool = False,
     remember: bool | None = None,
     tile_person_id: str = "",
 ) -> Response:
     """Issue a separate host-only cookie for each ten-minute sign-in flow.
 
     ``reauth`` asks the provider to sign the person in again (step-up) rather
-    than reuse its own session. A flow that started from a remembered tile asks
-    the same. It sends no email to the provider: the callback accepts only the
-    person the tile named (``tile_person_id``).
+    than reuse its own session, and the callback holds it to the same person.
+    ``fresh`` asks the same of a sign-in from the sign-in page, but accepts any
+    person: the callback refuses a reply that does not say the provider signed
+    them in just now. A flow that started from a remembered tile is fresh too,
+    and sends no email to the provider: the callback accepts only the person the
+    tile named (``tile_person_id``).
     """
     state_value = generate_state()
     binding = secrets.token_urlsafe(32)
@@ -56,11 +60,11 @@ def begin_browser_login(
         return_to=return_to, redirect_uri=config.redirect_uri,
         browser_cookie_name=cookie_name,
         browser_binding_hash=hashlib.sha256(binding.encode()).hexdigest(),
-        test_id=test_id, reauth=reauth, remember=remember, tile_person_id=tile_person_id,
+        test_id=test_id, reauth=reauth, fresh=fresh, remember=remember, tile_person_id=tile_person_id,
     )
     response = RedirectResponse(
         authorization_url(config, state=state.state, nonce=nonce, pkce=pkce,
-                          extra_params={"prompt": "login", "max_age": "0"} if reauth or tile_person_id else None),
+                          extra_params={"prompt": "login", "max_age": "0"} if reauth or fresh else None),
         status_code=302, headers={"cache-control": "no-store"},
     )
     response.set_cookie(

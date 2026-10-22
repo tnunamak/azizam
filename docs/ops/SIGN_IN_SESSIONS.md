@@ -170,7 +170,7 @@ The response names the ways to confirm:
   older one, does not confirm anyone. The sign-in must be by the same person. The
   new session replaces the old one. **Clock-skew allowance:** the provider's clock is not ours,
   so an `auth_time` up to 60 seconds before the request began still counts
-  (`AUTH_TIME_CLOCK_SKEW_SECONDS` in `proxy.py`; decision D40). One older than that does not.
+  (`AUTH_TIME_CLOCK_SKEW_SECONDS` in `gateway/admin_oidc.py`; decision D40). One older than that does not.
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 

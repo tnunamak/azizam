@@ -181,6 +181,8 @@ from gateway.admin_oidc import (
     decode_session_cookie,
     load_oidc_config,
     oidc_config_for_public_base,
+    provider_auth_time,
+    provider_signed_in_again,
     safe_browser_return_to,
     validate_oidc_stored_override,
     validate_id_token_claims,
@@ -14204,7 +14206,7 @@ _SECURITY_HEADERS = {
 # Browser sign-in and sign-out responses carry session cookies, one-time keys
 # or provider state: never cache them, never leak their URL as a referrer.
 _BROWSER_AUTH_PATHS = frozenset({
-    "/login", "/logout", "/auth/logout-confirm", "/admin/oidc/callback",
+    "/login", "/login/provider-sign-out", "/logout", "/auth/logout-confirm", "/admin/oidc/callback",
     "/setup/claim", "/setup/local-owner", "/setup/local-login", "/setup/first-app",
 })
 
@@ -15419,17 +15421,22 @@ def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> bool:
     return load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ).enabled
 
 
+async def _provider_discovery(issuer: str):
+    """The provider's OpenID discovery document: its endpoints, and its sign-out address when it publishes one."""
+    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(discovery_url)
+        response.raise_for_status()
+        return response.json()
+
+
 async def _admin_oidc_config_with_discovery():
     cfg = _effective_admin_oidc_config()
     if not cfg.enabled:
         return cfg
     if cfg.authorization_endpoint and cfg.token_endpoint and cfg.jwks_uri:
         return cfg
-    discovery_url = f"{cfg.issuer.rstrip('/')}/.well-known/openid-configuration"
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(discovery_url)
-        response.raise_for_status()
-        metadata = response.json()
+    metadata = await _provider_discovery(cfg.issuer)
     return replace(
         cfg,
         authorization_endpoint=cfg.authorization_endpoint
@@ -17009,10 +17016,11 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         # ASGI sees HTTP behind TLS ingress; only compare the host and port.
         tile = request.query_params.get("tile") or ""
         remember = remembered_people.box_value(request.query_params.get("remember"))
+        reauth = request.query_params.get("reauth") == "1"
         if not callback_host_matches(request, cfg.redirect_uri):
             return RedirectResponse(
                 f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}"
-                + ("&reauth=1" if request.query_params.get("reauth") == "1" else "")
+                + ("&reauth=1" if reauth else "")
                 + ("" if remember is None else f"&remember={int(remember)}")
                 + (f"&tile={quote(tile, safe='')}" if tile else ""),
                 status_code=302, headers={"cache-control": "no-store"},
@@ -17028,9 +17036,10 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             if person is None:
                 raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
             tile_person_id = person["person_id"]
+        # A sign-in from the sign-in page must be fresh (A2). A step-up (reauth=1) keeps its own rule: the same person.
         return begin_browser_login(
             cfg, ADMIN_OIDC_STATES, return_to=return_to,
-            reauth=request.query_params.get("reauth") == "1",
+            reauth=reauth, fresh=not reauth,
             remember=remember, tile_person_id=tile_person_id,
         )
     except accounts.AccountError as exc:
@@ -17804,6 +17813,36 @@ async def browser_login(request: Request):
     return await _start_browser_login(request, default_return_to="/")
 
 
+async def _provider_sign_out_address(cfg) -> str:
+    """The provider's own sign-out address from its discovery document, or "" when it publishes none."""
+    try:
+        metadata = await _provider_discovery(cfg.issuer)
+    except (httpx.HTTPError, ValueError):
+        return ""
+    address = metadata.get("end_session_endpoint") if isinstance(metadata, dict) else None
+    return address if isinstance(address, str) else ""
+
+
+@app.get("/login/provider-sign-out", include_in_schema=False)
+async def provider_sign_out(request: Request):
+    """Sign out at the provider, which then sends the browser back to the sign-in page. Azizam keeps no ID token,
+    so none is sent as a hint; the provider may ask the person to confirm. A provider that publishes no sign-out
+    address answers 404 and redirects nowhere."""
+    cfg = oidc_config_for_public_base(
+        _effective_admin_oidc_config(),
+        instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+    )
+    address = await _provider_sign_out_address(cfg) if cfg.enabled else ""
+    if not address:
+        return JSONResponse({"error": {"code": "provider_sign_out_unavailable",
+                                       "message": "This sign-in provider publishes no sign-out address."}},
+                            status_code=404, headers={"cache-control": "no-store"})
+    origin = urlsplit(cfg.redirect_uri)
+    back = f"{origin.scheme}://{origin.netloc}/sign-in/?after=provider-sign-out"
+    query = urlencode({"client_id": cfg.client_id, "post_logout_redirect_uri": back})
+    return RedirectResponse(f"{address}{'&' if '?' in address else '?'}{query}", status_code=302)
+
+
 def _browser_signin_failure(request: Request, *, return_to: str | None = None, reason: str = "provider"):
     """Give browser navigations a safe retry page; never forward provider detail.
 
@@ -17865,12 +17904,15 @@ async def admin_oidc_callback(request: Request):
         claims = await _oidc_verify_id_token(id_token, config=cfg)
         try:
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
-            if state.reauth and _provider_auth_time(claims) is None:
+            if state.reauth and provider_auth_time(claims) is None:
                 raise ProviderReportsNoSignInTime(NO_SIGN_IN_TIME_MESSAGE)
-            # A tile sign-in is a fresh one too, and only for the person the tile named. Both are refused before any
-            # write, so a refusal leaves no session and no row.
-            if (state.reauth or state.tile_person_id) and not _provider_signed_in_again(claims, since=state.created_at):
+            # Every refusal here comes before any write, so a refusal leaves no session and no row.
+            if state.reauth and not provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
+            # A sign-in from the sign-in page, a tile's included, needs a fresh provider sign-in and accepts any person.
+            if state.fresh and not provider_signed_in_again(claims, since=state.created_at):
+                raise ProviderSignInNotFresh(NOT_FRESH_MESSAGE)
+            # A tile sign-in is also only for the person the tile named.
             if state.tile_person_id:
                 signed_in = await asyncio.to_thread(admin_store.find_oidc_user, cfg.issuer, str(claims["sub"]),
                                                     path=ADMIN_STORE.path)
@@ -17956,7 +17998,7 @@ async def admin_oidc_callback(request: Request):
             raise ValueError("re-authentication was completed by a different person")
         # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
         # "now": the session is signed in and never recent (decision D40).
-        provider_time = _provider_auth_time(claims)
+        provider_time = provider_auth_time(claims)
         if not state.reauth:
             await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
                                     signing_key=cfg.signing_key, path=ADMIN_STORE.path)
@@ -17980,12 +18022,16 @@ async def admin_oidc_callback(request: Request):
         return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
+        not_fresh = isinstance(failure, ProviderSignInNotFresh)
         response = _browser_signin_failure(
             request, return_to=state.return_to if state else None,
-            reason="no_sign_in_time" if no_time else "provider",
+            reason="no_sign_in_time" if no_time else "not_fresh" if not_fresh else "provider",
         )
         if response is None and no_time:
             response = JSONResponse({"error": {"code": "provider_no_sign_in_time", "message": NO_SIGN_IN_TIME_MESSAGE}},
+                                    status_code=400, headers={"cache-control": "no-store"})
+        if response is None and not_fresh:
+            response = JSONResponse({"error": {"code": "not_fresh", "message": NOT_FRESH_MESSAGE}},
                                     status_code=400, headers={"cache-control": "no-store"})
         if response is None:
             response = Response(
@@ -17996,30 +18042,6 @@ async def admin_oidc_callback(request: Request):
         return clear_browser_binding(response, state) if state else response
 
 
-def _provider_auth_time(claims: Mapping[str, Any]) -> float | None:
-    """When the provider says the person last really signed in (``auth_time``), if it says."""
-    try:
-        value = None if claims.get("auth_time") is None else float(claims["auth_time"])
-    except (TypeError, ValueError):
-        return None
-    return value if value is not None and math.isfinite(value) else None
-
-
-# How far before the flow began an ``auth_time`` may fall and still count as "signed in again". The
-# provider's clock and ours are not the same clock; 60 seconds is the usual allowance for skew (the OIDC
-# libraries default to it). Decision D40; docs/ops/SIGN_IN_SESSIONS.md.
-AUTH_TIME_CLOCK_SKEW_SECONDS = 60
-
-
-def _provider_signed_in_again(claims: Mapping[str, Any], *, since: float) -> bool:
-    """A step-up sign-in asked for a fresh login (prompt=login, max_age=0). The provider must say,
-    with ``auth_time``, that the person signed in after the flow began, give or take the clock-skew
-    allowance. A response without it proves nothing: a provider that ignored the request, or a request
-    stripped of ``prompt`` and ``max_age`` on the way, would look exactly like this."""
-    auth_time = _provider_auth_time(claims)
-    return auth_time is not None and auth_time >= since - AUTH_TIME_CLOCK_SKEW_SECONDS
-
-
 class ProviderReportsNoSignInTime(ValueError):
     """A step-up sign-in came back with no ``auth_time``, although it asked for one with ``max_age=0``."""
 
@@ -18027,6 +18049,17 @@ class ProviderReportsNoSignInTime(ValueError):
 NO_SIGN_IN_TIME_MESSAGE = (
     "Your sign-in provider does not tell Azizam when you signed in, so Azizam cannot tell that you just "
     "confirmed. Confirm with your Azizam password instead, or use an admin key for this action."
+)
+
+
+class ProviderSignInNotFresh(ValueError):
+    """A sign-in from the sign-in page came back without an ``auth_time`` from just now. The provider may have
+    reused a login the person made earlier, so no one is signed in."""
+
+
+NOT_FRESH_MESSAGE = (
+    "Azizam could not confirm that your sign-in provider asked you to sign in just now, so it did not sign you "
+    "in. Sign out of your provider, then sign in again."
 )
 
 

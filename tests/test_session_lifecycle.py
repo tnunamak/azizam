@@ -797,9 +797,11 @@ def test_a_reauth_whose_auth_time_is_just_inside_the_clock_skew_allowance_confir
 def test_the_clock_skew_allowance_is_sixty_seconds_and_written_down(sg):
     from pathlib import Path
 
+    from gateway.admin_oidc import AUTH_TIME_CLOCK_SKEW_SECONDS
+
     doc = (Path(__file__).resolve().parents[1] / "docs" / "ops" / "SIGN_IN_SESSIONS.md").read_text()
 
-    assert sg.proxy.AUTH_TIME_CLOCK_SKEW_SECONDS == 60
+    assert AUTH_TIME_CLOCK_SKEW_SECONDS == 60
     assert "AUTH_TIME_CLOCK_SKEW_SECONDS" in doc and "60 seconds" in doc
 
 
