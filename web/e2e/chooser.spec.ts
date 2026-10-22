@@ -19,7 +19,7 @@ async function signInWithForm(page: Page, email: string, password: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 }
 
 /**
@@ -119,7 +119,7 @@ test("keyboard: the chooser journey with keys only, from a person's row to Home"
   await page.keyboard.type(lea.password);
   await page.keyboard.press("Enter");
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 });
 
 test("errors: only a wrong password marks the field invalid; too many tries and no answer are form-level alerts", async ({
@@ -178,7 +178,7 @@ test("restore: reopening the previous person's deep link after switch shows sign
   await expect(page).toHaveURL(/\/sign-in\//);
   await signInWithForm(page, lea.email, lea.password);
 
-  expect(new URL(page.url()).pathname).toBe("/");
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 });
 
 test("sign out everywhere ends the other browser's session, and that browser keeps its own name list", async ({
