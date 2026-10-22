@@ -167,6 +167,7 @@ from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN,
     KEY_CLAIM_EMAIL,
     AdminRole,
+    AdminSession,
     IDTokenClaimsError,
     OIDCConfigError,
     PKCEPair,
@@ -358,7 +359,9 @@ from gateway.video_extensions import (
     merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
     STANDARD_VIDEO_EXTEND_FIELDS,
+    ROUTE_MANAGED_VIDEO_INPUTS,
     bind_video_workflow_extensions,
+    validate_video_workflow_extensions,
 )
 from gateway.openai_media_schemas import (
     AUDIO_GENERATE_OPENAPI,
@@ -6704,10 +6707,17 @@ def _sign_image_token(image_id: str, expires: int) -> str:
     return _sign_asset_token(image_id, expires)
 
 
-def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None) -> str:
+def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None,
+                      family: str | None = None, subject: str | None = None, timing: str | None = None) -> str:
     # ``metadata_mode`` is part of the signed message so a client cannot flip a
     # ``none`` URL to ``full`` (the signature covers it).
     suffix = f":md={metadata_mode}" if metadata_mode else ""
+    if family is not None or subject is not None or timing is not None:
+        suffix += ":b=2"
+    if family is not None or subject is not None:
+        suffix += ":session=" + json.dumps([family, subject], separators=(",", ":"))
+    if timing is not None:
+        suffix += ":lifetime=" + timing
     msg = f"{asset_id}:{expires}{suffix}".encode("utf-8")
     return hmac.new(_image_signing_secret(), msg, hashlib.sha256).hexdigest()
 
@@ -6717,12 +6727,87 @@ def verify_image_signature(image_id: str, expires: int, sig: str) -> bool:
     return verify_asset_signature(image_id, expires, sig)
 
 
-def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None) -> bool:
+def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None,
+                           family: str | None = None, subject: str | None = None, timing: str | None = None) -> bool:
     """Constant-time HMAC verification for signed asset URLs."""
     if expires < int(time.time()):
         return False
-    expected = _sign_asset_token(asset_id, expires, metadata_mode)
+    expected = _sign_asset_token(asset_id, expires, metadata_mode, family, subject, timing)
     return hmac.compare_digest(expected, str(sig or ""))
+
+
+def _asset_url_session(request: Request):
+    # App credentials take precedence over a coincidentally present cookie.
+    # Try credentials retain their family even without cookies (e.g. job shims).
+    def binding():
+        identity = getattr(getattr(request, "scope", {}).get("auth_context"), "identity", None)
+        bound = getattr(identity, "browser_session", None)
+        api_key = _resolve_client_api_key(request)
+        credential = (admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
+                      if api_key and identity is None else None)
+        family = bound.family_id if bound else credential.get("session_id") if credential else None
+        if not family and (api_key or (identity and identity.key_hash.startswith("sha256:"))):
+            return None
+        raw = getattr(request, "cookies", {}).get(_browser_admin_cookie_config().name)
+        key = _browser_admin_session_signing_key()
+        if raw and key:
+            try:
+                # Never drop a binding when sign-out races the mint.
+                session = decode_session_cookie(raw, signing_key=key, now=0)
+                if not family or (session.family_id == family and session.subject == (bound.subject if bound else credential.get("created_by"))):
+                    return session
+            except SessionError:
+                pass
+        if bound is not None:
+            return bound
+        if family:
+            # Pre-upgrade Try keys have no timing facts: their derived URLs fail
+            # closed until a matching cookie supplies them or a new key is minted.
+            timing = json.loads(credential.get("session_timing_json") or
+                                '{"issued_at":0,"renewed_at":0,"expires_at":0}')
+            return AdminSession(subject=credential.get("created_by") or "", email="", role="none",
+                                session_id=family, **timing)
+        return None
+    return request_connections.memo(("asset-url-session", id(request)), binding)
+
+
+def _signed_asset_request_allowed(asset_id: str, expires: int, request: Request, mode: str | None) -> bool:
+    from gateway import session_policy
+    family, subject = request.query_params.get("family"), request.query_params.get("subject")
+    timing = request.query_params.get("session")
+    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), mode, family, subject, timing):
+        return False
+    if family is None and subject is None and timing is None:
+        return True
+    if not family or not subject or not timing or expires <= time.time():
+        return False
+    try:
+        session = AdminSession(subject=subject, email="", role="none", session_id=family, **json.loads(timing))
+        if not session_policy.is_usable(session, session_policy.load_asset_policy(ADMIN_STORE.path), time.time()):
+            return False
+    except (ValueError, TypeError):
+        return False
+    return accounts.asset_family_allowed(subject, family, path=ADMIN_STORE.path)
+
+
+def _session_asset_cache_headers(request: Request, asset_id: str, *, variant: str) -> dict[str, str]:
+    """The stored content digest and delivery recipe identify a representation.
+
+    Bump the recipe version when an encoder/metadata transform changes its bytes.
+    No media-sized hashing belongs on this per-request path.
+    """
+    if "family" not in request.query_params:
+        return {}
+    identity = f"asset-delivery-v1:{asset_id}:{variant}".encode()
+    return {"Cache-Control": "private, no-cache", "ETag": '"' + hmac.new(_image_signing_secret(), identity, hashlib.sha256).hexdigest() + '"'}
+
+
+def _asset_not_modified(request: Request, etag: str) -> bool:
+    if "family" not in request.query_params:
+        return request.headers.get("if-none-match") == etag
+    # GET uses weak comparison, even though our representation validator is strong.
+    return any(tag.strip().removeprefix("W/") in {etag, "*"}
+               for tag in request.headers.get("if-none-match", "").split(","))
 
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
@@ -7111,15 +7196,26 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     mode = metadata_mode or provenance.METADATA_NONE
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    session = _asset_url_session(request)
+    family, subject = (session.family_id, session.subject) if session else (None, None)
+    from gateway import session_policy
+    timing = json.dumps(session_policy.lifetime_claims(session), separators=(",", ":")) if session else None
+    binding = "&" + urlencode({"family": family, "subject": subject, "session": timing}) if session else ""
     if mode == thumbnails.THUMB_MODE:
         # The expiry steps once per TTL, so the URL is the same all window long
         # and the browser can keep the preview between visits.
         expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
-        sig = _sign_asset_token(asset_id, expires, mode)
-        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}"
+        if session:
+            expires = min(expires, int(session.expires_at), int(session.latest_expiry))
+        sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
+               else _sign_asset_token(asset_id, expires, mode))
+        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(asset_id, expires, mode)
-    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}"
+    if session:
+        expires = min(expires, int(session.expires_at), int(session.latest_expiry))
+    sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
+           else _sign_asset_token(asset_id, expires, mode))
+    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
 
 
 def build_signed_image_url(request: Request, image_id: str, metadata_mode: str | None = None) -> str:
@@ -7128,12 +7224,9 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     Honors `X-Forwarded-Proto` and the request's Host header so the URL works
     regardless of which Traefik route the client came in on.
     """
-    mode = metadata_mode or provenance.METADATA_NONE
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(image_id, expires, mode)
-    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
+    return build_signed_asset_url(request, image_id, metadata_mode).replace(
+        f"/v1/assets/{image_id}/", f"/v1/images/{image_id}/", 1,
+    )
 
 
 
@@ -10145,8 +10238,9 @@ async def _resolve_input_reference(
 class _VideoFormParseError(Exception):
     """Raised when an incoming multipart /v1/videos request can't be normalized."""
 
-
-_VIDEO_FORM_FILE_FIELDS = frozenset({"input_reference"})
+    def __init__(self, message: str, *, param: str | None = None):
+        super().__init__(message)
+        self.param = param
 
 
 async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
@@ -10158,8 +10252,9 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     as scalars, input_reference as asset id / URL / data: URI / base64). Here we
     flatten the form back into that shape so the downstream pipeline is unchanged.
 
-    File uploads for `input_reference` are converted to a data: URI so the
-    existing input_reference resolver can decode them without any new branch.
+    Accepted uploaded file parts (`input_reference`, `inputs[<name>]`, or
+    `extensions[com.azizam.workflow][<name>]`) are converted to a data: URI so the
+    existing asset resolvers can decode it without any new branch.
     """
     try:
         form = await request_forms.read_form(request, max_part_size=video_inputs.MAX_FORM_PART_BYTES)
@@ -10169,7 +10264,14 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     try:
         items: list[tuple[str, Any]] = []
         for name, value in form.multi_items():
-            if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
+            if hasattr(value, "read") and hasattr(value, "filename"):
+                workflow_file = re.fullmatch(
+                    rf"(?:extensions\[{re.escape(WORKFLOW_EXTENSION_NAMESPACE)}\]|inputs)\[[^\[\]]+\]",
+                    name,
+                )
+                if name != "input_reference" and workflow_file is None:
+                    reason = detect_unknown_top_level_fields({name: None}, ())[name]
+                    raise _VideoFormParseError(reason, param=name)
                 try:
                     raw = await value.read()
                 except Exception as exc:
@@ -10359,6 +10461,7 @@ async def _resolve_video_workflow_assets(
             and spec.get("type") == "asset"
             and spec.get("required")
             and name in binding_map
+            and name not in ROUTE_MANAGED_VIDEO_INPUTS  # e.g. `image`: sent as input_reference
             and name not in block
         ):
             raise _VideoAssetError(
@@ -10367,7 +10470,12 @@ async def _resolve_video_workflow_assets(
     assets: dict[str, tuple[bytes, str, str]] = {}
     for name, value in block.items():
         spec = specs.get(name)
-        if not isinstance(spec, Mapping) or spec.get("type") != "asset" or name not in binding_map:
+        if (
+            not isinstance(spec, Mapping)
+            or spec.get("type") != "asset"
+            or name not in binding_map
+            or name in ROUTE_MANAGED_VIDEO_INPUTS  # owned by standard route fields
+        ):
             continue
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(
@@ -10704,13 +10812,9 @@ async def proxy_graph_video_create(
         try:
             body = await _read_video_create_form_body(request)
         except _VideoFormParseError as exc:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": str(exc),
-                    "type": "invalid_request_error",
-                }}),
-                status_code=400,
-                media_type="application/json",
+            return _json_error(
+                400, str(exc), param=exc.param,
+                code="unknown_parameter" if exc.param else None,
             )
     else:
         try:
@@ -10871,7 +10975,20 @@ async def proxy_graph_video_create(
     staged_assets: dict[str, tuple[bytes, str, str]] = {}
     source_probe = None
     video_manifest = None
-    if workflow_cfg.get("requires_extensions"):
+    _workflow_block = (
+        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(body.get("extensions"), Mapping)
+        else body.get("extensions")
+    )
+    if isinstance(_workflow_block, Mapping):
+        # Gateway-level controls (metadata) are not workflow inputs.
+        _workflow_block = {
+            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
+        }
+    has_workflow_extensions = (
+        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
+    )
+    if has_workflow_extensions:
         try:
             video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
         except ManifestError as e:
@@ -10893,16 +11010,32 @@ async def proxy_graph_video_create(
         try:
             body = merge_workflow_inputs(body)
             ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-            if isinstance(ext_block, Mapping):
+            if workflow_cfg.get("requires_extensions") and isinstance(ext_block, Mapping):
                 body["extensions"] = {
                     **body["extensions"],
                     WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
                         ext_block, video_manifest.get("inputs") or {}
                     ),
                 }
-            staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context, request=request,
-            )
+            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
+            rejected = {**validation.rejected, **unknown_fields}
+            # Preserve the required-picture errors before reporting other invalid inputs.
+            for name, reason in validation.rejected.items():
+                spec = (video_manifest.get("inputs") or {}).get(name) or {}
+                if reason == "required input missing" and spec.get("type") == "asset":
+                    message = f"{name} is required for this model"
+                    if name == workflow_cfg.get("source_video_input"):
+                        message += ": pass a video id, URL or data URI"
+                    raise _VideoAssetError(
+                        message, param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
+                    )
+            if rejected:
+                name, reason = next(iter(rejected.items()))
+                return _json_error(400, reason, param=name, code="invalid_workflow_extension")
+            if workflow_cfg.get("requires_extensions") and workflow_cfg.get("source_video_input"):
+                staged_assets, source_probe = await _resolve_video_workflow_assets(
+                    body, video_manifest, workflow_cfg, auth_context, request=request,
+                )
         except ExtensionError as e:
             return Response(
                 content=json.dumps({"error": {
@@ -11004,6 +11137,15 @@ async def proxy_graph_video_create(
     # short workflows; long-form overrides this further down.
     actual_seconds = length / frame_rate
     duration_adjustment_reason = None
+
+    # Picture assets do not affect duration or dimensions; validate those before fetching.
+    if workflow_cfg.get("requires_extensions") and not workflow_cfg.get("source_video_input"):
+        try:
+            staged_assets, source_probe = await _resolve_video_workflow_assets(
+                body, video_manifest, workflow_cfg, auth_context, request=request,
+            )
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
 
     # Inject parameters into a deep copy of the workflow.
     workflow = copy.deepcopy(workflow_template)
@@ -11219,19 +11361,6 @@ async def proxy_graph_video_create(
         body, upload_error = await _upload_video_workflow_assets(body, staged_assets, auth_context)
         if upload_error is not None:
             return upload_error
-    _workflow_block = (
-        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
-        if isinstance(body.get("extensions"), Mapping)
-        else body.get("extensions")
-    )
-    if isinstance(_workflow_block, Mapping):
-        # Gateway-level controls (metadata) are not workflow inputs.
-        _workflow_block = {
-            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
-        }
-    has_workflow_extensions = (
-        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
-    )
     if has_workflow_extensions:
         try:
             manifest = video_manifest or _find_video_manifest(str(workflow_name), workflow_cfg)
@@ -15018,6 +15147,7 @@ async def _identity_submit_job(
     job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
+    shim.scope["auth_context"] = auth_context
     task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
     _identity_job_tasks.add(task)
     task.add_done_callback(_identity_job_tasks.discard)
@@ -15333,6 +15463,7 @@ def _end_provider_access_in(tx: admin_store.Transaction, person_id: str) -> None
     accounts.record_signin_refusal_in(tx.conn, person_id)
     admin_store.reconcile_oidc_admin_roles_in(tx.conn, person_id, set())
     accounts.revoke_person_sessions_in(tx.conn, person_id)
+    tx.after_commit(accounts.invalidate_asset_families)
     tx.after_commit(lambda: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused"))
 
 
@@ -17172,6 +17303,7 @@ async def setup_claim_admin_key(request: Request):
     cookie = _browser_admin_cookie_config()
     # A session claimed with a key is not a person's sign-in: it is not recorded, never
     # renews, and ends after the fixed cookie life, whatever happens to the key.
+    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
     session = browser_sessions.issue(
         {"sub": session_subject, "email": session_email},
         role=role, cookie=cookie, path=ADMIN_STORE.path, register=False, renewable=False,
@@ -17194,6 +17326,7 @@ def _normalize_local_email(value: str) -> str:
 
 
 def _issue_browser_admin_session(
+    request: Request,
     *,
     user_id: str,
     email: str,
@@ -17202,6 +17335,7 @@ def _issue_browser_admin_session(
     redirect_to: str = "/setup/",
 ) -> Response:
     cookie = _browser_admin_cookie_config()
+    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
     session = browser_sessions.issue(
         {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
     )
@@ -17364,6 +17498,7 @@ async def setup_create_local_owner(request: Request):
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
     return _issue_browser_admin_session(
+        request,
         user_id=str(user["id"]),
         email=email,
         role="owner",
@@ -17467,6 +17602,7 @@ async def setup_local_login(request: Request):
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
     return _issue_browser_admin_session(
+        request,
         user_id=str(user["id"]),
         email=email,
         role=role,
@@ -17737,6 +17873,9 @@ async def admin_oidc_callback(request: Request):
         # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
         # "now": the session is signed in and never recent (decision D40).
         provider_time = _provider_auth_time(claims)
+        if not state.reauth:
+            await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
+                                    signing_key=cfg.signing_key, path=ADMIN_STORE.path)
         session = browser_sessions.issue(
             session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
             authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,
@@ -21452,6 +21591,7 @@ async def _run_image_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             "image.generate", count_queue=False, auth_context=auth_context,
         )
@@ -22140,6 +22280,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
             str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
         )
@@ -22633,6 +22774,7 @@ async def _run_video_media_job(job_id: str) -> None:
         if auth_context is None:
             _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
+        request_shim.scope["auth_context"] = auth_context
         video_id = (job.get("metadata") or {}).get("upstream_video_id")
         if not video_id:
             # Admission is re-checked only before submitting new work; a job
@@ -23592,7 +23734,7 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     except ValueError:
         return refuse(400, "expires must be an integer")
     # Only a thumbnail-signed URL passes: a content URL's signature covers md=none|full.
-    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), thumbnails.THUMB_MODE):
+    if not _signed_asset_request_allowed(asset_id, expires, request, thumbnails.THUMB_MODE):
         return refuse(403, "Invalid or expired signature")
     source = asset_cache_path(asset_id)
     if source is None:
@@ -23603,9 +23745,13 @@ def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Respons
     stat = made.stat()
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
     headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
-    if request.headers.get("if-none-match") == etag:
+    headers.update(_session_asset_cache_headers(
+        request, asset_id, variant=f"thumb:{thumbnails.THUMB_EDGE}:{thumbnails.THUMB_MEDIA_TYPE}:{thumbnails.THUMB_RECIPE}:md=none:{stat.st_mtime_ns}:{stat.st_size}",
+    ))
+    if _asset_not_modified(request, headers["ETag"]):
         return Response(status_code=304, headers=headers)
-    return Response(content=made.read_bytes(), media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
+    return Response(content=made.read_bytes(),
+                    media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
 
 
 @app.get("/gateway/v1/assets/{asset_id}/content")
@@ -23654,7 +23800,7 @@ def _signed_asset_content_response(
             status_code=403,
             media_type="application/json",
         )
-    if not verify_asset_signature(asset_id, expires, sig, md_raw):
+    if not _signed_asset_request_allowed(asset_id, expires, request, md_raw):
         return Response(
             content=json.dumps({"error": {"message": "Invalid or expired signature", "type": "invalid_request_error"}}),
             status_code=403,
@@ -23686,7 +23832,8 @@ def _signed_asset_content_response(
             media_type="application/json",
         )
 
-    data = cache_path.read_bytes()
+    stat = cache_path.stat() if "family" in request.query_params else None
+    metadata_identity = ""
     if md_raw == provenance.METADATA_FULL:
         person_id: str | None = None
         if auth_context is None:
@@ -23706,6 +23853,17 @@ def _signed_asset_content_response(
         record = prompt_memory.get(asset_id, person_id) if person_id else None
         if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+        # The public validator is keyed: predictable prompt metadata must not be guessable from it.
+        metadata_identity = hmac.new(_image_signing_secret(), json.dumps(record["metadata"], sort_keys=True).encode(),
+                                     hashlib.sha256).hexdigest()
+    headers = _session_asset_cache_headers(
+        request, asset_id, variant=f"content:{cache_path.suffix}:md={md_raw or provenance.METADATA_NONE}:"
+        f"{metadata_identity}:{stat.st_mtime_ns}:{stat.st_size}:{media_delivery.encoder_revision()}",
+    ) if stat is not None else {}
+    if headers and _asset_not_modified(request, headers["ETag"]):
+        return Response(status_code=304, headers=headers)
+    data = cache_path.read_bytes()
+    if md_raw == provenance.METADATA_FULL:
         data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
     try:
         data = media_delivery.deliver_bytes(
@@ -23718,12 +23876,15 @@ def _signed_asset_content_response(
             status_code=502,
             media_type="application/json",
         )
-    return media_delivery.ranged_delivery_response(
+    response = media_delivery.ranged_delivery_response(
         request,
         data,
         media_type=asset_media_type(asset_id, cache_path),
-        cache_control="private, max-age=3600",
+        cache_control=headers.get("Cache-Control", "private, max-age=3600"),
+        etag=headers.get("ETag"),
     )
+    response.headers.update(headers)
+    return response
 
 
 async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
@@ -31093,6 +31254,8 @@ from gateway.json_compression import JsonCompressionMiddleware
 app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
+from gateway.browser_cache import BrowserCacheMiddleware
+app.add_middleware(BrowserCacheMiddleware)
 # Outermost: whatever answers with a web page, the app, its 404 or an error, says "do not index".
 from gateway.noindex import NoIndexHeaderMiddleware
 app.add_middleware(NoIndexHeaderMiddleware)

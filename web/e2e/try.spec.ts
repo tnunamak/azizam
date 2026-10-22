@@ -539,7 +539,13 @@ for (const theme of ["light", "dark"] as const) {
 
       await prepareTryKey(page);
       await waitForCatalog(page);
+      const completion = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/openai/v1/chat/completions") &&
+          response.request().method() === "POST",
+      );
       await page.getByRole("button", { name: "Run", exact: true }).click();
+      expect((await completion).ok()).toBe(true);
       await expect(
         page.getByText("Chat result", { exact: true }),
       ).toBeVisible();

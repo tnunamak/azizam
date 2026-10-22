@@ -39,7 +39,7 @@ def worker(tmp_path, monkeypatch, video_state):
     monkeypatch.setattr(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0)
     monkeypatch.setattr(proxy, "COMFY_VIDEO_TIMEOUT", 10)
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
-    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
+    monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: SimpleNamespace(scope={}))
     # The worker checks its caller's plan before each poll: a caller whose plan allows video.
     monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     dropped = Mock()

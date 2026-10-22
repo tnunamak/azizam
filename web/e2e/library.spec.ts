@@ -177,6 +177,9 @@ for (const mode of ["light", "dark"] as const) {
       await setTheme(page, mode, width);
       let failed = true;
       await page.route("**/me/api/media?**", (route) => {
+        // Folder evidence is fetched independently; fail only the asset list.
+        if (new URL(route.request().url()).searchParams.has("folder_state"))
+          return route.continue();
         if (failed) {
           failed = false;
           return fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 });
@@ -291,6 +294,8 @@ for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep 
     });
     await page.route("**/me/api/media{,/**}?**", (route) => {
       const url = new URL(route.request().url());
+      // The folder check has no asset scope; keep the asset assertions below.
+      if (url.searchParams.has("folder_state")) return route.continue();
       paths.push(url.toString());
       if (url.pathname === "/me/api/media") {
         if (url.searchParams.get("scope") === "everyone") everyoneSeen = true;
@@ -373,6 +378,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
   const requests: string[] = [];
   await page.route("**/me/api/media?**", (route) => {
     const url = route.request().url();
+    if (new URL(url).searchParams.has("folder_state")) return route.continue();
     requests.push(url);
     return fulfilJson(route, url.includes("cursor=")
         ? {
