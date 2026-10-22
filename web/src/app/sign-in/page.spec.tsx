@@ -88,7 +88,8 @@ it.each([
           : "Continue with single sign-on",
     });
     expect(provider).toHaveAttribute("data-variant", "default");
-    expect(provider).toHaveAttribute("href", options.oidc_url);
+    // The name box is on by default, so the single sign-on start says so: remember=1 (Addendum 2).
+    expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
     expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute(
       "data-variant",
       "outline",
@@ -169,6 +170,7 @@ it("sends the original return target to the server and follows its validated nex
         email: "member@example.test",
         password: "A long test password",
         return_to: "/usage/?receipt=one",
+        remember: true,
       }),
     }),
   );
@@ -189,7 +191,7 @@ it("requires a password before sign-in and sends a one-character password", asyn
   expect(screen.getByLabelText("Password")).toBeRequired();
   await user.type(screen.getByLabelText("Password"), "x");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ body: JSON.stringify({ email: "member@example.test", password: "x", return_to: "/" }) })));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ body: JSON.stringify({ email: "member@example.test", password: "x", return_to: "/", remember: true }) })));
 });
 it("requires a password before reset and sends a one-character password", async () => {
   window.history.replaceState(null, "", "/sign-in/#reset=reset-test");
@@ -419,7 +421,7 @@ it("shows a refused invitation sign-in with the same message, and the retry goes
   );
   expect(
     screen.getByRole("link", { name: "Continue with Keycloak" }),
-  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F");
+  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");
 });
 
 it("renders provider text through React escaping", async () => {

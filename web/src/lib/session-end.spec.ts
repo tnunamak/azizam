@@ -63,7 +63,7 @@ describe("ending the session", () => {
     expect(Object.keys(localStorage).sort()).toEqual(["azizam.handoff", "theme"]);
     expect(localStorage.getItem("theme")).toBe("dark");
     expect(Object.keys(sessionStorage)).toEqual(["azizam.handoff.last"]);
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
     expect(JSON.parse(localStorage.getItem("azizam.handoff")!)).toMatchObject({ state: "SIGNED_OUT", kind: "sign-out" });
   });
 
@@ -88,7 +88,7 @@ describe("ending the session", () => {
     await sessionEnd.endSession("sign-out");
     expect(posts).toBe(2);
     expect(sent("POST /logout").map(([, init]) => new Headers(init?.headers).get("x-azizam-csrf"))).toEqual(["stale", "fresh"]);
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
   it("a 403 that persists while the session is still live is a gateway error, not a sign-out", async () => {
@@ -129,7 +129,7 @@ describe("ending the session", () => {
     await sessionEnd.endSession("sign-out");
     await sessionEnd.retrySignOut();
     expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "signing-out" });
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
   it("the second failure adds the way out to the failure screen", async () => {
@@ -144,7 +144,7 @@ describe("ending the session", () => {
     route("GET /admin/api/session", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     route("POST /logout", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     await sessionEnd.endSession("sign-out");
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
   it("a second request to end the session while this one leaves joins it and sends nothing more", async () => {
@@ -172,13 +172,13 @@ describe("ending the session", () => {
     const [[, init]] = sent("POST /auth/api/sign-out-everywhere");
     expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-1");
     expect(sent("GET /admin/api/session")).toHaveLength(0);
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
 
   it("sign out everywhere follows only a page on this site", async () => {
     route("POST /auth/api/sign-out-everywhere", () => json({ next: "https://elsewhere.example/" }));
     await sessionEnd.endSession("sign-out-everywhere");
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
 });
 
@@ -325,7 +325,7 @@ describe("a page that opens or is restored during a sign-out", () => {
     );
     expect(sessionEnd.resumeSignOut()).toBe(true);
     expect(sessionEnd.getSessionScreen()).toEqual({ kind: "signing-out" });
-    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/"));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out"));
     expect(sent("POST /logout")).toHaveLength(1);
   });
 
@@ -460,7 +460,7 @@ describe("the sign-out while the session view key is down", () => {
     await sessionEnd.endSession("sign-out");
     const [[, init]] = sent("POST /logout");
     expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
   it("sign out everywhere sends the token the unavailable snapshot carries and ends the session", async () => {
@@ -469,7 +469,7 @@ describe("the sign-out while the session view key is down", () => {
     await sessionEnd.endSession("sign-out-everywhere");
     const [[, init]] = sent("POST /auth/api/sign-out-everywhere");
     expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
 });
 
