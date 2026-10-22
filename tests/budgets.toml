@@ -196,7 +196,7 @@
 # non-hex id is never removed). Hermetic --collect-only -q measured 15955.
 # Remove-missing round 2: order-independent job count (+1 pytest); removal
 # announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
-# Lowercase-only digest check adds one uppercase-ID regression.
+# Lowercase-only digest check adds one uppercase-ID regression; full collection measured 15957.
 pytest = 15957
 vitest = 3095
 playwright = 502
