@@ -12,6 +12,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, CircleAlert, CircleCheck, CircleX, Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
+import { useUnsavedWork } from "@/lib/unsaved-work";
 import {
   checkFromError,
   enginesApi,
@@ -389,6 +390,7 @@ function RecordForm({
   const currentTests = Object.fromEntries(Object.entries(tests).filter(([, t]) => !("snapshot" in t) || t.snapshot === configurationSnapshot));
   // Without the right to change settings, only the name can be unsaved.
   const dirty = settingsLocked ? name.trim() !== view.name : commands.length > 0 || bodyNow !== initialBody;
+  useUnsavedWork({ kind: "form", label: view.name, active: dirty });
   // Only the name changed: it saves through the plain service edit when the record needs that.
   const nameOnly = commands.length === 0 && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
   const optionKeys = new Set(optionFields(definition).map((f) => f.key));

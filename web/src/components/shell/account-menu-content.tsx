@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import {
+  ArrowLeftRight,
   ChevronDown,
   CircleHelp,
   CircleUserRound,
@@ -11,6 +12,7 @@ import {
   UserRoundCog,
 } from "lucide-react";
 import { endSession } from "@/lib/session-end";
+import { unsavedWorkNow } from "@/lib/unsaved-work";
 import {
   AvatarPicker,
   PersonAvatar,
@@ -36,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useViewer } from "./session";
+import { SwitchConfirm, type LeaveRequest } from "./switch-confirm";
 
 const roleLabels: Record<string, string> = {
   owner: "Owner",
@@ -67,11 +70,25 @@ export function AccountMenuContent({
 }) {
   const viewer = useViewer();
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const [leaving, setLeaving] = useState<LeaveRequest | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const avatarDialogRequested = useRef(false);
+  const leaveRequested = useRef(false);
   const canChangeAvatar = Boolean(
     viewer.authenticated && !viewer.serviceAdmin && avatarPersonId && onAvatarChange,
   );
+
+  /** Switch person and Sign out end the session here. Work that would be lost is confirmed first (DESIGN.md 4.2). */
+  function leave(end: LeaveRequest["end"], event: Event) {
+    const lost = unsavedWorkNow();
+    if (lost.length === 0) {
+      event.preventDefault();
+      void endSession(end);
+      return;
+    }
+    leaveRequested.current = true;
+    setLeaving({ end, lost, opener: accountTriggerRef.current });
+  }
 
   return (
     <>
@@ -106,7 +123,7 @@ export function AccountMenuContent({
         <DropdownMenuContent
           align="end"
           onCloseAutoFocus={(event) => {
-            if (avatarDialogRequested.current) event.preventDefault();
+            if (avatarDialogRequested.current || leaveRequested.current) event.preventDefault();
           }}
         >
           <DropdownMenuLabel className="font-normal">
@@ -152,17 +169,7 @@ export function AccountMenuContent({
                 Help
               </a>
             </DropdownMenuItem>
-            {viewer.authenticated ? (
-              <DropdownMenuItem
-                onSelect={(event) => {
-                  event.preventDefault();
-                  void endSession("sign-out");
-                }}
-              >
-                <LogOut />
-                Sign out
-              </DropdownMenuItem>
-            ) : (
+            {!viewer.authenticated && (
               <DropdownMenuItem asChild>
                 <a
                   href={`/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`}
@@ -173,6 +180,19 @@ export function AccountMenuContent({
               </DropdownMenuItem>
             )}
           </DropdownMenuGroup>
+          {viewer.authenticated && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={(event) => leave("switch", event)}>
+                <ArrowLeftRight />
+                Switch person
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={(event) => leave("sign-out", event)}>
+                <LogOut />
+                Sign out
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       {canChangeAvatar && avatarPersonId && onAvatarChange && (
@@ -219,6 +239,13 @@ export function AccountMenuContent({
           </DialogContent>
         </Dialog>
       )}
+      <SwitchConfirm
+        request={leaving}
+        onClose={() => {
+          leaveRequested.current = false;
+          setLeaving(null);
+        }}
+      />
     </>
   );
 }

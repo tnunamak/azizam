@@ -3,6 +3,7 @@ import { useLayoutEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { useUnsavedWork } from "@/lib/unsaved-work";
 import {
   dismissNotice,
   getSignIn,
@@ -92,6 +93,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
 
   const label = providerLabel(form.provider.name, form.provider.address);
   const dirty = formSig(form) !== formSig(baseForm);
+  useUnsavedWork({ kind: "form", label: "Sign-in", active: dirty });
   const signature = connectionSig(form.provider);
   const unchanged = signature === connectionSig(baseForm.provider);
   const liveUnchanged = live && unchanged;
