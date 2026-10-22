@@ -210,7 +210,8 @@
 # Full vitest list --json measured 3099 after merging r90 (2026-10-21).
 # Train r92: r91 15963 + multi-picture edit contract and catalog cases = 15982 measured.
 # Slice A3 (remembered people, D54): +23 cases in tests/test_remembered_people.py. --collect-only -q measured 16005.
-pytest = 16005
+# A3 review round 2 (F1-F8): +16 cases in tests/test_remembered_people.py (one parametrized twice). --collect-only -q measured 16021.
+pytest = 16021
 # Train r92: Try picture-upload specs, 3103 measured.
 vitest = 3103
 playwright = 502
