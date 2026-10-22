@@ -24,8 +24,14 @@ EDIT_RECORDS = [record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
                 and _execution(record, None)["sync"]["path"] == "/v1/images/edits"]
 assert EDIT_RECORDS, "no image.edit manifests discovered"
 EXPECTED_EDIT_MANIFEST_IDS = {
+    "image.edit.fibo-2-edit-turbo",
     "image.edit.flux2-klein",
+    "image.edit.flux2-klein-4b",
+    "image.edit.flux2-klein-4b-inpaint",
+    "image.edit.qwen-image-2.1-edit",
     "image.edit.qwen-image-2.1-edit-multiref",
+    "image.edit.qwen-image-2.1-inpaint",
+    "image.edit.seedvr2-upscale",
 }
 SELECT_EDIT_WORKFLOW = proxy._select_edit_workflow
 
