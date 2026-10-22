@@ -842,13 +842,13 @@
               "com.azizam.workflow": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
+                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
+                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
                   },
                   {
-                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
+                    "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
                   },
                   {
                     "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
@@ -918,105 +918,6 @@
         ],
         "type": "object"
       },
-      "WorkflowExtensionInputs_video_edit_bernini_r_remix": {
-        "additionalProperties": false,
-        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-        "properties": {
-          "source_video": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to restyle.",
-            "type": "string",
-            "x-azizam-asset": true
-          }
-        },
-        "required": [
-          "source_video"
-        ],
-        "title": "Bernini-R Remix",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
-      },
-      "WorkflowExtensionInputs_video_edit_rife_interpolate": {
-        "additionalProperties": false,
-        "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
-        "properties": {
-          "multiplier": {
-            "default": 2,
-            "description": "2 doubles the frames. 3 and 4 are less tested.",
-            "enum": [
-              2,
-              3,
-              4
-            ],
-            "type": "integer"
-          },
-          "source_video": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to make smoother.",
-            "type": "string",
-            "x-azizam-asset": true
-          }
-        },
-        "required": [
-          "source_video"
-        ],
-        "title": "RIFE 2x Frame Interpolation",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.rife-interpolate"
-      },
-      "WorkflowExtensionInputs_video_edit_scail_2_replace": {
-        "additionalProperties": false,
-        "description": "Replace a person in a video with a character from a picture, keeping the original motion and scene.",
-        "properties": {
-          "reference_fit": {
-            "default": true,
-            "description": "Resize and position the new character to match the person being replaced.",
-            "type": "boolean"
-          },
-          "reference_image": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. A picture of who should appear in the video.",
-            "type": "string",
-            "x-azizam-asset": true
-          },
-          "reference_subject": {
-            "default": "person",
-            "description": "Describe the character to use from the picture.",
-            "type": "string"
-          },
-          "source_point_x": {
-            "description": "Select a person in the first frame using a horizontal position from 0 to 1.",
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          },
-          "source_point_y": {
-            "description": "Select a person in the first frame using a vertical position from 0 to 1.",
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          },
-          "source_subject": {
-            "default": "person",
-            "description": "Describe the person to replace in the video.",
-            "type": "string"
-          },
-          "source_video": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video whose character is replaced.",
-            "type": "string",
-            "x-azizam-asset": true
-          },
-          "subject_index": {
-            "default": "0",
-            "description": "Choose a tracked person, counting from zero; zero selects the largest person.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reference_image",
-          "source_video"
-        ],
-        "title": "SCAIL-2 Character Replace",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.scail-2-replace"
-      },
       "WorkflowExtensionInputs_video_generate_ltx_2_5_i2v": {
         "additionalProperties": false,
         "description": "Make a video with sound from a starting picture and a description.",
@@ -1030,7 +931,7 @@
         "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
@@ -1067,7 +968,7 @@
         "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
@@ -1097,7 +998,7 @@
             "x-azizam-asset": true
           },
           "mid_frame_index": {
-            "description": "Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.",
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
             "minimum": 1,
             "type": "integer"
           },
@@ -1154,7 +1055,7 @@
         "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
@@ -1184,7 +1085,7 @@
         "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
@@ -1195,7 +1096,7 @@
             "x-azizam-asset": true
           },
           "mid_frame_index": {
-            "description": "Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.",
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
             "minimum": 1,
             "type": "integer"
           },
@@ -3051,7 +2952,7 @@
         "description": "Make a video with sound that starts on one picture and ends on another, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
@@ -3115,7 +3016,7 @@
         "description": "Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
@@ -3157,7 +3058,7 @@
             "x-azizam-asset": true
           },
           "mid_frame_index": {
-            "description": "Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.",
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
             "minimum": 1,
             "type": "integer"
           },
@@ -3290,7 +3191,7 @@
         "description": "Make a video with stereo sound that starts on one picture and ends on another, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
@@ -3336,7 +3237,7 @@
         "description": "Make a video with stereo sound that starts on one picture, passes through a second picture at its midpoint and ends on a third, following a description.",
         "properties": {
           "frames": {
-            "description": "Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.",
+            "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
@@ -3352,7 +3253,7 @@
             "x-azizam-asset": true
           },
           "mid_frame_index": {
-            "description": "Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.",
+            "description": "Which frame the middle picture pins to; defaults to half the frame count.",
             "minimum": 1,
             "type": "integer"
           },
@@ -22138,13 +22039,13 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
@@ -29070,13 +28971,13 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_rife_interpolate"
                           },
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
+                            "$ref": "#/components/schemas/WorkflowInputs_video_edit_scail_2_replace"
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"

@@ -58,7 +58,7 @@ inputs:
     default: 1
   frames:
     label: Length in frames
-    help: Exact frame count; 1 plus a multiple of 8 (121 is 5 s at 24 fps). Overrides `seconds` when both are sent.
+    help: Exact frame count on the 8N+1 grid; wins over `seconds`.
     type: integer
     step: 8
     offset: 1

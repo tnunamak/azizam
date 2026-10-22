@@ -45,12 +45,12 @@ inputs:
     required: true
   mid_frame_index:
     label: Middle picture frame
-    help: Which frame the middle picture is pinned to; must be above 0 and below frames - 1. Defaults to half the frame count.
+    help: Which frame the middle picture pins to; defaults to half the frame count.
     type: integer
     minimum: 1
   frames:
     label: Length in frames
-    help: Exact frame count; 5 plus a multiple of 17 (124 is 5.17 s at 24 fps). Overrides `seconds` when both are sent.
+    help: Exact frame count on the 17N+5 grid; wins over `seconds`.
     type: integer
     step: 17
     offset: 5
