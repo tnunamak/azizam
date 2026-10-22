@@ -21,6 +21,7 @@ import { formatAppName } from "@/lib/format";
 import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { keyPromptNote } from "@/lib/prompt-memory";
+import { useUnsavedWork } from "@/lib/unsaved-work";
 import { api, ApiError, queryKeys } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -520,6 +521,8 @@ function Connect({
   const [keyError, setKeyError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pastedKey, setPastedKey] = useState("");
+  // Kept only while this page is open, so a switch would lose it.
+  useUnsavedWork({ kind: "home-key", active: pastedKey.trim() !== "" });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);

@@ -65,6 +65,7 @@ import {
 } from "@/lib/prompt-memory";
 import { taskNames } from "@/lib/terms";
 import { modelDisplayName } from "@/lib/model-name";
+import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
 import { Button } from "@/components/ui/button";
 import { useCopied } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
@@ -228,6 +229,27 @@ const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
     prompt: "{}",
   },
 };
+const TRY_TABS = Object.keys(DEFAULTS) as TryTab[];
+/** The decide tab's other two fields start with these. */
+const DECIDE_STATE_EXAMPLE = "It is raining and the bus is 20 minutes late.";
+const DECIDE_OPTIONS_EXAMPLE = "Take a taxi\nWait for the bus";
+
+/** The words a tab starts with. Words that differ from these, or from what the tab last ran with, are unsent. */
+function startWords(tab: TryTab): string {
+  return tab === "decide"
+    ? JSON.stringify([DEFAULTS.decide.prompt, DECIDE_STATE_EXAMPLE, DECIDE_OPTIONS_EXAMPLE])
+    : DEFAULTS[tab].prompt;
+}
+
+/** The kind of work a running request makes: a picture, audio or video, or else the answer it waits for. */
+function madeKind(tab: TryTab | null, capability: string | undefined): Exclude<UnsavedKind, "form"> {
+  // A workflow makes what its catalog capability says; the other tabs make what their names say.
+  const made = tab === "workflow" ? capability : tab;
+  if (made === "image") return "try-picture";
+  if (made === "speech" || made === "music" || made === "sfx") return "try-audio";
+  if (made === "video") return "try-video";
+  return "try-waiting";
+}
 
 const TAB_ITEMS: Array<{
   value: TryTab;
@@ -1205,10 +1227,12 @@ export default function TryPage() {
       ) as Record<TryTab, string>,
   );
   const [voicesByModel, setVoicesByModel] = useState<Record<string, string>>({});
-  const [decisionState, setDecisionState] = useState(
-    "It is raining and the bus is 20 minutes late.",
-  );
-  const [options, setOptions] = useState("Take a taxi\nWait for the bus");
+  const [decisionState, setDecisionState] = useState(DECIDE_STATE_EXAMPLE);
+  const [options, setOptions] = useState(DECIDE_OPTIONS_EXAMPLE);
+  // The words each tab last ran with, or a workflow's loaded example. Only tabs whose words differ are unsent.
+  const [baseWords, setBaseWords] = useState<Partial<Record<TryTab, string>>>({});
+  const wordsNow = (tab: TryTab) =>
+    tab === "decide" ? JSON.stringify([prompt.decide, decisionState, options]) : prompt[tab];
   const [file, setFile] = useState<File | null>(null);
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
@@ -1271,6 +1295,14 @@ export default function TryPage() {
       workflowChoices.find((option) => option.id === model.workflow)?.workflow,
     [workflowChoices, model.workflow],
   );
+  const unsentTabs = TRY_TABS.filter(
+    (tab) => wordsNow(tab) !== (baseWords[tab] ?? startWords(tab)),
+  );
+  useUnsavedWork({ kind: "try-draft", count: unsentTabs.length, active: unsentTabs.length > 0 });
+  useUnsavedWork({
+    kind: madeKind(running, selectedWorkflow?.capability),
+    active: running !== null,
+  });
   const owner = viewer.admin;
   const workflowAvailability = selectedWorkflow
     ? workflowAvailabilityView(selectedWorkflow.availability, {
@@ -1389,10 +1421,12 @@ export default function TryPage() {
       body,
       selectedWorkflow.inputMapping,
     );
+    const example = JSON.stringify(inputs, null, 2);
     setPrompt((current) => ({
       ...current,
-      workflow: JSON.stringify(inputs, null, 2),
+      workflow: example,
     }));
+    setBaseWords((current) => ({ ...current, workflow: example }));
     setWorkflowFiles({});
     setWorkflowChecked(false);
   }, [selectedWorkflow]);
@@ -1890,6 +1924,7 @@ export default function TryPage() {
       return;
     }
     setRunning(tab);
+    setBaseWords((current) => ({ ...current, [tab]: wordsNow(tab) }));
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {

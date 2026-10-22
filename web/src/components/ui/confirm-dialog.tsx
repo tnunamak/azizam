@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { restoreFocus } from "@/lib/restore-focus";
 
 import { Button } from "./button";
@@ -25,6 +25,8 @@ export interface ConfirmDialogProps {
   /** e.g. "Disable app". Defaults to "Confirm". */
   confirmLabel?: string;
   cancelLabel?: string;
+  /** The cancel button's style. Defaults to ghost. */
+  cancelVariant?: ComponentProps<typeof Button>["variant"];
   /** The action is not available yet; the dialog only explains. */
   confirmDisabled?: boolean;
   /** Destructive styling (default). Set false for non-destructive confirms. */
@@ -63,6 +65,7 @@ function ConfirmDialogContent({
   description,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
+  cancelVariant = "ghost",
   confirmDisabled = false,
   danger = true,
   typedName,
@@ -113,7 +116,12 @@ function ConfirmDialogContent({
     >
       <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
         <DialogTitle>{title}</DialogTitle>
-        {description && <DialogDescription>{description}</DialogDescription>}
+        {/* A div, not a paragraph: the description may hold a list (DESIGN.md 4.2). */}
+        {description && (
+          <DialogDescription asChild>
+            <div>{description}</div>
+          </DialogDescription>
+        )}
       </DialogHeader>
       {typedName !== undefined && (
         <div
@@ -145,7 +153,7 @@ function ConfirmDialogContent({
         <Button
           size="md"
           type="button"
-          variant="ghost"
+          variant={cancelVariant}
           onClick={() => onOpenChange(false)}
           disabled={pending}
         >
