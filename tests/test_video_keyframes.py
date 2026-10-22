@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import media_ingestion, media_jobs  # noqa: E402
+from gateway import media_ingestion, media_jobs, media_metadata  # noqa: E402
 from gateway.workflow_openapi import ROOT_EXTENSION, schema_name  # noqa: E402
 from gateway.manifests import load_workflow_manifest  # noqa: E402
 from tests.support.access import access_context, authenticated  # noqa: E402
@@ -473,6 +473,8 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
                 self.assertEqual(r.status_code, 200, r.text)
                 self.assertEqual(self.graph[node]["inputs"]["value"], valid)
             with self.subTest(model=model, invalid=invalid):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
                 r = self.client.post("/v1/videos", json=self._body(model, frames=invalid))
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertEqual(r.json()["error"]["param"], "frames")
@@ -503,6 +505,8 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
                     self.assertEqual(g[node]["inputs"]["img_compression"], 7, (model, node))
         for invalid in (101, -1, 1.5):
             with self.subTest(invalid=invalid):
+                self.comfy.uploads.clear()
+                self.comfy.submitted.clear()
                 r = self.client.post("/v1/videos", json=self._body("video-ltx-2.5-keyframes", img_compression=invalid))
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertEqual(r.json()["error"]["param"], "img_compression")
@@ -512,12 +516,16 @@ class KeyframeJsonRequestTests(KeyframeRouteBase):
     def test_invalid_extensions_are_refused_before_asset_resolution(self) -> None:
         for model in (*KEYFRAME_MODELS, "video-minimax-h3-i2v", "video-ltx-2.5-i2v"):
             invalid_inputs = [{"unknown_input": 1}, {"image": _uri(PNG_FIRST)}, {"last_frame": 42}]
-            if model == "video-ltx-2.5-keyframes":
+            if model in ("video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"):
                 invalid_inputs.extend([{"last_frame_strength": 1.5}, {"last_frame_strength": []}])
+            if model == "video-ltx-2.5-keyframes-mid":
+                invalid_inputs.extend([{"mid_frame_strength": 1.5}, {"mid_frame_strength": []}])
             for invalid in invalid_inputs:
                 with self.subTest(model=model, invalid=invalid):
                     body = self._body(model, middle_frame=_uri(PNG_MID))
-                    if model != "video-minimax-h3-keyframes-mid":
+                    if model == "video-ltx-2.5-keyframes-mid":
+                        body["extensions"][NS]["mid_frame"] = _uri(PNG_MID)
+                    elif model != "video-minimax-h3-keyframes-mid":
                         del body["extensions"][NS]["middle_frame"]
                     body["extensions"][NS].update(invalid)
                     with patch.object(proxy, "_resolve_input_reference", AsyncMock(wraps=proxy._resolve_input_reference)) as resolve:
@@ -748,6 +756,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
             }),
         ):
             with self.subTest(model=model):
+                self.maxDiff = None
                 self.comfy.submitted.clear()
                 self.comfy.uploads.clear()
                 body = {"model": model, "prompt": "p", "seconds": 5, "seed": 3,
@@ -912,14 +921,20 @@ class VideoAudioControlTests(KeyframeRouteBase):
         self.assertEqual(job["assets"][0]["media_type"], "video/mp4")
 
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
-    def test_absent_or_true_audio_leaves_the_bytes_identical(self) -> None:
+    def test_absent_audio_leaves_the_bytes_unchanged(self) -> None:
         mp4 = _mp4_with_audio()
-        for audio in (None, True):
-            with self.subTest(audio=audio):
-                self._create(audio=audio)
-                stored = self._finished(mp4)
-                self.assertEqual(stored, mp4)
-                proxy._video_job_records.clear()
+        self._create(audio=None)
+        stored = self._finished(mp4)
+        self.assertEqual(_audio_stream_count(stored), 1)
+        self.assertEqual(stored, media_metadata.strip_metadata(mp4, ".mp4"))
+
+    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg and ffprobe are required")
+    def test_true_audio_leaves_the_bytes_unchanged(self) -> None:
+        mp4 = _mp4_with_audio()
+        self._create(audio=True)
+        stored = self._finished(mp4)
+        self.assertEqual(_audio_stream_count(stored), 1)
+        self.assertEqual(stored, media_metadata.strip_metadata(mp4, ".mp4"))
 
     def test_audio_must_be_a_boolean(self) -> None:
         for invalid in ("no", 0, "false", []):
@@ -1007,7 +1022,7 @@ class KeyframeCatalogTests(unittest.TestCase):
             extension_name = "WorkflowExtensionInputs_" + wid.replace(".", "_").replace("-", "_")
             properties = schemas[extension_name]["properties"]
             for name in _manifest(model)["inputs"]:
-                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength"):
+                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength", "frame_rate"):
                     self.assertNotIn(name, properties, (model, name))
                 else:
                     self.assertIn(name, properties, (model, name))
