@@ -75,11 +75,15 @@ def _session_view_key(path: Path) -> bytes:
 
 
 def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
+    """The public view id of a signed-in browser session. Every signed-in session has one, service-account
+    sessions included: the browser's pages compare it with the sign-in they show (web/src/lib/session-end.ts).
+    When it cannot be made, the account is unavailable (503) rather than signed in without one."""
     try:
         key = _session_view_key(path.parent / ".session_view_secret")
     except (OSError, ValueError):
-        logging.getLogger(__name__).warning("Session view id omitted: dedicated key unavailable")
-        return {}
+        logging.getLogger(__name__).error("Session view id unavailable: dedicated key cannot be read")
+        raise UserPortalError("session_view_unavailable",
+                              "Your sign-in cannot be checked right now. Try again.", status_code=503) from None
     return {"session_view_id": hmac.new(key, session.family_id.encode(), hashlib.sha256).hexdigest()}
 
 
@@ -252,6 +256,8 @@ def build_user_portal_snapshot(
             "authenticated": False,
             "apps": [],
             "error": {"code": exc.code, "message": exc.message},
+            # A browser session with no person behind it is still a session: it keeps its view id.
+            **_session_view_field(session, path),
         }
 
     if auto_create_personal_app:

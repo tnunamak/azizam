@@ -566,7 +566,7 @@ def test_provider_access_end_ends_warm_asset_family(media, monkeypatch):
 
 
 @pytest.mark.parametrize("state", ["missing", "symlink", "dangling", "invalid", "unwritable"])
-def test_session_view_key_is_dedicated_private_and_optional(media, monkeypatch, caplog, tmp_path, state):
+def test_session_view_key_is_dedicated_private_and_required(media, monkeypatch, caplog, tmp_path, state):
     from gateway import secret_store
     def forbidden(*args, **kwargs):
         raise AssertionError("session view must never read the provider master key")
@@ -587,14 +587,17 @@ def test_session_view_key_is_dedicated_private_and_optional(media, monkeypatch, 
             raise PermissionError("synthetic unavailable key directory")
         monkeypatch.setattr(user_runtime.tempfile, "NamedTemporaryFile", denied)
     response = client.get("/me/api/session")
-    assert response.status_code == 200 and response.json()["authenticated"] is True
     if state == "missing":
+        assert response.status_code == 200 and response.json()["authenticated"] is True
         assert len(response.json()["session_view_id"]) == 64
         assert key_path.stat().st_mode & 0o777 == 0o600
         assert not (media.path.parent / secret_store.DEFAULT_KEY_FILE).exists()
     else:
+        # A signed-in session without its view id is not shown as signed in: the account is unavailable.
+        assert response.status_code == 503 and response.json()["error"]["code"] == "session_view_unavailable"
+        assert response.headers["cache-control"] == "no-store"
         assert "session_view_id" not in response.json()
-        assert "Session view id omitted" in caplog.text
+        assert "Session view id unavailable" in caplog.text
     if state == "symlink":
         assert target.read_bytes() == b"x" * 32
     if state == "dangling":

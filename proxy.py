@@ -16200,7 +16200,13 @@ app.include_router(create_home_router(
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
-    snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    try:
+        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
+        # nothing that could be taken for a signed-in person.
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status_code,
+                            headers={"cache-control": "no-store"})
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
