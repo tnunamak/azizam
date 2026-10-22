@@ -128,13 +128,13 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
-             "video.generate.ltx-2.5-keyframes"}
+             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
         # The edit transport now documents repeated image[] parts for pictures.
-        assert route_graph.openapi_digest(proxy.app) == "1025614a600fdd6c31146a1a1a9445977202d1c33912976f68dddc1b9fb8ba80"
+        assert route_graph.openapi_digest(proxy.app) == "6e4b5a9f0436edaf0ab7edb3d01960c69334a7077b37746b3eb3b5e5052127a4"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
