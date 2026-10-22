@@ -194,6 +194,8 @@
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
 # Video refuses a bad character-replace selection and a full queue before uploading: +3 route cases.
 # Hermetic --collect-only -q measured 15956 (2026-10-21).
+# Sign-in session writes off-loop: three cases (claim, local login, provider callback).
+# Hermetic --collect-only -q measured 15956 on 2026-10-21.
 pytest = 15956
 vitest = 3091
 playwright = 502
