@@ -11049,6 +11049,19 @@ async def proxy_graph_video_create(
         except _VideoAssetError as e:
             return _video_asset_error_response(e)
 
+    if workflow_cfg.get("subject_select"):
+        # Character replace: the person selection only edits the graph, so a bad
+        # one is refused here, before any picture or video reaches the engine's
+        # input directory. The rules live in video_subject, and the graph edit
+        # below reads the same point helper once the extensions are bound.
+        try:
+            video_subject.validate_selection(
+                ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+            )
+        except video_subject.SubjectError as exc:
+            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                               code="invalid_workflow_extension")
+
     # Validate / clamp request inputs.
     max_seconds = float(workflow_cfg.get("max_seconds", 8))
     min_seconds = float(workflow_cfg.get("min_seconds", 1))
@@ -11408,13 +11421,10 @@ async def proxy_graph_video_create(
     subject_record: dict[str, Any] | None = None
     if workflow_cfg.get("subject_select"):
         # Character replace: pick which person is replaced, and remember how to
-        # read how many were tracked once the job is done.
+        # read how many were tracked once the job is done. The selection itself
+        # was validated before the uploads; this rewires the bound graph.
         block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
-            index_text = str(block.get("subject_index", "0")).strip()
-            if not re.fullmatch(r"\d+(,\d+)*", index_text):
-                raise video_subject.SubjectError(
-                    "subject_index must be a number like 0 or a list like 0,2", "subject_index")
             video_subject.apply_point(workflow, block, width, height)
             if block.get("reference_fit", True) not in (False, "false", "False", 0):
                 video_subject.add_reference_fit(workflow)
@@ -17303,8 +17313,11 @@ async def setup_claim_admin_key(request: Request):
     cookie = _browser_admin_cookie_config()
     # A session claimed with a key is not a person's sign-in: it is not recorded, never
     # renews, and ends after the fixed cookie life, whatever happens to the key.
-    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
-    session = browser_sessions.issue(
+    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
+    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
+                            signing_key=signing_key, path=ADMIN_STORE.path)
+    session = await asyncio.to_thread(
+        browser_sessions.issue,
         {"sub": session_subject, "email": session_email},
         role=role, cookie=cookie, path=ADMIN_STORE.path, register=False, renewable=False,
     )
@@ -17325,7 +17338,7 @@ def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
 
 
-def _issue_browser_admin_session(
+async def _issue_browser_admin_session(
     request: Request,
     *,
     user_id: str,
@@ -17335,8 +17348,11 @@ def _issue_browser_admin_session(
     redirect_to: str = "/setup/",
 ) -> Response:
     cookie = _browser_admin_cookie_config()
-    browser_sessions.end_incoming(request, cookie=cookie, signing_key=signing_key, path=ADMIN_STORE.path)
-    session = browser_sessions.issue(
+    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
+    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
+                            signing_key=signing_key, path=ADMIN_STORE.path)
+    session = await asyncio.to_thread(
+        browser_sessions.issue,
         {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
     )
     response = RedirectResponse(redirect_to, status_code=303)
@@ -17497,7 +17513,7 @@ async def setup_create_local_owner(request: Request):
     # auto-minted and revealed once. Landing back on /setup would greet them
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
-    return _issue_browser_admin_session(
+    return await _issue_browser_admin_session(
         request,
         user_id=str(user["id"]),
         email=email,
@@ -17601,7 +17617,7 @@ async def setup_local_login(request: Request):
     )
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
-    return _issue_browser_admin_session(
+    return await _issue_browser_admin_session(
         request,
         user_id=str(user["id"]),
         email=email,
@@ -17876,7 +17892,8 @@ async def admin_oidc_callback(request: Request):
         if not state.reauth:
             await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
                                     signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-        session = browser_sessions.issue(
+        session = await asyncio.to_thread(
+            browser_sessions.issue,
             session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
             authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,
         )

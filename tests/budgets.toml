@@ -192,8 +192,19 @@
 # measured 15952; npx vitest list measured 3091 (2026-10-21).
 # The merged public error-copy fixture adds one parameterized case.
 # Final hermetic --collect-only -q measured 15953 (2026-10-21).
-pytest = 15953
-vitest = 3091
+# Video refuses a bad character-replace selection and a full queue before uploading: +3 route cases.
+# Hermetic --collect-only -q measured 15956 (2026-10-21).
+# Sign-in session writes off-loop: three cases (claim, local login, provider callback).
+# Hermetic --collect-only -q measured 15956 on 2026-10-21.
+# Remove-missing follow-ups: +2 (an unseen job removal refuses; a 64-char
+# non-hex id is never removed). Hermetic --collect-only -q measured 15955.
+# Remove-missing round 2: order-independent job count (+1 pytest); removal
+# announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
+# Lowercase-only digest check adds one uppercase-ID regression; full collection measured 15957.
+# Train r91: r90 15953 + video validation 3 + sign-in off the loop 3 + remove-missing follow-ups 4 = 15963 measured.
+pytest = 15963
+# Train r91: remove-missing copy and toast specs, 3095 measured.
+vitest = 3095
 playwright = 502
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
