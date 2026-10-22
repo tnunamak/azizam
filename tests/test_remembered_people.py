@@ -607,7 +607,8 @@ def test_a_tile_sso_sign_in_is_refused_unless_the_provider_signed_the_person_in_
     refused = tls.sign_in(stranger, sub="helper", email=HELPER, groups=["/Trusted"], auth_time=auth_time,
                           start={"tile": tile})
 
-    assert refused.status_code == 303 and refused.headers["location"].startswith("/sign-in/?error=provider")
+    # A2: a tile sign-in is a fresh sign-in first, so a stale or missing sign-in time is refused as not_fresh.
+    assert refused.status_code == 303 and refused.headers["location"].startswith("/sign-in/?error=not_fresh")
     assert session_cookies(refused) == [] and not signed_in_state(stranger)
     assert device_rows(tls, client) == {helper}
 

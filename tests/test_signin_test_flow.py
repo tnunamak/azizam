@@ -5,6 +5,7 @@ are replaced. The start page, the callback, the test registry, the verdict and
 the owner link are production code.
 """
 from dataclasses import replace
+import time
 
 import httpx
 import pytest
@@ -46,7 +47,7 @@ def begin(client, snapshot, **provider):
 
 
 def finish(g, client, test, *, sub="owner", email=OWNER, groups=None, name=None, email_verified=True,
-           error=None, description=None, exchange_error=None, claims=None):
+           error=None, description=None, exchange_error=None, claims=None, auth_time=None):
     """The popup: open the start page, then have the provider redirect back to the callback."""
     started = client.get(test["start_url"], follow_redirects=False)
     if started.status_code != 302:
@@ -67,6 +68,8 @@ def finish(g, client, test, *, sub="owner", email=OWNER, groups=None, name=None,
             token_claims["name"] = name
         if groups is not None:
             token_claims["groups"] = list(groups)
+        if auth_time is not None:
+            token_claims["auth_time"] = auth_time
         token_claims.update(claims or {})
         return token_claims
 
@@ -121,6 +124,38 @@ def test_a_passing_test_shows_what_the_provider_sent_and_creates_no_person_app_o
         "groups_claim": "groups"}
     assert result["warnings"] == [] and result["can_link"] is False
     assert counts(sg) == before                      # nobody was signed in, made or given an app
+
+
+# ---------------------------------------------------------------------------
+# Does the provider ask for a password every time? (A2)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("auth_time_ago, supported", [(0, True), (3600, False), (None, False)],
+                         ids=["asks-every-time", "reuses-an-old-login", "reports-no-time"])
+def test_provider_test_reports_fresh_login_support(sg, auth_time_ago, supported):
+    """The test asks for a fresh login (prompt=login, max_age=0) and reports what came back. The test passes
+    either way; the answer is a line for Settings, not a refusal."""
+    owner = owner_client(sg)
+    test = begin(owner, get_snapshot(owner))
+    started = owner.get(test["start_url"], follow_redirects=False)
+    assert "prompt=login" in started.headers["location"] and "max_age=0" in started.headers["location"]
+
+    finish(sg, owner, test, auth_time=None if auth_time_ago is None else int(time.time()) - auth_time_ago)
+
+    result = status(owner, test)
+    assert result["status"] == "passed" and result["fresh_login_supported"] is supported
+
+
+def test_a_saved_provider_remembers_the_fresh_login_answer_of_the_test_that_saved_it(sg):
+    owner = owner_client(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot)
+    finish(sg, owner, test, auth_time=int(time.time()))
+
+    saved = save(owner, snapshot, proposal(snapshot), test_id=test["test_id"])
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["snapshot"]["provider"]["fresh_login_supported"] is True
 
 
 def test_a_test_remembers_the_groups_and_email_it_saw_for_the_pickers(sg):

@@ -458,3 +458,34 @@ def test_browser_provider_start_failure_keeps_safe_return_target(oidc_gateway, m
         assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/"]
         assert "private" not in failure.text
         assert not client.cookies.get(_oidc_config().cookie.name)
+
+
+def test_provider_sign_out_redirects_to_end_session_with_client_id(oidc_gateway, monkeypatch):
+    """Sign out at the provider, which then returns the browser to the sign-in page. Azizam keeps no ID token,
+    so none is sent as a hint."""
+    async def discovery(issuer):
+        assert issuer == "https://idp.example"
+        return {"end_session_endpoint": "https://idp.example/logout"}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 302
+    target = urlsplit(response.headers["location"])
+    assert f"{target.scheme}://{target.netloc}{target.path}" == "https://idp.example/logout"
+    assert parse_qs(target.query) == {
+        "client_id": ["gateway"],
+        "post_logout_redirect_uri": [f"{BASE_URL}/sign-in/?after=provider-sign-out"],
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_provider_sign_out_says_so_when_the_provider_publishes_no_address(oidc_gateway, monkeypatch):
+    async def discovery(issuer):
+        return {"issuer": issuer}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "provider_sign_out_unavailable"
