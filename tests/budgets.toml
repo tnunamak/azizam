@@ -217,12 +217,16 @@
 # Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
 # Merge of origin/main into A3: 15982 + A3 39 + r93 30 = 16051 measured (--collect-only -q, 2026-10-22).
 # A3 round 3 (review follow-ups): +5 cases in tests/test_remembered_people.py. --collect-only -q measured 16056.
-pytest = 16056
+# W1 r2 (one way to end a session, review fixes): +3 pytest cases for the view id of service-account sessions,
+# the 503 for an unreadable view key, and a provider reauth keeping the view id. collect-only 16056 -> 16059.
+pytest = 16059
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
 # +7 Playwright cases in e2e/session-end.spec.ts: playwright.config.ts 481 -> 488, gate lists 509.
-vitest = 3139
+# W1 r2: +15 vitest cases: the reviewer's seven (session-end.review.spec.ts), the restore, same-person, storage, toast and
+# prompt, wipe-timeout and live-region cases; 3154 measured. Playwright unchanged at 509.
+vitest = 3154
 playwright = 509
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
