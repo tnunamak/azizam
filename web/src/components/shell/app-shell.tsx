@@ -66,7 +66,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ReauthGate } from "./reauth-gate";
+import { SessionCover } from "./session-cover";
 import { ToastGate } from "./toast-gate";
+import {
+  checkPageShown,
+  continueFromOtherTab,
+  forgetFinishedSignOut,
+  getSessionScreen,
+  onSessionStopping,
+  resumeSignOut,
+  retrySignOut,
+  revealPage,
+  startSessionSync,
+  subscribeSession,
+} from "@/lib/session-end";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
 import { RelativeTime } from "@/components/product/relative-time";
@@ -1077,12 +1090,59 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** This page's side of the session (session-end.ts): other tabs, a pending sign-out, and a page restored from the back/forward cache. While the session has ended, the cover replaces the app. */
+function SessionBoundary({ children }: { children: React.ReactNode }) {
+  const screen = useSyncExternalStore(subscribeSession, getSessionScreen, getSessionScreen);
+  // Bumped once the check for this load is done; the page is revealed after that render.
+  const [checked, setChecked] = useState(0);
+  useEffect(() => onSessionStopping(() => void queryClient.cancelQueries()), []);
+  useEffect(() => {
+    const stopSync = startSessionSync();
+    resumeSignOut();
+    void forgetFinishedSignOut();
+    setChecked((count) => count + 1);
+    return stopSync;
+  }, []);
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      void checkPageShown().finally(() => setChecked((count) => count + 1));
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+  useEffect(() => {
+    if (checked > 0) revealPage();
+  }, [checked]);
+  if (screen.kind === "idle") return children;
+  return (
+    <SessionCover
+      screen={screen}
+      header={
+        <header className="flex items-center justify-between px-5 py-4 sm:px-8">
+          <span className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight">
+            <span className="bg-chrome rounded-control flex size-8 items-center justify-center">
+              <BrandMark className="size-5" />
+            </span>
+            {PRODUCT_NAME}
+          </span>
+          <ThemeToggle />
+        </header>
+      }
+      onRetry={() => void retrySignOut()}
+      onContinue={() => void continueFromOtherTab()}
+    />
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   usePreloadShellExtras();
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
-        <Shell>{children}</Shell>
+        <SessionBoundary>
+          <Shell>{children}</Shell>
+        </SessionBoundary>
         <ReauthGate />
         <ToastGate />
       </QueryClientProvider>

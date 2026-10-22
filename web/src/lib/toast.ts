@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore, type ReactNode } from "react";
 import type { ExternalToast } from "sonner";
+import { sessionIsClosed } from "@/lib/session-end";
 
 type ToastMessage = ReactNode;
 type ToastMethod = "success" | "error" | "info" | "warning" | "loading";
@@ -71,6 +72,8 @@ function enqueue(
   message: ToastMessage,
   options?: ExternalToast,
 ) {
+  // Nothing from a session that has ended may appear over the sign-out cover.
+  if (sessionIsClosed()) return;
   requestToaster();
   const id = options?.id ?? `azizam-toast-${++nextId}`;
   pending.push({ id, method, message, options });

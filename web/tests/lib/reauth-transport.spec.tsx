@@ -6,7 +6,6 @@ import {
   ApiError,
   confirmWithPassword,
   resetSessionCache,
-  signOutEverywhere,
 } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import { errorCopy } from "@/lib/error-copy";
@@ -262,23 +261,6 @@ it("confirms a password with the CSRF header and surfaces a wrong one", async ()
   expect(wrong.method).toBe("POST");
   expect(wrong.headers.get("x-azizam-csrf")).toBe("me-csrf");
   expect(right.headers.get("content-type")).toBe("application/json");
-});
-
-it("signs out everywhere with the CSRF header and returns the page to open", async () => {
-  reply("/auth/api/sign-out-everywhere", () => Response.json({ next: "/sign-in/" }));
-  await expect(signOutEverywhere()).resolves.toBe("/sign-in/");
-  expect(callsTo("/auth/api/sign-out-everywhere")[0].headers.get("x-azizam-csrf")).toBe("me-csrf");
-});
-
-it("takes a member's CSRF token from their own snapshot, never the admin session", async () => {
-  reply("/auth/api/sign-out-everywhere", () => Response.json({ next: "/sign-in/" }));
-  await signOutEverywhere();
-  expect(callsTo("/admin/api/session")).toHaveLength(0);
-});
-
-it("only follows a next page on this site", async () => {
-  reply("/auth/api/sign-out-everywhere", () => Response.json({ next: "https://elsewhere.example/" }));
-  await expect(signOutEverywhere()).resolves.toBe("/sign-in/");
 });
 
 it("words reauth_required as a request to confirm, not as a signed-out session", () => {

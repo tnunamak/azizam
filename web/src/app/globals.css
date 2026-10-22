@@ -206,3 +206,9 @@
 svg.lucide {
   stroke-width: 1.75;
 }
+
+/* A page entering the back/forward cache, or opened during a pending sign-out, shows nothing until
+   the session check has run (session-end.ts, CHECK_CLASS). */
+html.session-check body {
+  visibility: hidden;
+}

@@ -412,9 +412,9 @@ describe("LibraryPage batch J provenance", () => {
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
     ).toBeVisible();
-    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1?scope=me", {
+    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1?scope=me", expect.objectContaining({
       credentials: "same-origin",
-    });
+    }));
   });
 
   test("encodes receipt ids", async () => {
@@ -497,7 +497,7 @@ describe("LibraryPage batch J provenance", () => {
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
         "/me/api/media/asset_image_1/download?scope=me",
-        { credentials: "same-origin" },
+        expect.objectContaining({ credentials: "same-origin" }),
       ),
     );
     await waitFor(() => expect(click).toHaveBeenCalled());
@@ -1267,7 +1267,7 @@ describe("Library honesty and access", () => {
     await waitFor(() => expect(ready).toBeTypeOf("function"));
     expect(fetch).toHaveBeenCalledWith(
       "/me/api/media/p1/download?scope=me",
-      { credentials: "same-origin" },
+      expect.objectContaining({ credentials: "same-origin" }),
     );
     const preparing = within(dialog).getByRole("button", { name: "Preparing…" });
     expect(preparing).toBeDisabled();

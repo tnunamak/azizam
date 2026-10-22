@@ -43,6 +43,7 @@ import { outputKindOf } from "./workflow-input-meta";
 import { costFrom } from "./result-cost";
 import { runImageJob } from "./image-job";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
+import { sessionIsClosed } from "@/lib/session-end";
 import { ReceiptLink } from "./receipt-link";
 import { VoicePicker, selectedVoice, type SpeechVoices } from "./voice-picker";
 import { ServiceNotice, serviceUnavailable } from "@/components/product/service-notice";
@@ -2144,7 +2145,8 @@ export default function TryPage() {
           }),
         isNetworkFailure,
         now: () => Date.now(),
-        stopped: () => !mounted.current,
+        // A picture stops when the page unmounts or the session ends (the Try key ends with it).
+        stopped: () => !mounted.current || sessionIsClosed(),
       });
       if (outcome.kind === "stopped") return null;
       if (outcome.kind === "failed") throw new Error(outcome.message);

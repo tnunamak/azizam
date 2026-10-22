@@ -219,8 +219,11 @@
 # A3 round 3 (review follow-ups): +5 cases in tests/test_remembered_people.py. --collect-only -q measured 16056.
 pytest = 16056
 # Train r92: Try picture-upload specs, 3103 measured.
-vitest = 3103
-playwright = 502
+# W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
+# session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
+# +7 Playwright cases in e2e/session-end.spec.ts: playwright.config.ts 481 -> 488, gate lists 509.
+vitest = 3139
+playwright = 509
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

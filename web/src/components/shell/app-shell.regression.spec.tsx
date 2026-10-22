@@ -202,7 +202,9 @@ describe("AppShell accessible names", () => {
     });
     await user.click(menus[0]);
     await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-    expect(await screen.findByText("We couldn't confirm you were signed out. Refresh this page and try again.")).toBeVisible();
+    // The session is still live after the gateway's refusal and one retry: the cover says so.
+    expect(await screen.findByRole("heading", { name: "Couldn’t finish signing out" })).toBeVisible();
+    expect(screen.getByText(/The gateway didn’t finish signing you out/)).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
       "/logout",
       expect.objectContaining({
@@ -507,7 +509,7 @@ describe("Signed-out private pages", () => {
 });
 
 describe("WP-20 shell recovery", () => {
-  it("keeps sign-out pending and rejects repeat selections", async () => {
+  it("keeps sign-out pending behind the cover, and sends one sign-out request", async () => {
     const originalFetch = fetch;
     const logout = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
@@ -517,10 +519,10 @@ describe("WP-20 shell recovery", () => {
     const user = userEvent.setup();
     await user.click((await screen.findAllByRole("button", { name: "Account menu: Alex Owner" }))[0]);
     await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-    const pending = await screen.findByRole("menuitem", { name: "Signing out…" });
-    expect(pending).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(pending);
-    expect(logout).toHaveBeenCalledTimes(1);
+    // The cover replaces the app at once; its line appears after 300 ms.
+    expect(await screen.findByText("Signing out…")).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Sign out" })).toBeNull();
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
   });
 
   it("keeps Help in the common menu without developer links", async () => {
