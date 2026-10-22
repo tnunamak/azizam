@@ -5,6 +5,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import unittest
 import re
 from pathlib import Path
@@ -352,6 +353,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "email": "owner@example.com",
                 "email_verified": True,
                 "groups": ["/admins"],
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -410,6 +412,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "email_verified": True,
                 "groups": ["/trusted-users"],
                 "realm_access": {"roles": ["trusted"]},
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -467,6 +470,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "sub": "oidc-auto-subject",
                 "email": "user@example.com",
                 "email_verified": True,
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -662,6 +666,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "email": "owner@example.com",
                 "email_verified": True,
                 "groups": ["/admins"],
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -716,6 +721,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "sub": "oidc-subject",
                 "email": "owner@example.com",
                 "email_verified": True,
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -773,6 +779,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 "sub": "brother-subject",
                 "email": "brother@example.com",
                 "email_verified": True,
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -1839,6 +1846,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
                 "sub": "oidc-subject",
                 "email": "owner@example.com",
                 "email_verified": True,
+                "auth_time": int(time.time()),
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import replace
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
@@ -111,6 +112,7 @@ def _patch_oidc(monkeypatch: pytest.MonkeyPatch, record, calls: list[str]):
             "sub": "member-subject",
             "email": "member@example.test",
             "email_verified": True,
+            "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
             "iat": 1_700_000_000,
@@ -141,6 +143,7 @@ def _patch_oidc_by_code(monkeypatch: pytest.MonkeyPatch, records_by_code, calls:
             "sub": f"{subject}-subject",
             "email": f"{subject}@example.test",
             "email_verified": True,
+            "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
             "iat": 1_700_000_000,
