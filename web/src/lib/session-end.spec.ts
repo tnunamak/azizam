@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as sessionEnd from "@/lib/session-end";
+import { requestReauth } from "@/lib/reauth";
 import { networkFetch } from "@/lib/network-error";
 import { navigate } from "@/lib/navigate";
 
@@ -386,5 +387,13 @@ describe("this tab's own session storage", () => {
     expect(sessionStorage.getItem("azizam:job-notices:v1:person-1")).toBeNull();
     expect(Object.keys(sessionStorage)).toEqual(["azizam.handoff.last"]);
     expect(replace).toHaveBeenCalledWith("/sign-in/");
+  });
+});
+
+describe("the stores a session end clears", () => {
+  it("closes an open confirm-it's-you prompt as cancelled when the session ends", async () => {
+    const prompt = requestReauth({ methods: ["password"], windowSeconds: 900, oidcUrl: "/login?reauth=1" });
+    await sessionEnd.endSession("sign-out");
+    await expect(prompt).resolves.toBe(false);
   });
 });
