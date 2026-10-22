@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from dataclasses import replace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -606,11 +607,12 @@ def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
 
 # -- confirming with the identity provider -----------------------------------
 
-def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time: int | float | str | None = "now"):
+def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time: int | float | str | None = "now",
+                     iat: int | None = None):
     """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback.
 
     The provider says the person signed in just now, as Keycloak does. ``auth_time=None`` is a provider whose
-    ID token carries no ``auth_time``."""
+    ID token carries no ``auth_time``. ``iat`` is the token's own issue time (default: the fixed fixture time)."""
     if auth_time == "now":
         auth_time = int(time.time())
     params = {"return_to": "/settings/", **({"reauth": "1"} if reauth else {})}
@@ -624,7 +626,7 @@ def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_t
 
     async def verify(token, *, config):
         claims = {"iss": config.issuer, "aud": config.client_id, "sub": sub, "email": email, "email_verified": True,
-                  "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000}
+                  "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000 if iat is None else iat}
         if auth_time is not None:
             claims["auth_time"] = auth_time
         return claims
@@ -674,6 +676,50 @@ def test_fresh_sso_accepts_any_subject(sg):
 
     assert callback.status_code == 302 and callback.headers["location"] == "/"
     assert cookie_session(client).subject == person_id(sg, HELPER)
+
+
+@pytest.mark.parametrize("ahead_seconds, accepted", [
+    (60, True), (61, False), (10 * 365 * DAY, False),
+], ids=["on-the-allowance", "one-second-past-it", "ten-years-ahead"])
+def test_fresh_sso_refuses_an_auth_time_later_than_the_tokens_own_issue_time(sg, ahead_seconds, accepted):
+    """The provider's clock on both sides: auth_time may be at most the clock-skew allowance after the token's own
+    iat. A provider (or a replayed token) that dates the sign-in in the future proves nothing."""
+    client = sg.client()
+    now_s = int(time.time())
+
+    _, callback = through_provider(sg, client, reauth=False, auth_time=now_s + ahead_seconds, iat=now_s)
+
+    if accepted:
+        assert callback.status_code == 302 and signed_in_state(client)
+    else:
+        assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=not_fresh")
+        assert not signed_in_state(client)
+
+
+def test_a_refused_sign_in_links_to_the_sign_out_when_the_provider_publishes_one(sg, monkeypatch):
+    async def discovery(issuer):
+        return {"end_session_endpoint": "https://id.example/logout"}
+
+    monkeypatch.setattr(sg.proxy, "_provider_discovery", discovery)
+    client = sg.client()
+
+    _, callback = through_provider(sg, client, reauth=False, auth_time=None)
+
+    query = parse_qs(urlsplit(callback.headers["location"]).query)
+    assert query["error"] == ["not_fresh"] and query["provider_sign_out"] == ["1"]
+
+
+def test_a_refused_sign_in_offers_no_link_when_the_provider_publishes_no_sign_out_address(sg, monkeypatch):
+    async def discovery(issuer):
+        return {"issuer": issuer}
+
+    monkeypatch.setattr(sg.proxy, "_provider_discovery", discovery)
+    client = sg.client()
+
+    _, callback = through_provider(sg, client, reauth=False, auth_time=None)
+
+    query = parse_qs(urlsplit(callback.headers["location"]).query)
+    assert query["error"] == ["not_fresh"] and "provider_sign_out" not in query
 
 
 def test_confirming_through_the_provider_gives_a_fresh_session_and_ends_the_one_it_replaced(sg):

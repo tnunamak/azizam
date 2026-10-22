@@ -492,3 +492,33 @@ def test_provider_sign_out_says_so_when_the_provider_publishes_no_address(oidc_g
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "provider_sign_out_unavailable"
+
+
+@pytest.mark.parametrize("address", ["javascript:alert(1)", "http://idp.example/logout", "https:///logout"],
+                         ids=["script", "plain-http", "no-host"])
+def test_provider_sign_out_only_redirects_to_an_https_address(oidc_gateway, monkeypatch, address):
+    """A discovery document is the provider's word, but a browser redirect only goes to an https address."""
+    async def discovery(issuer):
+        return {"end_session_endpoint": address}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "provider_sign_out_unavailable"
+    assert "location" not in response.headers
+
+
+def test_provider_sign_out_is_throttled_like_sign_in(oidc_gateway, monkeypatch):
+    """The sign-out route shares sign-in's per-address budget (accounts.throttle_oidc): 20 a minute."""
+    async def discovery(issuer):
+        return {"end_session_endpoint": "https://idp.example/logout"}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+    client = _client()
+
+    for _ in range(20):
+        assert client.get("/login/provider-sign-out", follow_redirects=False).status_code == 302
+    limited = client.get("/login/provider-sign-out", follow_redirects=False)
+
+    assert limited.status_code == 429 and limited.json()["error"]["code"] == "login_rate_limited"
+    assert limited.headers["retry-after"] == "60"

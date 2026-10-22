@@ -629,6 +629,34 @@ def test_a_tile_sso_sign_in_that_returns_someone_else_is_refused_and_adds_no_nam
     assert device_rows(tls, client) == {helper}
 
 
+def test_a_tile_flow_stored_without_the_fresh_flag_still_refuses_an_old_sign_in(tls, monkeypatch):
+    """A tile flow is fresh by itself (A2 review L2): the callback holds it to a new sign-in whatever the flag says."""
+    client = tls.client()
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+    tile = next(person["tile"] for person in listed(client)["people"] if person["method"] == "sso")
+    stranger = same_device(tls, client)
+    stranger.get("/login", params={"tile": tile}, follow_redirects=False)
+    state, record = list(tls.proxy.ADMIN_OIDC_STATES.items())[-1]
+    tls.proxy.ADMIN_OIDC_STATES[state] = replace(record, fresh=False)
+    now_s = int(time.time())
+
+    async def exchange(code, *, config, pkce):
+        return {"id_token": "fake.id.token"}
+
+    async def verify(token, *, config):
+        return {"iss": config.issuer, "aud": config.client_id, "sub": "helper", "email": HELPER,
+                "email_verified": True, "nonce": record.nonce, "exp": 4_000_000_000, "iat": now_s,
+                "auth_time": now_s - 3600, "groups": ["/Trusted"]}
+
+    monkeypatch.setattr(tls.proxy, "_oidc_exchange_code", exchange)
+    monkeypatch.setattr(tls.proxy, "_oidc_verify_id_token", verify)
+    refused = stranger.get("/admin/oidc/callback", params={"state": state, "code": "c"},
+                           headers={"accept": "text/html"}, follow_redirects=False)
+
+    assert refused.status_code == 303 and refused.headers["location"].startswith("/sign-in/?error=not_fresh")
+    assert session_cookies(refused) == [] and not signed_in_state(stranger)
+
+
 def test_a_tile_sso_sign_in_as_an_existing_other_person_is_refused_and_changes_nothing(tls):
     client = tls.client()
     tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
