@@ -708,3 +708,34 @@ def test_a_session_whose_view_id_cannot_be_made_is_a_503_not_an_unidentified_sna
     assert response.headers["cache-control"] == "no-store"
     # The sign-out needs only the CSRF token, not the view id, so the unavailable answer still carries it.
     assert response.json()["csrf_token"] == csrf
+
+
+def test_health_says_degraded_with_the_reason_when_the_session_view_key_is_broken(media, monkeypatch):
+    client = media.client()
+
+    def unreadable(path):
+        raise OSError("the view secret cannot be read")
+
+    monkeypatch.setattr(user_runtime, "_session_view_key", unreadable)
+    body = client.get("/health").json()
+    assert body["status"] == "degraded"
+    assert body["reasons"] == ["session_view_key"]
+    # Public: the reason is a code, never the path or the error.
+    assert "secret" not in str(body) and "cannot be read" not in str(body)
+
+
+def test_health_is_plainly_healthy_while_the_session_view_key_works(media):
+    body = media.client().get("/health").json()
+    assert body["status"] == "healthy" and "reasons" not in body
+
+
+def test_a_broken_session_view_key_is_reported_once_at_start(media, monkeypatch, caplog):
+    def unreadable(path):
+        raise OSError("the view secret cannot be read")
+
+    monkeypatch.setattr(user_runtime, "_session_view_key", unreadable)
+    with caplog.at_level("ERROR"):
+        proxy._report_session_view_key_problem()
+    reports = [record for record in caplog.records if "Session view key problem" in record.getMessage()]
+    assert len(reports) == 1
+    assert "data/.session_view_secret" in reports[0].getMessage()
