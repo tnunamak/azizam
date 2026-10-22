@@ -436,7 +436,8 @@ def unknown_proof_owner(g, sid="unknown_proof_session_1"):
     planted the way a session from before A2 would be."""
     client = owner_client(g)
     session = forge(g, client, OWNER, renewed_ago=0, sid=sid)
-    put_cookie(client, encode_session_cookie(replace(session, authenticated_at=AUTH_TIME_UNKNOWN), signing_key=SIGNING_KEY))
+    unknown = replace(session, authenticated_at=AUTH_TIME_UNKNOWN)
+    put_cookie(client, encode_session_cookie(unknown, signing_key=SIGNING_KEY))
     return client
 
 
@@ -645,7 +646,7 @@ def test_signing_in_through_the_provider_asks_it_to_log_the_person_in_again(sg):
     plain = owner_client(sg).get("/login", params={"return_to": "/"}, follow_redirects=False)
 
     assert "prompt=login" in login.headers["location"] and "max_age=0" in login.headers["location"]
-    # A2: a sign-in from the sign-in page asks too, so "Continue with {provider}" never resumes whoever the provider holds.
+    # A2: a sign-in from the sign-in page asks too, so "Continue with {provider}" cannot resume the last person.
     assert "prompt=login" in plain.headers["location"] and "max_age=0" in plain.headers["location"]
 
 

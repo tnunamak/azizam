@@ -178,14 +178,20 @@ API keys are never asked. An admin key with the owner role can still do all of
 these actions headless. A request that carries a valid session cookie is treated
 as that session, even if it also carries a key.
 
-### A provider that does not report the sign-in time (decision D40)
+### A provider that does not report the sign-in time (decisions D40, D54)
 
-An ordinary provider sign-in records `auth_time` from the ID token as the time the person
-authenticated. A provider may leave `auth_time` out of an ordinary sign-in (OpenID Connect requires
-it only when the client asked with `max_age`). Then Azizam does not know when the person signed in,
-and it does not guess "now": the person is **signed in, but never recent**. Every action in the list above
-asks them to confirm, until they confirm with their Azizam password, or through the provider when it
-reports `auth_time` for the explicit confirmation (which asks with `max_age=0`).
+Every sign-in from the sign-in page asks the provider to log the person in again (`prompt=login`,
+`max_age=0`). The provider must then report `auth_time`, and Azizam accepts it only when it is at or after
+the time the sign-in began, less the 60-second clock-skew allowance. Without such an `auth_time`, Azizam
+signs no one in and returns the person to the sign-in page with `error=not_fresh`. A provider that ignores
+`max_age` and leaves `auth_time` out therefore stops every sign-in from the page. Before you turn a
+provider on, check the provider test in Settings: it reports whether the provider asks for a password
+every time.
+
+A session made before this change may carry no sign-in time. Azizam treats it as signed in but never
+recent, and every action in the list above asks the person to confirm. They can confirm with their Azizam
+password, or through the provider when it reports `auth_time` for the explicit confirmation (which asks
+with `max_age=0`).
 
 If the provider answers the explicit confirmation with no `auth_time` too, nobody can be confirmed
 through it. The person returns to the sign-in page with a plain message: the sign-in provider does not

@@ -217,7 +217,11 @@
 # Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
 # Merge of origin/main into A3: 15982 + A3 39 + r93 30 = 16051 measured (--collect-only -q, 2026-10-22).
 # A3 round 3 (review follow-ups): +5 cases in tests/test_remembered_people.py. --collect-only -q measured 16056.
-pytest = 16056
+# Slice A2 (fresh sign-in on every sign-in from the sign-in page, D54): +3 net in tests/test_session_lifecycle.py
+# (three missing-or-old sign-in-time cases and one any-person case; the old ordinary-login case folds into them),
+# +4 in tests/test_signin_test_flow.py (three provider-test answers and the saved answer), +2 sign-out cases in
+# tests/test_exposure_oidc_security.py. --collect-only -q measured 16065.
+pytest = 16065
 # Train r92: Try picture-upload specs, 3103 measured.
 vitest = 3103
 playwright = 502

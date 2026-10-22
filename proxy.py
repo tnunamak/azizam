@@ -17996,8 +17996,8 @@ async def admin_oidc_callback(request: Request):
         if previous is not None and previous.subject != str(user["id"]):
             # Confirming is for the person who asked. Someone else's login is not a confirmation.
             raise ValueError("re-authentication was completed by a different person")
-        # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
-        # "now": the session is signed in and never recent (decision D40).
+        # The freshness checks above refuse every reply without a time from this sign-in, so the unknown-time value
+        # below is only a fallback. It is never "now" (decision D40).
         provider_time = provider_auth_time(claims)
         if not state.reauth:
             await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
@@ -18058,7 +18058,7 @@ class ProviderSignInNotFresh(ValueError):
 
 
 NOT_FRESH_MESSAGE = (
-    "Azizam could not confirm that your sign-in provider asked you to sign in just now, so it did not sign you "
+    "Azizam could not confirm that your sign-in provider just asked for your password, so it did not sign you "
     "in. Sign out of your provider, then sign in again."
 )
 
