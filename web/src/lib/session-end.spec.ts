@@ -427,3 +427,24 @@ describe("a restored page fails closed", () => {
     expect(sessionEnd.getSessionScreen()).toEqual({ kind: "idle" });
   });
 });
+
+describe("the wipe does not wait on a cleanup step that hangs", () => {
+  it("gives the caches and the service workers two seconds each, then goes on", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("caches", { keys: () => new Promise(() => {}), delete: async () => true });
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: { getRegistrations: () => new Promise(() => {}) },
+      configurable: true,
+    });
+    let finished = false;
+    const wiping = sessionEnd.wipeBrowserState().then(() => {
+      finished = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await wiping;
+    expect(finished).toBe(true);
+    Reflect.deleteProperty(navigator, "serviceWorker");
+  });
+});

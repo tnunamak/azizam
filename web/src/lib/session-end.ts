@@ -276,7 +276,22 @@ export function revealPage(): void {
 /** Wipes this browser's storage and caches for the person who is leaving. Theme and the handoff record survive. */
 export async function wipeBrowserState(): Promise<void> {
   wipeTabStorage();
-  await Promise.allSettled([dropDatabases(), dropCaches(), dropWorkers()]);
+  await Promise.allSettled([
+    withinBudget(dropDatabases()),
+    withinBudget(dropCaches()),
+    withinBudget(dropWorkers()),
+  ]);
+}
+
+/** Each cleanup step gets WIPE_STEP_MS. A step that hangs (a cache or worker registry that never answers) must
+ * not hold the sign-out up: the sign-out goes on, and the step is abandoned. */
+const WIPE_STEP_MS = 2_000;
+
+function withinBudget(work: Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, WIPE_STEP_MS);
+    work.then(resolve, resolve).finally(() => clearTimeout(timer));
+  });
 }
 
 /** Session storage belongs to one tab, so every tab clears its own when the session ends here (SECURITY.md
