@@ -217,10 +217,20 @@
 # Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
 # Merge of origin/main into A3: 15982 + A3 39 + r93 30 = 16051 measured (--collect-only -q, 2026-10-22).
 # A3 round 3 (review follow-ups): +5 cases in tests/test_remembered_people.py. --collect-only -q measured 16056.
-pytest = 16056
+# Slice A2 (fresh sign-in on every sign-in from the sign-in page, D54): +3 net in tests/test_session_lifecycle.py
+# (three missing-or-old sign-in-time cases and one any-person case; the old ordinary-login case folds into them),
+# +4 in tests/test_signin_test_flow.py (three provider-test answers and the saved answer), +2 sign-out cases in
+# tests/test_exposure_oidc_security.py. --collect-only -q measured 16065.
+# A2 review round 2 (L1 iat bound, L2 tile fresh, L3 sign-out throttle, L4 https-only sign-out, L5 claims request, F1
+# refusal link): +14 pytest cases: 5 in tests/test_session_lifecycle.py, 4 in tests/test_exposure_oidc_security.py,
+# 4 in tests/test_oidc_authorization_security.py, 1 in tests/test_remembered_people.py. --collect-only -q measured 16079.
+pytest = 16079
 # Train r92: Try picture-upload specs, 3103 measured.
-vitest = 3103
-playwright = 502
+# A2 review round 2 (F1): +5 vitest cases in web/src/app/sign-in/page.spec.tsx. Full vitest list --json measured 3108.
+vitest = 3108
+# A2 review round 2 (F1): +3 Playwright cases (signin-shell.spec.ts 2, invite-signin.spec.ts 1). Listed 484 + 3 + 18 = 505
+# across the three gate configs (base 502).
+playwright = 505
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

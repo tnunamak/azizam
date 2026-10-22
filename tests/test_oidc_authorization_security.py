@@ -1,13 +1,25 @@
 """Regressions for exact OIDC grants and bounded pending login state."""
 
+import json
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 
 from gateway import signin_rules
 from gateway.admin_oidc import (
-    AdminRole, SessionError, access_names_from_oidc_claims,
+    AdminRole, SessionError, StateRecord, access_names_from_oidc_claims,
     bootstrap_admin_role, record_state,
 )
+from gateway.oidc_browser_flow import begin_browser_login
 from test_admin_oidc import make_config
+
+
+def _authorization_query(**flow) -> tuple[dict[str, list[str]], StateRecord]:
+    """The query the provider would receive, and the pending flow Azizam stored for it."""
+    store: dict[str, StateRecord] = {}
+    response = begin_browser_login(make_config(), store, return_to="/", **flow)
+    [record] = store.values()
+    return parse_qs(urlsplit(response.headers["location"]).query), record
 
 
 def admin_by_group(rule_group, claim_group):
@@ -64,3 +76,26 @@ def test_sec13_pending_login_flows_are_bounded_without_evicting_live_flow():
     with pytest.raises(SessionError, match="too many pending"):
         record_state(store, state="second", nonce="n", pkce_verifier="v", now=1, max_pending=1)
     assert set(store) == {"first"}
+
+
+def test_a_tile_flow_is_fresh_even_when_the_caller_does_not_say_so():
+    """A flow that starts from a remembered tile asks for a fresh sign-in by itself (A2 review L2)."""
+    query, record = _authorization_query(tile_person_id="person_1")
+
+    assert query["prompt"] == ["login"] and query["max_age"] == ["0"]
+    assert record.fresh is True and record.tile_person_id == "person_1"
+
+
+@pytest.mark.parametrize("flow", [{"fresh": True}, {"reauth": True}], ids=["sign-in-page", "step-up"])
+def test_a_fresh_or_step_up_sign_in_asks_for_its_auth_time_as_an_essential_claim(flow):
+    """The claims request parameter is standard OIDC Core 5.5. A provider without it ignores it, and one with it
+    returns auth_time, which both kinds of flow must have to decide anything."""
+    query, _record = _authorization_query(**flow)
+
+    assert json.loads(query["claims"][0]) == {"id_token": {"auth_time": {"essential": True}}}
+
+
+def test_a_plain_flow_asks_for_nothing_extra():
+    query, record = _authorization_query()
+
+    assert "prompt" not in query and "claims" not in query and record.fresh is False

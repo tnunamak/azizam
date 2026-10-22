@@ -170,7 +170,7 @@ The response names the ways to confirm:
   older one, does not confirm anyone. The sign-in must be by the same person. The
   new session replaces the old one. **Clock-skew allowance:** the provider's clock is not ours,
   so an `auth_time` up to 60 seconds before the request began still counts
-  (`AUTH_TIME_CLOCK_SKEW_SECONDS` in `proxy.py`; decision D40). One older than that does not.
+  (`AUTH_TIME_CLOCK_SKEW_SECONDS` in `gateway/admin_oidc.py`; decision D40). One older than that does not.
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 
@@ -178,14 +178,20 @@ API keys are never asked. An admin key with the owner role can still do all of
 these actions headless. A request that carries a valid session cookie is treated
 as that session, even if it also carries a key.
 
-### A provider that does not report the sign-in time (decision D40)
+### A provider that does not report the sign-in time (decisions D40, D54)
 
-An ordinary provider sign-in records `auth_time` from the ID token as the time the person
-authenticated. A provider may leave `auth_time` out of an ordinary sign-in (OpenID Connect requires
-it only when the client asked with `max_age`). Then Azizam does not know when the person signed in,
-and it does not guess "now": the person is **signed in, but never recent**. Every action in the list above
-asks them to confirm, until they confirm with their Azizam password, or through the provider when it
-reports `auth_time` for the explicit confirmation (which asks with `max_age=0`).
+Every sign-in from the sign-in page asks the provider to log the person in again (`prompt=login`,
+`max_age=0`). The provider must then report `auth_time`, and Azizam accepts it only when it is at or after
+the time the sign-in began, less the 60-second clock-skew allowance. Without such an `auth_time`, Azizam
+signs no one in and returns the person to the sign-in page with `error=not_fresh`. A provider that ignores
+`max_age` and leaves `auth_time` out therefore stops every sign-in from the page. Before you turn a
+provider on, check the provider test in Settings: it reports whether the provider asks for a password
+every time.
+
+A session made before this change may carry no sign-in time. Azizam treats it as signed in but never
+recent, and every action in the list above asks the person to confirm. They can confirm with their Azizam
+password, or through the provider when it reports `auth_time` for the explicit confirmation (which asks
+with `max_age=0`).
 
 If the provider answers the explicit confirmation with no `auth_time` too, nobody can be confirmed
 through it. The person returns to the sign-in page with a plain message: the sign-in provider does not
@@ -194,6 +200,26 @@ password instead, or use an admin key. A person with no password and such a prov
 password in the browser (setting one is also a confirmed action). An admin key does it, or the
 provider's administrator turns on `auth_time` for this client. Sign-ins by password or by an admin key
 are not affected: the sign-in itself is the proof.
+
+### Signing out at the provider (decision D54)
+
+When a sign-in is refused because the provider did not ask for a password just now, the sign-in page says so
+and offers **Sign out of {provider}**. That link goes to `/login/provider-sign-out`. The gateway reads the
+provider's discovery document and sends the browser to its `end_session_endpoint`, with the client ID and a
+return to `<origin>/sign-in/?after=provider-sign-out`. The link appears only when the provider publishes that
+address, and only an `https` address is used. Otherwise the route answers `404 provider_sign_out_unavailable`
+and the sign-in page tells the person to sign out of the provider another way.
+
+**Owner action:** register `<origin>/sign-in/?after=provider-sign-out` as a valid post-logout redirect URI in
+the identity provider's client settings, with `<origin>` being the public address of this gateway. Keycloak
+shows an HTTP 400 error page for a redirect URI the client does not list, so the person is stuck at the
+provider until the URI is registered.
+
+The sign-out route counts against the same per-address budget as sign-in (20 requests a minute), because each
+request makes the gateway fetch the discovery document. A fresh or step-up sign-in also asks the provider for
+`auth_time` as an essential claim (`claims={"id_token":{"auth_time":{"essential":true}}}`, OIDC Core 5.5).
+A provider that does not support that request still answers; one that omits `auth_time` is refused as
+described above.
 
 ### Making a credential after signing out (decision D41)
 
