@@ -78,7 +78,7 @@ class Gateway:
         async def verify(token, *, config):
             claims = {"iss": config.issuer, "aud": config.client_id, "sub": sub, "email": email,
                       "email_verified": email_verified, "nonce": record.nonce,
-                      "exp": 4_000_000_000, "iat": 1_700_000_000}
+                      "exp": 4_000_000_000, "iat": int(time.time())}
             if groups:
                 claims["groups"] = list(groups)
             if auth_time is not None:

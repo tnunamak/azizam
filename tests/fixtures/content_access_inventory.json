@@ -2103,6 +2103,12 @@
       "access": "none"
     },
     {
+      "handler": "proxy.provider_sign_out",
+      "method": "GET",
+      "path": "/login/provider-sign-out",
+      "access": "none"
+    },
+    {
       "handler": "proxy.cancel_response",
       "method": "POST",
       "path": "/openai/v1/responses/{response_id}/cancel",
