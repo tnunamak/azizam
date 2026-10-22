@@ -160,6 +160,7 @@ export async function continueFromOtherTab(): Promise<void> {
     return;
   }
   const seen = await readSessionNow();
+  wipeTabStorage();
   navigate.replace(seen?.authenticated ? "/" : SIGN_IN_PATH);
 }
 
@@ -261,9 +262,15 @@ export function revealPage(): void {
 
 /** Wipes this browser's storage and caches for the person who is leaving. Theme and the handoff record survive. */
 export async function wipeBrowserState(): Promise<void> {
+  wipeTabStorage();
+  await Promise.allSettled([dropDatabases(), dropCaches(), dropWorkers()]);
+}
+
+/** Session storage belongs to one tab, so every tab clears its own when the session ends here (SECURITY.md
+ * section 4). The keys that survive are the same in every tab. */
+function wipeTabStorage(): void {
   keepOnly(() => localStorage, KEEP_LOCAL);
   keepOnly(() => sessionStorage, KEEP_SESSION);
-  await Promise.allSettled([dropDatabases(), dropCaches(), dropWorkers()]);
 }
 
 /** Test-only: forget this page's state between specs. */
@@ -322,6 +329,7 @@ function publish(record: Handoff): void {
 function applyRemote(record: Handoff | null): void {
   if (!record) return;
   if (record.state === "SIGNED_OUT") {
+    wipeTabStorage();
     setOtherTab(causeOf(record.kind));
     return;
   }

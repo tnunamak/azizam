@@ -374,3 +374,17 @@ describe("the storage that survives", () => {
     expect(localStorage.getItem("azizam:unfinished-key-rotations")).toBeNull();
   });
 });
+
+describe("this tab's own session storage", () => {
+  it("Continue on the other-tab screen clears the tab's session storage, not only the allowlisted keys", async () => {
+    sessionEnd.observeViewer({ authenticated: true, epoch: "view-a" });
+    route("GET /me/api/session", () => json({ authenticated: false }));
+    await sessionEnd.checkPageShown();
+    sessionStorage.setItem("azizam:job-notices:v1:person-1", '["job-1"]');
+    sessionStorage.setItem("azizam.handoff.last", "{}");
+    await sessionEnd.continueFromOtherTab();
+    expect(sessionStorage.getItem("azizam:job-notices:v1:person-1")).toBeNull();
+    expect(Object.keys(sessionStorage)).toEqual(["azizam.handoff.last"]);
+    expect(replace).toHaveBeenCalledWith("/sign-in/");
+  });
+});
