@@ -355,6 +355,18 @@ CREATE TABLE IF NOT EXISTS user_avatars (
  picture_set_at INTEGER,
  updated_at INTEGER NOT NULL
 );
+-- The names a browser keeps for its sign-in list (gateway.remembered_people). ``device_hash`` is the SHA-256 of the
+-- browser's device cookie; the browser itself never sees a person id, only a tile derived from one. Times are
+-- milliseconds since the epoch, so the newest sign-in on a browser is told apart from one a moment earlier.
+CREATE TABLE IF NOT EXISTS remembered_people (
+ device_hash TEXT NOT NULL,
+ person_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ method TEXT NOT NULL CHECK (method IN ('password','sso')),
+ provider_issuer TEXT,
+ last_signed_in_at INTEGER NOT NULL,
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY (device_hash, person_id)
+);
 """
 
 # Run after any migration to schema 7: these name columns only schema 7 has.

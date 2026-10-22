@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,7 +18,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from gateway import accounts, admin_store, secret_store, signin_admin, signin_rules, signin_trial
+from gateway import accounts, admin_store, remembered_people, secret_store, signin_admin, signin_rules, signin_trial
 from gateway.accounts_api import signin_options
 from gateway.admin_api import AdminContext, _require_admin
 from gateway.admin_oidc import OIDCConfig, OIDCConfigError, StateRecord
@@ -112,6 +112,8 @@ class ProposalBody(_Body):
     methods: MethodsBody
     provider: ConnectionBody
     rules: RulesBody
+    # "On shared computers". Omitted means keep what is saved, so a page that does not send it cannot change it.
+    memory: Literal["remember", "nobody"] | None = None
 
 
 class PreviewBody(_Body):
@@ -312,6 +314,7 @@ def create_signin_api(
             "revision": signin_admin.revisions(path),
             "viewer": {"role": "owner" if is_owner else "admin", "can_edit": is_owner},
             "methods": {"password": bool(options["built_in"]), "provider": bool(options["oidc"])},
+            "memory": remembered_people.memory_mode(path),
             "provider": {
                 "name": cfg.display_name,
                 "address": cfg.issuer,
@@ -581,6 +584,8 @@ def create_signin_api(
 
         rules_doc = after.rules.as_dict()
         audit = dict(audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label)
+        memory_before = remembered_people.memory_mode(path)
+        memory_after = proposal.memory or memory_before
         mode = "both" if after.password and after.provider else "oidc" if after.provider else "built-in"
         payload = connection_payload(request, cfg, provider, enabled=after.provider, issuer=issuer)
 
@@ -600,6 +605,16 @@ def create_signin_api(
             admin_store.put_operator_setting_with_audit_in(
                 conn, "sign_in", {"mode": mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
                 audit_target_kind="operator_setting", audit_target_id="sign_in", validate_in_transaction=validate, **audit)
+
+        def write_memory(conn) -> None:
+            if memory_after == remembered_people.NOBODY:
+                # Remember nobody: every name on every browser goes now, and nothing is written until the owner changes it.
+                remembered_people.forget_everyone_in(conn)
+            if proposal.memory is not None and proposal.memory != memory_before:
+                admin_store.put_operator_setting_with_audit_in(
+                    conn, remembered_people.SETTING_KEY, {"mode": proposal.memory}, updated_by=ctx.audit_actor_id,
+                    audit_action="operator.sign_in_memory.update", audit_target_kind="operator_setting",
+                    audit_target_id=remembered_people.SETTING_KEY, **audit)
 
         def write_connection(tx) -> None:
             try:
@@ -632,6 +647,7 @@ def create_signin_api(
             else:
                 write_mode(tx.conn)
                 write_connection(tx)
+            write_memory(tx.conn)
             write_status(tx.conn)
             removed = signin_admin.apply_changes(
                 tx, path, saved, after, plans,

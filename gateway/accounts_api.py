@@ -7,10 +7,10 @@ from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, model_validator
 from starlette.responses import JSONResponse
 
-from gateway import accounts, admin_store, browser_sessions
+from gateway import accounts, admin_store, browser_sessions, remembered_people
 from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import SessionError, csrf_token_for_session, safe_browser_return_to
@@ -42,9 +42,20 @@ class _PasswordBody(BaseModel):
 
 
 class Login(_Body):
-    email: str
+    # The email the person types, or the tile this browser shows for them: one or the other, never both.
+    email: str | None = None
+    tile: str | None = None
     password: str
     return_to: str | None = None
+    # The sign-in page's box. True keeps the person's name on this browser's list, False takes it off, and omitted
+    # (null) leaves the list alone, as headless clients and pages that predate the box expect.
+    remember: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def email_or_tile(self):
+        if (self.email is None) == (self.tile is None):
+            raise ValueError("send either email or tile")
+        return self
 
 
 class Accept(_PasswordBody):
@@ -176,18 +187,75 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                                             "csrf_token": csrf_token_for_session(session, signing_key=signing_key_provider())}
         return result
 
+    def remembered_sign_in(request: Request, body: Login, token: str | None) -> dict:
+        """The person a tile names on this browser. The tile is only a name: their own password still has to match."""
+        person = remembered_people.resolve(token, body.tile, path=path_provider(), signing_key=signing_key_provider())
+        if person is None:
+            # A guess counts too, so one address cannot try tiles without limit.
+            accounts.throttle(client_ip(request), "tile:" + body.tile, path=path_provider())
+            raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
+        return accounts.login_as(person["person_id"], body.password, client_ip(request), path=path_provider())
+
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
         same_origin(request)
-        user = accounts.login(body.email, body.password, client_ip(request), path=path_provider())
+        path, cookie = path_provider(), cookie_provider()
+        token = remembered_people.device_token(request, secure=cookie.secure)
+        if body.tile is None:
+            user = accounts.login(body.email, body.password, client_ip(request), path=path)
+        else:
+            user = remembered_sign_in(request, body, token)
         # The owner's own password always works. For everyone else the switch decides,
         # and only a correct password learns that it is off.
         if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
-                "user", user["id"], path=path_provider()):
+                "user", user["id"], path=path):
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
-        accounts.clear_signin_refusal(str(user["id"]), path=path_provider())
-        return issue(request, user, {"next": safe_browser_return_to(body.return_to)})
+        accounts.clear_signin_refusal(str(user["id"]), path=path)
+        response = issue(request, user, {"next": safe_browser_return_to(body.return_to)})
+        minted = remembered_people.keep(path=path, token=token, person_id=str(user["id"]), method="password",
+                                        issuer=None, remember=body.remember, from_tile=body.tile is not None)
+        if minted:
+            remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
+        return response
+
+    @router.get("/auth/api/remembered")
+    def remembered(request: Request):
+        """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them."""
+        same_origin(request)
+        path, cookie = path_provider(), cookie_provider()
+        # TODO(A4, not this round): throttle_remembered writes through accounts.connection, and any write there
+        # invalidates the asset-family memo, so every list read resets it. Move the limiter off that path when A4 lands.
+        accounts.throttle_remembered(client_ip(request), path=path)
+        if remembered_people.memory_mode(path) != remembered_people.REMEMBER:
+            return {"remember": False, "people": []}
+        oidc = oidc_provider()
+        opts = signin_options(path, oidc)
+
+        def offered(row) -> bool:
+            # A name is offered only while its way of signing in is on: a provider name for another provider is not.
+            # With password sign-in off, no password name is offered, the owner's included: the list must not show
+            # who the owner is. The owner still signs in with a password from the email form.
+            if row["method"] == "sso":
+                return bool(opts["oidc"]) and row["provider_issuer"] == oidc.get("issuer")
+            return bool(opts["built_in"])
+
+        people = remembered_people.listing(
+            remembered_people.device_token(request, secure=cookie.secure), path=path,
+            signing_key=signing_key_provider(), offered=offered, provider_label=opts["oidc_label"])
+        return {"remember": True, "people": people}
+
+    @router.delete("/auth/api/remembered/{tile}")
+    def forget_remembered(request: Request, tile: str):
+        """Take one name off this browser's list. It does not sign anyone out or change their account."""
+        same_origin(request)
+        key = signing_key_provider()
+        if not key:
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        cookie = cookie_provider()
+        remembered_people.forget(remembered_people.device_token(request, secure=cookie.secure), tile,
+                                 path=path_provider(), signing_key=key)
+        return {"ok": True}
 
     @router.post("/auth/api/invite")
     def inspect(request: Request, body: InspectInvite):

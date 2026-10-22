@@ -77,6 +77,7 @@ from gateway import (
     audio_media_jobs,
     browser_sessions,
     avatars,
+    remembered_people,
     frontend_mount,
     media_jobs,
     me_prompt_memory,
@@ -16029,7 +16030,8 @@ app.include_router(create_account_router(
     session_reader=lambda request: _oidc_session_from_request(request),
     cookie_provider=_browser_admin_cookie_config,
     signing_key_provider=_browser_admin_session_signing_key,
-    oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name},
+    oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name,
+                           "issuer": cfg.issuer},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
@@ -17005,15 +17007,31 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         )
         callback = urlsplit(cfg.redirect_uri)
         # ASGI sees HTTP behind TLS ingress; only compare the host and port.
+        tile = request.query_params.get("tile") or ""
+        remember = remembered_people.box_value(request.query_params.get("remember"))
         if not callback_host_matches(request, cfg.redirect_uri):
             return RedirectResponse(
                 f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}"
-                + ("&reauth=1" if request.query_params.get("reauth") == "1" else ""),
+                + ("&reauth=1" if request.query_params.get("reauth") == "1" else "")
+                + ("" if remember is None else f"&remember={int(remember)}")
+                + (f"&tile={quote(tile, safe='')}" if tile else ""),
                 status_code=302, headers={"cache-control": "no-store"},
             )
+        tile_person_id = ""
+        if tile:
+            # The tile names a person on this browser only. The callback holds the provider to that same person; no
+            # email goes to the provider or the page, so the provider is asked to sign in without a hint.
+            person = await asyncio.to_thread(
+                remembered_people.resolve,
+                remembered_people.device_token(request, secure=_browser_admin_cookie_config().secure), tile,
+                path=ADMIN_STORE.path, signing_key=_browser_admin_session_signing_key())
+            if person is None:
+                raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
+            tile_person_id = person["person_id"]
         return begin_browser_login(
             cfg, ADMIN_OIDC_STATES, return_to=return_to,
             reauth=request.query_params.get("reauth") == "1",
+            remember=remember, tile_person_id=tile_person_id,
         )
     except accounts.AccountError as exc:
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
@@ -17849,8 +17867,15 @@ async def admin_oidc_callback(request: Request):
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
             if state.reauth and _provider_auth_time(claims) is None:
                 raise ProviderReportsNoSignInTime(NO_SIGN_IN_TIME_MESSAGE)
-            if state.reauth and not _provider_signed_in_again(claims, since=state.created_at):
+            # A tile sign-in is a fresh one too, and only for the person the tile named. Both are refused before any
+            # write, so a refusal leaves no session and no row.
+            if (state.reauth or state.tile_person_id) and not _provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
+            if state.tile_person_id:
+                signed_in = await asyncio.to_thread(admin_store.find_oidc_user, cfg.issuer, str(claims["sub"]),
+                                                    path=ADMIN_STORE.path)
+                if signed_in is None or str(signed_in["id"]) != state.tile_person_id:
+                    raise ValueError("identity provider signed in someone other than the tile's person")
             decision, bootstrap_owner = await _decide_oidc_signin(cfg, claims)
             if not decision.outcome.admitted:
                 raise SignInRefused("sign-in rules do not let this person in")
@@ -17942,6 +17967,13 @@ async def admin_oidc_callback(request: Request):
         )
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
+        minted = await asyncio.to_thread(
+            remembered_people.keep, path=ADMIN_STORE.path,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=bool(state.tile_person_id))
+        if minted:
+            remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         if previous is not None:
             # Confirming a sign-in replaces it: the one it confirms must not linger.
             await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)

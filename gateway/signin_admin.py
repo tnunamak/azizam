@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from gateway import accounts, admin_store, session_guard, signin_rules
+from gateway import accounts, admin_store, remembered_people, session_guard, signin_rules
 from gateway.session_guard import BrowserSession
 from gateway.admin_runtime import LOCAL_ADMIN_KEY_ISSUER
 from gateway.signin_rules import Claims, Outcome, Rules, Standing
@@ -94,7 +94,7 @@ def revisions(path: Path) -> str:
     """One revision for everything the page saves together."""
     parts = [
         admin_store.operator_setting_revision(admin_store.get_operator_setting(key, path=path))
-        for key in (RULES_KEY, "oidc_provider_config", "sign_in")
+        for key in (RULES_KEY, "oidc_provider_config", "sign_in", remembered_people.SETTING_KEY)
     ]
     return "-".join(parts)
 
@@ -102,7 +102,7 @@ def revisions(path: Path) -> str:
 def revisions_in(conn: sqlite3.Connection) -> str:
     """:func:`revisions` as one open transaction sees it."""
     return "-".join(admin_store.operator_setting_revision_in(conn, key)
-                    for key in (RULES_KEY, "oidc_provider_config", "sign_in"))
+                    for key in (RULES_KEY, "oidc_provider_config", "sign_in", remembered_people.SETTING_KEY))
 
 
 # ---------------------------------------------------------------------------

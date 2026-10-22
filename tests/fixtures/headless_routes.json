@@ -1170,6 +1170,22 @@
   {
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.remembered",
+    "method": "GET",
+    "path": "/auth/api/remembered",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.forget_remembered",
+    "method": "DELETE",
+    "path": "/auth/api/remembered/{tile}",
+    "schema": true
+  },
+  {
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
     "handler": "gateway.accounts_api.sign_out_everywhere",
     "method": "POST",
     "path": "/auth/api/sign-out-everywhere",

@@ -37,6 +37,8 @@ ADDED_PATHS: dict[str, str] = {
                                     "step-up window); tests/test_session_settings_api.py covers it",
     "/auth/api/reauth": "password confirmation for risky owner actions (step-up); tests/test_session_lifecycle.py covers it",
     "/auth/api/sign-out-everywhere": "ends all of a person's sessions; tests/test_session_lifecycle.py covers it",
+    "/auth/api/remembered": "the names a browser keeps for its sign-in list (GET) and the forget route (DELETE "
+                            "/auth/api/remembered/{tile}); tests/test_remembered_people.py covers them",
     "/admin/api/operator/service-registry/excluded": "fix or remove a record the registry leaves out (decision D22); "
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
@@ -134,7 +136,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
                       lambda: [record for record in records if record.id not in added])
         proxy.app.openapi_schema = None
-        # The edit transport now documents repeated image[] parts for pictures.
-        assert route_graph.openapi_digest(proxy.app) == "6e4b5a9f0436edaf0ab7edb3d01960c69334a7077b37746b3eb3b5e5052127a4"
+        # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
+        # nullable: true keeps a name, false takes it off, null leaves the list alone.
+        assert route_graph.openapi_digest(proxy.app) == "137bc145477e014b03dcbf5315f583b4aab13d30f5bc96505168cb0230b9d7ff"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

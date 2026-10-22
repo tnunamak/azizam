@@ -42,6 +42,9 @@ baseline's paths and its own. Only these differences are allowed:
   PATCH on /me/api/apps/{app_id} and /me/api/credentials/{credential_id} is new (a person renames their own App or key;
   tests/test_rename_apps_keys.py covers them): each is a route of its own, and every other method on those paths answers
   as before;
+* GET /auth/api/remembered (the sign-in list) and DELETE /auth/api/remembered/{tile} (forget one name) are new
+  (gateway/accounts_api.py; tests/test_remembered_people.py covers them): every other method on those paths answers
+  as the catch-all did before;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -85,6 +88,7 @@ ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere"}
+REMEMBERED_PATH = "/auth/api/remembered"
 LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
@@ -157,6 +161,8 @@ def _deliberate(key: str) -> str | None:
         return "host_commands"
     if path in SESSION_PATHS:
         return "sessions"
+    if path == REMEMBERED_PATH or path.startswith(REMEMBERED_PATH + "/"):
+        return "remembered"  # the sign-in list and its forget route (gateway/accounts_api.py)
     if re.fullmatch(r"/admin/api/operator/services/[^/]+/secret-entries", path) or path.startswith(LEFT_OUT_PATHS):
         return "secret_entries"  # decisions D27 and D22: the secret commands, and the records the registry leaves out
     if ui_routes.classify(path) is not None:
@@ -261,6 +267,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner command permission route
         if kind == "sessions" and key not in old:
             continue  # new session settings, step-up and sign-out-everywhere routes
+        if kind == "remembered" and key not in old:
+            continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
         if kind == "retention_ledger" and key not in old:
             continue  # new offline ledger and fact editor routes
         if kind == "secret_entries" and key not in old:
@@ -306,7 +314,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue

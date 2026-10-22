@@ -514,6 +514,21 @@ def throttle_oidc(ip: str, *, path: Path, now: int | None = None) -> None:
         raise AccountError("login_rate_limited", "Too many sign-in attempts. Try again in a minute.", 429)
 
 
+def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
+    """The sign-in page asks for its list once per load; a minute of 60 asks from one address is a scan, not a page."""
+    initialize(path)
+    ts = int(time.time()) if now is None else now
+    bucket = "remembered:" + hashlib.sha256(ip.encode()).hexdigest()
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'remembered:%' AND started_at<=?", (ts - 60,))
+        conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
+                     (bucket, ts))
+        attempts = conn.execute("SELECT attempts FROM account_login_limits WHERE bucket=?", (bucket,)).fetchone()[0]
+    if attempts > 60:
+        raise AccountError("login_rate_limited", "Too many requests. Try again in a minute.", 429)
+
+
 def login(email: str, password: str, ip: str, *, path: Path) -> dict:
     throttle(ip, email, path=path)
     email = email.strip().lower()
@@ -522,7 +537,24 @@ def login(email: str, password: str, ip: str, *, path: Path) -> dict:
         # by password, and the owner, who can set one whatever provider made their account.
         row = conn.execute("SELECT u.*,p.verifier FROM users u JOIN local_password_credentials p "
                            "ON p.user_id=u.id WHERE LOWER(u.email)=? ORDER BY u.created_at LIMIT 1", (email,)).fetchone()
-    valid = verify_password(password, row["verifier"] if row else _DUMMY_VERIFIER)
+    return _verified_login(row, password, path=path)
+
+
+def login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
+    """Sign in a remembered person: this browser's tile named them, and only their own password opens the account.
+
+    The attempt counts toward the same per-email limit as an email sign-in, so the two cannot be tried in turn.
+    """
+    with connection(path) as conn:
+        row = conn.execute("SELECT u.*,p.verifier FROM users u LEFT JOIN local_password_credentials p "
+                           "ON p.user_id=u.id WHERE u.id=?", (person_id,)).fetchone()
+    throttle(ip, (row["email"] or person_id) if row else person_id, path=path)
+    return _verified_login(row, password, path=path)
+
+
+def _verified_login(row, password: str, *, path: Path) -> dict:
+    verifier = row["verifier"] if row and row["verifier"] else _DUMMY_VERIFIER
+    valid = verify_password(password, verifier)
     state = access(row["id"], path=path) if row else None
     if not valid or not row or (state and (state["disabled_at"] is not None or state["removed_at"] is not None)):
         raise AccountError("invalid_login", "Email or password is incorrect.", 401)
@@ -747,6 +779,8 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
                              "OR (subject_kind='user' AND subject_id=?)) AND revoked_at IS NULL", (ts, user_id, user_id))
                 conn.execute("UPDATE account_links SET revoked_at=? WHERE user_id=? AND used_at IS NULL", (ts, user_id))
                 conn.execute("UPDATE admin_role_assignments SET revoked_at=? WHERE subject_kind='user' AND subject_id=?", (ts, user_id))
+                # Their names leave every browser's sign-in list now, not when a list is next read.
+                conn.execute("DELETE FROM remembered_people WHERE person_id=?", (user_id,))
             if remove:
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
                 # Nothing the identity provider shared outlives the person: not the sign-in picture URL.

@@ -227,12 +227,51 @@ server returns an error envelope with HTTP 200, or when status ignoring is
 configured. Check both the exit code and `error`/expected body shape. Avoid
 verbose output with credentials; it can include request headers.
 
+## Remembered people (sign-in list)
+
+A browser can keep the names of the people who signed in on it, so the sign-in
+page can offer them as a list (D54). The browser holds one cookie,
+`__Host-azizam-device` (`azizam-device` on a plain-HTTP gateway), which names the
+device. The server keeps the rows, and the page gets a tile for each name.
+
+- `GET /auth/api/remembered`: this device's names, as `{"remember", "people"}`.
+  Each person has `tile`, `name`, `avatar` (`variant`, `initial`), `method`
+  (`password` or `sso`), `provider` and `hint`. No email, person id, picture,
+  role or session appears. Rate-limited to 60 reads a minute per address.
+- `DELETE /auth/api/remembered/{tile}`: takes one name off this device's list. It
+  does not sign anyone out or change their account. A tile from another device
+  does nothing here.
+- `POST /auth/api/login` accepts `{"tile", "password"}` in place of
+  `{"email", "password"}`, never both. A tile only names a person. The person's
+  own password still has to match, and a wrong one counts toward the same limit
+  as an email sign-in. `"remember"` is three-valued: `true` keeps the person on
+  this device's list, `false` takes that person off this device's list after a
+  successful sign-in, and omitted or `null` leaves the list alone (headless
+  clients). A tile sign-in never adds a name.
+- `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
+  person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
+  email in any URL. The callback accepts only a fresh sign-in by the person the
+  tile named; any other sign-in is refused with `error=provider` and writes
+  nothing. `remember=1` or `remember=0` on the same request has the same meaning
+  as on the password form.
+- The owner sets "On shared computers" in `GET` and `PUT /admin/api/signin`, as
+  `memory`: `remember` (the default) or `nobody`. Choosing `nobody` deletes every
+  device's names at once and stops new ones. The owner's routes never show a tile
+  or a device.
+
+These routes are browser routes. They take the device cookie and no bearer key,
+and a request with an `Origin` from another site is refused. A name leaves the
+list for good when its person is removed or disabled, or when it is 90 days old
+since the last sign-in; those rows are deleted the first time they are read. A
+name whose sign-in method is off, or a provider name for a provider that is no
+longer set up, is hidden and kept until that method comes back. The list keeps
+at most 10 names per device.
+
 ## Registered route inventory
 
 Captured by walking `proxy.app.routes` when the web app moved to `/`. Counts
-are per registered method/path, including trailing-slash aliases: **123
-owner-bearer** (121 JSON/YAML owner API operations, 2 browser/HTML routes),
-**45 session-only**, **2 session-view**, **14 browser/public**; **184 total**.
+are per registered method/path, including trailing-slash aliases: **139
+owner-bearer**, **45 session-only**, **2 session-view**, **16 browser/public**; **202 total**.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -392,6 +431,8 @@ Selected successful workflows are exercised separately.
 | `POST /auth/api/login` | browser/public | no owner authority | `gateway.accounts_api.login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `GET /auth/api/options` | browser/public | no owner authority | `gateway.accounts_api.get_options`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/reauth` | browser/public | no owner authority | `gateway.accounts_api.reauth`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `GET /auth/api/remembered` | browser/public | no owner authority | `gateway.accounts_api.remembered`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | new |
+| `DELETE /auth/api/remembered/{tile}` | browser/public | no owner authority | `gateway.accounts_api.forget_remembered`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | new |
 | `POST /auth/api/password-reset` | browser/public | no owner authority | `gateway.accounts_api.reset`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/sign-out-everywhere` | browser/public | no owner authority | `gateway.accounts_api.sign_out_everywhere`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `GET /auth/logout-confirm` | session-only | denied | `proxy.logout_confirmation`; Browser session; mutations require CSRF/action header | hidden |
