@@ -88,8 +88,11 @@ function Failed({
       <h1 id="session-heading" ref={heading} tabIndex={-1} className="text-title text-balance">
         {FAILED_HEADING}
       </h1>
-      <p className="text-muted-foreground mt-4">{FAILURE_BODY[screen.reason]}</p>
-      {screen.tries >= 2 && <p className="text-muted-foreground mt-4">{WAY_OUT}</p>}
+      {/* A live region: the way-out text, which the second failure adds, is read out when it appears. */}
+      <div role="status">
+        <p className="text-muted-foreground mt-4">{FAILURE_BODY[screen.reason]}</p>
+        {screen.tries >= 2 && <p className="text-muted-foreground mt-4">{WAY_OUT}</p>}
+      </div>
       <div className="mt-8">
         {/* aria-disabled, not disabled: the button keeps focus while the try runs. */}
         <Button

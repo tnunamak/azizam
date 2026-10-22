@@ -102,6 +102,30 @@ describe("the failure screen", () => {
   });
 });
 
+describe("the second failure is announced", () => {
+  it("puts the way-out text inside a live region, so a screen reader reads it when it appears", () => {
+    const { rerender } = render(
+      <SessionCover
+        screen={{ kind: "failed", reason: "no-answer", tries: 1, trying: false }}
+        header={header}
+        onRetry={noop}
+        onContinue={noop}
+      />,
+    );
+    rerender(
+      <SessionCover
+        screen={{ kind: "failed", reason: "no-answer", tries: 2, trying: false }}
+        header={header}
+        onRetry={noop}
+        onContinue={noop}
+      />,
+    );
+    const live = screen.getByRole("status");
+    expect(live).toHaveTextContent(/use Sign out everywhere on another device, or ask the person who runs Azizam/);
+    expect(live).toHaveTextContent(/This browser couldn’t reach the gateway/);
+  });
+});
+
 describe("the other-tab screen", () => {
   it.each([
     ["switch", "You switched to someone else in another tab."],
