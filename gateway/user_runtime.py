@@ -74,6 +74,16 @@ def _session_view_key(path: Path) -> bytes:
     return hmac.new(key, b"azizam.session-view.v1", hashlib.sha256).digest()
 
 
+def session_view_key_problem(path: Path) -> str | None:
+    """Why the session view key cannot be used right now, or None when it can. Read on every call (no cache), so a
+    repaired file takes effect on the next request."""
+    try:
+        _session_view_key(path.parent / ".session_view_secret")
+    except (OSError, ValueError) as exc:
+        return exc.__class__.__name__
+    return None
+
+
 def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
     """The public view id of a signed-in browser session. Every signed-in session has one, service-account
     sessions included: the browser's pages compare it with the sign-in they show (web/src/lib/session-end.ts).

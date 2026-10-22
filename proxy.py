@@ -233,6 +233,7 @@ from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
     build_user_portal_snapshot,
+    session_view_key_problem,
     create_user_app,
     delete_user_app,
     ensure_try_session_key,
@@ -12905,6 +12906,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
     # Try deadline repair before serving; recurring maintenance retries failures.
@@ -18527,11 +18529,25 @@ async def _firehose_request_counter(request: Request, call_next):
 
 @app.get("/health")
 async def health():
-    """Proxy service health. Public so external health checks do not need API keys."""
-    return {
+    """Proxy service health. Public so external health checks do not need API keys. A broken session view key is
+    reported as degraded with its reason code only: signed-in accounts cannot be checked until it is fixed."""
+    body = {
         "status": "healthy",
         "app_credentials_configured": active_app_credential_count(),
     }
+    if await asyncio.to_thread(session_view_key_problem, ADMIN_STORE.path):
+        body = {**body, "status": "degraded", "reasons": ["session_view_key"]}
+    return body
+
+
+def _report_session_view_key_problem() -> None:
+    """Named once at start, in the log, so the owner finds the cause: until the key is fixed, signed-in accounts
+    answer 503. No restart is needed once the file is repaired."""
+    problem = session_view_key_problem(ADMIN_STORE.path)
+    if problem:
+        logging.getLogger(__name__).error(
+            "Session view key problem (%s): signed-in accounts answer 503 until it is fixed. "
+            "Fix or remove data/.session_view_secret, then reload. No restart is needed.", problem)
 
 
 def _public_base_url(request: Request) -> str | None:

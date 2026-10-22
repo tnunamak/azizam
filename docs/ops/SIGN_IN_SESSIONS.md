@@ -255,3 +255,7 @@ about 7 days (this is iOS behavior, not Azizam's, and Apple's rules change).
 The session cookie is set by the server, but if a phone is signed out after a
 week without use, check the idle timeout first, then expect to sign in again.
 This document was written without testing on a physical iPhone.
+
+## If signed-in pages say they cannot be checked
+
+`/health` answers `degraded` with the reason `session_view_key`, and the log names the same problem at start. Fix or remove `data/.session_view_secret`, then reload the page: no restart is needed, and a missing file is created again.
