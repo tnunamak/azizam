@@ -17910,7 +17910,7 @@ async def admin_oidc_callback(request: Request):
             if state.reauth and not provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
             # A sign-in from the sign-in page, a tile's included, needs a fresh provider sign-in and accepts any person.
-            if state.fresh and not provider_signed_in_again(claims, since=state.created_at):
+            if (state.fresh or state.tile_person_id) and not provider_signed_in_again(claims, since=state.created_at):
                 raise ProviderSignInNotFresh(NOT_FRESH_MESSAGE)
             # A tile sign-in is also only for the person the tile named.
             if state.tile_person_id:

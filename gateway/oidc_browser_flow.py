@@ -45,10 +45,11 @@ def begin_browser_login(
     than reuse its own session, and the callback holds it to the same person.
     ``fresh`` asks the same of a sign-in from the sign-in page, but accepts any
     person: the callback refuses a reply that does not say the provider signed
-    them in just now. A flow that started from a remembered tile is fresh too,
-    and sends no email to the provider: the callback accepts only the person the
-    tile named (``tile_person_id``).
+    them in just now. A flow that started from a remembered tile is fresh by
+    itself, whatever the caller passes, and sends no email to the provider: the
+    callback accepts only the person the tile named (``tile_person_id``).
     """
+    fresh = fresh or bool(tile_person_id)
     state_value = generate_state()
     binding = secrets.token_urlsafe(32)
     prefix = "__Host-gateway-oidc-" if config.cookie.secure else "gateway-oidc-"
