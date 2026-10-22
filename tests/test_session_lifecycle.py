@@ -940,3 +940,18 @@ def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatc
     assert all(index >= 0 for _, _, index in watch.writes), "a session write ran outside a request"
     on_loop = [name for name, thread, index in watch.writes if thread == watch.loop_threads[index]]
     assert not on_loop, f"{on_loop} wrote the session database on the event loop thread"
+
+
+def test_reauth_keeps_the_session_view_id_whichever_way_the_person_confirms(sg):
+    """The view id is the public face of a sign-in. A step-up keeps it: a password confirm and a provider confirm
+    both keep the sign-in's family, as the browser's other tabs rely on (web/src/lib/session-end.ts)."""
+    client = stale_owner(sg)
+    view = client.get("/me/api/session").json()["session_view_id"]
+
+    confirmed = client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client))
+    assert confirmed.status_code == 200
+    assert client.get("/me/api/session").json()["session_view_id"] == view
+
+    _, callback = reauth_through_provider(sg, client, auth_time=int(time.time()))
+    assert callback.status_code == 302
+    assert client.get("/me/api/session").json()["session_view_id"] == view

@@ -673,3 +673,32 @@ def test_sign_in_handoff_immediately_invalidates_warm_asset_family_memo(media):
     assert memo_key not in accounts._asset_families
     assert not accounts.asset_family_allowed(session.subject, session.family_id, path=media.path)
     assert anonymous.get(url, headers={"if-none-match": response.headers["etag"]}).status_code == 403
+
+
+def test_service_account_browser_session_still_carries_a_session_view_id(media):
+    """A browser session with no person behind it is still a session. The snapshot names its view id, so a page
+    that showed it can tell when that session has ended (web/src/lib/session-end.ts, fail closed)."""
+    client = media.client()
+    session = browser_sessions.issue({"sub": "service-account", "email": "service@example.test"},
+                                     role="owner", cookie=media.config.cookie, path=media.path,
+                                     register=False, renewable=False)
+    put_cookie(client, encode_session_cookie(session, signing_key=SIGNING_KEY))
+    snapshot = client.get("/me/api/session").json()
+    assert snapshot["authenticated"] is False
+    view = snapshot.get("session_view_id")
+    assert isinstance(view, str) and len(view) == 64 and view not in {session.session_id, session.family_id}
+    browser_sessions.end(session, path=media.path)
+    assert "session_view_id" not in client.get("/me/api/session").json()
+
+
+def test_a_session_whose_view_id_cannot_be_made_is_a_503_not_an_unidentified_snapshot(media, monkeypatch):
+    client = owner_client(media)
+
+    def unreadable(path):
+        raise OSError("the view secret cannot be read")
+
+    monkeypatch.setattr(user_runtime, "_session_view_key", unreadable)
+    response = client.get("/me/api/session")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "session_view_unavailable"
+    assert response.headers["cache-control"] == "no-store"
