@@ -225,8 +225,8 @@ pytest = 16059
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
 # +7 Playwright cases in e2e/session-end.spec.ts: playwright.config.ts 481 -> 488, gate lists 509.
 # W1 r2: +15 vitest cases: the reviewer's seven (session-end.review.spec.ts), the restore, same-person, storage, toast and
-# prompt, wipe-timeout and live-region cases; 3154 measured. Playwright unchanged at 509.
-vitest = 3154
+# prompt, wipe-timeout and live-region cases, and the Home request guard; 3155 measured. Playwright unchanged at 509.
+vitest = 3155
 playwright = 509
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
