@@ -17813,14 +17813,26 @@ async def browser_login(request: Request):
     return await _start_browser_login(request, default_return_to="/")
 
 
+def _is_https_address(value: object) -> bool:
+    """A browser redirect goes only to a plain https address with a host: no script, no http, no control characters."""
+    if not isinstance(value, str) or not value.isprintable():
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return parts.scheme == "https" and bool(parts.netloc)
+
+
 async def _provider_sign_out_address(cfg) -> str:
-    """The provider's own sign-out address from its discovery document, or "" when it publishes none."""
+    """The provider's own sign-out address from its discovery document, or "" when it publishes none or it is not
+    an https address. The discovery document is the provider's word; the redirect built from it is ours."""
     try:
         metadata = await _provider_discovery(cfg.issuer)
     except (httpx.HTTPError, ValueError):
         return ""
     address = metadata.get("end_session_endpoint") if isinstance(metadata, dict) else None
-    return address if isinstance(address, str) else ""
+    return address if _is_https_address(address) else ""
 
 
 @app.get("/login/provider-sign-out", include_in_schema=False)
