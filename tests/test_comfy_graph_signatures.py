@@ -167,7 +167,8 @@ class KeyframeGraphSignatureTests(unittest.TestCase):
     """The first-and-last-picture graphs are data files; each must pass the node signature check."""
 
     def test_every_keyframe_graph_passes(self) -> None:
-        for name in ("video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid", "video-ltx-2.5-keyframes"):
+        for name in ("video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid",
+                     "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"):
             with self.subTest(name):
                 graph = json.loads((ROOT / f"workflows/videos/{name}.json").read_text())
                 graph.pop("_meta")
