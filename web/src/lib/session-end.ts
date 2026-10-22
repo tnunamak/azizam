@@ -334,11 +334,26 @@ function mirrorLeaving(record: Extract<Handoff, { state: "LEAVING" }>): void {
   kind = record.kind;
   tries = record.tries;
   stop();
-  show(
-    record.failure
-      ? { kind: "failed", reason: record.failure, tries: record.tries, trying: false }
-      : { kind: "signing-out" },
-  );
+  if (record.failure) {
+    show({ kind: "failed", reason: record.failure, tries: record.tries, trying: false });
+    return;
+  }
+  show({ kind: "signing-out" });
+  scheduleTakeover(record.since);
+}
+
+/** A mirrored sign-out whose starter closed before it published a result would wait forever. The starter
+ * gives up within ANSWER_MS, so a record still unanswered after TAKEOVER_MS had no living starter: this
+ * tab finishes the sign-out itself. */
+const TAKEOVER_MS = ANSWER_MS + 5_000;
+
+function scheduleTakeover(since: number): void {
+  setTimeout(() => {
+    const record = readHandoff();
+    const stillWaiting =
+      screen.kind === "signing-out" && attempt === null && record?.state === "LEAVING" && record.since === since;
+    if (stillWaiting) void runSignOut();
+  }, TAKEOVER_MS);
 }
 
 type Answer = { ended: true; next: string } | { ended: false; reason: FailureReason };
