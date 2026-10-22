@@ -244,10 +244,16 @@ device. The server keeps the rows, and the page gets a tile for each name.
 - `POST /auth/api/login` accepts `{"tile", "password"}` in place of
   `{"email", "password"}`, never both. A tile only names a person. The person's
   own password still has to match, and a wrong one counts toward the same limit
-  as an email sign-in. `"remember": true` keeps the person on this device's list.
-- `GET /login?tile=…` starts provider sign-in with the person's email as
-  `login_hint`, and asks the provider to sign them in again (`prompt=login`,
-  `max_age=0`). The email is not in the page.
+  as an email sign-in. `"remember"` is three-valued: `true` keeps the person on
+  this device's list, `false` takes that person off this device's list after a
+  successful sign-in, and omitted or `null` leaves the list alone (headless
+  clients). A tile sign-in never adds a name.
+- `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
+  person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
+  email in any URL. The callback accepts only a fresh sign-in by the person the
+  tile named; any other sign-in is refused with `error=provider` and writes
+  nothing. `remember=1` or `remember=0` on the same request has the same meaning
+  as on the password form.
 - The owner sets "On shared computers" in `GET` and `PUT /admin/api/signin`, as
   `memory`: `remember` (the default) or `nobody`. Choosing `nobody` deletes every
   device's names at once and stops new ones. The owner's routes never show a tile

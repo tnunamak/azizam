@@ -384,9 +384,15 @@
             "type": "string"
           },
           "remember": {
-            "default": false,
-            "title": "Remember",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remember"
           },
           "return_to": {
             "anyOf": [
