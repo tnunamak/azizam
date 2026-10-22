@@ -231,8 +231,11 @@ pytest = 16064
 # W1 r3: +12 vitest cases: sign-out while the view key is down (2), a restored page held until a positive answer (4),
 # its unconfirmed screen (1), what each tab clears (3), and sign-in requests through the guard (2). 3167 measured, all
 # passed. Playwright unchanged at 509 (main 488 + live-data 3 + household 18).
-vitest = 3167
-playwright = 509
+# W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
+# confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
+# playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
+vitest = 3188
+playwright = 515
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
