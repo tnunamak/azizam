@@ -467,16 +467,27 @@ async function sessionStillLive(signal: AbortSignal): Promise<boolean> {
   return (await readAdmin(signal)).live;
 }
 
-async function readSession(signal: AbortSignal): Promise<SessionView & { csrf: string | null }> {
+/** A snapshot read. `unavailable` is set when the gateway says this sign-in cannot be identified right now (503
+ * session_view_unavailable): the sign-in is still there, and the answer still carries its CSRF token. */
+type SessionRead = SessionView & { csrf: string | null; unavailable: boolean };
+
+async function readSession(signal: AbortSignal): Promise<SessionRead> {
   const response = await endingRequest(SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
-  if (response.status === 401) return { authenticated: false, epoch: null, person: null, csrf: null };
-  if (!response.ok) throw new GatewayStatus(response.status);
+  if (response.status === 401) {
+    return { authenticated: false, epoch: null, person: null, csrf: null, unavailable: false };
+  }
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  const csrf = typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null;
+  if (response.status === 503 && errorCode(body) === "session_view_unavailable") {
+    return { authenticated: true, epoch: null, person: null, csrf, unavailable: true };
+  }
+  if (!response.ok) throw new GatewayStatus(response.status);
   return {
     authenticated: body?.authenticated === true,
     epoch: typeof body?.session_view_id === "string" ? body.session_view_id : null,
     person: personOf(body),
-    csrf: typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null,
+    csrf,
+    unavailable: false,
   };
 }
 
@@ -501,8 +512,10 @@ async function readSessionNow(): Promise<SessionView | null> {
   const budget = new AbortController();
   const timer = setTimeout(() => budget.abort(), ANSWER_MS);
   try {
-    const { authenticated, epoch: seenEpoch, person } = await readSession(budget.signal);
-    return { authenticated, epoch: seenEpoch, person };
+    const seen = await readSession(budget.signal);
+    // An unavailable sign-in gives no positive answer about who is shown: the restore check must not treat it as one.
+    if (seen.unavailable) return null;
+    return { authenticated: seen.authenticated, epoch: seen.epoch, person: seen.person };
   } catch {
     return null;
   } finally {

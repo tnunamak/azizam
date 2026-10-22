@@ -16204,9 +16204,11 @@ async def user_portal_session(request: Request):
         snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
-        # nothing that could be taken for a signed-in person.
-        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status_code,
-                            headers={"cache-control": "no-store"})
+        # nothing that could be taken for a signed-in person. The CSRF token still goes: a sign-out needs only the
+        # token, and the logout does not need the view key, so the sign-in can still be ended.
+        csrf = _csrf_token_for_oidc_session(session) if session is not None else ""
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}, "csrf_token": csrf},
+                            status_code=exc.status_code, headers={"cache-control": "no-store"})
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
