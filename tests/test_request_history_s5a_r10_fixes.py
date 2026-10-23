@@ -30,3 +30,15 @@ def test_a_token_beside_a_star_or_tilde_is_removed():
 def test_short_schemes_and_plain_segments_are_kept():
     assert clean("see https://a.test/v1/chat-completions now") == "see https://a.test/v1/chat-completions now"
     assert clean("open chrome-extension://abc/page") == "open chrome-extension://abc/page"
+
+
+def test_a_token_inside_encoded_brackets_is_removed():
+    token = "a" + "1234567890" * 2
+    assert token not in str(clean("see https://example.test/%5B" + token + "%5D now"))
+
+
+def test_a_long_run_of_digits_in_a_name_is_read_in_linear_time():
+    import time
+    start = time.monotonic()
+    request_history.is_credential_name("1" * 200_000 + "a")
+    assert time.monotonic() - start < 2.0

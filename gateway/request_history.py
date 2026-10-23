@@ -49,7 +49,6 @@ RESPONSE_HEADERS = frozenset({"content-type"})
 
 _CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "authorization", "apikey"})
 _CREDENTIAL_PAIRS = frozenset({("api", "key"), ("access", "token"), ("refresh", "token"), ("id", "token"), ("auth", "token")})
-_TRAILING_DIGITS = re.compile(r"\d+$")
 # One tokenizer for every name the secret floor reads. Brackets split too: a nested form value arrives as
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
@@ -67,7 +66,7 @@ _LETTER = re.compile(r"[A-Za-z]")
 _DIGIT = re.compile(r"[0-9]")
 #: Prose punctuation that may follow a path segment (R9-2). It is set aside before the token check, and kept.
 _PROSE_PUNCTUATION = "\"'`)]}>.,;!?"
-_NON_TOKEN = re.compile(r"[/*~+!$&'(),;=]+")  # separators inside a segment; a dot is not one, so a file name stays whole
+_NON_TOKEN = re.compile(r"[^A-Za-z0-9_.-]+")  # every non-token character separates; a dot does not, so a file name stays whole
 _LONGEST_SCHEME = 20  # schemes in use are far shorter; a 20-character one is a value read as a scheme (R10-1)
 #: What a URL reads as when it holds an ``@``, cannot be split into its parts, or holds a ``://`` that starts no token
 #: (R9-1). The whole URL or token is replaced, so no part of it is kept.
@@ -117,7 +116,9 @@ def segments(name: str) -> list[str]:
 def _forms(word: str) -> set[str]:
     """What a word may mean: as written without its digits, and without one trailing ``s``. ``password1`` and
     ``secrets`` read as ``password`` and ``secret``; ``access`` reads as itself, as it is a credential word."""
-    stem = _TRAILING_DIGITS.sub("", word)
+    stem = word
+    while stem and stem[-1].isdecimal():  # a backwards scan: re ``\d+$`` retries from every digit, which is quadratic
+        stem = stem[:-1]
     forms = {stem}
     if len(stem) > 1 and stem.endswith("s"):
         forms.add(stem[:-1])
@@ -220,8 +221,8 @@ def _scrub_segment(segment: str) -> str:
         return REMOVED
     decoded = unquote(segment)
     core = decoded.rstrip(_PROSE_PUNCTUATION)
-    # Each piece between separators is read on its own, so a decoded ``/`` or a ``*`` beside a token does not hide it
-    # (R10-2). A dot does not separate, so a dotted file name is not a token.
+    # Each piece between non-token characters is read on its own, so a decoded ``/``, a bracket or a ``*`` beside a
+    # token does not hide it (R10-2, R11-1). A dot does not separate, so a dotted file name is not a token.
     if ":" in core or any(_is_token_segment(piece) for piece in _NON_TOKEN.split(core)):
         return REMOVED + decoded[len(core):]
     return segment
