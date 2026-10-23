@@ -42,18 +42,21 @@ Only the App's person can keep one of its bindings: the owner gets `403 not_your
 for another person's App. A key that already names the person is left as it is.
 Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`).
 
-Keys and addresses are kept one at a time. From the browser console on the signed-in
-Azizam page:
+Keys and addresses are kept one at a time, on the Apps page of the signed-in person:
 
-```js
-const csrf = (await (await fetch("/auth/api/options")).json()).signed_in_oidc.csrf_token;
-await fetch("/me/api/credentials/<key id>/adopt", {
-  method: "POST", headers: { "x-azizam-csrf": csrf, "x-azizam-user-action": "1" },
-});
-```
+- A key with no recorded creator shows a notice and a **Keep** button in the **Rename keys**
+  list of its App.
+- A trusted address with no recorded creator shows the same notice and button in the
+  **Trusted addresses** list of its App. Only the owner can open that list, so a member
+  cannot keep an address on their own App from the Apps page yet.
+- Above the list of Apps, one line counts the keys and addresses that need a check, and
+  links to the first App that has one. The count includes addresses for the owner only.
 
-A `401` with `reauth_required` means confirm your password (or sign in again), then
-repeat the call. The Apps page does not show a Keep control yet.
+A key or address that names another person is also revoked or removed by the apply. The
+Apps page does not flag it. The preview lists it as not proven, so check it there.
+
+A `401` with `reauth_required` opens the same prompt to confirm your sign-in that adding a
+key uses. The keep runs again once you confirm.
 
 ## The first App
 

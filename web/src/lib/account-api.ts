@@ -24,6 +24,8 @@ export interface AccountApp {
   } | null;
   can_mint_keys: boolean;
   credentials: Credential[];
+  /** Trusted addresses on this app that have no recorded creator. Sent to the owner only. */
+  addresses_without_creator?: number;
 }
 /** The Try page's key for this sign-in. A reused key comes without its
  * secret: the browser kept it from the mint. */
@@ -181,6 +183,18 @@ export const accountApi = {
     accountRequest(`/me/api/credentials/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  /** Keep a key made before its creator was recorded: this person becomes its creator. The answer is the saved record. */
+  keepKey: (credentialId: string) =>
+    accountRequest<{ credential: Credential }>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}/adopt`,
+      { method: "POST" },
+    ).then((r) => r.credential),
+  /** Keep a trusted address made before its creator was recorded: this person becomes its creator. */
+  keepTrustedAddress: (appId: string, entryId: string) =>
+    accountRequest(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/adopt`,
+      { method: "POST" },
+    ),
   deleteApp: (appId: string) =>
     accountRequest(`/me/api/apps/${encodeURIComponent(appId)}`, {
       method: "DELETE",
