@@ -267,7 +267,10 @@
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
 # Switcher chooser (W4 and W5, without A2): +1 case, the sign-in options report fresh_sign_in as false
 # (tests/test_accounts.py). Ceiling 16988 -> 16989 (2026-10-23).
-pytest = 16989
+# Sign-in attempt limit (AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW): +10 cases for the default, an override, invalid values
+# and the per-email limit staying at 10 (tests/test_accounts.py, tests/test_remembered_people.py).
+# Ceiling 16989 -> 16999, remeasured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-23).
+pytest = 16999
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
