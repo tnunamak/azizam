@@ -146,13 +146,18 @@ def test_a_credential_field_inside_tool_call_arguments_is_removed():
     assert CANARY not in json.dumps(kept)
 
 
-@pytest.mark.parametrize("name", ["session_token", "aws_session_token", "private_key", "bearer", "cookie",
+@pytest.mark.parametrize("name", ["session_token", "aws_session_token", "private_key", "bearer",
                                   "hf_token", "github_token", "token", "key"])
 def test_names_rule_8_does_not_cover_today(name):
     """Documents the edge of rule 8 as specified (names only, no plain ``token``). Not a defect of the build; listed
     so a decision to widen the list is visible."""
     kept, _ = request_history.redact_json({name: CANARY})
     assert kept[name] == CANARY
+
+
+def test_cookie_is_a_credential_name():
+    kept, _ = request_history.redact_json({"cookie": CANARY})
+    assert kept["cookie"] == request_history.REMOVED
 
 
 def test_whole_url_and_header_and_query_rules_hold():
