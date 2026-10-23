@@ -39,6 +39,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from gateway import retention
 from gateway.runtime_auth import discovery_allows
 from gateway.policy import PolicyRequest
 from gateway.workflow_call import BuiltRequest, CallError, build_request, effective_schema, error_from, validate_inputs
@@ -194,6 +195,22 @@ def _clamp(value: float, spec: Mapping[str, Any]) -> tuple[float, bool]:
     return clamped, clamped != value
 
 
+def _only_prompt_control(value: Any) -> bool:
+    """Whether a caller's ``extensions`` holds nothing but the prompt-memory control, which this adapter passes on."""
+    return isinstance(value, Mapping) and set(value) == {retention.NAMESPACE}
+
+
+def _prompt_control(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The caller's prompt-memory control for the core route, or ``{}``. An invalid value raises ``PromptModeError``
+    here, so the caller gets the core's 400 and the core never sees it. No other extension is passed on."""
+    extensions = payload.get("extensions")
+    block = extensions.get(retention.NAMESPACE) if isinstance(extensions, Mapping) else None
+    if block is None:
+        return {}
+    retention.requested_mode({"extensions": {retention.NAMESPACE: block}})  # raises unless the block is exactly forget
+    return {retention.NAMESPACE: {"mode": "forget"}}
+
+
 def map_payload(deps: A1111Deps, payload: Mapping[str, Any], title: str) -> tuple[dict[str, Any], dict[str, Any], list[str], int, int]:
     """(catalog entry, workflow inputs, ignored field names, image count, seed)."""
     _check_unsupported(payload)
@@ -277,7 +294,9 @@ def map_payload(deps: A1111Deps, payload: Mapping[str, Any], title: str) -> tupl
         if seed < 0:
             seed = random.SystemRandom().randrange(0, 2**32)
         inputs["seed"] = seed
-    ignored += [k for k in payload if k not in _BENIGN and k not in _UNSUPPORTED]
+    ignored += [k for k in payload if k not in _BENIGN and k not in _UNSUPPORTED and k != "extensions"]
+    if "extensions" in payload and not _only_prompt_control(payload["extensions"]):
+        ignored.append("extensions")
     return entry, inputs, sorted(set(ignored)), count, seed
 
 
@@ -425,10 +444,16 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
             raise A1111Error(422, "request body must be a JSON object") from None
         if not isinstance(payload, Mapping):
             raise A1111Error(422, "request body must be a JSON object")
+        try:
+            control = _prompt_control(payload)
+        except retention.PromptModeError as exc:
+            return JSONResponse(retention.prompt_mode_refusal(exc), status_code=400)
         title = str(payload.get("model") or (payload.get("override_settings") or {}).get("sd_model_checkpoint") or session.model)
         entry, inputs, ignored, count, seed = map_payload(deps, payload, title)
         route = entry["execution"]["sync"]
         built = await build_request(lambda *_: None, request, auth, entry, route, inputs, wrap_intent=None, response_format="b64_json")
+        if control:
+            built.json = {**built.json, "extensions": {**built.json.get("extensions", {}), **control}}
         task = asyncio.ensure_future(_core_call(deps, request, built))
         session.tasks.add(task)
         try:
