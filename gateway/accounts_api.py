@@ -161,17 +161,20 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if origin and urlsplit(origin).netloc != request.url.netloc:
             raise accounts.AccountError("origin_forbidden", "Use the sign-in page on this gateway.", 403)
 
-    def issue(request, user, payload, *, authenticated_at=None):
+    def accept_and_sign_in(request, acceptance, *, authenticated_at=None):
+        """Accept the invitation and sign the person in inside one transaction; the cookie is set after it commits."""
         path = path_provider()
-        names = admin_store.effective_admin_roles("user", user["id"], path=path)
-        role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
         cookie, key = cookie_provider(), signing_key_provider()
-        if not key:
-            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        browser_sessions.end_incoming(request, cookie=cookie, signing_key=key, path=path)
-        session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path,
-                                         authenticated_at=authenticated_at)
-        response = JSONResponse(payload)
+        accounts.initialize(path)
+        with admin_store.transaction(path) as tx:
+            user, app, credential = accounts.accept_invite_in(tx.conn, acceptance)
+            names = admin_store.effective_user_roles_in(tx.conn, user["id"])
+            role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
+            browser_sessions.end_incoming_in(tx.conn, request, cookie=cookie, signing_key=key, path=path)
+            session = browser_sessions.issue_in(tx.conn, {"sub": user["id"], "email": user["email"]}, role=role,
+                                                cookie=cookie, path=path, authenticated_at=authenticated_at)
+        accounts.invalidate_asset_families()
+        response = JSONResponse({"next": "/", "app": app, "credential": credential})
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
         return response
 
@@ -194,30 +197,59 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             # A guess counts too, so one address cannot try tiles without limit.
             accounts.throttle(client_ip(request), "tile:" + body.tile, path=path_provider())
             raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
-        return accounts.login_as(person["person_id"], body.password, client_ip(request), path=path_provider())
+        return accounts.authenticate_login_as(
+            person["person_id"], body.password, client_ip(request), path=path_provider(),
+        )
 
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
-        same_origin(request)
-        path, cookie = path_provider(), cookie_provider()
-        token = remembered_people.device_token(request, secure=cookie.secure)
-        if body.tile is None:
-            user = accounts.login(body.email, body.password, client_ip(request), path=path)
-        else:
-            user = remembered_sign_in(request, body, token)
-        # The owner's own password always works. For everyone else the switch decides,
-        # and only a correct password learns that it is off.
-        if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
-                "user", user["id"], path=path):
-            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
-        # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
-        accounts.clear_signin_refusal(str(user["id"]), path=path)
-        response = issue(request, user, {"next": safe_browser_return_to(body.return_to)})
-        minted = remembered_people.keep(path=path, token=token, person_id=str(user["id"]), method="password",
-                                        issuer=None, remember=body.remember, from_tile=body.tile is not None)
-        if minted:
-            remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
-        return response
+        try:
+            same_origin(request)
+            path, cookie = path_provider(), cookie_provider()
+            token = remembered_people.device_token(request, secure=cookie.secure)
+            if body.tile is None:
+                user = accounts.authenticate_login(body.email, body.password, client_ip(request), path=path)
+            else:
+                user = remembered_sign_in(request, body, token)
+            built_in = options()["built_in"]
+            key = signing_key_provider()
+            if not key:
+                raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+            user_id = str(user["id"])
+            with admin_store.transaction(path) as tx:
+                conn = tx.conn
+                roles = admin_store.effective_user_roles_in(conn, user_id)
+                # The owner's own password always works. For everyone else the switch decides.
+                if not built_in and "owner" not in roles:
+                    raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+                accounts.clear_signin_refusal_in(conn, user_id)
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cookie, signing_key=key, path=path,
+                )
+                role = "owner" if "owner" in roles else "admin" if "admin" in roles else "none"
+                session = browser_sessions.issue_in(
+                    conn, {"sub": user_id, "email": user["email"]}, role=role,
+                    cookie=cookie, path=path,
+                )
+                accounts.record_successful_login_in(conn, user_id)
+                minted = remembered_people.keep_in(
+                    conn, token=token, person_id=user_id, method="password", issuer=None,
+                    remember=body.remember, from_tile=body.tile is not None,
+                )
+            accounts.invalidate_asset_families()
+            response = JSONResponse({"next": safe_browser_return_to(body.return_to)})
+            browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
+            if minted:
+                remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
+            return response
+        except accounts.AccountError:
+            raise
+        except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+            return JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+            )
 
     @router.get("/auth/api/remembered")
     def remembered(request: Request):
@@ -225,8 +257,6 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         except that the entry of the person this browser is signed in as carries ``you``: true."""
         same_origin(request)
         path, cookie = path_provider(), cookie_provider()
-        # TODO(A4, not this round): throttle_remembered writes through accounts.connection, and any write there
-        # invalidates the asset-family memo, so every list read resets it. Move the limiter off that path when A4 lands.
         accounts.throttle_remembered(client_ip(request), path=path)
         if remembered_people.memory_mode(path) != remembered_people.REMEMBER:
             return {"remember": False, "people": []}
@@ -294,10 +324,9 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to accept this invitation.", 403)
         if not signing_key_provider():
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
-                                                       path=path, oidc_user_id=oidc_user_id)
-        return issue(request, user, {"next": "/", "app": app, "credential": credential},
-                     authenticated_at=authenticated_at)
+        acceptance = accounts.prepare_invite_acceptance(body.token, body.email, body.name, body.password,
+                                                        path=path, oidc_user_id=oidc_user_id)
+        return accept_and_sign_in(request, acceptance, authenticated_at=authenticated_at)
 
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):

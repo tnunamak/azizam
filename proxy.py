@@ -2034,41 +2034,6 @@ def _provision_existing_user_personal_apps() -> int:
     return created
 
 
-def _ensure_personal_app_for_owner(
-    user: Mapping[str, Any],
-    *,
-    role: str,
-    via: str = "setup_local_owner",
-) -> Mapping[str, Any] | None:
-    """Ensure a just-claimed local owner has a personal App.
-
-    Parity with the OIDC login path, so the user portal can hand the new owner
-    a working key without a separate "create App" step. The App is "Same as
-    its person"; it runs once the owner has an access plan.
-    """
-    user_id = str(user.get("id") or "")
-    if not user_id:
-        return None
-    label = user.get("email") or user.get("display_name") or user_id
-    app = admin_store.ensure_personal_app_for_user(
-        user_id,
-        name=f"{label} personal access",
-        path=ADMIN_STORE.path,
-    )
-    admin_store.record_audit(
-        "app.self_create",
-        actor_kind="user",
-        actor_id=user_id,
-        actor_label=str(user.get("display_name") or user.get("email") or user_id),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"email": user.get("email"), "via": via, "role": role,
-                  "access_plan": app.get("access_plan")},
-        path=ADMIN_STORE.path,
-    )
-    return app
-
-
 AuthIdentity = RuntimeIdentity
 
 
@@ -17635,26 +17600,100 @@ def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
 
 
-async def _issue_browser_admin_session(
+def _complete_setup_local_owner(
     request: Request,
     *,
-    user_id: str,
     email: str,
-    role: str,
+    verifier: str,
     signing_key: bytes,
-    redirect_to: str = "/setup/",
-) -> Response:
+):
+    """Commit the first owner, their plan, their personal App and their session together.
+
+    Returns the session and its cookie, or None when an owner was already claimed. The caller sets the
+    cookie after this returns, so the cookie is set only once the claim has committed.
+    """
+    path = ADMIN_STORE.path
     cookie = _browser_admin_cookie_config()
-    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
-    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
-                            signing_key=signing_key, path=ADMIN_STORE.path)
-    session = await asyncio.to_thread(
-        browser_sessions.issue,
-        {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
-    )
-    response = RedirectResponse(redirect_to, status_code=303)
-    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
-    return response
+    accounts.initialize(path)
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.claim_first_local_owner_in(
+            conn,
+            issuer=_LOCAL_OWNER_ISSUER,
+            subject=email,
+            email=email,
+            display_name=email,
+            verifier=verifier,
+            granted_by="setup-local-owner",
+        )
+        if user is None:
+            return None
+        user_id = str(user["id"])
+        # A fresh gateway has no built-in default plan, so the first owner gets one
+        # ordinary starting plan; without it they would be refused on their own gateway.
+        admin_store.seed_first_owner_plan_in(conn, user_id)
+        # Parity with OIDC login: give the new owner a personal App up front so the
+        # portal can hand them a working key without a separate "create App" step.
+        label = user.get("email") or user.get("display_name") or user_id
+        app = admin_store.ensure_personal_app_for_user_in(conn, user_id, name=f"{label} personal access")
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "setup_local_owner", "role": "owner",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(conn, request, cookie=cookie, signing_key=signing_key, path=path)
+        session = browser_sessions.issue_in(conn, {"sub": user_id, "email": email}, role="owner",
+                                            cookie=cookie, path=path)
+    accounts.invalidate_asset_families()
+    return session, cookie
+
+
+def _complete_setup_local_login(
+    request: Request,
+    user: Mapping[str, Any],
+    *,
+    email: str,
+    built_in: bool,
+    signing_key: bytes,
+):
+    """Commit the setup recovery login and its replacement session together."""
+    path = ADMIN_STORE.path
+    user_id = str(user["id"])
+    cookie = _browser_admin_cookie_config()
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        role_names = admin_store.effective_user_roles_in(conn, user_id)
+        if not built_in and "owner" not in role_names:
+            return None, "builtin_disabled"
+        if "owner" in role_names:
+            role = "owner"
+        elif role_names & {"admin", "superadmin"}:
+            role = "admin"
+        else:
+            return None, "admin_role_required"
+
+        accounts.clear_signin_refusal_in(conn, user_id)
+        admin_store._record_audit_in_transaction(
+            conn, "setup.local_owner_login",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="user", target_id=user_id,
+            metadata={"email": email, "via": "setup_page"},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(
+            conn, request, cookie=cookie, signing_key=signing_key, path=path,
+        )
+        session = browser_sessions.issue_in(
+            conn, {"sub": user_id, "email": email},
+            role=role, cookie=cookie, path=path,
+        )
+    accounts.invalidate_asset_families()
+    return session, None
 
 
 def _origin_header_allowed_for_request(request: Request) -> bool:
@@ -17789,35 +17828,19 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.claim_first_local_owner(
-        issuer=_LOCAL_OWNER_ISSUER,
-        subject=email,
-        email=email,
-        display_name=email,
-        verifier=verifier,
-        granted_by="setup-local-owner",
-        path=ADMIN_STORE.path,
-    )
-    if user is None:
-        return RedirectResponse("/setup/", status_code=303)
-    # A fresh gateway has no built-in default plan, so the first owner gets one
-    # ordinary starting plan; without it they would be refused on their own gateway.
-    admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-    # Parity with OIDC login: give the new owner a personal App up front so the
-    # portal can hand them a working key without a separate "create App" step.
-    _ensure_personal_app_for_owner(user, role="owner")
     # Setup is done — hand the new owner to the portal, where their key is
     # auto-minted and revealed once. Landing back on /setup would greet them
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role="owner",
-        signing_key=signing_key,
-        redirect_to="/",
+    claimed = await asyncio.to_thread(
+        _complete_setup_local_owner, request, email=email, verifier=verifier, signing_key=signing_key,
     )
+    if claimed is None:
+        return RedirectResponse("/setup/", status_code=303)
+    session, cookie = claimed
+    response = RedirectResponse("/", status_code=303)
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
+    return response
 
 
 @app.post("/setup/local-login", include_in_schema=False)
@@ -17881,17 +17904,14 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=401,
         )
-    role_names = admin_store.effective_admin_roles(
-        "user", str(user["id"]), path=ADMIN_STORE.path,
+    session, signin_error = await asyncio.to_thread(
+        _complete_setup_local_login, request, user, email=email,
+        built_in=built_in, signing_key=signing_key,
     )
-    if not built_in and "owner" not in role_names:
+    if signin_error == "builtin_disabled":
         # Only the owner's password works while built-in sign-in is off.
         return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
-    if "owner" in role_names:
-        role = "owner"
-    elif "admin" in role_names or "superadmin" in role_names:
-        role = "admin"
-    else:
+    if signin_error == "admin_role_required":
         return await _setup_page_response(
             request,
             login_error=(
@@ -17901,27 +17921,16 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=403,
         )
-    accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-    admin_store.record_audit(
-        "setup.local_owner_login",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role=role,
-        signing_key=signing_key,
-        redirect_to=_safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+    response = RedirectResponse(
+        _safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+        status_code=303,
     )
+    browser_sessions.set_cookie(
+        response, session, cookie=_browser_admin_cookie_config(), signing_key=signing_key,
+    )
+    return response
 
 
 @app.post("/setup/first-app", include_in_schema=False)
@@ -18039,6 +18048,118 @@ def _browser_signin_failure(request: Request, *, return_to: str | None = None, r
     )
 
 
+class _OidcBootstrapRefused(Exception):
+    """A first-owner race changed the admission decision during sign-in."""
+
+
+class _OidcAccountDisabled(Exception):
+    """The OIDC identity belongs to a disabled or removed person."""
+
+
+def _complete_oidc_signin(
+    request: Request,
+    state,
+    cfg,
+    claims: Mapping[str, Any],
+    decision,
+    bootstrap_owner: bool,
+):
+    """Commit every successful OIDC sign-in write together and return its session and device cookie."""
+    path = ADMIN_STORE.path
+    accounts.initialize(path)
+    previous = browser_sessions.decode_incoming(
+        request, cookie=cfg.cookie, signing_key=cfg.signing_key,
+    ) if state.reauth else None
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.upsert_oidc_user_in(
+            conn, cfg.issuer, str(claims["sub"]),
+            email=str(claims.get("email") or ""),
+            display_name=str(claims.get("name") or claims.get("email") or ""),
+        )
+        person_id = str(user["id"])
+        account_state = conn.execute(
+            "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
+        ).fetchone()
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            raise _OidcAccountDisabled()
+        accounts.record_oidc_verification_in(conn, person_id, claims.get("email_verified") is True)
+        accounts.clear_signin_refusal_in(conn, person_id)
+        oidc_access_names = access_names_from_oidc_claims(
+            claims, client_id=cfg.client_id, groups_claim=cfg.groups_claim,
+        )
+        admin_store.replace_user_identity_claims_in(conn, person_id, oidc_access_names)
+
+        owner_claimed = False
+        if bootstrap_owner:
+            owner_claimed = admin_store.claim_first_owner_in(
+                conn, person_id, granted_by="oidc-bootstrap",
+            )
+            if owner_claimed:
+                admin_store.seed_first_owner_plan_in(conn, person_id)
+            else:
+                # Another first sign-in won ownership while this request waited for the write lock.
+                decision = signin_admin.decide(
+                    path, claims, issuer=cfg.issuer, client_id=cfg.client_id,
+                    groups_claim=cfg.groups_claim, bootstrap_owner=False,
+                )
+                if not decision.outcome.admitted:
+                    raise _OidcBootstrapRefused()
+
+        effective_grants = admin_store.reconcile_oidc_admin_roles_in(
+            conn, person_id, {"admin"} if decision.outcome.admin else set(),
+        )
+        signin_admin.sync_rule_plan_in(conn, person_id, decision.outcome)
+        effective_roles = {grant["role"] for grant in effective_grants}
+        role = "owner" if owner_claimed or "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
+        avatars.record_sign_in_picture_in(conn, person_id, claims.get("picture"))
+        label = user.get("email") or user.get("display_name") or user["id"]
+        app = admin_store.ensure_personal_app_for_user_in(
+            conn, person_id, name=f"{label} personal access",
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=person_id,
+            actor_label=str(user.get("display_name") or user.get("email") or person_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "oidc_login",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+
+        if previous is not None and previous.subject != person_id:
+            raise ValueError("re-authentication was completed by a different person")
+        session_claims = {"sub": person_id, "email": claims.get("email") or ""}
+        provider_time = _provider_auth_time(claims)
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            try:
+                session = browser_sessions.confirm_in(
+                    conn, previous, path=path, authenticated_at=authenticated_at,
+                )
+            except SessionError:
+                # The session ended while the person was at the provider. The provider has just proved who they
+                # are, so they get a new session, as they did before sign-in writes were atomic.
+                previous = None
+        if previous is None:
+            if not state.reauth:
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cfg.cookie, signing_key=cfg.signing_key, path=path,
+                )
+            session = browser_sessions.issue_in(
+                conn, session_claims, role=role, cookie=cfg.cookie, path=path,
+                authenticated_at=authenticated_at,
+            )
+        minted = remembered_people.keep_in(
+            conn,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=person_id, method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=bool(state.tile_person_id),
+        )
+    accounts.invalidate_asset_families()
+    return user, session, minted
+
+
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
     error = request.query_params.get("error")
@@ -18103,105 +18224,24 @@ async def admin_oidc_callback(request: Request):
             # A refused person keeps nothing the identity provider gave them.
             await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
             raise
-        user = admin_store.upsert_oidc_user(
-            cfg.issuer,
-            str(claims["sub"]),
-            email=str(claims.get("email") or ""),
-            display_name=str(claims.get("name") or claims.get("email") or ""),
-            path=ADMIN_STORE.path,
-        )
-        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
-        accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
-        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
-        oidc_access_names = access_names_from_oidc_claims(
-            claims,
-            client_id=cfg.client_id,
-            groups_claim=cfg.groups_claim,
-        )
-        admin_store.replace_user_identity_claims(
-            str(user["id"]),
-            oidc_access_names,
-            path=ADMIN_STORE.path,
-        )
-        # Whether an owner already exists is decided inside the write's own
-        # transaction, so two first sign-ins cannot both become owner.
-        if bootstrap_owner and admin_store.claim_first_owner(
-            str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
-        ):
-            admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-        elif bootstrap_owner:
-            # Another first sign-in won the owner role; this person is an ordinary one.
-            decision, _ = await _decide_oidc_signin(cfg, claims, bootstrap_owner=False)
-            if not decision.outcome.admitted:
-                await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
-                raise SignInRefused("sign-in rules do not let this person in")
-        # Rule-derived grants are re-derived at every sign-in; a grant no rule
-        # supports any more ends here. Grants the owner gave by hand stay.
-        effective_grants = admin_store.reconcile_oidc_admin_roles(
-            str(user["id"]), {"admin"} if decision.outcome.admin else set(),
-            path=ADMIN_STORE.path,
-        )
-        signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
-        effective_roles = {grant["role"] for grant in effective_grants}
-        role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
-        # Kept only for a person who is let in: the URL the provider shared (https and short);
-        # the browser never loads it (gateway/me_avatar.py serves it).
-        await asyncio.to_thread(avatars.record_sign_in_picture, str(user["id"]), claims.get("picture"), path=ADMIN_STORE.path)
-        label = user.get("email") or user.get("display_name") or user["id"]
-        app = admin_store.ensure_personal_app_for_user(
-            str(user["id"]),
-            name=f"{label} personal access",
-            path=ADMIN_STORE.path,
-        )
-        admin_store.record_audit(
-            "app.self_create",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-            target_kind="app",
-            target_id=str(app["id"]),
-            metadata={"email": user.get("email"), "via": "oidc_login",
-                      "access_plan": app.get("access_plan")},
-            path=ADMIN_STORE.path,
-        )
-        session_claims = {
-            "sub": user["id"],
-            "email": claims.get("email") or "",
-        }
-        previous = await asyncio.to_thread(_oidc_session_from_request, request) if state.reauth else None
-        if previous is not None and previous.subject != str(user["id"]):
-            # Confirming is for the person who asked. Someone else's login is not a confirmation.
-            raise ValueError("re-authentication was completed by a different person")
-        # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
-        # "now": the session is signed in and never recent (decision D40).
-        provider_time = _provider_auth_time(claims)
-        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
-        if previous is not None:
-            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
-            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
-            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
-                                              authenticated_at=authenticated_at)
-        else:
-            if not state.reauth:
-                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-            session = await asyncio.to_thread(
-                browser_sessions.issue,
-                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-                authenticated_at=authenticated_at,
+        try:
+            user, session, minted = await asyncio.to_thread(
+                _complete_oidc_signin, request, state, cfg, claims, decision, bootstrap_owner,
             )
+        except _OidcBootstrapRefused:
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise SignInRefused("sign-in rules do not let this person in") from None
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
-        minted = await asyncio.to_thread(
-            remembered_people.keep, path=ADMIN_STORE.path,
-            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
-            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
-            remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         return clear_browser_binding(response, state)
+    except _OidcAccountDisabled:
+        response = JSONResponse(
+            {"error": {"code": "account_disabled", "message": "This account is disabled."}},
+            status_code=403,
+        )
+        return clear_browser_binding(response, state) if state else response
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
         response = _browser_signin_failure(
@@ -18216,6 +18256,18 @@ async def admin_oidc_callback(request: Request):
                 content="OIDC authentication failed",
                 status_code=400,
                 media_type="text/plain; charset=utf-8",
+            )
+        return clear_browser_binding(response, state) if state else response
+    except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+        response = _browser_signin_failure(
+            request, return_to=state.return_to if state else None, reason="provider",
+        )
+        if response is None:
+            response = JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+                headers={"cache-control": "no-store"},
             )
         return clear_browser_binding(response, state) if state else response
 

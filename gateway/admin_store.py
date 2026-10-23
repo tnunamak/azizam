@@ -1073,45 +1073,59 @@ def upsert_oidc_user(
     """
     if not issuer or not subject:
         raise ValueError("issuer and subject are required")
-    ts = _now() if now is None else int(now)
     with _conn(path) as conn:
-        row = conn.execute(
-            "SELECT id FROM users WHERE issuer = ? AND subject = ?",
+        out = upsert_oidc_user_in(conn, issuer, subject, email=email, display_name=display_name, now=now)
+        conn.commit()
+    return out
+
+
+def upsert_oidc_user_in(
+    conn: sqlite3.Connection,
+    issuer: str,
+    subject: str,
+    *,
+    email: str | None = None,
+    display_name: str | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Upsert a provider identity without committing the caller's transaction."""
+    if not issuer or not subject:
+        raise ValueError("issuer and subject are required")
+    ts = _now() if now is None else int(now)
+    row = conn.execute(
+        "SELECT id FROM users WHERE issuer = ? AND subject = ?",
+        (issuer, subject),
+    ).fetchone()
+    linked = None
+    if row is None:
+        linked = conn.execute(
+            "SELECT user_id FROM oidc_identity_links WHERE issuer = ? AND subject = ?",
             (issuer, subject),
         ).fetchone()
-        linked = None
-        if row is None:
-            linked = conn.execute(
-                "SELECT user_id FROM oidc_identity_links WHERE issuer = ? AND subject = ?",
-                (issuer, subject),
-            ).fetchone()
-        if linked is not None:
-            user_id = linked["user_id"]
-            conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (ts, user_id))
-            _insert_account_access(conn, user_id)
-        elif row is None:
-            user_id = _gen_id("usr")
-            conn.execute(
-                "INSERT INTO users(id, issuer, subject, email, display_name, "
-                "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_id, issuer, subject, email, display_name, ts, ts),
-            )
-            _insert_prompt_memory_preference(conn, user_id, ts)
-            _insert_account_access(conn, user_id)
-        else:
-            user_id = row["id"]
-            conn.execute(
-                "UPDATE users SET email = COALESCE(?, email), "
-                "display_name = COALESCE(?, display_name), last_login_at = ? "
-                "WHERE id = ?",
-                (email, display_name, ts, user_id),
-            )
-            # A person always has an access row; signing in repairs a missing one.
-            _insert_account_access(conn, user_id)
-        conn.commit()
-        out = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+    if linked is not None:
+        user_id = linked["user_id"]
+        conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (ts, user_id))
+        _insert_account_access(conn, user_id)
+    elif row is None:
+        user_id = _gen_id("usr")
+        conn.execute(
+            "INSERT INTO users(id, issuer, subject, email, display_name, "
+            "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, issuer, subject, email, display_name, ts, ts),
+        )
+        _insert_prompt_memory_preference(conn, user_id, ts)
+        _insert_account_access(conn, user_id)
+    else:
+        user_id = row["id"]
+        conn.execute(
+            "UPDATE users SET email = COALESCE(?, email), "
+            "display_name = COALESCE(?, display_name), last_login_at = ? "
+            "WHERE id = ?",
+            (email, display_name, ts, user_id),
+        )
+        # A person always has an access row; signing in repairs a missing one.
+        _insert_account_access(conn, user_id)
+    out = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return _row_to_dict(out)  # type: ignore[return-value]
 
 
@@ -1278,73 +1292,104 @@ def claim_first_local_owner(
     owns the durable first-owner check and every write that makes the claim
     observable.
     """
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            user = claim_first_local_owner_in(
+                conn,
+                issuer=issuer,
+                subject=subject,
+                email=email,
+                display_name=display_name,
+                verifier=verifier,
+                granted_by=granted_by,
+                now=now,
+            )
+        except BaseException:
+            conn.rollback()
+            raise
+        if user is None:
+            conn.rollback()
+            return None
+        conn.commit()
+    return user
+
+
+def claim_first_local_owner_in(
+    conn: sqlite3.Connection,
+    *,
+    issuer: str,
+    subject: str,
+    email: str,
+    display_name: str,
+    verifier: str,
+    granted_by: str,
+    now: int | None = None,
+) -> dict[str, Any] | None:
+    """The first-owner claim inside the caller's transaction; None, with no write, once an owner exists."""
     if not issuer or not subject:
         raise ValueError("issuer and subject are required")
     if not verifier or not isinstance(verifier, str):
         raise ValueError("verifier is required")
     ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        existing = conn.execute(
-            "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
-        ).fetchone()
-        if existing is not None:
-            conn.rollback()
-            return None
+    existing = conn.execute(
+        "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
+    ).fetchone()
+    if existing is not None:
+        return None
 
-        row = conn.execute(
-            "SELECT id FROM users WHERE issuer = ? AND subject = ?",
-            (issuer, subject),
-        ).fetchone()
-        if row is None:
-            user_id = _gen_id("usr")
-            conn.execute(
-                "INSERT INTO users(id, issuer, subject, email, display_name, "
-                "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_id, issuer, subject, email, display_name, ts, ts),
-            )
-            _insert_prompt_memory_preference(conn, user_id, ts)
-            _insert_account_access(conn, user_id)
-        else:
-            user_id = row["id"]
-            conn.execute(
-                "UPDATE users SET email = COALESCE(?, email), "
-                "display_name = COALESCE(?, display_name), last_login_at = ? "
-                "WHERE id = ?",
-                (email, display_name, ts, user_id),
-            )
-            # A person always has an access row; signing in repairs a missing one.
-            _insert_account_access(conn, user_id)
+    row = conn.execute(
+        "SELECT id FROM users WHERE issuer = ? AND subject = ?",
+        (issuer, subject),
+    ).fetchone()
+    if row is None:
+        user_id = _gen_id("usr")
+        conn.execute(
+            "INSERT INTO users(id, issuer, subject, email, display_name, "
+            "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, issuer, subject, email, display_name, ts, ts),
+        )
+        _insert_prompt_memory_preference(conn, user_id, ts)
+        _insert_account_access(conn, user_id)
+    else:
+        user_id = row["id"]
+        conn.execute(
+            "UPDATE users SET email = COALESCE(?, email), "
+            "display_name = COALESCE(?, display_name), last_login_at = ? "
+            "WHERE id = ?",
+            (email, display_name, ts, user_id),
+        )
+        # A person always has an access row; signing in repairs a missing one.
+        _insert_account_access(conn, user_id)
 
-        conn.execute(
-            "INSERT INTO local_password_credentials"
-            "(user_id, verifier, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET "
-            "verifier = excluded.verifier, updated_at = excluded.updated_at",
-            (user_id, verifier, ts, ts),
-        )
-        conn.execute(
-            "INSERT INTO admin_role_assignments(role, subject_kind, "
-            "subject_id, scope_app_id, granted_at, granted_by) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("owner", "user", user_id, None, ts, granted_by),
-        )
-        _record_audit_in_transaction(
-            conn,
-            "setup.local_owner_create",
-            actor_kind="user",
-            actor_id=user_id,
-            actor_label=display_name or email or user_id,
-            target_kind="user",
-            target_id=user_id,
-            metadata={"email": email, "via": "setup_page"},
-            now=ts,
-        )
-        conn.commit()
-        out = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+    conn.execute(
+        "INSERT INTO local_password_credentials"
+        "(user_id, verifier, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "verifier = excluded.verifier, updated_at = excluded.updated_at",
+        (user_id, verifier, ts, ts),
+    )
+    conn.execute(
+        "INSERT INTO admin_role_assignments(role, subject_kind, "
+        "subject_id, scope_app_id, granted_at, granted_by) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("owner", "user", user_id, None, ts, granted_by),
+    )
+    _record_audit_in_transaction(
+        conn,
+        "setup.local_owner_create",
+        actor_kind="user",
+        actor_id=user_id,
+        actor_label=display_name or email or user_id,
+        target_kind="user",
+        target_id=user_id,
+        metadata={"email": email, "via": "setup_page"},
+        now=ts,
+    )
+    out = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
     return _row_to_dict(out)  # type: ignore[return-value]
 
 
@@ -1403,6 +1448,19 @@ def replace_user_identity_claims(
     path: Path = DB_PATH,
 ) -> None:
     """Replace exact OIDC authorization claims observed for a user."""
+    with _conn(path) as conn:
+        replace_user_identity_claims_in(conn, user_id, claims_by_kind, now=now)
+        conn.commit()
+
+
+def replace_user_identity_claims_in(
+    conn: sqlite3.Connection,
+    user_id: str,
+    claims_by_kind: Mapping[str, Iterable[str]],
+    *,
+    now: int | None = None,
+) -> None:
+    """Replace exact provider claims inside the caller's transaction."""
     if not user_id:
         raise ValueError("user_id is required")
     ts = _now() if now is None else int(now)
@@ -1415,19 +1473,16 @@ def replace_user_identity_claims(
             if normalized:
                 rows.append((kind, normalized))
 
-    with _conn(path) as conn:
-        for kind in IDENTITY_CLAIM_KINDS:
-            conn.execute(
-                "DELETE FROM user_identity_claims "
-                "WHERE user_id = ? AND claim_kind = ?",
-                (user_id, kind),
-            )
-        conn.executemany(
-            "INSERT OR IGNORE INTO user_identity_claims"
-            "(user_id, claim_kind, claim_value, updated_at) VALUES (?, ?, ?, ?)",
-            [(user_id, kind, value, ts) for kind, value in rows],
+    for kind in IDENTITY_CLAIM_KINDS:
+        conn.execute(
+            "DELETE FROM user_identity_claims WHERE user_id = ? AND claim_kind = ?",
+            (user_id, kind),
         )
-        conn.commit()
+    conn.executemany(
+        "INSERT OR IGNORE INTO user_identity_claims"
+        "(user_id, claim_kind, claim_value, updated_at) VALUES (?, ?, ?, ?)",
+        [(user_id, kind, value, ts) for kind, value in rows],
+    )
 
 
 def list_user_identity_claims(
@@ -1729,30 +1784,37 @@ def seed_first_owner_plan(user_id: str, *, path: Path = DB_PATH) -> str | None:
     fallback for anyone else. Does nothing if any plan exists or the person
     already holds one. Returns the new plan id.
     """
-    from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, plan_to_document
-
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM access_plans LIMIT 1").fetchone() is not None:
+        plan_id = seed_first_owner_plan_in(conn, user_id)
+        if plan_id is None:
             conn.rollback()
             return None
-        _insert_account_access(conn, user_id)
-        if conn.execute("SELECT plan_id FROM account_access WHERE user_id = ?", (user_id,)).fetchone()[0] is not None:
-            conn.rollback()
-            return None
-        plan_id = _gen_id("plan")
-        document = plan_to_document(AccessPlan(
-            id=plan_id, name=STARTER_PLAN_NAME,
-            can_use={capability: CapabilityGrant(all_items=True) for capability in CAPABILITIES},
-            can_load_models=True,
-        ))
-        ts = _now()
-        conn.execute(
-            "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (plan_id, STARTER_PLAN_NAME, json.dumps(document, ensure_ascii=False, sort_keys=True), ts, ts),
-        )
-        conn.execute("UPDATE account_access SET plan_id = ? WHERE user_id = ?", (plan_id, user_id))
         conn.commit()
+    return plan_id
+
+
+def seed_first_owner_plan_in(conn: sqlite3.Connection, user_id: str, *, now: int | None = None) -> str | None:
+    """Seed the first owner's plan inside the caller's transaction, without rolling it back."""
+    from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, plan_to_document
+
+    if conn.execute("SELECT 1 FROM access_plans LIMIT 1").fetchone() is not None:
+        return None
+    _insert_account_access(conn, user_id)
+    if conn.execute("SELECT plan_id FROM account_access WHERE user_id = ?", (user_id,)).fetchone()[0] is not None:
+        return None
+    plan_id = _gen_id("plan")
+    document = plan_to_document(AccessPlan(
+        id=plan_id, name=STARTER_PLAN_NAME,
+        can_use={capability: CapabilityGrant(all_items=True) for capability in CAPABILITIES},
+        can_load_models=True,
+    ))
+    ts = _now() if now is None else int(now)
+    conn.execute(
+        "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (plan_id, STARTER_PLAN_NAME, json.dumps(document, ensure_ascii=False, sort_keys=True), ts, ts),
+    )
+    conn.execute("UPDATE account_access SET plan_id = ? WHERE user_id = ?", (plan_id, user_id))
     return plan_id
 
 
@@ -1868,6 +1930,36 @@ def ensure_personal_app_for_user(
         now=now,
         path=path,
     )
+
+
+def ensure_personal_app_for_user_in(
+    conn: sqlite3.Connection,
+    user_id: str,
+    *,
+    name: str | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Return or provision a personal App inside the caller's transaction."""
+    if not user_id:
+        raise ValueError("user_id is required")
+    row = conn.execute(
+        "SELECT * FROM apps WHERE kind = 'personal' AND owner_user_id = ? "
+        "AND id NOT IN (SELECT app_id FROM session_apps) "
+        "ORDER BY created_at ASC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if row is not None:
+        return _row_to_dict(row)  # type: ignore[return-value]
+    _check_app_assignment(conn, PERSON_ASSIGNMENT)
+    app_id = _gen_id("app")
+    ts = _now() if now is None else int(now)
+    conn.execute(
+        "INSERT INTO apps(id, kind, name, owner_user_id, access_plan, created_at) "
+        "VALUES (?, 'personal', ?, ?, ?, ?)",
+        (app_id, name or f"personal-{user_id}", user_id, PERSON_ASSIGNMENT, ts),
+    )
+    row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+    return _row_to_dict(row)  # type: ignore[return-value]
 
 
 def ensure_session_app_for_user(
@@ -3424,6 +3516,27 @@ def effective_admin_roles(
     return frozenset(kept)
 
 
+def effective_user_roles_in(
+    conn: sqlite3.Connection,
+    user_id: str,
+    *,
+    now: int | None = None,
+    oidc_max_age: int = OIDC_GRANT_MAX_AGE_SECONDS,
+) -> frozenset[str]:
+    """The person's current global roles as the caller's transaction sees them."""
+    ts = _now() if now is None else int(now)
+    rows = conn.execute(
+        "SELECT role, provenance, last_confirmed_at FROM admin_role_assignments "
+        "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL AND revoked_at IS NULL",
+        (user_id,),
+    ).fetchall()
+    return frozenset(
+        str(row["role"]) for row in rows
+        if row["provenance"] != "oidc"
+        or (row["last_confirmed_at"] is not None and int(row["last_confirmed_at"]) > ts - oidc_max_age)
+    )
+
+
 def claim_first_owner(
     user_id: str, *, granted_by: str, now: int | None = None, path: Path = DB_PATH,
 ) -> bool:
@@ -3433,20 +3546,34 @@ def claim_first_owner(
     cannot both win. A revoked owner grant still counts: an email cannot
     recover ownership that was taken away.
     """
-    ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1").fetchone():
+        claimed = claim_first_owner_in(conn, user_id, granted_by=granted_by, now=now)
+        if not claimed:
             conn.rollback()
             return False
-        cur = conn.execute(
-            "INSERT INTO admin_role_assignments(role, subject_kind, subject_id, scope_app_id, "
-            "granted_at, granted_by, provenance) VALUES ('owner', 'user', ?, NULL, ?, ?, 'manual')",
-            (user_id, ts, granted_by),
-        )
-        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (cur.lastrowid,)).fetchone()
-        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor_kind="system", actor_id=granted_by)
         conn.commit()
+    return True
+
+
+def claim_first_owner_in(
+    conn: sqlite3.Connection,
+    user_id: str,
+    *,
+    granted_by: str,
+    now: int | None = None,
+) -> bool:
+    """Claim first ownership inside the caller's transaction, without committing or rolling it back."""
+    ts = _now() if now is None else int(now)
+    if conn.execute("SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1").fetchone():
+        return False
+    cur = conn.execute(
+        "INSERT INTO admin_role_assignments(role, subject_kind, subject_id, scope_app_id, "
+        "granted_at, granted_by, provenance) VALUES ('owner', 'user', ?, NULL, ?, ?, 'manual')",
+        (user_id, ts, granted_by),
+    )
+    granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (cur.lastrowid,)).fetchone()
+    _audit_admin_role(conn, "admin_role.grant", granted, ts, actor_kind="system", actor_id=granted_by)
     return True
 
 
