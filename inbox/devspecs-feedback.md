@@ -1,5 +1,14 @@
 # devspecs feedback
 
+## 2026-10-23 — logged sign-in follow-ups
+
+`ds tldr` and `ds recent` returned context. A multi-slice `ds task` waited on
+another index update without returning a task ID or usable task pack. It showed
+no progress during implementation, and the process was gone at a later check;
+I could not confirm its exit status. I continued from the task brief, source
+inspection, and focused tests. No index state was reset. A bounded wait with a
+visible lock owner and recoverable task ID would make this stall diagnosable.
+
 ## 2026-10-20 — STT measurement scoring
 
 `ds recent` returned relevant STT work. A sliced `ds task` and a retry with
