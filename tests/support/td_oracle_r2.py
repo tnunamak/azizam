@@ -45,12 +45,17 @@ def expected(v, r, a, strict_share):
     if not r.available: return "deny"
     k = r.kind
     if k in ("creation", "voice", "receipt", "job"):
-        own = bool({x for x in v.owner_keys if x} & {x for x in r.owner_keys if x})
-        allowed = {"creation": {"read", "delete", "reuse", "link"}, "voice": {"read", "delete", "reuse"},
-                   "receipt": {"read"}, "job": {"read", "cancel"}}[k]
-        if own and a in allowed: return "own"
-        if k == "creation" and a == "share" and own and nn(v.person_id) and tuple(r.maker_person_ids) == (v.person_id,): return "own"
-        if k == "creation" and a in ("read", "link") and share_hit(v, r, False): return "shared"
+        # D51/D52 maker basis: owning an App is not making its content.
+        if k == "creation" and len(r.maker_person_ids) > 1:
+            return "shared" if a in ("read", "link") and share_hit(v, r, False) else "deny"
+        if a in ("read", "link"):
+            if content_read(v, r): return "own"
+            return "shared" if k == "creation" and share_hit(v, r, False) else "deny"
+        if k == "creation" and a in ("delete", "reuse"): return "own" if tdself(v, r) and content_read(v, r) else "deny"
+        if k == "creation" and a == "share":
+            return "own" if tdself(v, r) and tuple(r.maker_person_ids) == (v.person_id,) and delegated_ok(v) else "deny"
+        if k == "voice" and a in ("delete", "reuse"): return "own" if tdself(v, r) and content_read(v, r) else "deny"
+        if k == "job" and a == "cancel": return "own" if tdself(v, r) and content_read(v, r) else "deny"
         return "deny"
     if k == "prompt":
         if a == "read":
