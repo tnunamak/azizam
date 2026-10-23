@@ -253,7 +253,8 @@ class _OverBudget(Exception):
 class WorkBudget:
     """The work one record may spend on JSON held inside strings (R6-2): the text it decodes, in bytes, and the values
     it visits. One budget is shared by every body of a record, so the total stays bounded however many wrappers the
-    record holds. Only a string that parses as JSON spends it, so a string that is plain text costs nothing here."""
+    record holds. A string spends it when it parses as a JSON object, array or literal that is cleaned further. A
+    literal around plain text is cleaned as text and costs nothing here."""
 
     def __init__(self, *, max_bytes: int, max_nodes: int = JSON_NODE_LIMIT) -> None:
         self.max_bytes = max_bytes
@@ -300,6 +301,11 @@ def _redact_string(text: str, found: set[str], depth: int, budget: WorkBudget, *
         if depth > JSON_DEPTH_LIMIT:
             found.add("json_depth")
             return {"omitted": "json_depth"}
+        try:
+            budget.decode(text)
+        except _OverBudget:
+            found.add("json_budget")
+            return {"omitted": "json_budget"}
         inner = _redact_string(parsed, found, depth + 1, budget, tool_arguments=tool_arguments)
         return json.dumps(inner, ensure_ascii=False) if isinstance(inner, str) else inner
     omissions: set[str] = set()
