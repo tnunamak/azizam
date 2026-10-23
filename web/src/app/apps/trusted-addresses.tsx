@@ -3,7 +3,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch } from "@/lib/api";
-import { accountApi } from "@/lib/account-api";
+import {
+  accountApi,
+  administratorsToConfirm,
+  type KeepOptions,
+} from "@/lib/account-api";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
 export interface TrustedAddress {
   id: string;
@@ -27,6 +32,8 @@ export interface TrustedAddress {
   created_by: string | null;
   /** Present only when the cut-over would remove the address: keep it, or add it again. */
   cutover?: "keep" | "readd";
+  /** The administrators on record who could also have added it. Keeping it asks the owner to confirm them first. */
+  administrators?: string[];
   /** The person recorded as its maker, when that is another person. */
   made_by_name?: string;
 }
@@ -59,6 +66,7 @@ export function TrustedAddressesDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keptId, setKeptId] = useState<string | null>(null);
+  const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   const appId = app?.id ?? "";
   const key = ["admin", "app-trusted-addresses", appId];
   const { data, isPending, isError } = useQuery({
@@ -109,43 +117,74 @@ export function TrustedAddressesDialog({
     }
   }
 
+  // A keep that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
+  // for it too, when the list this dialog holds is stale.
   async function keep(entry: TrustedAddress) {
-    const kept = await change(() => accountApi.keepTrustedAddress(appId, entry.id));
-    if (kept) {
-      setKeptId(entry.id);
+    if (entry.administrators?.length) {
+      setKeepConfirmation({ id: entry.id, what: "address", administrators: entry.administrators });
+      return;
+    }
+    await keepNow(entry.id, {});
+  }
+
+  async function keepNow(entryId: string, options: KeepOptions) {
+    setBusy(true);
+    setError(null);
+    try {
+      await accountApi.keepTrustedAddress(appId, entryId, options);
+      await queryClient.invalidateQueries({ queryKey: key });
+      setKeptId(entryId);
       onChanged();
       toast.success("Address kept");
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      if (administrators !== null) {
+        setKeepConfirmation({ id: entryId, what: "address", administrators });
+      } else {
+        setError(messageOf(caught, "The address could not be kept. Try again."));
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
-  // An App holds each address once, so the old entry is removed before the same address is added again. The add
-  // then records this person as the address's maker. Focus moves to the new entry's Remove button.
+  // The owner confirmed the administrators. A failure rejects, so the dialog stays open with the reason in it.
+  async function confirmKeep(confirmation: KeepConfirmation) {
+    try {
+      await accountApi.keepTrustedAddress(appId, confirmation.id, { confirmed: true });
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      setKeepConfirmation({
+        ...confirmation,
+        administrators: administrators ?? confirmation.administrators,
+        error:
+          administrators !== null
+            ? "The administrators changed. Read them again, then keep it."
+            : messageOf(caught, "The address could not be kept. Try again."),
+      });
+      throw caught;
+    }
+    await queryClient.invalidateQueries({ queryKey: key });
+    setKeptId(confirmation.id);
+    onChanged();
+    toast.success("Address kept");
+  }
+
+  // One call: the gateway replaces the old entry with the same address, made by this person, in one transaction. A
+  // failure leaves the old entry in place, so the list still shows it. Focus moves to the new entry's Remove button.
   async function addAgain(entry: TrustedAddress) {
     setBusy(true);
     setError(null);
-    let addedId: string | null = null;
     try {
-      await accountApi.removeTrustedAddress(appId, entry.id);
-      try {
-        const added = await accountApi.addTrustedAddress(appId, {
-          address: entry.address,
-          note: entry.note ?? "",
-        });
-        addedId = added.trusted_address.id;
-      } catch (caught) {
-        setError(
-          `${entry.address} is no longer trusted. ${messageOf(caught, "It could not be added again.")} Add it below to trust it again.`,
-        );
-      }
-    } catch (caught) {
-      setError(messageOf(caught, "The address could not be changed. Try again."));
-    }
-    await queryClient.invalidateQueries({ queryKey: key });
-    onChanged();
-    setBusy(false);
-    if (addedId !== null) {
-      setKeptId(addedId);
+      const readded = await accountApi.readdTrustedAddress(appId, entry.id);
+      await queryClient.invalidateQueries({ queryKey: key });
+      setKeptId(readded.trusted_address.id);
+      onChanged();
       toast.success("Address added again");
+    } catch (caught) {
+      setError(messageOf(caught, "The address could not be added again. Try again."));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -298,6 +337,14 @@ export function TrustedAddressesDialog({
             </Button>
           </DialogFooter>
         </form>
+        <KeepConfirmDialog
+          confirmation={keepConfirmation}
+          onClose={() => setKeepConfirmation(null)}
+          onConfirm={async () => {
+            if (keepConfirmation) await confirmKeep(keepConfirmation);
+          }}
+          fallbackFocus={() => [document.getElementById(`remove-address-${keepConfirmation?.id ?? ""}`)]}
+        />
       </DialogContent>
     </Dialog>
   );

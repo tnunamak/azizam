@@ -82,6 +82,8 @@ export interface Credential {
   cutover?: "keep" | "replace";
   /** The person recorded as its maker, when that is another person. */
   made_by_name?: string;
+  /** The administrators on record who could also have made it. Keeping it asks the owner to confirm them first. */
+  administrators?: string[];
 }
 
 /** Mint responses carry the full key exactly once. Reveal-once: show in the

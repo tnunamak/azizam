@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { accountApi, type AccountApp, type ReplacedKey } from "@/lib/account-api";
+import {
+  accountApi,
+  administratorsToConfirm,
+  type AccountApp,
+  type KeepOptions,
+  type ReplacedKey,
+} from "@/lib/account-api";
 import type { Credential } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RelativeTime } from "@/components/product";
+import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
 /** The most characters a name may have; the gateway enforces the same limit. */
 const NAME_LIMIT = 80;
@@ -375,6 +382,7 @@ export function RenameKeysDialog({
   const [editing, setEditing] = useState<string | null>(null);
   const [working, setWorking] = useState<{ id: string; remedy: "keep" | "replace" } | null>(null);
   const [remedyFailure, setRemedyFailure] = useState<{ id: string; message: string } | null>(null);
+  const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   // The row that had the edit, so its Rename button gets focus back.
   const returnTo = useRef<string | null>(null);
 
@@ -390,20 +398,50 @@ export function RenameKeysDialog({
     setEditing(null);
   }
 
+  // A key that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
+  // for it too, when the snapshot this page holds is stale.
   async function keep(keyRecord: Credential) {
-    setWorking({ id: keyRecord.id, remedy: "keep" });
+    if (keyRecord.administrators?.length) {
+      setKeepConfirmation({ id: keyRecord.id, what: "key", administrators: keyRecord.administrators });
+      return;
+    }
+    await keepNow(keyRecord.id, {});
+  }
+
+  async function keepNow(id: string, options: KeepOptions) {
+    setWorking({ id, remedy: "keep" });
     setRemedyFailure(null);
     try {
-      onKept(await accountApi.keepKey(keyRecord.id));
+      onKept(await accountApi.keepKey(id, options));
       // The Keep button goes once the key is kept; its Rename button stays, so focus moves there.
-      document.getElementById(`rename-key-${keyRecord.id}`)?.focus();
+      document.getElementById(`rename-key-${id}`)?.focus();
     } catch (caught) {
-      setRemedyFailure({
-        id: keyRecord.id,
-        message: failure(caught, "The key could not be kept. Try again."),
-      });
+      const administrators = administratorsToConfirm(caught);
+      if (administrators !== null) {
+        setKeepConfirmation({ id, what: "key", administrators });
+        return;
+      }
+      setRemedyFailure({ id, message: failure(caught, "The key could not be kept. Try again.") });
     } finally {
       setWorking(null);
+    }
+  }
+
+  // The owner confirmed the administrators. A failure rejects, so the dialog stays open with the reason in it.
+  async function confirmKeep(confirmation: KeepConfirmation) {
+    try {
+      onKept(await accountApi.keepKey(confirmation.id, { confirmed: true }));
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      setKeepConfirmation({
+        ...confirmation,
+        administrators: administrators ?? confirmation.administrators,
+        error:
+          administrators !== null
+            ? "The administrators changed. Read them again, then keep it."
+            : failure(caught, "The key could not be kept. Try again."),
+      });
+      throw caught;
     }
   }
 
@@ -479,6 +517,14 @@ export function RenameKeysDialog({
             Done
           </Button>
         </DialogFooter>
+        <KeepConfirmDialog
+          confirmation={keepConfirmation}
+          onClose={() => setKeepConfirmation(null)}
+          onConfirm={async () => {
+            if (keepConfirmation) await confirmKeep(keepConfirmation);
+          }}
+          fallbackFocus={() => [document.getElementById(`rename-key-${keepConfirmation?.id ?? ""}`)]}
+        />
       </DialogContent>
     </Dialog>
   );

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { accountApi } from "./account-api";
+import { accountApi, administratorsToConfirm } from "./account-api";
 import { requestReauth } from "./reauth";
 
 vi.mock("./reauth", async (importOriginal) => ({
@@ -209,5 +209,47 @@ it("removeTrustedAddress deletes one entry on the App with the same headers", as
   expect(sent).toHaveLength(1);
   expect(sent[0].method).toBe("DELETE");
   expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses/tad-1");
+  expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
+});
+
+it("keepKey sends the owner's confirmation only when the owner has confirmed the administrators", async () => {
+  reply.body = { credential: { id: "key-1" } };
+  await accountApi.keepKey("key-1", { confirmed: true });
+  await accountApi.keepKey("key-2");
+  expect(sent.map((request) => request.body)).toEqual([{ confirm_admins_could_have_made_it: true }, undefined]);
+});
+
+it("keepTrustedAddress sends the owner's confirmation in the same body", async () => {
+  await accountApi.keepTrustedAddress("app-1", "tad-1", { confirmed: true });
+  expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses/tad-1/adopt");
+  expect(sent[0].body).toEqual({ confirm_admins_could_have_made_it: true });
+});
+
+it("administratorsToConfirm names the administrators a keep asks the owner to confirm, and nothing for other refusals", async () => {
+  reply = {
+    status: 409,
+    body: { error: { code: "keep_needs_confirmation", message: "Confirm them.", administrators: ["Alex", "unnamed administrator"] } },
+  };
+  const asked = await accountApi.keepKey("key-1").catch((error: unknown) => error);
+  expect(administratorsToConfirm(asked)).toEqual(["Alex", "unnamed administrator"]);
+
+  reply = { status: 409, body: { error: { code: "keep_needs_confirmation", message: "Confirm them." } } };
+  const unnamed = await accountApi.keepKey("key-1").catch((error: unknown) => error);
+  expect(administratorsToConfirm(unnamed)).toEqual([]);
+
+  reply = { status: 409, body: { error: { code: "keep_not_provable", message: "This key cannot be kept." } } };
+  const refused = await accountApi.keepKey("key-1").catch((error: unknown) => error);
+  expect(administratorsToConfirm(refused)).toBeNull();
+  expect(administratorsToConfirm(new Error("offline"))).toBeNull();
+});
+
+it("readdTrustedAddress posts to the entry's readd route with the same headers, and returns the new entry and the one it replaced", async () => {
+  reply = { status: 201, body: { trusted_address: { id: "tad-3" }, replaced_entry_id: "tad-1" } };
+  const readded = await accountApi.readdTrustedAddress("app-1", "tad-1");
+  expect(readded).toEqual({ trusted_address: { id: "tad-3" }, replaced_entry_id: "tad-1" });
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("POST");
+  expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses/tad-1/readd");
+  expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
   expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
 });

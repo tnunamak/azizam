@@ -113,6 +113,7 @@ async function accountRequest<T>(
       payload?.error?.message ??
         "The gateway could not complete this request. Try again.",
       response.status,
+      payload,
     );
   }
   return payload as T;
@@ -153,6 +154,23 @@ export type McpConsentRequest = {
   access: string[];
   lasts: string;
 };
+/** Keeping a binding that administrators on record could also have made needs the owner's confirmation. */
+export interface KeepOptions {
+  /** The owner has read the administrators and confirms them. */
+  confirmed?: boolean;
+}
+
+const keepBody = ({ confirmed = false }: KeepOptions) =>
+  confirmed ? { confirm_admins_could_have_made_it: true } : undefined;
+
+/** The administrators the gateway asks the owner to confirm before a keep (409 `keep_needs_confirmation`), or null
+ * for any other failure. A stale snapshot can send a keep that the gateway still wants confirmed. */
+export function administratorsToConfirm(caught: unknown): string[] | null {
+  if (!(caught instanceof ApiError) || caught.code !== "keep_needs_confirmation") return null;
+  const names = (caught.payload as { error?: { administrators?: unknown } } | undefined)?.error?.administrators;
+  return Array.isArray(names) ? names.map(String) : [];
+}
+
 export const accountApi = {
   discovery: () => accountRequest<GatewayDiscovery>("/.well-known/azizam"),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
@@ -189,15 +207,22 @@ export const accountApi = {
       method: "DELETE",
     }),
   /** Keep a key made before its creator was recorded: this person becomes its creator. The answer is the saved record. */
-  keepKey: (credentialId: string) =>
+  keepKey: (credentialId: string, options: KeepOptions = {}) =>
     accountRequest<{ credential: Credential }>(
       `/me/api/credentials/${encodeURIComponent(credentialId)}/adopt`,
-      { method: "POST" },
+      { method: "POST", body: keepBody(options) },
     ).then((r) => r.credential),
   /** Keep a trusted address made before its creator was recorded: this person becomes its creator. */
-  keepTrustedAddress: (appId: string, entryId: string) =>
+  keepTrustedAddress: (appId: string, entryId: string, options: KeepOptions = {}) =>
     accountRequest(
       `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/adopt`,
+      { method: "POST", body: keepBody(options) },
+    ),
+  /** Add an address that cannot be kept again, in one step: the same address replaces the old entry, made by this
+   * person. An app holds each address once, so removing and adding would be two calls that can leave it removed. */
+  readdTrustedAddress: (appId: string, entryId: string) =>
+    accountRequest<{ trusted_address: { id: string }; replaced_entry_id: string }>(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/readd`,
       { method: "POST" },
     ),
   /** Replace a key that cannot be kept: a new key on the same app, and this one revoked. The secret comes back once. */

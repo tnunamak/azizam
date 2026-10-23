@@ -26,13 +26,15 @@ vi.mock("@/lib/toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/toast")>()),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/account-api", () => ({
+vi.mock("@/lib/account-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/account-api")>()),
   accountApi: {
     session: vi.fn(),
     discovery: vi.fn(),
     keepKey: vi.fn(),
     replaceKey: vi.fn(),
     keepTrustedAddress: vi.fn(),
+    readdTrustedAddress: vi.fn(),
     addTrustedAddress: vi.fn(),
     removeTrustedAddress: vi.fn(),
     mcpConnections: vi.fn(),
@@ -151,6 +153,7 @@ type Address = {
   created_by: string | null;
   cutover?: "keep" | "readd";
   made_by_name?: string;
+  administrators?: string[];
 };
 const unkeptAddress: Address = {
   id: "tad-1",
@@ -192,6 +195,7 @@ beforeEach(() => {
   vi.mocked(accountApi.keepKey).mockReset();
   vi.mocked(accountApi.replaceKey).mockReset();
   vi.mocked(accountApi.keepTrustedAddress).mockReset();
+  vi.mocked(accountApi.readdTrustedAddress).mockReset();
   vi.mocked(accountApi.addTrustedAddress).mockReset();
   vi.mocked(accountApi.removeTrustedAddress).mockReset();
   vi.mocked(adminFetch).mockReset();
@@ -271,7 +275,7 @@ it("keeps the key through the gateway, removes its notice and leaves focus on it
   fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
 
   await waitFor(() => expect(within(keys).queryByText(KEEP_NOTICE)).toBeNull());
-  expect(accountApi.keepKey).toHaveBeenCalledWith("key-old");
+  expect(accountApi.keepKey).toHaveBeenCalledWith("key-old", {});
   expect(within(keys).queryByRole("button", { name: "Keep key Old desk key" })).toBeNull();
   expect(within(keys).getByRole("button", { name: "Rename key Old desk key" })).toHaveFocus();
   expect(toast.success).toHaveBeenCalledWith("Key kept");
@@ -461,7 +465,7 @@ it("keeps a trusted address with no recorded creator through its route, and refr
   fireEvent.click(within(dialog).getByRole("button", { name: "Keep address 10.0.0.7" }));
 
   await waitFor(() => expect(within(dialog).queryByText(ADDRESS_KEEP_NOTICE)).toBeNull());
-  expect(accountApi.keepTrustedAddress).toHaveBeenCalledWith("hall", "tad-1");
+  expect(accountApi.keepTrustedAddress).toHaveBeenCalledWith("hall", "tad-1", {});
   expect(toast.success).toHaveBeenCalledWith("Address kept");
   expect(within(dialog).getByRole("button", { name: "Remove 10.0.0.7" })).toHaveFocus();
   await waitFor(() =>
@@ -469,22 +473,16 @@ it("keeps a trusted address with no recorded creator through its route, and refr
   );
 });
 
-it("adds an address again: the old entry is removed first, then the same address is added with its note", async () => {
+it("adds an address again in one call: the gateway replaces the old entry with the same address, made by this person", async () => {
   const before = snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner");
   const after = snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 0 })], "owner");
   const gateway = gatewayAnswers(before, after);
   let addresses: Address[] = [otherAddress];
   vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: addresses }));
-  const order: string[] = [];
-  vi.mocked(accountApi.removeTrustedAddress).mockImplementation(async () => {
-    order.push("remove");
-    addresses = [];
-  });
-  vi.mocked(accountApi.addTrustedAddress).mockImplementation(async () => {
-    order.push("add");
+  vi.mocked(accountApi.readdTrustedAddress).mockImplementation(async () => {
     addresses = [{ ...otherAddress, id: "tad-3", created_by: "person-1", cutover: undefined, made_by_name: undefined }];
     gateway.markKept();
-    return { trusted_address: { id: "tad-3" } };
+    return { trusted_address: { id: "tad-3" }, replaced_entry_id: "tad-2" };
   });
   renderApps(owner);
 
@@ -494,47 +492,20 @@ it("adds an address again: the old entry is removed first, then the same address
   fireEvent.click(within(dialog).getByRole("button", { name: "Add address 10.0.0.8 again" }));
 
   await waitFor(() => expect(within(dialog).queryByText(ADDRESS_ADD_AGAIN_ALEX)).toBeNull());
-  expect(order).toEqual(["remove", "add"]);
-  expect(accountApi.removeTrustedAddress).toHaveBeenCalledWith("hall", "tad-2");
-  expect(accountApi.addTrustedAddress).toHaveBeenCalledWith("hall", {
-    address: "10.0.0.8",
-    note: "Hall speaker",
-  });
+  expect(accountApi.readdTrustedAddress).toHaveBeenCalledTimes(1);
+  expect(accountApi.readdTrustedAddress).toHaveBeenCalledWith("hall", "tad-2");
+  expect(accountApi.removeTrustedAddress).not.toHaveBeenCalled();
+  expect(accountApi.addTrustedAddress).not.toHaveBeenCalled();
   expect(toast.success).toHaveBeenCalledWith("Address added again");
   expect(within(dialog).getByRole("button", { name: "Remove 10.0.0.8" })).toHaveFocus();
 });
 
-it("says an address could not be added again after its old entry was removed, and asks for it to be added below", async () => {
-  let addresses: Address[] = [otherAddress];
-  vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: addresses }));
-  vi.mocked(accountApi.session).mockResolvedValue(
-    snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner"),
-  );
-  vi.mocked(accountApi.removeTrustedAddress).mockImplementation(async () => {
-    addresses = [];
-  });
-  vi.mocked(accountApi.addTrustedAddress).mockRejectedValue(
-    new ApiError("invalid_trusted_address", "An app can have at most 20 trusted addresses.", 400),
-  );
-  renderApps(owner);
-
-  await chooseFromMenu("Hall display", "Trusted addresses");
-  const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Add address 10.0.0.8 again" }));
-
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "10.0.0.8 is no longer trusted. An app can have at most 20 trusted addresses. Add it below to trust it again.",
-  );
-  expect(within(dialog).queryByRole("button", { name: "Add address 10.0.0.8 again" })).toBeNull();
-  expect(toast.success).not.toHaveBeenCalled();
-});
-
-it("keeps the old address when its removal fails, so it is not added again", async () => {
+it("says an address could not be added again, and its old entry stays listed", async () => {
   vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: [otherAddress] }));
   vi.mocked(accountApi.session).mockResolvedValue(
     snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner"),
   );
-  vi.mocked(accountApi.removeTrustedAddress).mockRejectedValue(
+  vi.mocked(accountApi.readdTrustedAddress).mockRejectedValue(
     new ApiError("trusted_address_not_found", "Trusted address not found for this App", 404),
   );
   renderApps(owner);
@@ -546,8 +517,9 @@ it("keeps the old address when its removal fails, so it is not added again", asy
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Trusted address not found for this App",
   );
-  expect(accountApi.addTrustedAddress).not.toHaveBeenCalled();
   expect(within(dialog).getByRole("button", { name: "Add address 10.0.0.8 again" })).toBeEnabled();
+  expect(accountApi.removeTrustedAddress).not.toHaveBeenCalled();
+  expect(toast.success).not.toHaveBeenCalled();
 });
 
 it("words an address with no recorded maker as made before Azizam recorded it, not as made by someone else", async () => {
@@ -621,4 +593,163 @@ it("shows no line once every key and address names its person", async () => {
 
   await screen.findByRole("heading", { name: "Hall display" });
   expect(screen.queryByRole("link", { name: /need a quick check/ })).toBeNull();
+});
+
+// Keeping a binding that administrators on record could also have made waits for the owner's confirmation.
+const ADMINISTRATORS = ["Alex", "unnamed administrator"];
+const keyWithAdmins: Credential = { ...oldKey, administrators: ADMINISTRATORS };
+const addressWithAdmins: Address = { ...unkeptAddress, administrators: ADMINISTRATORS };
+function confirmBody(names: string[]): string {
+  return `Azizam did not record who made it. Administrators at the time could also have made it: ${names.join(", ")}. Keep it only if you made it or trust them.`;
+}
+
+it("asks the owner to confirm the administrators before keeping a key they could have made", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith({ credentials: [keyWithAdmins] })]));
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  expect(within(dialog).getByText(confirmBody(ADMINISTRATORS))).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Keep key" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+  expect(accountApi.keepKey).not.toHaveBeenCalled();
+});
+
+it("confirming keeps the key with the owner's confirmation, and removes its notice", async () => {
+  const gateway = gatewayAnswers(
+    snapshotOf([appWith({ credentials: [keyWithAdmins] })]),
+    snapshotOf([appWith({ credentials: [keptKey, ownKey] })]),
+  );
+  vi.mocked(accountApi.keepKey).mockImplementation(async () => {
+    gateway.markKept();
+    return keptKey;
+  });
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep key" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Keep this key?" })).toBeNull());
+  expect(accountApi.keepKey).toHaveBeenCalledWith("key-old", { confirmed: true });
+  expect(toast.success).toHaveBeenCalledWith("Key kept");
+  await waitFor(() => expect(within(keys).queryByText(KEEP_NOTICE)).toBeNull());
+});
+
+it("cancelling the confirmation keeps nothing, and the key keeps its Keep button", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith({ credentials: [keyWithAdmins] })]));
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Keep this key?" })).toBeNull());
+  expect(accountApi.keepKey).not.toHaveBeenCalled();
+  expect(within(keys).getByRole("button", { name: "Keep key Old desk key" })).toBeEnabled();
+});
+
+it("a keep the gateway asks to confirm, on a page that was not up to date, opens the same dialog with the names it gives", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith()]));
+  vi.mocked(accountApi.keepKey).mockRejectedValue(
+    new ApiError("keep_needs_confirmation", "Administrators at the time could also have made this key.", 409, {
+      error: {
+        code: "keep_needs_confirmation",
+        message: "Administrators at the time could also have made this key.",
+        administrators: ["Sam"],
+      },
+    }),
+  );
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  expect(within(dialog).getByText(confirmBody(["Sam"]))).toBeVisible();
+  expect(accountApi.keepKey).toHaveBeenCalledWith("key-old", {});
+});
+
+it("a confirmed keep that fails says why in the dialog, and the dialog stays open", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith({ credentials: [keyWithAdmins] })]));
+  vi.mocked(accountApi.keepKey).mockRejectedValue(new ApiError("keep_not_provable", "This key cannot be kept.", 409));
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep key" }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("This key cannot be kept.");
+  expect(screen.getByRole("dialog", { name: "Keep this key?" })).toBeVisible();
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
+it("if the administrators changed before the owner confirmed, the dialog names the new ones and asks again", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith({ credentials: [keyWithAdmins] })]));
+  vi.mocked(accountApi.keepKey).mockRejectedValue(
+    new ApiError("keep_needs_confirmation", "Administrators at the time could also have made this key.", 409, {
+      error: { code: "keep_needs_confirmation", message: "", administrators: ["Sam"] },
+    }),
+  );
+  renderApps();
+
+  const keys = await openKeys("Hall display");
+  fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
+  const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep key" }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "The administrators changed. Read them again, then keep it.",
+  );
+  expect(within(dialog).getByText(confirmBody(["Sam"]))).toBeVisible();
+});
+
+it("asks the owner to confirm the administrators before keeping an address they could have added", async () => {
+  vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: [addressWithAdmins] }));
+  vi.mocked(accountApi.session).mockResolvedValue(
+    snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner"),
+  );
+  renderApps(owner);
+
+  await chooseFromMenu("Hall display", "Trusted addresses");
+  await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
+  fireEvent.click(await screen.findByRole("button", { name: "Keep address 10.0.0.7" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Keep this address?" });
+  expect(within(dialog).getByText(confirmBody(ADMINISTRATORS))).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Keep address" })).toBeEnabled();
+  expect(accountApi.keepTrustedAddress).not.toHaveBeenCalled();
+});
+
+it("confirming keeps the address with the owner's confirmation, and cancelling keeps nothing", async () => {
+  const before = snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner");
+  const after = snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 0 })], "owner");
+  const gateway = gatewayAnswers(before, after);
+  let addresses: Address[] = [addressWithAdmins];
+  vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: addresses }));
+  vi.mocked(accountApi.keepTrustedAddress).mockImplementation(async () => {
+    addresses = [{ ...unkeptAddress, created_by: "person-1", cutover: undefined }];
+    gateway.markKept();
+  });
+  renderApps(owner);
+
+  await chooseFromMenu("Hall display", "Trusted addresses");
+  await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
+  fireEvent.click(await screen.findByRole("button", { name: "Keep address 10.0.0.7" }));
+  const dialog = await screen.findByRole("dialog", { name: "Keep this address?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Keep this address?" })).toBeNull());
+  expect(accountApi.keepTrustedAddress).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Keep address 10.0.0.7" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Keep this address?" })).getByRole("button", { name: "Keep address" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Keep this address?" })).toBeNull());
+  expect(accountApi.keepTrustedAddress).toHaveBeenCalledWith("hall", "tad-1", { confirmed: true });
+  expect(toast.success).toHaveBeenCalledWith("Address kept");
 });
