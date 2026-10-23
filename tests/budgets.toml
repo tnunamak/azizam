@@ -228,7 +228,9 @@
 # gateway setting, invalid settings). collect-only 16067 -> 16077.
 # Owner visibility step 2 (App-binding authority, guards, preview, /me trusted addresses): collect-only 16077 -> 16119.
 # Step 2 finished (pre-cut-over mode and its back-fill tests, accept and apply, /me keep routes, the e2e owner seed): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16174.
-pytest = 16174
+# Keep UI (owner visibility step 2): +2 cases in tests/test_me_binding_adoption.py, the owner's count of addresses
+# with no creator and a member not being sent it. --collect-only -q (scripts/run-hermetic-pytest.sh) measured 16176 on 2026-10-23.
+pytest = 16176
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -241,8 +243,12 @@ pytest = 16174
 # W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
 # confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
 # playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
-vitest = 3188
-playwright = 515
+# Keep UI on the Apps page: +8 cases in src/app/apps/keep.spec.tsx and +4 in src/lib/account-api.spec.ts (the keep
+# route and its headers, and the sign-in confirmation). Vitest list measured 3200 on 2026-10-23.
+vitest = 3200
+# Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
+# gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
+playwright = 517
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
