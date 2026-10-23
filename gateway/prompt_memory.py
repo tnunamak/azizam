@@ -275,6 +275,14 @@ def insert_prompt_in(conn: sqlite3.Connection, record: Mapping[str, Any]) -> Non
     )
 
 
+def _creating_receipt_id() -> str | None:
+    """The receipt of the request making this media. That request's job is the one that indexes the asset."""
+    from gateway import media_delivery
+
+    receipt = getattr(media_delivery.current(), "receipt", None)
+    return getattr(receipt, "request_id", None) or None
+
+
 def safe_put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
@@ -290,7 +298,7 @@ def safe_put(
                 {
                     "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
                     "metadata": dict(metadata) if metadata else None, "created_at": started,
-                    "kept_until": kept_until,
+                    "kept_until": kept_until, "origin_id": _creating_receipt_id(),
                 },
                 database_path=target,
                 on_result=on_result,

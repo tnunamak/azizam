@@ -478,13 +478,13 @@ class _Capture:
             # short media transaction, with admin.db always acquired first.
             nonlocal written, erased_by_library
             with request_history.write_transaction(self.media_path) as conn:
+                # Only the creating receipts this write belongs to: its own, and each prompt's asset's creator.
+                # Another job that made the same bytes is a new Library item (media_jobs.hide_assets_in).
                 origins = {
                     str(value)
                     for value in (
                         (record or {}).get("request_id"), receipt_id,
-                        *media_jobs.request_ids_for_assets_in(
-                            conn, [str(prompt["asset_id"]) for prompt in prompt_records if prompt.get("asset_id")],
-                        ),
+                        *(prompt.get("origin_id") for prompt in prompt_records),
                     )
                     if value
                 }
