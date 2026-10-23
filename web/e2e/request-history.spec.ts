@@ -99,7 +99,7 @@ for (const width of [1440, 390]) {
     await expect(detail.getByRole("heading", { name: "Fast" })).toBeVisible();
     const conversation = detail.getByRole("list", { name: "Conversation" });
     await expect(conversation.getByText(kept, { exact: true })).toBeVisible();
-    await expect(detail.getByText(/^Kept the request until /)).toBeVisible({ timeout: 15_000 });
+    await expect(detail.getByText(/^Kept the request and its reply until /)).toBeVisible({ timeout: 15_000 });
     await expect(detail.getByText("What was sent")).toHaveCount(0);
     const technical = detail.locator("details", { hasText: "Technical details" });
     await expect(technical).not.toHaveAttribute("open");
