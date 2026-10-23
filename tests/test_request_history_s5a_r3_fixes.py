@@ -9,10 +9,18 @@ import asyncio
 import json
 import sqlite3
 import time
+from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
-from gateway import request_history, request_history_capture
+import pytest
+
+import proxy
+from gateway import admin_store, media_jobs, prompt_memory, receipt_store, request_history, request_history_capture
 from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
+from tests.support.gateway import gateway_client, use_admin_db
+from tests.test_media_provenance import comfy_png
+from tests.test_request_history_capture import _kept_rows, _mint_member_key
 from tests.test_review_retention_s5a_probes import SENTENCE, _drive, _identity, _kept, member_db  # noqa: F401 - fixture
 
 FORGET = {"com.azizam.prompts": {"mode": "forget"}}
@@ -221,7 +229,7 @@ def _busy(*args, **kwargs):
     raise sqlite3.OperationalError("database is locked")
 
 
-def test_delete_all_reports_the_rows_it_deleted_when_the_intent_cannot__be_cleared(member_db, monkeypatch):
+def test_delete_all_reports_the_rows_it_deleted_when_the_intent_cannot_be_cleared(member_db, monkeypatch):
     db, media, person = member_db
     now = int(time.time())
     request_history.insert(_kept_row(person, now - 10), path=media)
@@ -240,3 +248,83 @@ def test_delete_all_says_pending_when_the_rows_cannot_be_deleted(member_db, monk
     result = request_history.delete_all_for_person(person, admin_path=db, path=media, now=now)
     assert result == {"deleted": 0, "pending": True}
     assert len(_kept(media)) == 1
+
+
+# ------------------------------------------------------------------ end to end: a media route with the forget header
+
+IMAGE_REQUEST = {"model": "krea2-turbo", "prompt": SENTENCE, "size": "8x6", "response_format": "b64_json"}
+
+
+@pytest.fixture
+def image_gateway(fake_upstreams, monkeypatch, tmp_path):
+    """The gateway with a member's key, a ComfyUI fake that returns one PNG, and every store under tmp_path."""
+    db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
+    _mint_member_key(db, person_id)
+    media = tmp_path / "media_jobs.db"
+    media_jobs.init_db(media)
+    prompt_memory.init_db(path=media)
+    comfy = fake_upstreams.asgi(load_scenario("comfyui/image-complete-png", png_hex=comfy_png().hex()))
+    for target, name, value in (
+        (media_jobs, "DB_PATH", media),
+        (proxy, "IMAGE_CACHE_DIR", tmp_path / "asset-cache"),
+        (proxy, "_image_url_signing_secret", b"test-secret"),
+        (proxy, "COMFY_ENABLED", True),
+        (proxy, "COMFY_HOST", comfy.base_url),
+        (proxy, "get_vram_estimate", lambda *_args, **_kwargs: 1024),
+        (proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)),
+        (proxy, "_service_availability_response", lambda *_args, **_kwargs: None),
+        (proxy, "configured_downstream_headers", lambda *_args: {}),
+        (proxy, "resolve_image_background_decision", AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
+    ):
+        monkeypatch.setattr(target, name, value)
+    return tmp_path, media
+
+
+def _generate(headers: dict):
+    async def call():
+        async with gateway_client() as client:
+            return await client.post("/v1/images/generations", json=IMAGE_REQUEST, headers=headers)
+    return asyncio.run(call())
+
+
+def _receipts() -> dict[str, dict]:
+    return {row["request_id"]: row for row in receipt_store.recent(limit=500, audience="internal")}
+
+
+def _new_receipt(before: dict[str, dict]) -> dict:
+    """The one receipt written since ``before`` was taken. Two requests in one second cannot be told apart by time."""
+    fresh = [row for request_id, row in _receipts().items() if request_id not in before]
+    assert len(fresh) == 1, fresh
+    return fresh[0]
+
+
+def _library_prompts(media) -> list[str]:
+    conn = sqlite3.connect(media)
+    try:
+        return [row[0] for row in conn.execute("SELECT prompt_text FROM asset_prompts")]
+    finally:
+        conn.close()
+
+
+def test_r2_e2e_a_media_route_with_the_forget_header_keeps_no_prompt_and_no_request(image_gateway):
+    _, media = image_gateway
+    before = _receipts()
+    response = _generate({"x-azizam-prompts": "forget"})
+    assert response.status_code == 200, response.text
+    assert _library_prompts(media) == []
+    assert _kept_rows(media) == []
+    stored = _new_receipt(before)
+    assert {"kind": "library_prompt", "decision": "not_kept", "reason": "request_forget"} in stored["retention"]
+
+
+def test_r2_e2e_control_the_same_media_request_without_the_header_keeps_its_prompt_and_request(image_gateway):
+    _, media = image_gateway
+    before = _receipts()
+    response = _generate({})
+    assert response.status_code == 200, response.text
+    assert _library_prompts(media) == [SENTENCE]
+    assert len(_kept_rows(media)) == 1
+    stored = _new_receipt(before)
+    assert any(entry.get("kind") == "library_prompt" and entry.get("decision") == "kept"
+               for entry in stored["retention"]), stored["retention"]
