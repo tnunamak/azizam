@@ -44,11 +44,13 @@ _TRAILING_DIGITS = re.compile(r"\d+$")
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 #: Any URL scheme, in any case: ``https``, ``postgres``, ``wss``, ``HTTPS``. A URL inside a longer string runs to the
-#: next space or quote; punctuation that closes a sentence is not part of it.
+#: next whitespace. Its user info may hold a quote or a sub-delim (``'`` is one), so no quote ends it. Punctuation that
+#: closes a sentence is not part of it.
 _URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
 _URL_START = re.compile(_URL_SCHEME)
-_URL_IN_TEXT = re.compile(_URL_SCHEME + r"[^\s<>\"'`]+")
-_URL_TRAILING_PUNCTUATION = ".,;:!?)]}"
+_URL_IN_TEXT = re.compile(_URL_SCHEME + r"\S+")
+#: Closing marks that are not part of a URL in prose. A quote here cannot be user info: user info ends at the last ``@``.
+_URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\">"
 
 _TABLE = """
 CREATE TABLE IF NOT EXISTS kept_requests (
@@ -133,11 +135,20 @@ def _query_without_values(query: str) -> str:
 
 
 def _scrub_url(value: str) -> tuple[str, bool] | None:
-    """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go."""
-    if _URL_START.match(value) is None or any(char.isspace() for char in value):
+    """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go.
+
+    User info may hold a sub-delim, a quote, or an unencoded ``/``, ``?``, ``#`` or ``@``, so no parser can say where it
+    ends. It is taken to end at the last ``@`` in the URL, and everything from the scheme to that ``@`` is removed."""
+    match = _URL_START.match(value)
+    if match is None or any(char.isspace() for char in value):
         return None
+    scheme, rest = value[:match.end()], value[match.end():]
+    at = rest.rfind("@")
+    userinfo = f"{REMOVED}@" if at != -1 else ""
+    if at != -1:
+        rest = rest[at + 1:]
     try:
-        parts = urlsplit(value)
+        parts = urlsplit(scheme + rest)
         port = parts.port
     except ValueError:
         return REMOVED, True
@@ -145,7 +156,6 @@ def _scrub_url(value: str) -> tuple[str, bool] | None:
     if ":" in host:
         host = f"[{host}]"
     netloc = f"{host}:{port}" if port else host
-    userinfo = f"{REMOVED}@" if parts.username is not None or parts.password is not None else ""
     query = _query_without_values(parts.query)
     changed = bool(userinfo or parts.query or parts.fragment)
     return urlunsplit((parts.scheme, userinfo + netloc, parts.path, query, "")), changed
