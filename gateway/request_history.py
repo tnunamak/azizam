@@ -109,9 +109,11 @@ def _forms(word: str) -> set[str]:
 
 
 def is_credential_name(name: str) -> bool:
-    """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept. The name is
-    NFKC-normalised first, so a fullwidth ``ｐａｓｓｗｏｒｄ`` reads as ``password``."""
-    words = [_forms(part) for part in segments(unicodedata.normalize("NFKC", str(name)))]
+    """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept.
+    Format characters (category Cf, such as a zero-width space) are dropped first, then the name is NFKC-normalised,
+    so a fullwidth ``ｐａｓｓｗｏｒｄ`` reads as ``password``."""
+    visible = "".join(char for char in str(name) if unicodedata.category(char) != "Cf")
+    words = [_forms(part) for part in segments(unicodedata.normalize("NFKC", visible))]
     if any(_CREDENTIAL_SEGMENTS & forms for forms in words):
         return True
     return any((first, second) in _CREDENTIAL_PAIRS
