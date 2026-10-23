@@ -186,6 +186,22 @@ def test_a_browser_session_reads_and_deletes_its_own_history_and_nobody_elses(ga
     assert _browser("GET", f"/gateway/v1/requests/{mine['record_id']}").status_code == 404
 
 
+def test_a_key_sent_with_a_session_cookie_is_judged_as_the_key(gateway, browser):
+    """A key in any form the key layer reads keeps the call on the key's view, even when a session cookie is present."""
+    maker, other = gateway["maker"], gateway["other"]
+    mine, theirs = _record(maker), _record(other)
+    _store(gateway, mine, theirs)
+    browser(maker.person)
+
+    async def run():
+        async with gateway_client() as client:
+            return await client.request("GET", "/gateway/v1/requests", headers={"x-api-key": other.key})
+
+    listing = asyncio.run(run())
+    assert listing.status_code == 200, listing.text
+    assert [item["record_id"] for item in listing.json()["requests"]] == [theirs["record_id"]]
+
+
 def test_delete_all_under_admin_lock_contention_is_503_with_retry_after_and_deletes_nothing(gateway, browser):
     maker = gateway["maker"]
     _store(gateway, _record(maker))
