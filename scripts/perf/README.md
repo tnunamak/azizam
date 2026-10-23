@@ -11,7 +11,7 @@ Engines point at the fake engine. Ports 18000-18998 only.
 |---|---|
 | `run.py` | Everything below, then `check.py`. The nightly `perf` task (`scripts/test-scheduled`) runs this and opens or updates the `perf-red` issue. |
 | `serve.py` | The instrumented fixture gateway on a copy (`--port`, `--clone`). Its copy of the data is a scratch directory (`scripts/scratch_owner.py`), deleted when it ends, and a killed run's copy is removed at the next start; the path is the `state` field of the ready line. Responses carry `x-perf-sql`, `x-perf-connects`, `x-perf-subproc`, `x-perf-ms`. |
-| `api_bench.py` | Every GET route (route table, real ids from list responses): p50/p95, bytes, statements, connections, processes. |
+| `api_bench.py` | Every GET route (route table, real ids from list responses): p50/p95, bytes, statements, connections, processes. Also one cold read of Home: it waits 61 s, past the 60 s stale limit for Home's engine rows, before each of three reads (row `/me/api/home (status cache expired)`, limits in `budgets.toml`). |
 | `home_bench.mjs` | Home alone, in a real browser: desktop and a throttled phone, cold and warm cache; breaks the time into HTML, JavaScript download, compile and run, and each API call. Judged by `[home]` in budgets.toml. |
 | `ui_bench.mjs` | Every page, signed in as owner and member: time until `<main>` stops changing, requests, bytes, long tasks. Run from `web/` (needs a built `web/out`). |
 | `check.py` | Judges both against `budgets.toml`; ranks what is over. `--counts-only` ignores times. |

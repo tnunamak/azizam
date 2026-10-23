@@ -276,7 +276,15 @@
 # Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
 # tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
 # Train r102: collect-only measured 17071 (sign-in atomic + follow-ups, request history 5b-2, embeddings and A1111 forget).
-pytest = 17071
+# Home reads engine rows (tests/test_home_engine_rows.py, 3 cases) and one health verdict per probe outcome
+# (tests/test_on_demand_health_probe.py, 9 cases): collect-only 16813 -> 16825 (2026-10-23).
+# Home engine rows, round 2: +7 cases in tests/test_home_engine_rows.py (a stale burst, a cold burst, a cancelled reader,
+# a failed refresh, and the probe deadline) and +10 in tests/test_health_connect_failures.py (refused, DNS and TLS
+# against a resident and an on-demand engine, and the cause of a failed connection). collect-only 16825 -> 16842 (2026-10-23).
+# Home's cached health evidence (+3 in tests/test_home_engine_rows.py) and the health probe deadline (+1 in
+# tests/test_on_demand_health_probe.py): collect-only 16842 -> 16846.
+# Train r103 step 1 (Home speed and status fixes): 17071 + 35 (16848 - 16813) = 17106, provisional until the final hermetic collection.
+pytest = 17106
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

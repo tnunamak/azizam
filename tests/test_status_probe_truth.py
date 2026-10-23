@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import socket
 import ssl
 import unittest
 from unittest.mock import patch
 
+import httpcore
 import httpx
 
 import status_endpoint as status
@@ -17,6 +19,15 @@ def _raising(exc: Exception) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         raise exc
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _refused() -> httpx.ConnectError:
+    """What httpx raises for a refused connection: the socket's ECONNREFUSED sits under two wrappers."""
+    inner = httpcore.ConnectError("connect failed")
+    inner.__cause__ = ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+    outer = httpx.ConnectError("connect failed")
+    outer.__cause__ = inner
+    return outer
 
 
 async def _probe(client: httpx.AsyncClient, service: dict | None = None) -> dict:
@@ -35,7 +46,7 @@ class ProbeTruthTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(status._HTTP_TIMEOUT.connect, 3.0)
 
     async def test_refused_connection_still_reads_as_refused(self):
-        row = await _probe(_raising(httpx.ConnectError("refused")))
+        row = await _probe(_raising(_refused()))
         self.assertEqual(row["last_error"], "connect refused")
         self.assertEqual(row["live_status"], "down")
 
@@ -49,12 +60,12 @@ class ProbeTruthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["live_status"], "down")
 
     async def test_on_demand_service_that_is_not_running_is_idle(self):
-        row = await _probe(_raising(httpx.ConnectError("refused")), {"residency": "on_demand"})
+        row = await _probe(_raising(_refused()), {"residency": "on_demand"})
         self.assertEqual(row["live_status"], "stopped")
         self.assertIsNone(row["last_error"])
 
     async def test_on_demand_declared_in_config_is_idle(self):
-        row = await _probe(_raising(httpx.ConnectError("refused")), {"config": {"residency": "on_demand"}})
+        row = await _probe(_raising(_refused()), {"config": {"residency": "on_demand"}})
         self.assertEqual(row["live_status"], "stopped")
 
     async def test_on_demand_service_that_times_out_is_still_a_fault(self):

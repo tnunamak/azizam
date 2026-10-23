@@ -31,7 +31,7 @@ import threading
 import time
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional
 
 import httpx
 import yaml
@@ -39,7 +39,7 @@ import yaml
 from gateway import lifecycle_drivers
 from gateway import http_tls
 from gateway.http_tls import tls_context
-from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
+from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
@@ -72,6 +72,9 @@ _COMMIT_HASH: Optional[str] = _resolve_commit_hash()
 # slow or loaded host. 3 s lets a busy host finish its handshake without
 # stretching the whole-status budget (probes run concurrently).
 _HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
+# An engine probe still running at this deadline is reported as slow instead of waited for. The probes' own
+# timeouts end most slow probes first. This ends one that keeps its connection busy, such as a body that trickles in.
+_BACKEND_GRID_DEADLINE_S = 4.0
 
 # httpx builds an SSL context (reads the CA bundle) for every client it creates.
 # That is seconds of CPU on a loaded host, so build it once, off the event loop.
@@ -213,6 +216,15 @@ _ROLE_ORDER = {"required": 0, "optional": 1, "standby": 2}
 _VALID_ROLES = {"required", "optional", "standby"}
 
 
+# What the grid says about a failed connection. Only "refused" means nothing listens on the port.
+_CONNECT_FAILURE_TEXT = {
+    "refused": "connect refused",
+    "dns": "DNS lookup failed",
+    "tls": "TLS handshake failed",
+    "other": "connection failed",
+}
+
+
 async def _probe(
     client: httpx.AsyncClient,
     key: str,
@@ -275,10 +287,13 @@ async def _probe(
             "latency_ms": dt,
             "last_error": f"HTTP {r.status_code}",
         }
-    except httpx.ConnectError:
-        if starts_on_demand(service or {}):
-            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process"}
-        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
+    except httpx.ConnectError as exc:
+        kind = connect_failure_kind(exc)
+        if kind == "refused" and starts_on_demand(service or {}):
+            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process",
+                    "starts_on_demand": True}
+        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": _CONNECT_FAILURE_TEXT[kind],
+                "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
     except Exception as e:  # noqa: BLE001
@@ -345,7 +360,7 @@ def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str
     else:
         live_status = "unknown"
         error = None
-    return {
+    row = {
         "key": target["key"],
         "service_id": target["key"],
         "name": target["name"],
@@ -359,6 +374,9 @@ def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str
         "source": "lifecycle",
         "kind": "process",
     }
+    if target.get("service") and starts_on_demand(target["service"]):
+        row["starts_on_demand"] = True
+    return row
 
 
 async def _lifecycle_probe(target: Mapping[str, Any], config_backends: Mapping[str, Any]) -> dict[str, Any]:
@@ -398,7 +416,55 @@ def _merge_backend_observations(rows: list[dict[str, Any]]) -> list[dict[str, An
     return sorted(merged.values(), key=lambda row: _ROLE_ORDER.get(str(row.get("role") or "required"), 99))
 
 
-async def _backend_grid(config: dict) -> list[dict]:
+def _http_target_row(target: Mapping[str, Any], status: str, error: Optional[str]) -> dict[str, Any]:
+    """The row for an HTTP engine that was not measured, or that did not answer in time."""
+    return {
+        "key": target["key"],
+        "service_id": target["key"],
+        "name": target["name"],
+        "url": target["url"],
+        "role": target["role"],
+        "note": target.get("note"),
+        "status": status,
+        "live_status": status,
+        "latency_ms": None,
+        "last_error": error,
+        "kind": "no_response",
+    }
+
+
+def _overdue_http_row(target: Mapping[str, Any]) -> dict[str, Any]:
+    # Slow, not down: the same verdict as a probe that times out on its own.
+    return {**_http_target_row(target, "degraded", "timeout"), "observed_at_s": int(time.time())}
+
+
+def _overdue_lifecycle_row(target: Mapping[str, Any]) -> dict[str, Any]:
+    return _row_for_lifecycle_state(target, "unknown", "status check did not finish")
+
+
+async def _within_deadline(
+    probe: Awaitable[dict[str, Any]], deadline_s: float, target: Mapping[str, Any],
+    overdue: Callable[[Mapping[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    """The probe's row, or the overdue row when the probe is still running at the deadline."""
+    try:
+        return await asyncio.wait_for(probe, timeout=deadline_s)
+    except TimeoutError:
+        return overdue(target)
+
+
+def checking_backend_rows(config: dict) -> list[dict]:
+    """The grid's rows before any engine has been measured.
+
+    Unknown, not down: the availability layer reads an unknown status as not measured,
+    and any other status it does not recognise as unavailable.
+    """
+    rows = [_http_target_row(t, "unknown", None) for t in _resolve_backend_targets(config)]
+    rows += [_row_for_lifecycle_state(t, "unknown") for t in _lifecycle_backend_targets(config)]
+    return _merge_backend_observations(rows)
+
+
+async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADLINE_S) -> list[dict]:
     targets = _resolve_backend_targets(config)
     lifecycle_targets = _lifecycle_backend_targets(config)
     backends = config.get("backends", {}) or {}
@@ -409,16 +475,14 @@ async def _backend_grid(config: dict) -> list[dict]:
             row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
             row["observed_at_s"] = int(time.time())
             return row
+        # Each probe has its own deadline, so one slow engine does not hold up the rows of the others.
         http_results, lifecycle_results = await asyncio.gather(
             asyncio.gather(
-                *[
-                    configured_probe(t)
-                    for t in targets
-                ],
+                *[_within_deadline(configured_probe(t), deadline_s, t, _overdue_http_row) for t in targets],
                 return_exceptions=False,
             ),
             asyncio.gather(
-                *[_lifecycle_probe(t, backends) for t in lifecycle_targets],
+                *[_within_deadline(_lifecycle_probe(t, backends), deadline_s, t, _overdue_lifecycle_row) for t in lifecycle_targets],
                 return_exceptions=False,
             ),
         )
@@ -3116,6 +3180,10 @@ def _record_backend_health_samples(backends: Optional[list[dict]]) -> None:
         status = str(
             backend.get("live_status") or backend.get("status") or "down"
         ).lower()
+        if status == "stopped" and backend.get("starts_on_demand") is True:
+            # Idle until a request starts it: not up, and not a failed check. Recording it as down made
+            # the 24-hour strip show down for an engine that was simply not running.
+            continue
         status_value = _SERVICE_STATUS_VALUE.get(status, 0.0)
         tags = json.dumps(
             _backend_history_tags(backend), sort_keys=True, separators=(",", ":")

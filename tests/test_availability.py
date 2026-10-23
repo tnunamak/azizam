@@ -1318,14 +1318,17 @@ def test_availability_projection_is_presentation_only_not_a_routing_input():
                 users[node.name] = used
     assert set(users) <= {
         "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
-        "_status_payload_with_availability", "_user_models_catalog_payload", "_user_workflows_catalog_payload",
+        "_status_payload_with_availability", "_home_status_payload", "_user_models_catalog_payload",
+        "_user_workflows_catalog_payload",
     }
-    # The two provider callables are only handed to discovery and Home/Status routers.
+    # The two provider callables are only handed to discovery and Home/Status routers. Home gets the
+    # engine-rows variant (_home_status_payload); the admin Status keeps the full status page.
     module_refs = [n for n in ast.walk(tree) if isinstance(n, ast.keyword)
-                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability"}]
+                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability", "_home_status_payload"}]
     assert {(k.arg, k.value.id) for k in module_refs} <= {
         ("capabilities_provider", "_gateway_capabilities_provider"),
         ("status_provider", "_status_payload_with_availability"),
+        ("status_provider", "_home_status_payload"),
     }
 
 
