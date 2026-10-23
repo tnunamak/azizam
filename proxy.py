@@ -13901,10 +13901,11 @@ async def _probe_service_rows(services: dict[str, Any], started: float) -> list[
 
 async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
     """The rows for these services: a row cached less than the TTL ago, else the row of a probe in flight for the
-    service, else a new probe for the services nobody is probing."""
+    service, else a new probe for the services nobody is probing. A shared probe that fails does not fail this
+    reader: its services are probed again one by one, and a service that still fails gets an unknown row."""
     now = status_endpoint._now()
     rows: list[dict[str, Any]] = []
-    probes: list[asyncio.Task] = []
+    waits: dict[asyncio.Task, list[str]] = {}  # each probe this reader waits on -> the requested services it answers
     cold: dict[str, Any] = {}
     for key, service in services.items():
         hit = _SERVICE_ROW_CACHE.get(key)
@@ -13912,18 +13913,37 @@ async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
         if hit is not None and now - hit[0] < _SERVICE_ROW_CACHE_TTL_S:
             rows.append(dict(hit[1]))
         elif probe is not None and not probe.done():
-            if probe not in probes:
-                probes.append(probe)
+            waits.setdefault(probe, []).append(key)
         else:
             cold[key] = service
     if cold:
         probe = asyncio.ensure_future(_probe_service_rows(cold, now))
         _SERVICE_ROW_PROBES.update(dict.fromkeys(cold, probe))
-        probes.append(probe)
-    for probe in probes:
-        # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
-        rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+        waits[probe] = list(cold)
+    for probe, keys in waits.items():
+        try:
+            # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
+            rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - another service's failure in a shared batch must not fail this reader
+            rows.extend(await _service_rows_one_by_one({key: services[key] for key in keys}))
     return rows
+
+
+async def _service_rows_one_by_one(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Probe each service on its own after a shared probe failed. A service that fails again gets an unknown row with
+    the error's type, never an exception."""
+    async def one(key: str, service: Any) -> list[dict[str, Any]]:
+        try:
+            return await _probe_service_rows({key: service}, status_endpoint._now())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported as an unknown row
+            return [{"service_id": key, "key": key, "status": "unknown", "last_error": type(exc).__name__,
+                     "observed_at_s": int(time.time())}]
+    groups = await asyncio.gather(*(one(key, service) for key, service in services.items()))
+    return [row for group in groups for row in group]
 
 
 async def _status_payload_with_service_rows(
