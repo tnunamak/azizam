@@ -48,6 +48,7 @@ import { ListCard, ListRow } from "@/components/product/list-card";
 import { StateBadge, StatusLine } from "@/components/product/status-ui";
 import { AppMark } from "@/components/product/app-mark";
 import { CapNotice } from "@/components/product/cap-notice";
+import { RequestHistoryNotice } from "./request-history-notice";
 import {
   AudioFace,
   MediaBadge,
@@ -1566,6 +1567,7 @@ export default function HomePage() {
               side on desktop and 32 below on phones and tablets. */}
           <div className={homeGrid}>
             <div className={homeSections}>
+              <RequestHistoryNotice />
               {refusal ? (
                 <CapNotice
                   warning={

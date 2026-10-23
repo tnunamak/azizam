@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }),
+  requestHistory: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => mocks.params }));
 vi.mock("@/lib/account-api", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/lib/account-api", () => ({
     tryKey: mocks.tryKey,
     revokeKey: mocks.revokeKey,
     promptMemory: mocks.promptMemory,
+    requestHistory: mocks.requestHistory,
   },
 }));
 const response = (body: unknown, ok = true) =>
@@ -45,6 +47,15 @@ const workflows = {
   ],
 };
 const fetchMock = vi.fn();
+/** The member's request history choice: on, with the default period (the gateway's data). */
+const historyOn = () => ({
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+});
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
     configurable: true,
@@ -54,8 +65,18 @@ beforeEach(() => {
     configurable: true,
     value: () => {},
   });
+  // The Incognito switch renders on every tab; the switch measures itself with ResizeObserver, which jsdom lacks.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   mocks.params = new URLSearchParams();
   mocks.promptMemory.mockResolvedValue({ prompt_memory: null });
+  mocks.requestHistory.mockResolvedValue(historyOn());
   vi.stubGlobal("fetch", fetchMock);
   fetchMock
     .mockReset()
