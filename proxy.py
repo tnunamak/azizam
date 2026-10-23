@@ -13874,7 +13874,56 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
-_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# Every capabilities and overview read asks about the same few services. Their rows are kept for the TTL below, and a
+# read that finds a service cold shares the probe already in flight for it, so a read costs no HTTP probe or `systemctl`
+# process unless a row has expired. The status grid keeps its own rows and deadlines.
+_SERVICE_ROW_CACHE_TTL_S = 12.0
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}  # service id -> (probe start, row)
+_SERVICE_ROW_PROBES: dict[str, asyncio.Task] = {}  # service id -> the probe in flight that will answer it
+
+
+def _service_row_key(row: Mapping[str, Any]) -> str:
+    return str(row.get("service_id") or row.get("key") or "")
+
+
+async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+    try:
+        rows = await status_endpoint._backend_grid({"backends": services})
+    finally:
+        for key in services:
+            _SERVICE_ROW_PROBES.pop(key, None)
+    checked_at = int(time.time())
+    for row in rows:
+        row.setdefault("observed_at_s", checked_at)
+        _SERVICE_ROW_CACHE[_service_row_key(row)] = (started, dict(row))
+    return rows
+
+
+async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The rows for these services: a row cached less than the TTL ago, else the row of a probe in flight for the
+    service, else a new probe for the services nobody is probing."""
+    now = status_endpoint._now()
+    rows: list[dict[str, Any]] = []
+    probes: list[asyncio.Task] = []
+    cold: dict[str, Any] = {}
+    for key, service in services.items():
+        hit = _SERVICE_ROW_CACHE.get(key)
+        probe = _SERVICE_ROW_PROBES.get(key)
+        if hit is not None and now - hit[0] < _SERVICE_ROW_CACHE_TTL_S:
+            rows.append(dict(hit[1]))
+        elif probe is not None and not probe.done():
+            if probe not in probes:
+                probes.append(probe)
+        else:
+            cold[key] = service
+    if cold:
+        probe = asyncio.ensure_future(_probe_service_rows(cold, now))
+        _SERVICE_ROW_PROBES.update(dict.fromkeys(cold, probe))
+        probes.append(probe)
+    for probe in probes:
+        # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
+        rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+    return rows
 
 
 async def _status_payload_with_service_rows(
@@ -13896,22 +13945,7 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    # Every capabilities and overview read asks about the same few services. Their
-    # rows are kept as long as the status grid keeps its own, so a read costs no
-    # HTTP probe or `systemctl` process unless a row has expired.
-    now = time.monotonic()
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
-    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
-    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
-    probed: list[dict[str, Any]] = []
-    if unchecked:
-        probed = await status_endpoint._backend_grid({"backends": unchecked})
-        checked_at = int(time.time())
-        for row in probed:
-            row.setdefault("observed_at_s", checked_at)
-            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
-    extra = status_endpoint._merge_backend_observations([*kept, *probed])
+    extra = status_endpoint._merge_backend_observations(await _service_rows(missing))
     return {**status_payload, "backends": [*rows, *extra]}
 
 
