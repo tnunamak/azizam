@@ -104,6 +104,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
             "accountable_person_id": owner,
             "access_plan": app["access_plan"],
             "disabled": app["disabled_at"] is not None,
+            "missing_app": False,
             "created_by_audit": created_by_audit.get(app["id"]),
             "keys": [
                 {
@@ -126,9 +127,44 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
             "blocks_apply": blocks,
         })
 
+    # A key or address whose App row is gone authenticates nothing (the runtime joins the App), so it stops no App:
+    # the cut-over revokes or removes it and blocks nothing. The guards and the apply's check find it the same way.
+    known = {app["id"] for app in apps}
+    orphan_keys = [k for k in keys if _key_app_id(k) not in known]
+    orphan_addresses = [a for a in addresses if a["app_id"] not in known]
+    for app_id in sorted({_key_app_id(k) for k in orphan_keys} | {a["app_id"] for a in orphan_addresses}):
+        previewed.append({
+            "app_id": app_id,
+            "name": None,
+            "kind": None,
+            "session_app": False,
+            "accountable_person_id": None,
+            "access_plan": None,
+            "disabled": False,
+            "missing_app": True,
+            "created_by_audit": None,
+            "keys": [
+                {
+                    "id": k["id"], "prefix": k["prefix"], "display_name": k["display_name"],
+                    "created_by": k["created_by"], "last_used_at": k["last_used_at"], "proven": False, "action": "revoke",
+                }
+                for k in orphan_keys if _key_app_id(k) == app_id
+            ],
+            "trusted_addresses": [
+                {
+                    "id": a["id"], "address": a["address"], "created_by": a["created_by"],
+                    "proven": False, "action": "remove", "use_history": UNAVAILABLE,
+                }
+                for a in orphan_addresses if a["app_id"] == app_id
+            ],
+            "surviving_bindings": 0,
+            "would_lose_all_bindings": False,
+            "blocks_apply": [],
+        })
+
     blocked = sorted({app["app_id"] for app in previewed if app["blocks_apply"]})
     summary = {
-        "apps": len(previewed),
+        "apps": sum(1 for app in previewed if not app["missing_app"]),
         "session_apps": sum(1 for app in previewed if app["session_app"]),
         "keys_to_revoke": sum(1 for a in previewed for k in a["keys"] if k["action"] == "revoke"),
         "addresses_to_remove": sum(1 for a in previewed for t in a["trusted_addresses"] if t["action"] == "remove"),
@@ -176,10 +212,13 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
         "",
     ]
     for app in body["apps"]:
-        lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']}{' (session App)' if app['session_app'] else ''} "
-                     f"accountable={app['accountable_person_id']} plan={app['access_plan']}"
-                     f"{' disabled' if app['disabled'] else ''}")
-        if app["kind"] == "personal":
+        if app["missing_app"]:
+            lines.append(f"App {app['app_id']} has no App row: its bindings are removed and it stops nothing")
+        else:
+            lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']}{' (session App)' if app['session_app'] else ''} "
+                         f"accountable={app['accountable_person_id']} plan={app['access_plan']}"
+                         f"{' disabled' if app['disabled'] else ''}")
+        if not app["missing_app"] and app["kind"] == "personal":
             maker = app["created_by_audit"]
             if maker is None:
                 lines.append("  creator not recorded in audit")

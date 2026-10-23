@@ -219,6 +219,7 @@ def _change(conn: sqlite3.Connection, body: dict[str, Any], digest: str) -> tupl
             if entry["action"] == "remove":
                 conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry["id"],))
                 removed.append({"id": entry["id"], "address": entry["address"], "app_id": app["app_id"], "created_by": entry["created_by"]})
+    _refuse_unproven_bindings(conn)
     app_binding_guard.install(conn)
     admin_store._record_audit_in_transaction(
         conn, ACTION, actor_kind="system", actor_id=None, actor_label=f"cli:{_operator()}",
@@ -227,6 +228,24 @@ def _change(conn: sqlite3.Connection, body: dict[str, Any], digest: str) -> tupl
         now=now,
     )
     return revoked, removed
+
+
+def _refuse_unproven_bindings(conn: sqlite3.Connection) -> None:
+    """After the revocations and removals, in the same transaction: no unproven binding may stay live.
+
+    It uses the guards' own creator test and App lookup, so a key or address whose App row is gone counts too.
+    """
+    keys = conn.execute(
+        "SELECT COUNT(*) FROM credentials c LEFT JOIN apps a ON a.id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
+        "WHERE c.subject_kind = 'app' AND c.revoked_at IS NULL AND (a.id IS NULL OR c.created_by IS NOT a.owner_user_id)",
+    ).fetchone()[0]
+    addresses = conn.execute(
+        "SELECT COUNT(*) FROM app_trusted_addresses t LEFT JOIN apps a ON a.id = t.app_id "
+        "WHERE a.id IS NULL OR t.created_by IS NOT a.owner_user_id",
+    ).fetchone()[0]
+    if keys or addresses:
+        raise CutoverError(f"{keys} App key(s) and {addresses} trusted address(es) would stay live without a proven creator; "
+                           "nothing was changed")
 
 
 def _report(backup: Path, revoked: list[dict], removed: list[dict]) -> list[str]:
