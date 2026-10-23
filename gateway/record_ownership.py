@@ -43,5 +43,7 @@ def owns_record(kind: str, record: Mapping[str, Any], *, viewer: Viewer, apps: A
         # the creating credential here. Rows of another App, and rows of another maker, still deny.
         origin = ContentOrigin("app_key", credential_id=viewer.credential_id or app_id)
     person_id = makers[0] if len(makers) == 1 else None
-    row = (ReceiptRecord if kind == "receipt" else JobRecord)(person_id=person_id, app_id=app_id, origin=origin)
+    owner_key_hash = str(record.get("owner_key_hash") or "") or None
+    row = (ReceiptRecord if kind == "receipt" else JobRecord)(
+        person_id=person_id, app_id=app_id, origin=origin, owner_key_hash=owner_key_hash)
     return isinstance(decide(viewer, row, "read"), Own)

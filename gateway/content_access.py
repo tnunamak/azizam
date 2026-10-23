@@ -165,6 +165,7 @@ class ReceiptRecord:
     person_id: str | None = None  # the trusted maker, never the App's owner (D51)
     app_id: str | None = None
     origin: ContentOrigin | None = None
+    owner_key_hash: str | None = None  # the creating key of an App-less row (the legacy runtime key)
     request_id: str | None = None
     available: bool = True
     kind: Literal["receipt"] = field(default="receipt", init=False)
@@ -176,6 +177,7 @@ class JobRecord:
     person_id: str | None = None  # the maker of the job's creating receipt (D51)
     app_id: str | None = None
     origin: ContentOrigin | None = None
+    owner_key_hash: str | None = None  # the creating key of an App-less job (the legacy runtime key)
     job_id: str | None = None
     available: bool = True
     kind: Literal["job"] = field(default="job", init=False)
@@ -264,6 +266,13 @@ def _content_read(viewer: Viewer, record: PersonRecord) -> bool:
     return False
 
 
+def _appless_legacy_key(viewer: Viewer, record: ReceiptRecord | JobRecord) -> bool:
+    """The legacy runtime key (no App, no person) reads the rows it created (D52)."""
+    return (record.person_id is None and not record.app_id and viewer.auth_kind == "app_key"
+            and not viewer.person_id and not viewer.app_id and bool(viewer.key_hash)
+            and record.owner_key_hash == viewer.key_hash)
+
+
 def decide_own(viewer: Viewer, principals: Iterable[str]) -> bool:
     """Principal-only Own check; no per-row resource or set allocation.
 
@@ -298,12 +307,13 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
         if action in {"delete", "reuse"} and _self(viewer, record) and _content_read(viewer, record):
             return OWN
     elif isinstance(record, ReceiptRecord):
-        if action == "read" and _content_read(viewer, record):
+        if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
             return OWN
     elif isinstance(record, JobRecord):
-        if action == "read" and _content_read(viewer, record):
+        if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
             return OWN
-        if action == "cancel" and _self(viewer, record) and _content_read(viewer, record):
+        if action == "cancel" and ((_self(viewer, record) and _content_read(viewer, record))
+                                   or _appless_legacy_key(viewer, record)):
             return OWN
     elif isinstance(record, PromptRecord):
         if action == "read":

@@ -163,7 +163,7 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
         asset_id = proxy.store_asset_bytes(_png(), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
     finally:
         proxy.media_delivery._CONTEXT.set(None)
-    scope = me_media._MediaScope(app_ids=None, viewer_person_id=hh.owner["id"], user_ids=None, audit_everyone=True)
+    scope = me_media._member_media_scope(hh.owner["id"], hh.admin)
     items = me_media._media_items(
         request=Request({"type": "http", "method": "GET", "path": "/me/api/media", "headers": []}),
         scope=scope, signed_url_builder=lambda *_a, **_k: "u", asset_path_resolver=proxy.asset_cache_path,
@@ -171,12 +171,10 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
         asset_catalog_provider=me_media.create_asset_catalog_provider(proxy.IMAGE_CACHE_DIR),
         asset_metadata_reader=proxy._read_asset_metadata, admin_db_path=hh.admin, media_jobs_path=hh.jobs,
         receipts_path=hh.receipts, prompt_memory_path=hh.jobs)
-    item = next(i for i in items if i["asset_id"] == asset_id)
-    assert item["prompt"] is None
+    # A service App's output names no person, so no person's Library lists it, and its prompt reaches nobody (D51, D52).
+    assert asset_id not in {i["asset_id"] for i in items}
     assert prompt_memory.get_person_prompts(hh.owner["id"]) == {}
-    assert item["workflow_download_url"] is None
-    assert item["source"]["app_id"] == svc["id"]
-    assert "robin typed this" not in item["title"]
+    assert "robin typed this" not in str(items)
 
 
 
@@ -190,15 +188,15 @@ def _library(hh, scope):
         receipts_path=hh.receipts, prompt_memory_path=hh.jobs)
 
 
-@pytest.mark.parametrize("makers", [[], ["another-person"]])
-def test_app_library_visibility_does_not_depend_on_maker_metadata(hh, makers):
+@pytest.mark.parametrize("makers,visible", [([], True), (["another-person"], False)])
+def test_a_recorded_maker_decides_and_an_empty_maker_falls_back_to_the_personal_app(hh, makers, visible):
     auth = _ctx_for(_robin_key(hh), hh.admin)
     asset_id = proxy.store_asset_bytes(_png(), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth), maker_person_id=None)
     meta = proxy._read_asset_metadata(asset_id)
     meta["maker_person_ids"] = makers
     proxy._write_asset_metadata(asset_id, meta)
     items = _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin))
-    assert asset_id in {item["asset_id"] for item in items}
+    assert (asset_id in {item["asset_id"] for item in items}) is visible
 
 
 def test_legacy_service_key_stays_no_person(hh):

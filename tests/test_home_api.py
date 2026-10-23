@@ -397,8 +397,7 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
     assert evidence["receipt_viewed"]["recorded"]
     assert not evidence["external_client_confirmed"]["recorded"]
-    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
-    assert {row["target_id"] for row in audit_rows} == {"mine"}
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
 
 
 def test_setup_actual_invitation_completes_optional_step(home_case):

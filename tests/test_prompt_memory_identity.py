@@ -254,7 +254,8 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
             media_jobs_path=jobs_db, receipts_path=receipts_db, prompt_memory_path=jobs_db,
         )
     assert library(member["id"])[0]["prompt"] == "video-full-secret"
-    assert library(owner["id"])[0]["prompt"] is None
+    # The owner did not make this video and holds no share, so it is not in the owner's Library (D51).
+    assert library(owner["id"]) == []
 
 
 def test_delete_person_removes_only_that_persons_responses(tmp_path):
