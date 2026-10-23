@@ -115,6 +115,57 @@ def test_remembered_returns_only_tile_name_avatar_method_provider_hint(tls):
         assert leaked not in text
 
 
+def test_the_list_marks_only_the_entry_of_the_person_signed_in_on_this_browser(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)
+    sign_in_with_password(client, NEIGHBOUR, NEIGHBOUR_PASSWORD)  # both are listed; this browser is the neighbour's
+
+    marked = {person["name"]: person.get("you") for person in listed(client)["people"]}
+
+    assert marked == {MEMBER_NAME: None, NEIGHBOUR_NAME: True}
+
+
+def test_the_list_marks_nobody_for_a_browser_with_no_session(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)
+    anonymous = same_device(tls, client)  # the device cookie, and no session
+
+    [person] = listed(anonymous)["people"]
+
+    assert "you" not in person
+
+
+def test_the_list_marks_nobody_when_the_session_belongs_to_someone_else(tls):
+    owner_with_password(tls)
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    device = tls.client()
+    sign_in_with_password(device, MEMBER, MEMBER_PASSWORD)  # MEMBER is listed on this device
+    owner_browser = tls.client()
+    assert sign_in_with_password(owner_browser, OWNER, OWNER_PASSWORD).status_code == 200
+    holder = same_device(tls, device)  # this device, carrying the owner's session
+    put_cookie(holder, owner_browser.cookies.get(COOKIE))
+
+    [person] = listed(holder)["people"]
+
+    assert person["name"] == MEMBER_NAME and "you" not in person
+
+
+def test_the_list_marks_nobody_when_the_session_person_was_forgotten_on_this_browser(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, NEIGHBOUR, NEIGHBOUR_PASSWORD)
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)  # this browser is signed in as the member
+    assert client.delete(f"/auth/api/remembered/{tile_for(client, MEMBER_NAME)}").status_code == 200  # forgotten, still signed in
+
+    [person] = listed(client)["people"]
+
+    assert person["name"] == NEIGHBOUR_NAME and "you" not in person
+
+
 def test_device_cookie_is_host_prefixed_httponly_secure_lax(tls):
     make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
     response = sign_in_with_password(tls.client(), MEMBER, MEMBER_PASSWORD)
