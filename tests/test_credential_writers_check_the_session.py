@@ -404,6 +404,10 @@ REVIEWED_UNGUARDED_TABLES = {
 NOT_CREDENTIAL_TABLES = {
     # request history content: written only by the retention writer, under its lock, never by a credential
     "kept_requests",
+    # A person's "Not now" on the one-time History notice: one row per person and when it was dismissed. It holds no
+    # secret and grants nothing. The route needs a signed-in session and the same write check as a settings choice, and
+    # it writes only that session's own person (gateway/request_history_api.py).
+    "request_history_notice_seen",
     "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
     "audit_events", "media_hidden_assets",
