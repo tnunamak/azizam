@@ -737,7 +737,16 @@ def test_a_session_app_key_is_not_found_for_keep_or_replace_instead_of_a_server_
     owner_id = gateway.user(OWNER)["id"]
     session_app_id = admin_store.ensure_session_app_for_user(owner_id, name="Signed-in work", path=gateway.path)["id"]
     before_the_cut_over(gateway.path)
-    key_id = _unproven_key(gateway, session_app_id)
+    # A key a database stored on a session App before the guard refused such keys: written directly, as it was.
+    key_id = f"cred_{uuid.uuid4().hex[:10]}"
+    conn = sqlite3.connect(gateway.path)
+    try:
+        conn.execute("INSERT INTO credentials(id, subject_kind, subject_id, app_id, hash, prefix, created_at, created_by) "
+                     "VALUES (?, 'app', ?, ?, ?, 'opk_legacy', 1, NULL)",
+                     (key_id, session_app_id, session_app_id, f"sha256:{uuid.uuid4().hex}"))
+        conn.commit()
+    finally:
+        conn.close()
 
     kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
     replaced = owner.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(owner))
