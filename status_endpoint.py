@@ -67,7 +67,10 @@ _SECTION_AT: dict[str, float] = {}  # when each section last answered, monotonic
 # The 24-hour backend history has its own light sampler, which runs as long as the gateway does. It probes the HTTP
 # health URLs only, so it starts no process; the snapshot's status grid keeps the lifecycle checks.
 BACKEND_SAMPLE_INTERVAL_S = 60.0
+# Shutdown waits this long for a sample write that has already started. A thread cannot be cancelled once it runs.
+BACKEND_SAMPLE_JOIN_S = 5.0
 _SAMPLE_TASK: asyncio.Task | None = None
+_SAMPLE_WRITE: concurrent.futures.Future | None = None  # the sample write on the status pool, while one runs
 
 
 def _now() -> float:
@@ -4440,7 +4443,15 @@ async def _sample_backend_health(config: dict) -> None:
             )
             for t in targets
         ))
-    await _section(_record_backend_health_samples, rows)
+    await _write_backend_samples(rows)
+
+
+async def _write_backend_samples(rows: list) -> None:
+    """Write one sample on the status pool. The write's handle is kept, so shutdown can wait for a write that has started."""
+    global _SAMPLE_WRITE
+    context = contextvars.copy_context()
+    _SAMPLE_WRITE = _SECTION_POOL.submit(functools.partial(context.run, _record_backend_health_samples, rows))
+    await asyncio.wrap_future(_SAMPLE_WRITE)
 
 
 async def _backend_sample_loop(get_config: Callable[[], dict]) -> None:
@@ -4462,10 +4473,16 @@ def start_backend_samples(get_config: Callable[[], dict]) -> None:
 
 
 async def stop_backend_samples() -> None:
-    """Cancel the sampler and wait until it has ended, so no sample is written after shutdown."""
-    global _SAMPLE_TASK
+    """Cancel the sampler and wait until it has ended. A sample write that has started cannot be cancelled, so shutdown
+    waits for it too, for at most BACKEND_SAMPLE_JOIN_S, and logs if it is still running after that."""
+    global _SAMPLE_TASK, _SAMPLE_WRITE
     task, _SAMPLE_TASK = _SAMPLE_TASK, None
-    if task is None:
-        return
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    # The shared metrics writer is not closed here: the lifespan closes it after the metrics sampler has stopped too.
+    write, _SAMPLE_WRITE = _SAMPLE_WRITE, None
+    if write is not None and not write.done():
+        _finished, unfinished = await asyncio.wait({asyncio.wrap_future(write)}, timeout=BACKEND_SAMPLE_JOIN_S)
+        if unfinished:
+            _log.warning("backend sample write still running %s s into shutdown; not waiting longer", BACKEND_SAMPLE_JOIN_S)

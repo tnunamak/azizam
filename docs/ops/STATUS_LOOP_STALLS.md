@@ -107,7 +107,9 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
    cancel the batch the other rows wait for.
 7. **Backend history has its own light sampler** (`start_backend_samples()`). It probes each HTTP health URL
    once at startup and then every `BACKEND_SAMPLE_INTERVAL_S` (60 s), and writes the four `service_*` samples
-   from those rows. It asks no lifecycle driver and starts no process. The snapshot build no longer writes
+   from those rows. It asks no lifecycle driver and starts no process. Shutdown cancels it and waits up to `BACKEND_SAMPLE_JOIN_S` (5 s)
+   for a write that has already started on the status pool. A write still running after that is logged, and the
+   sampler's handle to it is dropped. The snapshot build no longer writes
    samples, so the samples come at a fixed interval and not at the times a build happens to run.
 
 ## Costs and limits
@@ -168,7 +170,8 @@ stopped (0), and a backend with no health URL has no sample.
   and joins; a backend answer older than the freshness bound is not trusted for availability, even inside a fresh build; the lifespan opens
   the snapshot and the sampler before serving and joins both after.
 - `tests/test_backend_health_sampler.py`: the sampler probes the HTTP health URLs and starts no process; it
-  samples once at startup and then once a minute, and joins at shutdown; the status build writes no samples.
+  samples once at startup and then once a minute, and joins at shutdown, waiting for a write that has already started, up to its bound; the status build writes no
+  samples.
 - `tests/test_status_probes_off_loop.py`: no probe starts on the loop; one systemctl call per scope;
   sections run together; a section past its budget is stale and does not hold the others; a
   shielded lifecycle batch survives one row's deadline.
