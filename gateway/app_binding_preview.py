@@ -165,6 +165,12 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
         lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']} "
                      f"accountable={app['accountable_person_id']} plan={app['access_plan']}"
                      f"{' disabled' if app['disabled'] else ''}")
+        if app["kind"] == "personal":
+            maker = app["created_by_audit"]
+            if maker is None:
+                lines.append("  creator not recorded in audit")
+            elif maker != app["accountable_person_id"]:
+                lines.append(f"  created by {maker} (audit): kept personal by default")
         for key in app["keys"]:
             lines.append(f"  key {key['prefix']} created_by={_show(key['created_by'])} "
                          f"proven={'yes' if key['proven'] else 'no'} last_used={key['last_used_at'] or 'never'} "
