@@ -229,8 +229,8 @@
 # Slice 5a (request history, server side): tests/test_request_history_*.py (contract, secret floor, storage and
 # upgrade, capture, forget and receipts, reader matrix, maker routes and fences, member choice): collect-only 16077 -> 16231.
 # Slice 5a review fixes: +26 cases in tests/test_review_retention_s5a_probes.py (the reviewer's probes, now on the
-# branch) and +15 in tests/test_request_history_s5a_review.py. collect-only 16231 -> 16272 (2026-10-23).
-pytest = 16272
+# branch) and +16 in tests/test_request_history_s5a_review.py. collect-only 16231 -> 16273 (2026-10-23).
+pytest = 16273
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
