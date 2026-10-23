@@ -144,6 +144,24 @@ def test_home_owner_recent_shows_only_owned_app_activity(home_case):
     assert all(row.get("source", {}).get("app_id") != service["id"] for row in projected["receipts"])
 
 
+def test_client_activity_projection_keeps_app_id_under_source(home_case):
+    c = home_case
+    app_id = c.client_app["id"]
+    receipt_store.record(
+        {"request_id": "mine", "app_id": app_id, "status": "succeeded"},
+        path=c.receipts,
+    )
+
+    rows = receipt_store.recent(
+        limit=5, audience="client", viewer_person_id=c.user["id"],
+        app_ids=[app_id], path=c.receipts,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["source"]["app_id"] == app_id
+    assert "app_id" not in rows[0]
+
+
 def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)

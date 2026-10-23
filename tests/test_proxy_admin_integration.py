@@ -1309,7 +1309,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                 self.assertTrue(decision.called)
                 self.assertEqual(response.json()["scope"], "me")
                 self.assertEqual(len(response.json()["receipts"]), 1)
-                self.assertEqual(response.json()["receipts"][0]["app_id"], apps[name]["id"])
+                self.assertEqual(response.json()["receipts"][0]["source"]["app_id"], apps[name]["id"])
                 for foreign in set(people) - {name}:
                     self.assertNotIn(f"private-{foreign}-model", response.text)
                 self.assertNotIn(service["id"], response.text)
