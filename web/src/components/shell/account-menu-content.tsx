@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import {
   ArrowLeftRight,
   ChevronDown,
+  Braces,
   CircleHelp,
   CircleUserRound,
   LogOut,
@@ -155,9 +156,15 @@ export function AccountMenuContent({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem asChild>
-              <a href="/docs">
+              <a href="https://azizam.dev/docs">
                 <CircleHelp />
                 Help
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href="/docs">
+                <Braces />
+                API reference
               </a>
             </DropdownMenuItem>
             {!viewer.authenticated && (
