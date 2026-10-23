@@ -52,14 +52,17 @@ const caption = () =>
   document.querySelector('[data-slot="sign-in-caption"]')!.textContent;
 
 /** A server stub for a provider that is not on yet: it asks for a test first. */
+/** The server's rule (gateway/signin_api.py): a test is needed to turn single sign-on on, and not to save while it is off. */
 const newProvider =
   (verdict: TestVerdict | null = ownerUnlinked()) =>
-  (_p: unknown, testId: string | null): Preview =>
+  (proposal: SignInProposal, testId: string | null): Preview =>
     testId
       ? emptyPreview({ test_verdict: verdict })
-      : emptyPreview({
-          blockers: [{ code: "test_required", message: "Test first." }],
-        });
+      : emptyPreview(
+          proposal.methods.provider
+            ? { blockers: [{ code: "test_required", message: "Test first." }] }
+            : {},
+        );
 
 describe("state a: live and configured", () => {
   it("shows the saved sign-in, the connection and nothing to save", async () => {
@@ -308,9 +311,8 @@ describe("state d: first-time setup", () => {
       secret: "s3cret",
       name: "Keycloak",
     });
-    // Before the test: Turn on is off and says why; Test is ready.
-    expect(await screen.findByText("Test sign-in first")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeDisabled();
+    // Before the test: the switch is locked and says why, and Save keeps single sign-on off.
+    await until(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
     expect(screen.getByRole("switch", { name: "Keycloak" })).toHaveAttribute(
       "aria-disabled",
       "true",
@@ -322,18 +324,20 @@ describe("state d: first-time setup", () => {
     // After the test it can be turned on, and says what that does.
     await runTest(user);
     await screen.findByText("Keycloak works.");
-    await until(() =>
-      expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeEnabled(),
-    );
     expect(screen.getByText("Passed, not on yet")).toBeInTheDocument();
     expect(caption()).toContain(
       "The test passed. Turning it on adds a Keycloak button to the sign-in page.",
+    );
+    // The switch turns it on; the button then reads Turn on, and Save makes it so.
+    await user.click(screen.getByRole("switch", { name: "Keycloak" }));
+    await until(() =>
+      expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeEnabled(),
     );
     // The page still says the provider is off until Save.
     expect(
       screen.getByText("People sign in with a password. To add another way to sign in, connect a provider below."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Keycloak" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Keycloak" })).toBeChecked();
   });
 
   it("asks the owner to link before turning on, without hiding Save for later", async () => {
@@ -414,9 +418,9 @@ describe("state e: empty first run", () => {
     );
     expect(screen.getByText("Fill in the fields above first.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Test sign-in" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Turn on your provider" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save for later" })).toBeDisabled();
-    expect(caption()).toBe("Test sign-in first");
+    expect(caption()).toBe("Nothing to save.");
     expect(screen.getByText("No rules yet.")).toBeInTheDocument();
     expect(text()).not.toMatch(/\ba your provider\b|your own your/i);
   });
@@ -593,10 +597,9 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
   }
 
   it("uses the host in the row label, button, captions, sentence and sign-in button text", async () => {
-    await withHostOnly();
+    const user = await withHostOnly();
     expect(screen.getByRole("switch", { name: "id.example.com" })).toBeInTheDocument();
     expect(screen.getByText("id.example.com", { selector: "p" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Turn on id.example.com" })).toBeEnabled();
     expect(
       screen.getByText("Passed just now. Opens id.example.com in a new window."),
     ).toBeInTheDocument();
@@ -616,6 +619,11 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
       screen.getByText("Stays on until id.example.com is on, so you can still sign in."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Name")).toHaveAttribute("placeholder", "id.example.com");
+    // The switch turns it on, and then the button reads Turn on with the host.
+    await user.click(screen.getByRole("switch", { name: "id.example.com" }));
+    await until(() =>
+      expect(screen.getByRole("button", { name: "Turn on id.example.com" })).toBeEnabled(),
+    );
   });
 
   it("never reads 'your provider' or 'a your' once an address exists", async () => {
@@ -632,6 +640,7 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
     await user.click(name);
     await user.paste("Family account");
     expect(await screen.findByRole("switch", { name: "Family account" })).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Family account" }));
     expect(screen.getByRole("button", { name: "Turn on Family account" })).toBeInTheDocument();
     expect(screen.getByText("Family account works.")).toBeInTheDocument();
     expect(

@@ -195,8 +195,9 @@ def test_oidc_invite_acceptance_does_not_refresh_the_sign_in_proof(sg, proof_tim
     assert current.family_id != previous.family_id
     assert current.authenticated_at == previous.authenticated_at
     assert not accounts.session_allowed(previous.subject, previous.session_id, family_id=previous.family_id, path=sg.path)
-    app_id = response.json()["app"]["id"]
-    assert asks_again(client.post(f"/me/api/apps/{app_id}/keys", json={}, headers=csrf(client)))
+    # A connection to a client is still asked from a stale proof; a key on the invited App is routine now.
+    assert asks_again(client.post("/me/api/mcp/requests/req_not_pending", json={"decision": "allow"},
+                                  headers={**csrf(client), "x-azizam-user-action": "1"}))
 
 
 def test_failed_password_sign_in_keeps_the_incoming_session(sg):

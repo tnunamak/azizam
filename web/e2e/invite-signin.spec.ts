@@ -1,6 +1,7 @@
 // Principal state: the invite creates a member, so the address is namespaced
 // and two copies of this case can run at once (fixtures/isolation.ts).
 import { expect, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("invited member creates a password account and signs in again", async ({
   browser,
@@ -110,4 +111,27 @@ test("invited member creates a password account and signs in again", async ({
   } finally {
     await guest.close();
   }
+});
+
+test("a refused invitation sign-in shows the sign-out screen, and Back goes back to the invitation", async ({
+  page,
+}) => {
+  await page.route("**/auth/api/options*", (route) =>
+    fulfilJson(route, {
+      built_in: false,
+      oidc: true,
+      oidc_label: "Household accounts",
+      oidc_url: "/login?return_to=%2Finvite%2F",
+      instance_name: "Azizam",
+      fresh_sign_in: true,
+    }),
+  );
+  await page.goto("/sign-in/?error=not_fresh&return_to=%2Finvite%2F&provider_sign_out=1");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Sign out of Household accounts first" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(
+    page.getByRole("link", { name: "Continue with Household accounts" }),
+  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");
 });

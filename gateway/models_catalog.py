@@ -12,6 +12,8 @@ import asyncio
 from urllib.parse import quote
 import copy
 import json
+import socket
+import ssl
 import statistics
 import inspect
 from pathlib import Path
@@ -28,7 +30,7 @@ from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
-    declared_health_success, engine_label, model_locality, service_health_endpoint, CAPABILITY_ICON_KEYS)
+    declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS)
 from gateway.model_files import model_file_availability
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
@@ -980,6 +982,41 @@ class HealthProbeNoResponse(Exception):
         self.status_code = status_code
 
 
+class HealthProbeTimedOut(Exception):
+    """The health endpoint did not answer in time: slow, which is not the same as down."""
+
+
+class HealthProbeRefused(Exception):
+    """Nothing listens on the health endpoint: stopped, or not started yet."""
+
+
+# An answer that has not come by this deadline is slow, not down. The read timeout alone does not bound a
+# body that keeps trickling in, so a probe is cut off here.
+HEALTH_PROBE_DEADLINE_S = 2.0
+
+
+def connect_failure_kind(error: BaseException) -> str:
+    """Name why a connection failed: ``refused``, ``dns``, ``tls`` or ``other``.
+
+    httpx reports every failure to connect as a ConnectError and keeps the socket or TLS
+    error it wrapped as the cause. Only a refused connection means nothing listens on the
+    port. A name that does not resolve or a broken TLS handshake is another fault, so it
+    must not be read as a stopped engine.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, ConnectionRefusedError):
+            return "refused"
+        if isinstance(cause, socket.gaierror):
+            return "dns"
+        if isinstance(cause, ssl.SSLError):
+            return "tls"
+        cause = cause.__cause__ or cause.__context__
+    return "other"
+
+
 # Latest successful health check per service in this process. Lost on
 # restart; the evidence then omits ``last_success_at_s`` instead of guessing.
 _HEALTH_LAST_SUCCESS_S: dict[str, int] = {}
@@ -1018,11 +1055,19 @@ async def probe_service_health(
         times = {"observed_at_s": attempted_at, "last_attempt_at_s": attempted_at}
         if service_id in _HEALTH_LAST_SUCCESS_S:
             times["last_success_at_s"] = _HEALTH_LAST_SUCCESS_S[service_id]
-        missing_route = False
+        missing_route = starting = slow = refused = False
         try:
-            payload = await get_json(endpoint)
+            payload = await asyncio.wait_for(get_json(endpoint), timeout=HEALTH_PROBE_DEADLINE_S)
         except HealthProbeNoResponse as exc:
             missing_route = exc.status_code in {404, 405}
+            # 502-504 from an engine that answers: a model is still loading, or it is overloaded.
+            starting = exc.status_code in {502, 503, 504}
+            payload = None
+        except (HealthProbeTimedOut, TimeoutError):
+            slow = True
+            payload = None
+        except HealthProbeRefused:
+            refused = True
             payload = None
         except Exception:  # noqa: BLE001
             payload = None
@@ -1032,6 +1077,25 @@ async def probe_service_health(
                     "available": None,
                     "status": "unknown",
                     "reason": "Health endpoint did not respond",
+                    "source": "health",
+                    "kind": "no_response",
+                    **times,
+                }
+            # The gateway starts this engine when a request needs it, so a stopped one can still take requests.
+            if refused and starts_on_demand(service or {}):
+                return service_id, {
+                    "available": None,
+                    "status": "stopped",
+                    "reason": "Not running; it starts when a request needs it",
+                    "source": "health",
+                    "kind": "process",
+                    **times,
+                }
+            if slow or starting:
+                return service_id, {
+                    "available": None,
+                    "status": "degraded",
+                    "reason": "Health endpoint did not answer in time" if slow else "Health endpoint is starting or busy",
                     "source": "health",
                     "kind": "no_response",
                     **times,

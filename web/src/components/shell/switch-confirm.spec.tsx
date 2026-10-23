@@ -90,7 +90,8 @@ it("Discard and switch ends the session and sends the person to the sign-in page
 
   await user.click(await screen.findByRole("button", { name: "Discard and switch" }));
 
-  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/"));
+  // The sign-in page reads ?after=switch and shows who just left (DESIGN.md section 4.5).
+  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/?after=switch"));
   expect(fetch).toHaveBeenCalledWith("/logout", expect.objectContaining({ method: "POST" }));
 });
 

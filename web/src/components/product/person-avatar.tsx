@@ -5,8 +5,9 @@ import { Avatar as AvatarPrimitive } from "radix-ui";
 import { cn } from "@/lib/cn";
 
 /**
- * The household's avatars: a generated disc with the person's initial, or the
- * picture the person's sign-in provider shared. Everything here is drawn from
+ * The household's avatars: the picture the person's sign-in provider shared, or
+ * a generated disc with the person's initial. The picture is the default when
+ * there is one; a disc the person chose stays. Everything here is drawn from
  * the stable person id, never the display name, so a rename keeps the colour.
  */
 
@@ -114,7 +115,7 @@ export type PersonAvatarProps = {
   personId?: string | null;
   name: string;
   selection?: AvatarSelection | null;
-  /** The gateway path of the picture. It loads only after an explicit sign-in selection. */
+  /** The gateway path of the picture. It is shown unless the person chose a generated disc. */
   pictureUrl?: string | null;
   size?: PersonAvatarSize;
   className?: string;
@@ -142,8 +143,10 @@ export function PersonAvatar({
     seed,
     selection?.kind === "generated" ? selection.variant : undefined,
   );
+  // The default (no choice, or automatic) is the picture when the gateway gave one; the gateway withholds
+  // another person's picture unless they chose it, so that case shows the disc.
   const imageUrl =
-    selection?.kind === "sign-in" ? getAvatarPictureUrl(pictureUrl) : undefined;
+    selection?.kind === "generated" ? undefined : getAvatarPictureUrl(pictureUrl);
   const hidden = decorative && !label;
   const initials = getAvatarInitials(name);
 
@@ -213,7 +216,8 @@ export function AvatarPicker({
 }: AvatarPickerProps) {
   const groupId = React.useId();
   const pictureAvailable = Boolean(getAvatarPictureUrl(pictureUrl));
-  const pictureSelected = value?.kind === "sign-in" && pictureAvailable;
+  // The picture is the default, so it is the checked choice unless the person picked a generated disc.
+  const pictureSelected = pictureAvailable && value?.kind !== "generated";
   const selectedVariant = getGeneratedAvatar(
     personId,
     value?.kind === "generated" ? value.variant : undefined,

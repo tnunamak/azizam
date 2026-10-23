@@ -509,6 +509,23 @@
   ],
   "gateway_sleeps": [],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "img_1f112bafd6ef3faeed8f29756abee071b70ead75d5550c07a8ef7ff28d0ec826",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      },
+      {
+        "asset_id": "img_32c804eba2a55266294a3ab0fca4fc3525d5f07c2cda91da6959d14d114c5c97",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      },
+      {
+        "asset_id": "img_db7080aad611e6346ae0e79325c5ed72026b87041dfedf734ac5885cc5940583",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_jobs": [
       {
         "api_key_name": "test-app",
@@ -580,7 +597,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [

@@ -242,10 +242,12 @@ device. The server keeps the rows, and the page gets a tile for each name.
 - `POST /auth/api/login` accepts `{"tile", "password"}` in place of
   `{"email", "password"}`, never both. A tile only names a person. The person's
   own password still has to match, and a wrong one counts toward the same limit
-  as an email sign-in. `"remember"` is three-valued: `true` keeps the person on
-  this device's list, `false` takes that person off this device's list after a
-  successful sign-in, and omitted or `null` leaves the list alone (headless
-  clients). A tile sign-in never adds a name.
+  as an email sign-in. That limit is 60 attempts per address in 15 minutes
+  (`AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` sets the 60) and 10 per email.
+  `"remember"` is three-valued: `true` keeps the person on this device's list,
+  `false` takes that person off this device's list after a successful sign-in,
+  and omitted or `null` leaves the list alone (headless clients). A tile sign-in
+  never adds a name.
 - `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
   person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
   email in any URL. The callback accepts only a fresh sign-in by the person the
@@ -483,6 +485,7 @@ Selected successful workflows are exercised separately.
 | `PUT /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.put_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/retention` | session-only | denied | `gateway.request_history_api.get_my_retention`; Browser session; mutations require CSRF/action header | hidden |
 | `PUT /me/api/retention` | session-only | denied | `gateway.request_history_api.put_my_retention`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/retention/notice-seen` | session-only | denied | `gateway.request_history_api.dismiss_request_history_notice`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/prompt-memory/prompts` | session-only | denied | `gateway.me_prompt_memory.delete_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/receipts/{request_id}` | session-only | denied | `proxy.user_portal_receipt_detail`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/session` | session-view | no owner authority | `proxy.user_portal_session`; Optional browser session; returns unauthenticated view without cookie | hidden |

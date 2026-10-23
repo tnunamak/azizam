@@ -404,10 +404,20 @@ REVIEWED_UNGUARDED_TABLES = {
 NOT_CREDENTIAL_TABLES = {
     # request history content: written only by the retention writer, under its lock, never by a credential
     "kept_requests",
+    # A person's "Not now" on the one-time History notice: one row per person and when it was dismissed. It holds no
+    # secret and grants nothing. The route needs a signed-in session and the same write check as a settings choice, and
+    # it writes only that session's own person (gateway/request_history_api.py).
+    "request_history_notice_seen",
     "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
-    "audit_events", "media_hidden_assets", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
-    "media_jobs_migrations", "media_jobs_schema_version", "media_volume_identity", "operator_settings_generations",
+    "audit_events", "media_hidden_assets",
+    # Which creating request made each media asset: asset, job and request ids only. Library deletes read it to find the
+    # requests behind an asset. Only the media job store writes it, on save and in the schema backfill. It grants nothing.
+    "media_job_asset_origins", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
+    "media_jobs_migrations", "media_jobs_schema_version",
+    # A person's Library erasures, by creating request: ids and a time. A later history write for an erased request is
+    # refused. It can refuse a write but never grant one, and holds no secret. Written only by the Library delete paths.
+    "media_library_erasure_fences", "media_volume_identity", "operator_settings_generations",
     # Dated retention descriptions and their source links hold no credential or authority.
     "retention_fact_destinations", "retention_fact_overrides", "retention_fact_references", "retention_fact_revisions",
     # Measurement job payloads contain experiment settings and reports, not credentials or authority.

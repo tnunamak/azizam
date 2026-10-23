@@ -5,6 +5,7 @@
   "authorize": "member",
   "connect": "member",
   "design": "member",
+  "history": "member",
   "library": "member",
   "models": "member",
   "status": "member",

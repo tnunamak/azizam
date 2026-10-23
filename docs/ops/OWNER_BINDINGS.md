@@ -95,8 +95,8 @@ The audit event records the administrators confirmed, in `confirmed_administrato
 
 **Replace a key** issues a new key and revokes the old one:
 
-- `POST /me/api/credentials/{credential_id}/replace`, from the browser session, with the
-  same recent sign-in as adding a key.
+- `POST /me/api/credentials/{credential_id}/replace`, from the browser session. It does not ask for a
+  recent sign-in: it is a person's own key (`docs/ops/SIGN_IN_SESSIONS.md`).
 - The new key is on the same App, has the old key's name, and has no expiry, as a key
   made from the Apps page has. The App's access plan applies to it unchanged.
 - The insert, the revocation and the audit event share one transaction. A failure
@@ -167,8 +167,8 @@ await fetch("/me/api/credentials/<key id>/adopt", {
 });
 ```
 
-A `401` with `reauth_required` opens the same prompt to confirm your sign-in that adding a
-key uses. The keep runs again once you confirm.
+A keep does not ask for a recent sign-in: it is a person's own key or address
+(`docs/ops/SIGN_IN_SESSIONS.md`).
 
 ## The first App
 

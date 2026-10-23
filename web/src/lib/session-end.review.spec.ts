@@ -58,7 +58,7 @@ describe("R1 navigator.onLine is a hint, not a gate", () => {
     vi.mocked(fetch).mockClear();
     await sessionEnd.retrySignOut();
     expect(sent("POST /logout")).toHaveLength(1);
-    expect(replace).toHaveBeenCalledWith("/sign-in/");
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 });
 

@@ -122,4 +122,4 @@ def test_source_timestamp_migrates_existing_fact_destinations(tmp_path):
     media_jobs.init_db(path)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT source_id,created_at FROM retention_fact_destinations").fetchone() == ("legacy", 0)
-    assert media_jobs.schema_version(path) == 4
+    assert media_jobs.schema_version(path) == media_jobs.SCHEMA_VERSION

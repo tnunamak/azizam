@@ -19,7 +19,7 @@ from gateway.session_policy import DAY, MINUTE
 from tests.test_credential_binding_fingerprint import ATTACKS, NEW_HOST, _attacked, _stored
 from tests.test_session_lifecycle import (  # noqa: F401  (sg is a fixture, and needs gateway)
     COOKIE, HELPER, OWNER, PASSWORD, SIGNING_KEY, asks_again, cookie_session, csrf, forge, gateway, owner_client,
-    person_id, put_cookie, registry, set_password, sg, signed_in_state, stale_owner, through_provider,
+    person_id, put_cookie, registry, sg, signed_in_state, stale_owner, through_provider,
 )
 from tests.support.access import store_plan
 
@@ -61,68 +61,49 @@ def member_headers(client):
     return {**ACT, "x-azizam-csrf": client.get("/me/api/session").json()["csrf_token"]}
 
 
-# -- HIGH 1: an old session made a key that outlives it --------------------------------------------
+# -- Routine own-account actions do not ask for a recent sign-in --------------------------------------
+# A person making a key for their own App is an ordinary action, so an old sign-in is not asked (gateway/step_up.py).
+# A key for anyone else stays with the owner's and administrators' routes, which ask.
 
-def test_an_old_owner_session_cannot_make_a_permanent_app_key_through_the_self_service_route(sg):
-    """The review's input: one-day-old owner cookie, POST /me/api/apps then POST /me/api/apps/{id}/keys."""
+def test_an_old_owner_session_makes_a_key_for_its_own_app_on_either_route(sg):
     client = owner_client(sg)
     forge(sg, client, OWNER, issued_ago=DAY)
-    headers = {**csrf(client), **ACT}
-    app = client.post("/me/api/apps", json={"name": "attacker persistence"}, headers=headers)
-    assert app.status_code == 201
-    app_id = app.json()["app"]["id"]
-    assert asks_again(client.post(f"/admin/api/apps/{app_id}/keys", json={"label": "probe"}, headers=headers))
-
-    bypass = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "probe"}, headers=headers)
-
-    assert asks_again(bypass), (bypass.status_code, bypass.text[:200])
-    assert sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,)) == []
-
-
-def test_after_confirming_the_same_person_makes_the_key(sg):
-    client = owner_client(sg)
-    forge(sg, client, OWNER, issued_ago=DAY)
-    set_password(sg, OWNER)
     headers = {**csrf(client), **ACT}
     app_id = client.post("/me/api/apps", json={"name": "mine"}, headers=headers).json()["app"]["id"]
-    assert asks_again(client.post(f"/me/api/apps/{app_id}/keys", json={"label": "k"}, headers=headers))
 
-    assert client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client)).status_code == 200
+    made = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "laptop"}, headers=headers)
+    via_admin = client.post(f"/admin/api/apps/{app_id}/keys", json={"label": "desk"}, headers=headers)
 
-    made = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "k"}, headers={**csrf(client), **ACT})
     assert made.status_code == 201, made.text
+    assert via_admin.status_code == 201, via_admin.text
+    assert len(sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,))) == 2
 
 
-def test_a_member_is_asked_too_and_a_fresh_member_is_not(sg):
-    stale, fresh = member_client(sg, stale=True), member_client(sg, email="fresh@example.test")
+def test_a_member_makes_a_key_for_its_own_app_from_an_old_session(sg):
+    stale = member_client(sg, stale=True)
     app_id = stale.post("/me/api/apps", json={"name": "mine"}, headers=member_headers(stale)).json()["app"]["id"]
-    fresh_app = fresh.post("/me/api/apps", json={"name": "mine"}, headers=member_headers(fresh)).json()["app"]["id"]
 
-    denied = stale.post(f"/me/api/apps/{app_id}/keys", json={"label": "k"}, headers=member_headers(stale))
-    allowed = fresh.post(f"/me/api/apps/{fresh_app}/keys", json={"label": "k"}, headers=member_headers(fresh))
+    made = stale.post(f"/me/api/apps/{app_id}/keys", json={"label": "k"}, headers=member_headers(stale))
 
-    assert asks_again(denied) and sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,)) == []
-    assert allowed.status_code == 201, allowed.text
+    assert made.status_code == 201, made.text
+    assert len(sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,))) == 1
 
 
-def test_the_setup_page_will_not_make_a_first_app_key_for_an_old_session(sg, monkeypatch):
-    """The review's second entry point: POST /setup/first-app."""
+def test_the_setup_page_makes_the_first_app_key_for_an_old_session(sg, monkeypatch):
     async def status(_config):
         return {"generated_at": 0, "banner": "ok", "errors": {}}
 
     monkeypatch.setattr(sg.proxy.status_endpoint, "get_cached_status", status)
-    stale, fresh = stale_owner(sg), owner_client(sg)
-    form = lambda client: {"csrf_token": csrf(client)["x-azizam-csrf"], "app_name": "first-app", "key_label": "Laptop"}
+    stale = stale_owner(sg)
+    form = {"csrf_token": csrf(stale)["x-azizam-csrf"], "app_name": "first-app", "key_label": "Laptop"}
 
-    denied = stale.post("/setup/first-app", data=form(stale))
-    allowed = fresh.post("/setup/first-app", data=form(fresh))
+    made = stale.post("/setup/first-app", data=form)
 
-    assert denied.status_code == 401 and "Sign in again" in denied.text and "opk_" not in denied.text
-    assert allowed.status_code == 201 and "opk_" in allowed.text
+    assert made.status_code == 201 and "opk_" in made.text
     assert len(sg.rows("SELECT * FROM credentials WHERE subject_kind='app'")) == 1
 
 
-def test_a_try_key_is_asked_for_an_administrator_only_when_it_would_make_a_new_one(sg):
+def test_a_try_key_is_made_for_an_administrator_on_an_old_session(sg):
     client = owner_client(sg)
     forge(sg, client, OWNER, issued_ago=0.0)
     first = client.post("/me/api/try-key", json={}, headers={**csrf(client), **ACT})
@@ -136,8 +117,9 @@ def test_a_try_key_is_asked_for_an_administrator_only_when_it_would_make_a_new_o
     fresh_mint = client.post("/me/api/try-key", json={"reuse_id": "gone"}, headers={**csrf(client), **ACT})
 
     assert reused.status_code == 200 and reused.json()["credential"]["reused"] is True
-    assert asks_again(fresh_mint)
-    assert len(sg.rows("SELECT * FROM credentials WHERE session_id IS NOT NULL")) == 1
+    assert fresh_mint.status_code == 201, fresh_mint.text
+    # The newest earlier Try key stays live for a second tab, and the new one is live beside it.
+    assert len(sg.rows("SELECT * FROM credentials WHERE session_id IS NOT NULL AND revoked_at IS NULL")) == 2
 
 
 def test_a_member_gets_a_try_key_from_an_old_session_without_being_asked(sg):

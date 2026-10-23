@@ -1552,6 +1552,12 @@
       "access": "own-account"
     },
     {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.dismiss_request_history_notice",
+      "method": "POST",
+      "path": "/me/api/retention/notice-seen",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.models_catalog.create_models_catalog_router.<locals>.models_catalog",
       "method": "GET",
       "path": "/me/api/models/catalog",

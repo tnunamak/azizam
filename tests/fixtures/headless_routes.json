@@ -1578,6 +1578,14 @@
   {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.request_history_api.dismiss_request_history_notice",
+    "method": "POST",
+    "path": "/me/api/retention/notice-seen",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.me_prompt_memory.delete_prompt_memory",
     "method": "DELETE",
     "path": "/me/api/prompt-memory/prompts",

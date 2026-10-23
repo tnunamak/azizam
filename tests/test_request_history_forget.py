@@ -250,7 +250,7 @@ def test_a_kept_request_writes_the_receipt_entry_with_its_deadline_and_parts(ans
     _send("/v1/chat/completions", {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]})
     entry = next(item for item in _receipt_retention(_latest_receipt_id()) if item["kind"] == "request_history")
     assert entry["decision"] == "kept" and entry["reason"] == "kept"
-    assert entry["parts"] == ["accepted"]
+    assert entry["parts"] == ["accepted", "received"]
     assert isinstance(entry["kept_until_ms"], int) and entry["kept_until_ms"] > 0
     assert entry["limited_by"] == "member_choice"
 

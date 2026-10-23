@@ -138,6 +138,35 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
     return None if missing else path
 
 
+# Home's first read after the status cache (12 s) expires. Waiting past the 60 s that Home may serve
+# engine rows stale (proxy._ENGINE_ROWS_MAX_STALE_S) makes each sample a cold read. A shorter wait would
+# be served the old rows while the refresh runs, and its counts would depend on how far the refresh got.
+# The row takes its limits from budgets.toml [api.routes].
+COLD_HOME_ROUTE = "/me/api/home (status cache expired)"
+COLD_HOME_WAIT_S = 61
+COLD_HOME_REPEATS = 3
+
+
+def cold_home_row(owner: Session) -> dict:
+    samples, stamps, size, status = [], [], 0, 0
+    for _ in range(COLD_HOME_REPEATS):
+        time.sleep(COLD_HOME_WAIT_S)
+        status, headers, body, ms = owner.get("/me/api/home")
+        samples.append(ms)
+        size = len(body)
+        stamps.append({k: float(headers.get(f"x-perf-{k}", 0)) for k in ("sql", "connects", "subproc", "ms", "cpu-ms")})
+        if status >= 400:
+            break
+    # Three samples: p95 is the slowest one, and the counts are the largest seen (a count is exact per read).
+    return {
+        "route": COLD_HOME_ROUTE, "who": "owner", "status": status,
+        "p50_ms": round(pct(samples, 0.5), 1), "p95_ms": round(max(samples), 1), "bytes": size,
+        "sql": int(max(s["sql"] for s in stamps)), "connects": int(max(s["connects"] for s in stamps)),
+        "subproc": int(max(s["subproc"] for s in stamps)), "server_ms": round(pct([s["ms"] for s in stamps], 0.5), 1),
+        "cpu_ms": round(pct([s["cpu-ms"] for s in stamps], 0.5), 1),
+    }
+
+
 def run(manifest: dict) -> dict:
     host, port = "127.0.0.1", int(manifest["port"])
     owner, member, anon = Session(host, port), Session(host, port), Session(host, port)
@@ -190,6 +219,7 @@ def run(manifest: dict) -> dict:
                 "subproc": int(min(s["subproc"] for s in stamps)), "server_ms": round(min(s["ms"] for s in stamps), 1),
                 "cpu_ms": round(min(s["cpu-ms"] for s in stamps), 1),
             })
+    rows.append(cold_home_row(owner))
     return {"rows": rows, "pool": sorted(pool), "repeats": REPEATS}
 
 

@@ -1,6 +1,7 @@
 """Hermetic account lifecycle tests using temporary SQLite and ASGI clients."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import logging
 from tests.support.app_keys import accountable_person
 import sqlite3
 import threading
@@ -199,6 +200,27 @@ def test_throttle_persists_ip_bucket_across_email_addresses(account_db):
     for index in range(60):
         accounts.throttle("same-ip", f"member-{index}@example.test", path=path, now=1000)
     expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
+
+
+def test_the_gateway_setting_raises_the_per_address_limit_and_keeps_the_per_email_limit(account_db, monkeypatch):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", "2000")
+    for index in range(10):
+        accounts.throttle(f"ip-{index}", "member@example.test", path=path, now=1000)
+    expect_error("login_rate_limited", lambda: accounts.throttle("new-ip", "member@example.test", path=path, now=1001))
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many", "1.5"])
+def test_an_invalid_login_attempt_setting_logs_one_line_and_keeps_sixty(account_db, monkeypatch, caplog, setting):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", setting)
+    monkeypatch.setattr(accounts, "_invalid_login_attempts_logged", False)
+    with caplog.at_level(logging.WARNING, logger="gateway.accounts"):
+        for index in range(60):
+            accounts.throttle("same-ip", f"member-{index}@example.test", path=path, now=1000)
+        expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
+    warnings = [record for record in caplog.records if "AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW" in record.getMessage()]
+    assert [record.levelno for record in warnings] == [logging.WARNING]
 
 
 def test_plan_change_applies_to_every_app_that_uses_the_persons_plan(account_db, fast_password_work):
@@ -422,6 +444,12 @@ def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, acco
     admin_store.put_operator_setting("sign_in", {"mode": "both"}, path=path)
     options = client.get("/auth/api/options").json()
     assert options["built_in"] is True and options["oidc"] is False
+
+
+def test_options_do_not_report_fresh_sign_in_until_account_switcher_a2_ships(account_client):
+    # The sign-in page shows its refused-sign-in screen only when the gateway says every single sign-on is fresh.
+    client, _ = account_client
+    assert client.get("/auth/api/options").json()["fresh_sign_in"] is False
 
 
 def test_invalid_account_request_bodies_fail(account_client):

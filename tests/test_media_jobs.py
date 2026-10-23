@@ -171,6 +171,47 @@ class TestStoreLifecycle(_StoreCase):
     def test_init_records_schema_version(self) -> None:
         self.assertEqual(media_jobs.schema_version(self.db), media_jobs.SCHEMA_VERSION)
 
+    def test_existing_database_backfills_indexed_asset_origins(self) -> None:
+        modern_asset = "asset_modern_origin"
+        legacy_asset = "asset_legacy_origin"
+        media_jobs.create(_make_job(
+            job_id="job_modern_origin", request_id="idem_modern",
+            parent_request_id="receipt_modern", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": modern_asset}],
+        ), path=self.db)
+        media_jobs.create(_make_job(
+            job_id="job_legacy_origin", request_id="idem_legacy",
+            parent_request_id="receipt_legacy", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": legacy_asset}],
+        ), path=self.db)
+
+        # Recreate the v4 shape and a legacy row written before creating_receipt_id existed.
+        with media_jobs._conn(self.db) as conn:
+            conn.execute(
+                "UPDATE media_jobs SET job_json=json_remove(job_json, '$.creating_receipt_id') "
+                "WHERE job_id='job_legacy_origin'"
+            )
+            conn.execute("DROP TABLE IF EXISTS media_job_asset_origins")
+            conn.execute("UPDATE media_jobs_schema_version SET version=4")
+            conn.commit()
+
+        media_jobs.init_db(self.db)
+
+        with media_jobs._conn(self.db) as conn:
+            self.assertEqual(
+                conn.execute("SELECT version FROM media_jobs_schema_version").fetchone()[0],
+                media_jobs.SCHEMA_VERSION,
+            )
+            index_names = {row[1] for row in conn.execute("PRAGMA index_list(media_job_asset_origins)")}
+            self.assertIn("media_job_asset_origins_asset", index_names)
+            plan = " ".join(str(value) for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT DISTINCT origin_id FROM media_job_asset_origins WHERE asset_id=?",
+                (modern_asset,),
+            ) for value in row)
+            self.assertIn("media_job_asset_origins_asset", plan)
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (modern_asset,)), {"receipt_modern"})
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (legacy_asset,)), {"receipt_legacy"})
+
     def test_create_and_get_round_trip(self) -> None:
         job = _make_job()
         created = media_jobs.create(job, path=self.db)

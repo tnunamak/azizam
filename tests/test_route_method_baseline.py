@@ -180,9 +180,9 @@ def _deliberate(key: str) -> str | None:
     if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
         return "native"
     if (path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/")
-            or path in {"/me/api/retention", "/gateway/v1/me/retention"}
+            or path in {"/me/api/retention", "/me/api/retention/notice-seen", "/gateway/v1/me/retention"}
             or re.fullmatch(r"/me/api/credentials/[^/]+/privacy-permission", path)):
-        return "request_history"  # history rows, settings and permission; tests/test_request_history_*.py
+        return "request_history"  # history rows, the member's own choice, its notice and permission; tests/test_request_history_*.py
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
