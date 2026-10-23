@@ -105,6 +105,8 @@ export function HistoryList() {
   const rows: RequestHistoryItem[] =
     list.data?.pages.flatMap((page) => page.requests) ?? [];
   const keeps = choice.data?.keep ?? true;
+  // The period is the gateway's; until the choice has loaded, the screen says nothing about it.
+  const period = choice.data ? periodWords(choice.data.retention) : null;
 
   if (rows.length === 0)
     return (
@@ -113,7 +115,7 @@ export function HistoryList() {
         title={keeps ? "No requests yet" : "History is off"}
         description={
           keeps
-            ? `Requests your apps send are kept here for ${periodWords(choice.data?.retention ?? "7_days")}. Try a request to see one.`
+            ? `Requests your apps send are kept here${period ? ` for ${period}` : ""}. Try a request to see one.`
             : "Azizam doesn’t keep new requests. Turn it on in Your settings to keep them here."
         }
         action={
@@ -139,7 +141,9 @@ export function HistoryList() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-muted-foreground text-meta">
           {keeps
-            ? `Kept for ${periodWords(choice.data?.retention ?? "7_days")}.`
+            ? period
+              ? `Kept for ${period}.`
+              : "Kept for the time your settings allow."
             : "History is off. Nothing new is kept."}
         </p>
         <Button
@@ -151,7 +155,7 @@ export function HistoryList() {
           Delete all history
         </Button>
       </div>
-      <ul className="divide-border divide-y rounded-lg border">
+      <ul aria-label="Kept requests" className="divide-border divide-y rounded-lg border">
         {rows.map((item) => {
           const stamp = formatTimestamp(item.created_at);
           const what = item.summary.model ?? routeWords(item.summary.route);

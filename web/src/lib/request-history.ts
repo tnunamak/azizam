@@ -4,8 +4,6 @@
  * settings, the Home notice and Try's Incognito switch share these shapes and words, so none of
  * them says something different.
  */
-import { formatTimestamp } from "@/lib/format";
-
 /** The member's choice, as `GET` and `PUT /me/api/retention` answer. */
 export interface RequestHistoryChoice {
   keep: boolean;
@@ -143,9 +141,4 @@ export function keptSentence(
   }
   if (entry.decision === "failed") return "Not kept. Saving it failed.";
   return `Not kept. ${NOT_KEPT_REASON[entry.reason] ?? "Nothing was kept for a reason this page doesn’t show."}`;
-}
-
-/** The time a row shows, in the same words as the rest of the app. */
-export function whenWords(seconds: number): string {
-  return formatTimestamp(seconds).children;
 }
