@@ -232,3 +232,13 @@ about two minutes and reported low context completeness with eight missed test
 files. Those warnings were accurate; source and review-probe reads remained the
 main evidence. The task files live outside the checkout so hermetic preflight
 can keep requiring a clean Git tree.
+
+## 2026-10-23 — request-history Library cascade
+
+`ds task` created a five-slice workspace and its checkpoint workflow tracked
+the implementation through push. The query I gave it was concise and omitted
+the explicit no-web scope, so the pack ranked a web Library page as a primary
+file. It also omitted `gateway/media_jobs.py` and `gateway/retention.py` from
+the likely-primary list; source inspection found both were central. The pack
+helped structure the work, but the full task constraints and direct source reads
+were still needed to choose the right files.
