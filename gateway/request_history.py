@@ -47,7 +47,7 @@ REQUEST_HEADERS = frozenset({"content-type", "accept", "x-azizam-prompts"})
 #: Reply headers kept by name.
 RESPONSE_HEADERS = frozenset({"content-type"})
 
-_CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "authorization", "apikey"})
+_CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "authorization", "apikey", "cookie"})
 _CREDENTIAL_PAIRS = frozenset({("api", "key"), ("access", "token"), ("refresh", "token"), ("id", "token"), ("auth", "token")})
 # One tokenizer for every name the secret floor reads. Brackets split too: a nested form value arrives as
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.

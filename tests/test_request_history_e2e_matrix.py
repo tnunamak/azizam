@@ -603,13 +603,7 @@ def test_mcp_grants_read_only_their_connection_and_cannot_delete(world, shape):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("shape", [
-    pytest.param(shape, id=shape.name, marks=(
-        pytest.mark.xfail(strict=True, raises=pytest.fail.Exception,
-                          reason="R1: Cookie/Set-Cookie names are not scrubbed (gateway/request_history.py:50)")
-        if shape.name not in {"gzip_json", "over_limit"} else []))
-    for shape in SHAPES
-])
+@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
 def test_cookie_fields_inside_json_are_removed_from_saved_content(world, shape):
     """Cookies in parsed header objects/JSON strings are credentials too (requirement 1)."""
     _run(world, shape, payload=_payload(world.canaries, cookies=True))
