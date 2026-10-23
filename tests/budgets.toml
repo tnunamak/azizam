@@ -243,12 +243,12 @@ pytest = 16087
 # A2 review round 2 (F1): +3 Playwright cases (signin-shell.spec.ts 2, invite-signin.spec.ts 1). Listed 484 + 3 + 18 = 505
 # across the three gate configs (base 502).
 # Train r95 rebuilt on r96: vitest 3167 + A2 5 = 3172; Playwright 509 + A2 3 = 512.
-# W4 (the sign-in chooser): +69 vitest cases in web/src/app/sign-in (chooser, sign-in-status, page, the moved
+# W4 (the sign-in chooser): +70 vitest cases in web/src/app/sign-in (chooser, sign-in-status, page, the moved
 # form), web/src/lib/remembered-people.spec.ts and session-end.leaver.spec.ts; the W1 sign-out expectations keep their
-# count. Full vitest run measured 3241 (3172 + 69). Playwright +13: e2e/chooser.spec.ts 7 and e2e/chooser-states.spec.ts
-# 6 (two widths of three journeys). playwright.config.ts 504, live-data 3, household 18: 525 listed.
-vitest = 3241
-playwright = 525
+# count. Full vitest run measured 3242 (3172 + 70). Playwright +14: e2e/chooser.spec.ts 8 and e2e/chooser-states.spec.ts
+# 6 (two widths of three journeys). playwright.config.ts 505, live-data 3, household 18: 526 listed.
+vitest = 3242
+playwright = 526
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
