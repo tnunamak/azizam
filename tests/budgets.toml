@@ -265,7 +265,9 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
-pytest = 16988
+# Switcher chooser (W4 and W5, without A2): +1 case, the sign-in options report fresh_sign_in as false
+# (tests/test_accounts.py). Ceiling 16988 -> 16989 (2026-10-23).
+pytest = 16989
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -288,14 +290,20 @@ pytest = 16988
 # administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
 # Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
 # administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
-vitest = 3232
+# Switcher chooser (W4 and W5, without A2, plus the round trip): the chooser, its status lines, the sign-out screen
+# (inert until fresh sign-in is reported), the stale-name notice, the Settings choice, and the session-end and switch
+# expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
+vitest = 3321
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
 # playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
 # playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
-playwright = 525
+# Switcher chooser (W4 and W5, without A2, plus the round trip): playwright.config.ts 504 -> 533 (+29: chooser 8,
+# chooser-states 6 and 2 in the global-state project, signin-shell 10, invite-signin 1, chooser-round-trip 2).
+# Gate lists 554 (533 + live-data 3 + household 18), measured 2026-10-23.
+playwright = 554
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
