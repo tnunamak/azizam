@@ -62,9 +62,14 @@ CREATE TABLE IF NOT EXISTS kept_requests (
   policy_version INTEGER NOT NULL,
   linked_asset_ids TEXT NOT NULL DEFAULT '[]',
   fact_revisions TEXT NOT NULL DEFAULT '[]',
-  summary_json TEXT NOT NULL
+  summary_json TEXT NOT NULL,
+  parts_kept TEXT NOT NULL DEFAULT '[]',
+  byte_size INTEGER NOT NULL DEFAULT 0
 )
 """
+#: Columns added after the first table shape. A database made before them gains them on connect, and their values are
+#: derived from the stored parts, so a list reads metadata alone (REQUEST_RETENTION.md 3.6).
+_ADDED_COLUMNS = (("parts_kept", "TEXT NOT NULL DEFAULT '[]'"), ("byte_size", "INTEGER NOT NULL DEFAULT 0"))
 _INDEXES = (
     "CREATE INDEX IF NOT EXISTS kept_requests_person_time ON kept_requests(person_id, kind, created_at)",
     "CREATE INDEX IF NOT EXISTS kept_requests_deadline ON kept_requests(kept_until)",
@@ -374,9 +379,34 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
     conn = prompt_memory._connect(path)
     conn.execute(_TABLE)
+    _add_missing_columns(conn)
     for statement in _INDEXES:
         conn.execute(statement)
     return conn
+
+
+def _derived(parts_json: str, omissions_json: str, summary_json: str) -> tuple[str, int]:
+    """The two columns a list reads without the bodies: the names of the kept parts, and the stored bytes of a record."""
+    try:
+        names = sorted(json.loads(parts_json))
+    except (ValueError, TypeError):
+        names = []
+    return json.dumps(names), sum(len(text.encode("utf-8")) for text in (parts_json, omissions_json, summary_json))
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    present = {row[1] for row in conn.execute("PRAGMA table_info(kept_requests)")}
+    missing = [(name, ddl) for name, ddl in _ADDED_COLUMNS if name not in present]
+    if not missing:
+        return
+    for name, ddl in missing:
+        conn.execute(f"ALTER TABLE kept_requests ADD COLUMN {name} {ddl}")
+    for record_id, parts_json, omissions_json, summary_json in conn.execute(
+            "SELECT record_id, parts_json, omissions_json, summary_json FROM kept_requests").fetchall():
+        parts_kept, byte_size = _derived(parts_json, omissions_json, summary_json)
+        conn.execute("UPDATE kept_requests SET parts_kept=?, byte_size=? WHERE record_id=?",
+                     (parts_kept, byte_size, record_id))
+    conn.commit()
 
 
 @contextmanager
@@ -400,16 +430,18 @@ def write_transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 def insert_record(conn: sqlite3.Connection, record: Mapping[str, Any]) -> None:
     """Add one kept request inside the caller's transaction (see ``write_transaction``)."""
+    parts_json = json.dumps(record["parts"], ensure_ascii=False, sort_keys=True)
+    omissions_json = json.dumps(record["omissions"], sort_keys=True)
+    summary_json = json.dumps(record["summary"], ensure_ascii=False, sort_keys=True)
+    parts_kept, byte_size = _derived(parts_json, omissions_json, summary_json)
     conn.execute(
         "INSERT INTO kept_requests(record_id, request_id, kind, person_id, app_id, origin_kind, origin_id, "
         "engine_id, debug_window_id, created_at, kept_until, parts_json, omissions_json, policy_version, "
-        "linked_asset_ids, fact_revisions, summary_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, '[]', '[]', ?)",
+        "linked_asset_ids, fact_revisions, summary_json, parts_kept, byte_size) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, '[]', '[]', ?, ?, ?)",
         (record["record_id"], record.get("request_id"), KIND, record["person_id"], record.get("app_id"),
          record["origin_kind"], record.get("origin_id"), record["created_at"], record.get("kept_until"),
-         json.dumps(record["parts"], ensure_ascii=False, sort_keys=True),
-         json.dumps(record["omissions"], sort_keys=True), record["policy_version"],
-         json.dumps(record["summary"], ensure_ascii=False, sort_keys=True)),
+         parts_json, omissions_json, record["policy_version"], summary_json, parts_kept, byte_size),
     )
 
 
@@ -430,12 +462,28 @@ def _rows(sql: str, params: tuple, *, path: Path | None) -> list[dict[str, Any]]
         conn.close()
 
 
-def rows_for_person(person_id: str, *, after: int, now: int, path: Path | None = None) -> list[dict[str, Any]]:
-    """The person's kept requests that are not expired and not erased, newest first. Ownership is applied later."""
-    return _rows(
-        "SELECT * FROM kept_requests WHERE person_id=? AND kind=? AND created_at>? "
-        "AND (kept_until IS NULL OR kept_until>?) ORDER BY created_at DESC, record_id DESC",
-        (person_id, KIND, after, now), path=path)
+#: The columns a list reads. The bodies (parts_json, omissions_json) are not among them, so a list never loads one.
+_METADATA = ("record_id, request_id, kind, person_id, app_id, origin_kind, origin_id, created_at, kept_until, "
+             "parts_kept, summary_json")
+
+
+def page_for_person(person_id: str, *, after: int, now: int, before: tuple[int, str] | None, limit: int,
+                    path: Path | None = None) -> list[dict[str, Any]]:
+    """One page of the person's kept requests that are not expired and not erased, newest first, cut in SQL.
+
+    ``before`` is the (created_at, record_id) of the last row of the previous page. Ownership is applied to the
+    page by the caller, so a page can hold rows the viewer may not read; the caller reads further pages until it
+    has enough rows it may read.
+    """
+    sql = (f"SELECT {_METADATA} FROM kept_requests WHERE person_id=? AND kind=? AND created_at>? "
+           "AND (kept_until IS NULL OR kept_until>?)")
+    params: list[Any] = [person_id, KIND, after, now]
+    if before is not None:
+        sql += " AND (created_at<? OR (created_at=? AND record_id<?))"
+        params += [before[0], before[0], before[1]]
+    sql += " ORDER BY created_at DESC, record_id DESC LIMIT ?"
+    params.append(int(limit))
+    return _rows(sql, tuple(params), path=path)
 
 
 def get_row(record_id: str, *, path: Path | None = None) -> dict[str, Any] | None:

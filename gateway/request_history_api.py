@@ -41,13 +41,17 @@ def _visible_now(row: dict[str, Any], cutoff: int, now: int) -> bool:
     return (row["kept_until"] is None or int(row["kept_until"]) > now) and int(row["created_at"]) > cutoff
 
 
+#: Rows read per page of the database, before the viewer's own rows are cut from them.
+_BATCH = 100
+
+
 def _item(row: dict[str, Any]) -> dict[str, Any]:
     import json
 
     return {
         "record_id": row["record_id"], "request_id": row.get("request_id"), "kind": row["kind"],
         "created_at": int(row["created_at"]), "kept_until": row.get("kept_until"),
-        "origin_kind": row.get("origin_kind"), "kept_parts": sorted(json.loads(row["parts_json"])),
+        "origin_kind": row.get("origin_kind"), "kept_parts": json.loads(row["parts_kept"]),
         "summary": json.loads(row["summary_json"]),
     }
 
@@ -56,14 +60,14 @@ def _cursor(row: dict[str, Any]) -> str:
     return f"{int(row['created_at'])}:{row['record_id']}"
 
 
-def _start_after(visible: list[dict[str, Any]], cursor: str | None) -> int | None:
-    """The index after the cursor's row, or None when the cursor names no row of this list."""
+def _cursor_position(cursor: str | None) -> tuple[int, str] | None:
+    """The position a cursor names, as the list gives cursors out. A malformed cursor raises ValueError."""
     if not cursor:
-        return 0
-    for index, row in enumerate(visible):
-        if _cursor(row) == cursor:
-            return index + 1
-    return None
+        return None
+    created, separator, record_id = cursor.partition(":")
+    if not separator or not record_id or not created.isdigit():
+        raise ValueError(cursor)
+    return int(created), record_id
 
 
 def create_request_history_router(
@@ -87,21 +91,33 @@ def create_request_history_router(
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
             return viewer
+        try:
+            before = _cursor_position(cursor)
+        except ValueError:
+            return _error(400, "invalid_cursor", "The cursor is not one this list gives out.")
+        if not viewer.person_id:
+            return {"requests": [], "next_cursor": None}
+        after = retention.group_cutoff(admin_path(), viewer.person_id, GROUP)
         now = int(time.time())
-        rows: list[dict[str, Any]] = []
-        if viewer.person_id:
-            after = retention.group_cutoff(admin_path(), viewer.person_id, GROUP)
-            rows = [row for row in request_history.rows_for_person(viewer.person_id, after=after, now=now,
-                                                                   path=media_path())]
-        # Ownership first, then the page: a page is never short because another person's rows were cut from it.
-        visible = content_access.visible_maker_rows(viewer, rows)
-        start = _start_after(visible, cursor)
-        if start is None:
-            return _error(400, "invalid_cursor", "The cursor does not name a row of this list.")
-        page = visible[start:start + limit]
-        more = start + limit < len(visible)
-        return {"requests": [_item(row) for row in page],
-                "next_cursor": _cursor(page[-1]) if more and page else None}
+        # Pages are cut in SQL from metadata. The viewer's own rows are cut from each batch, and batches are read until
+        # the page is full, so a page is never short because other people's rows were in the batch.
+        page: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+        while next_cursor is None:
+            batch = request_history.page_for_person(viewer.person_id, after=after, now=now, before=before,
+                                                    limit=_BATCH, path=media_path())
+            for row in batch:
+                if not isinstance(content_access.decide(viewer, content_access.request_history_record(row), "read"),
+                                  content_access.Own):
+                    continue
+                if len(page) == limit:
+                    next_cursor = _cursor(page[-1])
+                    break
+                page.append(row)
+            if len(batch) < _BATCH:
+                break
+            before = (int(batch[-1]["created_at"]), str(batch[-1]["record_id"]))
+        return {"requests": [_item(row) for row in page], "next_cursor": next_cursor}
 
     def _readable(viewer: content_access.Viewer, record_id: str) -> dict[str, Any] | None:
         row = request_history.get_row(record_id, path=media_path())
