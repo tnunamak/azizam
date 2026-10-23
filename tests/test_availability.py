@@ -245,15 +245,11 @@ def test_systemd_status_observes_process_state_without_health_probe(monkeypatch,
     import asyncio
     from gateway import lifecycle_drivers
 
-    class Process:
-        async def communicate(self):
-            return observed.encode(), b""
+    def run_probe(argv):
+        assert argv == ["systemctl", "--user", "is-active", "--", "fake.service"]
+        return f"{observed}\n".encode()
 
-    async def create_process(*command, **kwargs):
-        assert command == ("systemctl", "--user", "is-active", "fake.service")
-        return Process()
-
-    monkeypatch.setattr(lifecycle_drivers.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(lifecycle_drivers, "_run_probe", run_probe)
     service = {"lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service", "scope": "user"}}}
     assert asyncio.run(lifecycle_drivers.SystemdDriver().status(service)) == expected
 
