@@ -1907,6 +1907,64 @@ slice 5b. These are the readings the build took where the text leaves a form ope
   privacy permission; the MCP tools; the settings UI; the household route for this group; `maker_signed_in`; debug
   captures. `policy_version` records the bundled file's format version, not the household revision.
 
+**Slice 5a review fixes, as built.** The review's probes are `tests/test_review_retention_s5a_probes.py`. Each finding
+that they pin now passes with its mark removed. The tests the review did not pin are in
+`tests/test_request_history_s5a_review.py`.
+
+- **Secret floor (rules 4, 8 and 9).** One name tokenizer, `request_history.segments`, splits on `-`, `_`, space, `.`,
+  `[`, `]` and camel case. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. Every URL
+  inside a longer string is scrubbed with the whole-URL helper, and the punctuation after it is kept. A tool call's
+  `arguments` string is parsed and its JSON is cleaned like any JSON. Text that is not JSON is cleaned as text. Two
+  other name checks exist and were left alone: `redaction.is_forbidden_key` is an exact-key set for receipts and media
+  jobs, and `legacy_credential_rules` tokenizes command-line flags. Neither splits request-history names.
+- **Controls (section 3.4).** A multipart `extensions` field is read by `extensions.multipart_extensions`, the routes'
+  own parser. The bracket field then overrides it, as in the workflow route. An invalid or unreadable value is a forget,
+  and so is a control field sent as a file.
+- **Header forget (section 3.4).** `X-Azizam-Prompts: forget` is carried on the request's slot. `retention.decide`
+  takes it as `request_forget`. Saved conversations, Library prompts and the job spool all honour it.
+- **Unreadable control (review item 5).** A JSON or multipart body that the gateway did not read in full, because it
+  was over 1 MiB, was cut short, or did not parse, leaves no row. Its receipt says `not_kept` for `incomplete`. A body in
+  another container carries no control but the header, and the header is read. Such a body keeps its
+  `unsupported_container` record, as section 3.5 rule 7 and `test_without_the_header_a_non_json_body…` require. This is
+  our reading of "unparsed body".
+- **Disconnects (section 3.6).** `http.disconnect` is not a complete body. A body cut short before the route ran is
+  replayed with `more_body` still set, so the route sees the disconnect. The drain stops at a disconnect.
+- **Cost (sections 3.3, 3.6, 12).** The decision is made as soon as the caller is known. A member whose history is off,
+  a forget, a request with no person, and the kill switch all skip body parsing, reply buffering, the write lock and
+  any write except the receipt entry. A reply is buffered only when it may be kept. One writer thread
+  (`request_history_capture.WRITER`) does every write, and at most 32 captures are in flight. A request beyond that is
+  not captured, and its receipt says `storage_unavailable`. The media-jobs transaction opens before the household lock
+  is taken, so that lock is never held while the other database is waited on. A commit that fails after the lock is
+  released reports `write_failed`.
+  - A body forget in an OFF member's request is reported `member_disabled`, because that body is not read. A header
+    forget is reported `request_forget`, as before.
+  - The Library and Responses writers still take the household lock around their own commit, as on main. Moving them
+    is a follow-up.
+- **List (sections 4, 10).** The list selects metadata columns only. Two columns are new, `parts_kept` and
+  `byte_size`, in `kept_requests` in `media_jobs.db`. A database made before them gains them on connect, and their
+  values are derived from the stored parts. Pages are keyset pages (created_at, record id), cut in SQL in batches of 100.
+  The viewer's own rows are cut from each batch. A malformed cursor is `400 invalid_cursor`. A well-formed cursor
+  always pages, including one whose row was deleted. Before this, that cursor was a 400.
+- **Byte cap (section 12).** `kinds.request_history.max_bytes_per_person` is 268435456 (256 MiB), in
+  `registry/retention.yml`. Each maintenance pass removes a person's oldest records until their stored sizes fit (FIFO).
+  Maintenance runs on a timer, so a person can exceed the cap by what is written between passes. A receipt keeps the
+  deadline it recorded, so a record can leave before that deadline.
+- **Browser session (section 10).** `/gateway/v1/requests` accepts the person's browser session with no Authorization
+  header. The key layer skips such a call, and the router reads the session as the viewer. Reads are the person's own
+  rows only. Writes (delete one, delete all) need `X-Azizam-User-Action: 1` and the CSRF token, as `PUT
+  /me/api/retention` does. A delegated credential's delete is still `403 privacy_permission_required`.
+- **Busy store (section 12).** A read or write that the store's lock refuses returns `503 retry_required`, with
+  `Retry-After: 1`. Delete all writes its fence first, so a busy fence erases nothing. A row delete that fails after
+  the fence returns `202` with `pending: true`. The rows are already hidden, and maintenance deletes them. A turn-off
+  whose row delete fails keeps its erasure intent and still succeeds. Maintenance settles that intent.
+- **Design-owner rulings (review item 13; no change).** A second key of the same App reads that App's rows, as D52's
+  "its own App" says. The `connection_id` rule applies to MCP grants only. `store:false` ends the conversation only,
+  and history follows the person's switch (section 3.3). The native passthrough lane is not captured in 5a.
+  Conflict: section 4 says a delegated credential reads request history only with the privacy permission. D52, of
+  2026-10-20, says it reads its own App's rows without one. The build follows D52.
+- **Rollback (review item 11).** Schema 17 is not rollback-safe. Take a backup of `admin.db` and `media_jobs.db` before
+  deploy.
+
 ## 18. Tim's three decisions
 
 The design does not depend on any answer. Each answer is a data value plus,
