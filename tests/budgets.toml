@@ -269,8 +269,10 @@
 # Total: 16813 + 38 = 16851.
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
-# Merge of owner visibility slice 1 with train r101: 16988 + 38 = 17026 (provisional, re-measured below).
-pytest = 17026
+# Owner visibility step 3 slice 1 round 2: full hermetic collection measured 16884 on 2026-10-23.
+# A clean worktree at origin/main (3ca403cc5) collects 16823 the same way, so the train r101 figure
+# (16988) above does not reproduce; the ceiling follows the measurement.
+pytest = 16884
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
