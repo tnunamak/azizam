@@ -1,6 +1,7 @@
 """Registered-route coverage, schema stability, and real credential boundaries."""
 from __future__ import annotations
 
+import os
 import copy
 import hashlib
 import json
@@ -313,10 +314,21 @@ def _settle_metrics_writer():
         writer.flush()
 
 
+def _gateway_databases(root):
+    """The gateway's databases under root. Pytest's own temporary tree (tmp/) holds every earlier test's
+    databases; this probe reads the gateway's state, so it does not walk or dump that tree."""
+    found = []
+    for directory, dirnames, filenames in os.walk(root):
+        if Path(directory) == root:
+            dirnames[:] = [name for name in dirnames if name != "tmp"]
+        found.extend(Path(directory) / name for name in filenames if name.endswith(".db"))
+    return sorted(found)
+
+
 def _database_contents(root):
     _settle_metrics_writer()
     result = {}
-    for path in sorted(root.rglob("*.db")):
+    for path in _gateway_databases(root):
         try:
             with sqlite3.connect(path) as connection:
                 result[str(path)] = _digest(list(connection.iterdump()))
