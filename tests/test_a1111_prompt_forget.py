@@ -98,3 +98,15 @@ def test_other_extension_namespaces_are_not_passed_to_the_core(sdapi):
     assert set(sdapi.received[0]["extensions"]) == {"com.azizam.workflow"}
     assert 99 not in sdapi.received[0]["extensions"]["com.azizam.workflow"].values()
     assert "extensions" in response.headers["x-azizam-ignored-params"].split(",")
+
+
+@pytest.mark.parametrize("extensions", [[], "forget", 7])
+def test_extensions_that_are_not_an_object_get_the_core_400_and_the_core_route_is_not_called(sdapi, extensions):
+    body = {"model": MODEL, "prompt": PROMPT, "extensions": extensions}
+    core = _post("/v1/images/generations", body)
+    response = _post("/sdapi/v1/txt2img", body)
+
+    assert core.status_code == 400, core.text
+    assert response.status_code == 400, response.text
+    assert response.json() == core.json()
+    assert sdapi.received == []

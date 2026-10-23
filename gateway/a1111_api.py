@@ -204,6 +204,8 @@ def _prompt_control(payload: Mapping[str, Any]) -> dict[str, Any]:
     """The caller's prompt-memory control for the core route, or ``{}``. An invalid value raises ``PromptModeError``
     here, so the caller gets the core's 400 and the core never sees it. No other extension is passed on."""
     extensions = payload.get("extensions")
+    if extensions is not None and not isinstance(extensions, Mapping):
+        retention.requested_mode({"extensions": extensions})  # raises: the core refuses extensions that are not an object
     block = extensions.get(retention.NAMESPACE) if isinstance(extensions, Mapping) else None
     if block is None:
         return {}

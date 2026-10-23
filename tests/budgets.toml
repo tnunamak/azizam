@@ -265,7 +265,7 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
 # tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
-pytest = 16827
+pytest = 16830
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
