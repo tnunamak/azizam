@@ -52,7 +52,7 @@ class AccountError(ValueError):
 
 
 @contextmanager
-def connection(path: Path) -> Iterator[sqlite3.Connection]:
+def connection(path: Path, *, invalidate_asset_cache: bool = True) -> Iterator[sqlite3.Connection]:
     if request_connections.active():
         # Share the request's admin-store connection: this is the same database.
         with admin_store._conn(path) as conn:
@@ -61,7 +61,7 @@ def connection(path: Path) -> Iterator[sqlite3.Connection]:
                 with conn:
                     yield conn
             finally:
-                if conn.total_changes != changes:
+                if invalidate_asset_cache and conn.total_changes != changes:
                     invalidate_asset_families()
         return
     conn = sqlite_startup.connect(path, timeout=10)
@@ -72,7 +72,7 @@ def connection(path: Path) -> Iterator[sqlite3.Connection]:
         with conn:
             yield conn
     finally:
-        if conn.total_changes != changes:
+        if invalidate_asset_cache and conn.total_changes != changes:
             invalidate_asset_families()
         conn.close()
 
@@ -488,7 +488,7 @@ def register_session(user_id: str, session_id: str, expires_at: int, *, path: Pa
 def throttle(ip: str, email: str, *, path: Path, now: int | None = None):
     ts = int(time.time()) if now is None else now
     exceeded = False
-    with connection(path) as conn:
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE started_at<=?", (ts - 900,))
         for label, value, maximum in (("ip", ip, 60), ("email", email.strip().lower(), 10)):
@@ -505,7 +505,7 @@ def throttle_oidc(ip: str, *, path: Path, now: int | None = None) -> None:
     initialize(path)
     ts = int(time.time()) if now is None else now
     bucket = "oidc:" + hashlib.sha256(ip.encode()).hexdigest()
-    with connection(path) as conn:
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'oidc:%' AND started_at<=?", (ts - 60,))
         conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
@@ -523,7 +523,7 @@ def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
     initialize(path)
     ts = int(time.time()) if now is None else now
     bucket = "remembered:" + hashlib.sha256(ip.encode()).hexdigest()
-    with connection(path) as conn:
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'remembered:%' AND started_at<=?", (ts - 60,))
         conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
