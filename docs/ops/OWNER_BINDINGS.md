@@ -27,8 +27,10 @@ on and off.
   `POST /admin/api/apps/{app_id}/trusted-addresses` accept the same person.
 - Any other caller gets `403 not_your_app` on an admin route. On a `/me` route, an
   App that is not the person's gets `404 app_not_found`, the same answer as for
-  minting a key. A disabled App gets `403 app_disabled`. A control-plane key adds no
-  binding for any App, including the owner's own.
+  minting a key. A key or address on such an App gets the same `404` as one that does
+  not exist: `credential_not_found` for a key, `app_not_found` for an address. A disabled
+  App gets `403 app_disabled`. A control-plane key adds no binding for any App,
+  including the owner's own.
 
 A database installed fresh by this release also refuses, in the database itself, a
 key or address whose creator is not the App's person. It also refuses a change to an
