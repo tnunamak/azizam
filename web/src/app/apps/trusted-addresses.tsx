@@ -6,6 +6,8 @@ import { adminFetch } from "@/lib/api";
 import {
   accountApi,
   administratorsToConfirm,
+  hasAdministrators,
+  type AdministratorsOnRecord,
   type KeepOptions,
 } from "@/lib/account-api";
 import { toast } from "@/lib/toast";
@@ -33,7 +35,7 @@ export interface TrustedAddress {
   /** Present only when the cut-over would remove the address: keep it, or add it again. */
   cutover?: "keep" | "readd";
   /** The administrators on record who could also have added it. Keeping it asks the owner to confirm them first. */
-  administrators?: string[];
+  administrators?: AdministratorsOnRecord;
   /** The person recorded as its maker, when that is another person. */
   made_by_name?: string;
 }
@@ -120,7 +122,7 @@ export function TrustedAddressesDialog({
   // A keep that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
   // for it too, when the list this dialog holds is stale.
   async function keep(entry: TrustedAddress) {
-    if (entry.administrators?.length) {
+    if (entry.administrators && hasAdministrators(entry.administrators)) {
       setKeepConfirmation({ id: entry.id, what: "address", administrators: entry.administrators });
       return;
     }

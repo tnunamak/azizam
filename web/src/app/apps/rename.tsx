@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   accountApi,
   administratorsToConfirm,
+  hasAdministrators,
   type AccountApp,
   type KeepOptions,
   type ReplacedKey,
@@ -401,7 +402,7 @@ export function RenameKeysDialog({
   // A key that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
   // for it too, when the snapshot this page holds is stale.
   async function keep(keyRecord: Credential) {
-    if (keyRecord.administrators?.length) {
+    if (keyRecord.administrators && hasAdministrators(keyRecord.administrators)) {
       setKeepConfirmation({ id: keyRecord.id, what: "key", administrators: keyRecord.administrators });
       return;
     }

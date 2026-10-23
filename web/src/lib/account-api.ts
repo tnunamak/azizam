@@ -1,5 +1,5 @@
 import { networkFetch } from "./network-error";
-import { ApiError, type Credential, type MintedCredential } from "./api";
+import { ApiError, type AdministratorsOnRecord, type Credential, type MintedCredential } from "./api";
 import { parseReauth, requestReauth } from "./reauth";
 import {
   learnContract,
@@ -163,12 +163,41 @@ export interface KeepOptions {
 const keepBody = ({ confirmed = false }: KeepOptions) =>
   confirmed ? { confirm_admins_could_have_made_it: true } : undefined;
 
+export type { AdministratorsOnRecord } from "./api";
+
+/** True when the gateway names anyone the owner must confirm before a keep. */
+export function hasAdministrators(administrators?: AdministratorsOnRecord | null): boolean {
+  return !!administrators && (administrators.people.length > 0 || administrators.unnamed_people > 0 || administrators.admin_keys > 0);
+}
+
+/** The administrators on record in one line, as the owner reads them: each person by name, then the people with no name
+ * and the administrator keys as counts, with empty parts left out. The gateway renders the same sentence. */
+export function administratorsSentence(administrators: AdministratorsOnRecord): string {
+  const items = [
+    ...administrators.people,
+    ...(administrators.unnamed_people > 0
+      ? [`${administrators.unnamed_people} ${administrators.unnamed_people === 1 ? "person" : "people"} with no name`]
+      : []),
+    ...(administrators.admin_keys > 0
+      ? [`${administrators.admin_keys} administrator ${administrators.admin_keys === 1 ? "key" : "keys"}`]
+      : []),
+  ];
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+function isAdministratorsOnRecord(value: unknown): value is AdministratorsOnRecord {
+  const record = value as Partial<AdministratorsOnRecord> | null;
+  return typeof record === "object" && record !== null && Array.isArray(record.people)
+    && typeof record.unnamed_people === "number" && typeof record.admin_keys === "number";
+}
+
 /** The administrators the gateway asks the owner to confirm before a keep (409 `keep_needs_confirmation`), or null
  * for any other failure. A stale snapshot can send a keep that the gateway still wants confirmed. */
-export function administratorsToConfirm(caught: unknown): string[] | null {
+export function administratorsToConfirm(caught: unknown): AdministratorsOnRecord | null {
   if (!(caught instanceof ApiError) || caught.code !== "keep_needs_confirmation") return null;
-  const names = (caught.payload as { error?: { administrators?: unknown } } | undefined)?.error?.administrators;
-  return Array.isArray(names) ? names.map(String) : [];
+  const administrators = (caught.payload as { error?: { administrators?: unknown } } | undefined)?.error?.administrators;
+  return isAdministratorsOnRecord(administrators) ? administrators : { people: [], unnamed_people: 0, admin_keys: 0 };
 }
 
 export const accountApi = {
