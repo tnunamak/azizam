@@ -9,7 +9,10 @@ transaction (design §8.1 steps 2 and 3; docs/ops/OWNER_BINDINGS.md).
 from __future__ import annotations
 
 import fcntl
+import os
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -17,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway import accounts, admin_store, app_binding_cutover, app_binding_guard, app_binding_preview, sqlite_startup
+from gateway import accounts, admin_store, app_binding_cutover, app_binding_guard, app_binding_preview, gateway_lifetime, sqlite_startup
 from tests.support.app_keys import before_the_cut_over
 
 DAY = 86_400
@@ -210,6 +213,51 @@ def test_apply_refuses_while_the_gateway_holds_its_private_directory_lock(legacy
 
     assert "gateway is running" in capsys.readouterr().err
     assert legacy.unproven_key in _live_keys(legacy.path)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _gateway_process(path: Path, env: dict[str, str]) -> subprocess.Popen:
+    """A real second process holding the database's lifetime lock as the gateway does, until its stdin closes."""
+    script = ("import sys\nfrom pathlib import Path\nfrom gateway import gateway_lifetime\n"
+              "gateway_lifetime.hold(Path(sys.argv[1]))\nprint('held', flush=True)\nsys.stdin.read()\n")
+    proc = subprocess.Popen([sys.executable, "-c", script, str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            text=True, cwd=REPO_ROOT, env=env)
+    assert proc.stdout.readline().strip() == "held", "the gateway process did not take its lifetime lock"
+    return proc
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.stdin.close()
+    proc.wait(timeout=30)
+
+
+def test_the_lifetime_lock_sits_beside_the_database_whatever_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("AZIZAM_PRIVATE_TMPDIR", str(tmp_path / "elsewhere"))
+    assert gateway_lifetime.lock_path(tmp_path / "admin.db") == tmp_path / "admin.db.running"
+
+
+def test_apply_refuses_while_a_gateway_process_holds_the_lifetime_lock(legacy, capsys):
+    assert _accept(legacy.path) == 0
+    gateway = _gateway_process(legacy.path, {**os.environ, "AZIZAM_PRIVATE_TMPDIR": str(legacy.path.parent / "elsewhere")})
+    try:
+        assert _apply(legacy.path) == 1
+    finally:
+        _stop(gateway)
+
+    assert "the gateway is running" in capsys.readouterr().err
+    assert legacy.unproven_key in _live_keys(legacy.path)
+    assert _receipts(legacy.path) == 0
+
+
+def test_apply_proceeds_once_the_gateway_process_has_exited(legacy):
+    assert _accept(legacy.path) == 0
+    gateway = _gateway_process(legacy.path, dict(os.environ))
+    _stop(gateway)
+
+    assert _apply(legacy.path) == 0
+    assert legacy.unproven_key not in _live_keys(legacy.path)
 
 
 def test_apply_refuses_while_another_process_has_the_database_open(legacy, capsys):

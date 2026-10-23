@@ -7,9 +7,10 @@ prove a claim of the branch on a path its own tests do not cover.
 
 from __future__ import annotations
 
-import fcntl
 import os
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +22,7 @@ from tests.support.app_keys import before_the_cut_over
 from tests.test_access_plan_migration import build_v6
 from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway, signed_in  # noqa: F401  (gateway is a fixture)
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 ACT = {"x-azizam-user-action": "1"}
 
 
@@ -88,8 +90,22 @@ def test_a_member_cannot_keep_a_key_the_audit_log_shows_someone_else_minted(gate
 
 # --- Finding 2: apply's "the gateway is running" checks miss a running gateway ---------------------------
 
-@pytest.mark.xfail(strict=True, reason="review finding 2: apply treats a missing .owner.lock as 'gateway stopped'")
-def test_apply_refuses_when_the_gateway_lock_is_in_a_private_directory_the_cli_does_not_see(tmp_path, monkeypatch):
+def _gateway_process(path: Path, env: dict[str, str]) -> subprocess.Popen:
+    """A real second process that holds the database's lifetime lock the way the gateway does, until its stdin closes."""
+    script = ("import sys\nfrom pathlib import Path\nfrom gateway import gateway_lifetime\n"
+              "gateway_lifetime.hold(Path(sys.argv[1]))\nprint('held', flush=True)\nsys.stdin.read()\n")
+    proc = subprocess.Popen([sys.executable, "-c", script, str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            text=True, cwd=REPO_ROOT, env=env)
+    assert proc.stdout.readline().strip() == "held", "the gateway process did not take its lifetime lock"
+    return proc
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.stdin.close()
+    proc.wait(timeout=30)
+
+
+def test_apply_refuses_while_a_gateway_process_holds_its_lock_even_when_its_private_directory_is_elsewhere(tmp_path, monkeypatch):
     path = tmp_path / "data" / "admin.db"
     path.parent.mkdir()
     admin_store.init_db(path)
@@ -100,17 +116,15 @@ def test_apply_refuses_when_the_gateway_lock_is_in_a_private_directory_the_cli_d
     admin_store.create_credential_hash(subject_kind="app", subject_id=desk, app_id=desk, hash=f"sha256:{uuid.uuid4().hex}",
                                        prefix="opk_test", created_by=owner["id"], path=path)
     # The gateway runs with AZIZAM_PRIVATE_TMPDIR set (start.sh sources .env.local; the Docker image sets it).
-    gateway_private = tmp_path / "elsewhere" / "private-tmp"
-    gateway_private.mkdir(parents=True)
-    fd = os.open(gateway_private / ".owner.lock", os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    gateway_env = {**os.environ, "AZIZAM_PRIVATE_TMPDIR": str(tmp_path / "elsewhere" / "private-tmp")}
+    # The operator's shell does not carry the gateway's environment.
+    monkeypatch.delenv("AZIZAM_PRIVATE_TMPDIR", raising=False)
+    gateway = _gateway_process(path, gateway_env)
     try:
-        # The operator's shell does not carry the gateway's environment.
-        monkeypatch.delenv("AZIZAM_PRIVATE_TMPDIR", raising=False)
         assert app_binding_cutover.main(["accept", "--admin-db", str(path), "--digest", _digest(path), "--by", "t"]) == 0
         code = app_binding_cutover.main(["apply", "--admin-db", str(path)])
     finally:
-        os.close(fd)
+        _stop(gateway)
     assert code != 0
 
 
