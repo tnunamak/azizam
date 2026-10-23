@@ -131,5 +131,5 @@ test("a refused invitation sign-in explains itself, and the retry goes back to t
   );
   await expect(
     page.getByRole("link", { name: "Continue with Household accounts" }),
-  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F");
+  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");
 });

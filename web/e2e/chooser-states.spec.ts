@@ -1,274 +1,155 @@
 // Every state of the sign-in page's chooser and person screens, at a phone and a desktop width (account
-// switcher W4; DESIGN.md 4.5-4.9 and 10, mockup S4 to S10). The remembered list and the sign-in answers
-// are answered here, so each state is the same every run. Each state is captured to test-results/w4-shots/
-// and asserted on its key line, so a missing state fails the run rather than leaving an empty picture.
+// switcher W4; DESIGN.md 4.5-4.9 and 10). The states come from real journeys on the fixture gateway, the same
+// ones the chooser tests run, so each capture is a real screen. Each capture is saved to test-results/ under
+// w4-shots/ and is asserted on its key line first, so a missing state fails the run.
+//
+// Two states are not captured here, and the page tests cover both. The single sign-on opening state needs a
+// provider row, which the fixture gateway cannot make. The plain form with no name box for an owner who remembers
+// nobody needs the owner's "On shared computers" choice, which the fixture gateway does not let a test set; W5
+// adds that choice to Settings and its capture belongs with it.
 import type { Page } from "@playwright/test";
-import { expect, test } from "@playwright/test";
-
-test.use({ storageState: { cookies: [], origins: [] } });
+import { expect, GLOBAL_STATE_TAG, ownerApi, test } from "./fixtures/isolation";
+import { CHOOSER_HEADING, twoPeopleOnOneBrowser } from "./chooser-journey";
 
 const WIDTHS = [
   { name: "390", width: 390, height: 844 },
   { name: "1440", width: 1440, height: 900 },
 ];
 
-const people = [
-  { tile: "t_robin", name: "Robin Okafor", avatar: { variant: "v1", initial: "R" }, method: "password", provider: null, hint: null },
-  { tile: "t_lea", name: "Léa Okafor", avatar: { variant: "v4", initial: "L" }, method: "password", provider: null, hint: null },
-  { tile: "t_sam", name: "Sam Okafor", avatar: { variant: "v3", initial: "S" }, method: "sso", provider: "Family login", hint: null },
-];
-
-const json = (body: unknown, status = 200) => ({
-  status,
-  contentType: "application/json",
-  body: JSON.stringify(body),
-});
-
-async function remember(page: Page, list = people) {
-  await page.route("**/auth/api/remembered", (route) => route.fulfill(json({ remember: true, people: list })));
+/** Saves the page as the state's capture, after its key line has shown. */
+async function capture(page: Page, name: string, id: string) {
+  await page.screenshot({ path: test.info().outputPath(`w4-shots/${name}-${id}.png`), fullPage: true });
 }
 
-/** The browser's record of who signed out last, as a switch or a sign-out writes it. */
-async function lastLeft(page: Page, tile: string) {
-  await page.addInitScript((value) => sessionStorage.setItem("azizam.handoff.last", value), JSON.stringify({ tile }));
+/** The gateway's identifier for a remembered name, read from the same browser the page is in. */
+async function tileOf(page: Page, name: string): Promise<string> {
+  const list = (await (await page.request.get("/auth/api/remembered")).json()) as {
+    people: { tile: string; name: string }[];
+  };
+  const person = list.people.find((entry) => entry.name === name);
+  expect(person, `${name} is remembered on this browser`).toBeDefined();
+  return person!.tile;
 }
 
-type State = {
-  id: string;
-  setup: (page: Page) => Promise<void>;
-  /** Where the state is on screen once it is ready. */
-  ready: (page: Page) => Promise<void>;
-};
+/** The status lines and lists that come from the sign-in page's address, on a browser that has signed people in. */
+async function endingStates(page: Page, name: string, robinName: string) {
+  await page.goto("/sign-in/");
+  await expect(page.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible();
+  await capture(page, name, "list");
 
-const states: State[] = [
-  {
-    id: "list",
-    setup: (page) => remember(page).then(() => page.goto("/sign-in/")),
-    ready: async (page) => {
-      await expect(page.getByRole("heading", { level: 1, name: "Who’s signing in?" })).toBeVisible();
-    },
-  },
-  {
-    id: "list-after-switch",
-    setup: async (page) => {
-      await remember(page);
-      await lastLeft(page, "t_robin");
-      await page.goto("/sign-in/?after=switch");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("status")).toHaveText("Robin Okafor is signed out. To come back, sign in again.");
-    },
-  },
-  {
-    id: "list-after-sign-out",
-    setup: async (page) => {
-      await remember(page);
-      await lastLeft(page, "t_lea");
-      await page.goto("/sign-in/?after=sign-out");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("button", { name: "Forget Léa Okafor on this browser" })).toBeVisible();
-    },
-  },
-  {
-    id: "list-after-provider-sign-out",
-    setup: async (page) => {
-      await remember(page);
-      await page.goto("/sign-in/?after=provider-sign-out");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("status")).toContainText("You’re signed out of Family login.");
-    },
-  },
-  {
-    id: "forget",
-    setup: async (page) => {
-      await remember(page);
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Forget someone on this browser" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("heading", { level: 1, name: "Forget someone on this browser" })).toBeVisible();
-    },
-  },
-  {
-    id: "forget-after-one",
-    setup: async (page) => {
-      await remember(page);
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Forget someone on this browser" }).click();
-      await page.getByRole("button", { name: "Forget Robin Okafor on this browser" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("status")).toContainText("Robin Okafor is forgotten on this browser.");
-    },
-  },
-  {
-    id: "password",
-    setup: async (page) => {
-      await remember(page);
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Léa Okafor", exact: true }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByLabel("Password for Léa Okafor")).toBeFocused();
-    },
-  },
-  {
-    id: "password-wrong",
-    setup: async (page) => {
-      await remember(page);
-      await page.route("**/auth/api/login", (route) =>
-        route.fulfill(json({ error: { code: "invalid_login", message: "Wrong" } }, 401)),
-      );
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Léa Okafor", exact: true }).click();
-      await page.getByLabel("Password for Léa Okafor").fill("not the password");
-      await page.getByRole("button", { name: "Sign in" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("alert")).toHaveText("That password isn’t right. Try again.");
-    },
-  },
-  {
-    id: "password-too-many",
-    setup: async (page) => {
-      await remember(page);
-      await page.route("**/auth/api/login", (route) =>
-        route.fulfill(json({ error: { code: "login_rate_limited", message: "Too many attempts. Try again in 15 minutes." } }, 429)),
-      );
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Léa Okafor", exact: true }).click();
-      await page.getByLabel("Password for Léa Okafor").fill("not the password");
-      await page.getByRole("button", { name: "Sign in" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("alert")).toHaveText("Too many tries. Wait 15 minutes, then try again.");
-    },
-  },
-  {
-    id: "password-no-answer",
-    setup: async (page) => {
-      await remember(page);
-      await page.route("**/auth/api/login", (route) => route.abort());
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Léa Okafor", exact: true }).click();
-      await page.getByLabel("Password for Léa Okafor").fill("not the password");
-      await page.getByRole("button", { name: "Sign in" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("alert")).toHaveText("Couldn’t reach the gateway. Try again in a moment.");
-    },
-  },
-  {
-    id: "single-sign-on-opening",
-    setup: async (page) => {
-      await remember(page);
-      // The provider's page never answers here, so the opening state stays on screen.
-      await page.route(/\/login\?tile=/, () => {});
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Sam Okafor" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("status")).toHaveText("Opening Family login");
-    },
-  },
-  {
-    id: "password-gone",
-    setup: async (page) => {
-      await remember(page);
-      await page.route("**/auth/api/login", (route) =>
-        route.fulfill(json({ error: { code: "tile_unknown", message: "That name is no longer on this browser." } }, 404)),
-      );
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Léa Okafor", exact: true }).click();
-      await page.getByLabel("Password for Léa Okafor").fill("not the password");
-      await page.getByRole("button", { name: "Sign in" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("heading", { level: 1, name: "Léa Okafor can’t sign in from this list" })).toBeVisible();
-    },
-  },
-  {
-    id: "form",
-    setup: async (page) => {
-      await remember(page, []);
-      await page.goto("/sign-in/");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeChecked();
-    },
-  },
-  {
-    id: "form-from-list",
-    setup: async (page) => {
-      await remember(page);
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Someone else" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("button", { name: "Back to the list" })).toBeVisible();
-    },
-  },
-  {
-    id: "form-remember-nobody",
-    setup: async (page) => {
-      await page.route("**/auth/api/remembered", (route) => route.fulfill(json({ remember: false, people: [] })));
-      await page.goto("/sign-in/");
-    },
-    ready: async (page) => {
-      await expect(page.getByLabel("Email")).toBeVisible();
-      await expect(page.getByRole("checkbox")).toHaveCount(0);
-    },
-  },
-  {
-    id: "form-everyone-forgotten",
-    setup: async (page) => {
-      await page.route("**/auth/api/remembered", (route) => route.fulfill(json({ remember: true, people: people.slice(0, 2) })));
-      await page.route("**/auth/api/remembered/*", (route) => route.fulfill(json({ ok: true })));
-      await page.goto("/sign-in/");
-      await page.getByRole("button", { name: "Forget someone on this browser" }).click();
-      await page.getByRole("button", { name: "Forget Robin Okafor on this browser" }).click();
-      await page.getByRole("button", { name: "Forget Léa Okafor on this browser" }).click();
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("status")).toHaveText("Everyone is forgotten on this browser.");
-    },
-  },
-  {
-    id: "list-unavailable",
-    setup: async (page) => {
-      await page.route("**/auth/api/remembered", (route) => route.abort());
-      await page.goto("/sign-in/");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("alert")).toHaveText("Couldn’t reach the gateway.");
-    },
-  },
-  {
-    id: "reset-password",
-    setup: async (page) => {
-      await page.goto("/sign-in/#reset=capture-token");
-    },
-    ready: async (page) => {
-      await expect(page.getByRole("heading", { level: 1, name: "Choose a new password" })).toBeVisible();
-    },
-  },
-];
+  // Switch person's record: the person who just left is named, and goes last.
+  const robinTile = await tileOf(page, robinName);
+  await page.evaluate(
+    (value) => sessionStorage.setItem("azizam.handoff.last", value),
+    JSON.stringify({ tile: robinTile }),
+  );
+  await page.goto("/sign-in/?after=switch");
+  await expect(page.getByRole("status")).toHaveText(`${robinName} is signed out. To come back, sign in again.`);
+  await capture(page, name, "list-after-switch");
+
+  await page.goto("/sign-in/?after=provider-sign-out");
+  // The fixture gateway names its provider "single sign-on", the label the owner sets when none is set.
+  await expect(page.getByRole("status")).toContainText("You’re signed out of single sign-on.");
+  await capture(page, name, "list-after-provider-sign-out");
+}
 
 for (const viewport of WIDTHS) {
-  test(`every chooser and sign-in state is captured and shows its key line at ${viewport.name} px`, async ({ context }) => {
-    for (const state of states) {
-      // A fresh page per state: the init script that sets the last-left record must not carry over.
-      const page = await context.newPage();
+  test.describe(`at ${viewport.name} px`, () => {
+    test(`the list, its status lines, and the forget mode are captured`, async ({ isolated }) => {
+      test.setTimeout(240_000);
+      const { page, robinName, leaName } = await twoPeopleOnOneBrowser(isolated);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await state.setup(page);
-      await state.ready(page);
-      await page.screenshot({
-        path: test.info().outputPath(`w4-shots/${viewport.name}-${state.id}.png`),
-        fullPage: true,
-      });
-      await page.close();
-    }
+      const name = viewport.name;
+
+      await expect(page.getByRole("status")).toContainText("You’re signed out.");
+      await capture(page, name, "list-after-sign-out");
+      await endingStates(page, name, robinName);
+
+      await page.goto("/sign-in/");
+      await page.getByRole("button", { name: "Someone else" }).click();
+      await expect(page.getByRole("button", { name: "Back to the list" })).toBeVisible();
+      await capture(page, name, "form-from-list");
+
+      await page.getByRole("button", { name: "Back to the list" }).click();
+      await page.getByRole("button", { name: "Forget someone on this browser" }).click();
+      await expect(page.getByRole("heading", { level: 1, name: "Forget someone on this browser" })).toBeVisible();
+      await capture(page, name, "forget");
+
+      await page.getByRole("button", { name: `Forget ${robinName} on this browser` }).click();
+      await expect(page.getByRole("status")).toContainText(`${robinName} is forgotten on this browser.`);
+      await capture(page, name, "forget-after-one");
+
+      await page.getByRole("button", { name: `Forget ${leaName} on this browser` }).click();
+      await expect(page.getByRole("status")).toHaveText("Everyone is forgotten on this browser.");
+      await capture(page, name, "form-everyone-forgotten");
+    });
+
+    test(`the password screens are captured: wrong, no answer, too many tries, and a name the list no longer has`, async ({ isolated }) => {
+      test.setTimeout(240_000);
+      const { page, leaName, lea } = await twoPeopleOnOneBrowser(isolated);
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      const name = viewport.name;
+      const alert = page.getByRole("alert").filter({ hasText: /\S/ });
+      const submit = page.getByRole("button", { name: "Sign in" });
+
+      await page.getByRole("button", { name: leaName, exact: true }).click();
+      await expect(page.getByLabel(`Password for ${leaName}`)).toBeFocused();
+      await capture(page, name, "password");
+
+      await page.getByLabel(`Password for ${leaName}`).fill("not the password");
+      await submit.click();
+      await expect(alert).toHaveText("That password isn’t right. Try again.");
+      await capture(page, name, "password-wrong");
+
+      await page.route("**/auth/api/login", (route) => route.abort());
+      await submit.click();
+      await expect(alert).toHaveText("Couldn’t reach the gateway. Try again in a moment.");
+      await capture(page, name, "password-no-answer");
+      await page.unroute("**/auth/api/login");
+
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        await page.getByLabel(`Password for ${leaName}`).fill("not the password");
+        const answered = page.waitForResponse((response) => response.url().endsWith("/auth/api/login"));
+        await submit.click();
+        if ((await answered).status() === 429) break;
+      }
+      await expect(alert).toHaveText("Too many tries. Wait 15 minutes, then try again.");
+      await capture(page, name, "password-too-many");
+
+      // Léa's name is removed on the gateway while this page still shows it: the next sign-in finds no such name.
+      await page.goto("/sign-in/");
+      await expect(page.getByRole("button", { name: leaName, exact: true })).toBeVisible();
+      const leaTile = await tileOf(page, leaName);
+      expect((await page.request.delete(`/auth/api/remembered/${encodeURIComponent(leaTile)}`)).ok()).toBe(true);
+      await page.getByRole("button", { name: leaName, exact: true }).click();
+      await page.getByLabel(`Password for ${leaName}`).fill(lea.password);
+      await submit.click();
+      await expect(page.getByRole("heading", { level: 1, name: `${leaName} can’t sign in from this list` })).toBeVisible();
+      await capture(page, name, "password-gone");
+    });
+
+    test(`the list cannot be read, the plain form for a new browser, and the reset form are captured`, async ({ browser, baseURL }) => {
+      test.setTimeout(120_000);
+      const name = viewport.name;
+      // A browser with no sign-in of its own: the plain form, with the name box on, and the reset form.
+      const fresh = await browser.newContext({ baseURL, viewport: { width: viewport.width, height: viewport.height } });
+      const page = await fresh.newPage();
+      await page.goto("/sign-in/");
+      await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeChecked();
+      await capture(page, name, "form");
+
+      await page.route("**/auth/api/remembered", (route) => route.abort());
+      await page.goto("/sign-in/");
+      await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveText("Couldn’t reach the gateway.");
+      await capture(page, name, "list-unavailable");
+      await page.unroute("**/auth/api/remembered");
+
+      // A new address, so the page loads again: the reset token is read when the page first loads.
+      await page.goto("/sign-in/?view=reset#reset=capture-token");
+      await expect(page.getByRole("heading", { level: 1, name: "Choose a new password" })).toBeVisible();
+      await capture(page, name, "reset-password");
+      await fresh.close();
+    });
   });
 }
+
