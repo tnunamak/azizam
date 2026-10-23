@@ -891,13 +891,13 @@ def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
 
     c.registry["services"]["service"]["config"] = {}
     response = c.http.get("/me/api/home")
-    assert alias_rows(response.json())[0]["backend_kind"] != "local"
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
     c.registry["services"]["service"]["config"] = {
         "gateway_lifecycle": True, "cost_class": "paid-remote",
     }
     response = c.http.get("/me/api/home")
-    assert alias_rows(response.json())[0]["backend_kind"] != "local"
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
 
 def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):
