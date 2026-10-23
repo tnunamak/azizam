@@ -51,3 +51,21 @@ def unguarded(path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def before_the_cut_over(path: Path) -> None:
+    """The whole state of an existing database before its cut-over is applied: no guards, no ownership version.
+
+    ``unguarded`` alone leaves the version row, which a restart would read as an applied cut-over.
+    """
+    import sqlite3
+
+    from gateway import app_binding_guard
+
+    unguarded(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("DELETE FROM schema_migration_steps WHERE name = ?", (app_binding_guard.RECEIPT,))
+        conn.commit()
+    finally:
+        conn.close()

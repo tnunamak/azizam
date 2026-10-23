@@ -291,18 +291,27 @@ def test_an_upgraded_database_keeps_its_bindings_until_the_cut_over_is_applied(t
     assert receipts == 0
 
 
-def test_a_restart_never_repairs_or_fills_in_an_unproven_creator(tmp_path):
+def test_an_upgraded_database_fills_only_the_creators_its_audit_log_proves_before_the_cut_over(tmp_path):
     path = tmp_path / "admin.db"
     build_v6(path)
     admin_store.init_db(path)
-    # Unproven App keys: no creator recorded, though the audit log names each App's owner as the creator.
-    # The retired startup back-fill would have written that owner in; a restart must not.
+    # Unproven App keys: no creator recorded. The audit log names each App's owner as the creator of
+    # every key but one, which has no audit row at all.
     _sql(path, "UPDATE credentials SET created_by=NULL WHERE subject_kind='app'")
     _sql(path, "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, action, target_kind, target_id) "
                "SELECT 'aud_' || c.id, 1, 'user', a.owner_user_id, 'credential.create', 'credential', c.id "
                "FROM credentials c JOIN apps a ON a.id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
                "WHERE c.subject_kind = 'app'")
-    before = sqlite3.connect(path).execute("SELECT id, created_by FROM credentials WHERE subject_kind='app' ORDER BY id").fetchall()
+    conn = sqlite3.connect(path)
+    unaudited = conn.execute("SELECT id FROM credentials WHERE subject_kind='app' ORDER BY id LIMIT 1").fetchone()
+    expected = dict(conn.execute(
+        "SELECT c.id, a.owner_user_id FROM credentials c JOIN apps a ON a.id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
+        "WHERE c.subject_kind = 'app'").fetchall())
+    conn.close()
+    if unaudited is not None:
+        _sql(path, "DELETE FROM audit_events WHERE target_id = ?", (unaudited[0],))
+        expected[unaudited[0]] = None
     admin_store.init_db(path)
-    after = sqlite3.connect(path).execute("SELECT id, created_by FROM credentials WHERE subject_kind='app' ORDER BY id").fetchall()
-    assert after == before
+    after = dict(sqlite3.connect(path).execute(
+        "SELECT id, created_by FROM credentials WHERE subject_kind='app'").fetchall())
+    assert after == expected
