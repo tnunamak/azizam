@@ -271,3 +271,34 @@ def test_a_personal_app_another_person_made_is_shown_and_kept_personal_by_defaul
 
     assert code == 0
     assert f"created by {maker['id']} (audit): kept personal by default" in text
+
+
+def _delete_app_row_leaving_its_bindings(path: Path, app_id: str) -> None:
+    """The state a legacy database can hold: an App row gone while its keys and addresses remain."""
+    _unguarded(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM apps WHERE id = ?", (app_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_key_and_an_address_whose_app_row_is_gone_are_listed_for_removal_and_block_nothing(db):
+    owner = _person(db, "owner@example.test")
+    desk = _service_app(db, owner)["id"]
+    key_id = _insert_key(db, desk, created_by=owner["id"], last_used_at=AS_OF - DAY)  # used yesterday
+    entry_id = _insert_address(db, desk, created_by=owner["id"])
+    _delete_app_row_leaving_its_bindings(db, desk)
+
+    body = _json(db)
+
+    listed = _app_block(body, desk)
+    assert listed["missing_app"] is True
+    assert [(key["id"], key["action"]) for key in listed["keys"]] == [(key_id, "revoke")]
+    assert [(entry["id"], entry["action"]) for entry in listed["trusted_addresses"]] == [(entry_id, "remove")]
+    assert listed["blocks_apply"] == []
+    assert body["summary"]["keys_to_revoke"] == 1
+    assert body["summary"]["addresses_to_remove"] == 1
+    assert desk not in body["summary"]["apps_blocking_apply"]

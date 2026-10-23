@@ -383,3 +383,53 @@ def test_after_apply_a_control_plane_key_still_takes_its_creator(legacy):
         assert conn.execute("SELECT created_by FROM credentials WHERE id = ?", (control,)).fetchone()[0] == f"user:{legacy.owner['id']}"
     finally:
         conn.close()
+
+
+def _orphan_bindings(path: Path) -> tuple[str, str]:
+    """A key and an address whose App row is gone, with no creator: the state a legacy database can hold."""
+    owner = _person(path, "gone-owner@example.test")
+    gone = admin_store.create_app("Gone", kind="service", owner_user_id=owner["id"], access_plan="person", path=path)["id"]
+    key_id = _key(path, gone, created_by=None)
+    entry_id = _address(path, gone, "10.0.0.5", created_by=None)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM apps WHERE id = ?", (gone,))
+        conn.commit()
+    finally:
+        conn.close()
+    return key_id, entry_id
+
+
+def test_apply_revokes_a_key_and_removes_an_address_whose_app_row_is_gone(legacy):
+    orphan_key, orphan_address = _orphan_bindings(legacy.path)
+    assert _accept(legacy.path) == 0
+
+    assert _apply(legacy.path) == 0
+
+    assert orphan_key not in _live_keys(legacy.path)
+    assert orphan_address not in _addresses(legacy.path)
+    assert _receipts(legacy.path) == 1
+
+
+@pytest.mark.parametrize("binding", ["key", "address"])
+def test_apply_refuses_when_a_binding_would_survive_without_a_proven_creator(legacy, monkeypatch, capsys, binding):
+    orphan_key, orphan_address = _orphan_bindings(legacy.path)
+    real_build = app_binding_preview.build
+
+    def preview_that_misses_orphans(conn, *, as_of):
+        # The preview leaves out a binding whose App is gone, so the apply's own check must still refuse.
+        body = real_build(conn, as_of=as_of)
+        body["apps"] = [app for app in body["apps"] if not app.get("missing_app")]
+        return body
+
+    monkeypatch.setattr(app_binding_preview, "build", preview_that_misses_orphans)
+    assert _accept(legacy.path) == 0
+
+    assert _apply(legacy.path) == 1
+
+    assert "proven creator" in capsys.readouterr().err
+    assert (orphan_key if binding == "key" else orphan_address) in (
+        _live_keys(legacy.path) if binding == "key" else _addresses(legacy.path))
+    assert legacy.unproven_key in _live_keys(legacy.path)  # the change was rolled back as a whole
+    assert _receipts(legacy.path) == 0
