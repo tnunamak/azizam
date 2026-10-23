@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import accounts, admin_store  # noqa: E402
+from gateway import accounts, admin_store, content_access  # noqa: E402
 from tests.support.app_keys import accountable_person, issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
@@ -1303,8 +1303,10 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
 
             for name in ("owner", "admin", "member_a", "member_b"):
                 sign_in(name)
-                response = self.client.get("/me/api/activity")
+                with patch("gateway.user_runtime.decide", wraps=content_access.decide) as decision:
+                    response = self.client.get("/me/api/activity")
                 self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(decision.called)
                 self.assertEqual(response.json()["scope"], "me")
                 self.assertEqual(len(response.json()["receipts"]), 1)
                 self.assertEqual(response.json()["receipts"][0]["app_id"], apps[name]["id"])
