@@ -727,6 +727,16 @@ def _connection_test_contract(method, template, response, row, gateway):
 
 
 def _metadata_contract(method, template, response, row):
+    if (method, template) == ("PUT", "/gateway/v1/me/retention") and response.status_code == 403:
+        try:
+            code = response.json()["error"]["code"]
+        except (KeyError, TypeError, ValueError):
+            code = None
+        if code == "privacy_permission_required":
+            row["outcome"] = "metadata (contract)"
+            row["rule"] = "retention setting requires privacy permission; no model runs"
+            row["detail"] = ""
+        return
     reason = _METADATA_CONTRACT.get((method, template))
     if reason is None or response.status_code != 200:
         return
