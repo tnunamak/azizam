@@ -93,7 +93,7 @@ def test_the_sampler_samples_once_a_minute_and_joins_at_shutdown(monkeypatch, sp
     assert spawns == []
 
 
-def test_the_status_build_leaves_the_backend_samples_to_the_sampler(monkeypatch):
+def test_the_status_build_leaves_the_backend_samples_to_the_sampler(monkeypatch, spawns):
     written: list[object] = []
     monkeypatch.setattr(status_endpoint, "_record_backend_health_samples", written.append)
 
