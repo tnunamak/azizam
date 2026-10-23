@@ -18,7 +18,9 @@ import http.client
 import http.cookiejar
 import json
 import re
+import statistics
 import sys
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -144,14 +146,61 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
 # The row takes its limits from budgets.toml [api.routes].
 COLD_HOME_ROUTE = "/me/api/home (status cache expired)"
 COLD_HOME_WAIT_S = 61
-COLD_HOME_REPEATS = 3
+COLD_STATUS_ROUTE = "/admin/api/status (status cache expired)"
+# The status page keeps a stale answer for 60 s past its 12 s TTL and rebuilds in the background, so
+# a read is cold only after that stale window.
+COLD_STATUS_WAIT_S = 62
+COLD_REPEATS = 3
 
 
-def cold_home_row(owner: Session) -> dict:
-    samples, stamps, size, status = [], [], 0, 0
-    for _ in range(COLD_HOME_REPEATS):
-        time.sleep(COLD_HOME_WAIT_S)
-        status, headers, body, ms = owner.get("/me/api/home")
+class LoopProbe:
+    """Times /health on its own connection, so a stall of the gateway's event loop shows as latency.
+
+    The gateway answers /health on the loop, so while the loop is blocked the probe's request waits.
+    Each sample is (start time, latency in ms).
+    """
+
+    def __init__(self, host: str, port: int):
+        self.host, self.port = host, port
+        self.samples: list[tuple[float, float]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="loop-probe", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=30)
+        while not self._stop.is_set():
+            started = time.perf_counter()
+            try:
+                conn.request("GET", "/health")
+                conn.getresponse().read()
+            except (http.client.HTTPException, OSError):
+                conn.close()
+                conn = http.client.HTTPConnection(self.host, self.port, timeout=30)
+            self.samples.append((started, (time.perf_counter() - started) * 1000))
+            time.sleep(0.005)
+
+
+def cold_read(owner: Session, route: str, path: str, wait_s: float, probe: LoopProbe) -> dict:
+    """One route read cold, `COLD_REPEATS` times. Each read's stall is the largest probe latency that
+    started while it ran (plus 0.5 s, where a stale read's rebuild runs), less the idle median just before."""
+    samples, stamps, stalls, size, status = [], [], [], 0, 0
+    for _ in range(COLD_REPEATS):
+        idle_from = time.perf_counter()
+        time.sleep(wait_s)
+        idle = [ms for started, ms in list(probe.samples) if started >= idle_from]
+        baseline = statistics.median(idle) if idle else 0.0
+        started = time.perf_counter()
+        status, headers, body, ms = owner.get(path)
+        ended = time.perf_counter()
+        during = [latency for t, latency in list(probe.samples) if started <= t <= ended + 0.5]
+        stalls.append(max(during) - baseline if during else 0.0)
         samples.append(ms)
         size = len(body)
         stamps.append({k: float(headers.get(f"x-perf-{k}", 0)) for k in ("sql", "connects", "subproc", "ms", "cpu-ms")})
@@ -159,11 +208,12 @@ def cold_home_row(owner: Session) -> dict:
             break
     # Three samples: p95 is the slowest one, and the counts are the largest seen (a count is exact per read).
     return {
-        "route": COLD_HOME_ROUTE, "who": "owner", "status": status,
+        "route": route, "who": "owner", "status": status,
         "p50_ms": round(pct(samples, 0.5), 1), "p95_ms": round(max(samples), 1), "bytes": size,
         "sql": int(max(s["sql"] for s in stamps)), "connects": int(max(s["connects"] for s in stamps)),
         "subproc": int(max(s["subproc"] for s in stamps)), "server_ms": round(pct([s["ms"] for s in stamps], 0.5), 1),
         "cpu_ms": round(pct([s["cpu-ms"] for s in stamps], 0.5), 1),
+        "stall_ms": round(max(stalls), 1),
     }
 
 
@@ -219,7 +269,13 @@ def run(manifest: dict) -> dict:
                 "subproc": int(min(s["subproc"] for s in stamps)), "server_ms": round(min(s["ms"] for s in stamps), 1),
                 "cpu_ms": round(min(s["cpu-ms"] for s in stamps), 1),
             })
-    rows.append(cold_home_row(owner))
+    probe = LoopProbe(host, port)
+    probe.start()
+    try:
+        rows.append(cold_read(owner, COLD_HOME_ROUTE, "/me/api/home", COLD_HOME_WAIT_S, probe))
+        rows.append(cold_read(owner, COLD_STATUS_ROUTE, "/admin/api/status", COLD_STATUS_WAIT_S, probe))
+    finally:
+        probe.stop()
     return {"rows": rows, "pool": sorted(pool), "repeats": REPEATS}
 
 

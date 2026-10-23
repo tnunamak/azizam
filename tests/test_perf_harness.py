@@ -48,6 +48,14 @@ def test_the_budget_file_sets_every_limit_the_checker_reads() -> None:
     assert BUDGETS["api"]["processes"] == 0 and BUDGETS["api"]["p95_ms"] <= 100 and BUDGETS["ui"]["ready_ms"] <= 500
 
 
+def test_a_cold_read_that_stalls_the_event_loop_past_its_limit_is_reported() -> None:
+    assert BUDGETS["loop"]["max_stall_ms"] <= 100
+    stalled = {"route": "/admin/api/status (status cache expired)", "who": "owner", "stall_ms": 150.0}
+    assert [v["metric"] for v in check.loop_violations([stalled], BUDGETS["loop"])] == ["stall_ms"]
+    assert check.loop_violations([{**stalled, "stall_ms": 40.0}], BUDGETS["loop"]) == []
+    assert check.loop_violations([_api()], BUDGETS["loop"]) == [], "a row without a stall is not a loop finding"
+
+
 def test_a_route_within_every_limit_is_not_reported() -> None:
     assert check.api_violations([_api()], BUDGETS["api"], counts_only=False) == []
 
