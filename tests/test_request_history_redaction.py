@@ -52,7 +52,8 @@ def test_rule_8_names_are_compared_in_snake_kebab_and_camel_case():
 
 
 def test_rule_4_a_url_with_user_info_is_replaced_whole():
-    url = "https://" + "user:pw-secret" + "@" + "cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret"
+    url = ("https://" + "user:pw-secret" + "@"
+           + "cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret")
     redacted, omissions = rh.redact_json({"image_url": url})
     text = json.dumps(redacted)
     assert redacted["image_url"] == "[url removed]"

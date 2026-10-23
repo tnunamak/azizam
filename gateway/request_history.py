@@ -56,8 +56,8 @@ _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _SCHEME_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+.-")
 _SCHEME_LETTER = re.compile(r"[A-Za-z]")
 _WHITESPACE = re.compile(r"\s")
-#: What a URL reads as when it holds an ``@`` or cannot be split into its parts. The whole URL is replaced, so no part of
-#: it is kept.
+#: What a URL reads as when it holds an ``@`` or cannot be split into its parts. The whole URL is replaced, so no part
+#: of it is kept.
 URL_REMOVED = "[url removed]"
 
 _TABLE = """
@@ -147,10 +147,10 @@ def allowed_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 def _url_runs(text: str) -> list[tuple[int, int]]:
-    """Each URL in ``text``, as (start, end). A URL starts at a scheme (a letter, scheme characters, then ``://``) and runs
-    to the next whitespace or the next scheme, so ``https://a.test/x,https://b.test/y`` is two URLs. Each scheme is found
-    by walking back from its ``://``, so each character is read once: a long run of letters costs time in proportion to
-    its length."""
+    """Each URL in ``text``, as (start, end). A URL starts at a scheme (a letter, scheme characters, then ``://``) and
+    runs to the next whitespace or the next scheme, so ``https://a.test/x,https://b.test/y`` is two URLs. Each scheme is
+    found by walking back from its ``://``, so each character is read once: a long run of letters costs time in
+    proportion to its length."""
     schemes: list[int] = []
     separator = text.find("://")
     while separator != -1:
@@ -171,8 +171,8 @@ def _url_runs(text: str) -> list[tuple[int, int]]:
 def _scrub_url(url: str) -> tuple[str, bool]:
     """Rule 4 for one URL (R7-1). An ``@`` or ``%40`` anywhere replaces the whole URL, as does one that cannot be split
     into a scheme and a non-empty ASCII host. Otherwise the scheme, host, port and path are kept, a path segment that is
-    a credential name becomes ``[removed]``, and a query or fragment becomes ``?[removed]`` or ``#[removed]``. The second
-    value says whether any part was removed."""
+    a credential name becomes ``[removed]``, and a query or fragment becomes a marker, ``?[removed]`` or ``#[removed]``.
+    The second value says whether any part was removed."""
     if "@" in url or "%40" in url:
         return URL_REMOVED, True
     try:
@@ -236,8 +236,8 @@ class WorkBudget:
     """The work one record may spend on JSON held inside strings (R6-2): the text it decodes, in bytes, and the values
     it visits. One budget is shared by every body of a record, so the total stays bounded however many wrappers the
     record holds. A string spends it when it parses as a JSON object, array or literal that is cleaned further. A
-    literal around plain text is cleaned as text and costs nothing here. Before a string is parsed it must fit in what is
-    left (R7-3), so one too long to fit is omitted unparsed, even when it would have been plain text."""
+    literal around plain text is cleaned as text and costs nothing here. Before a string is parsed it must fit in what
+    is left (R7-3), so one too long to fit is omitted unparsed, even when it would have been plain text."""
 
     def __init__(self, *, max_bytes: int, max_nodes: int = JSON_NODE_LIMIT) -> None:
         self.max_bytes = max_bytes

@@ -22,7 +22,7 @@ def _url(user_info: str, rest: str) -> str:
 
 
 def _escaped_slashes(text: str) -> str:
-    """A JSON string literal of ``text`` in which each slash is written as ``\\u002f``, so the encoded text has no ``://``."""
+    """A JSON string literal of ``text`` with each slash written as ``\\u002f``, so no ``://`` shows in the encoded text."""
     return json.dumps(text).replace("/", "\\u002f")
 
 
@@ -174,7 +174,7 @@ def test_r7_2_b_a_literal_holding_a_data_url_is_omitted_as_media():
     assert found == ["media"]
 
 
-# ------------------------------------------------------------------ R7-3: a string is checked against the budget before it is parsed
+# ------------------------------------------------------------------ R7-3: the budget is checked before a parse
 
 
 def test_r7_3_a_a_string_the_budget_cannot_hold_is_not_parsed(monkeypatch):

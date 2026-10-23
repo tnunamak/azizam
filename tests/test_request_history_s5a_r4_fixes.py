@@ -40,7 +40,7 @@ def own_admission_limit(monkeypatch):
 # ------------------------------------------------------------------ R4-1: a URL's user info, sub-delims included
 
 
-# Round 7 (R7-1) replaced the output of the next four tests: a URL with an @ is replaced whole, and so is any URL in them.
+# Round 7 (R7-1): a URL with an @ is now replaced whole, so the two tests below expect `[url removed]`.
 @pytest.mark.parametrize("delimiter", USER_INFO_DELIMITERS)
 def test_r4_1_a_user_info_with_a_delimiter_is_removed_from_a_url_in_text(delimiter):
     kept, found = request_history.redact_json({"content": f"connect postgres://user:a{delimiter}{SECRET}@db/app now"})

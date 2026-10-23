@@ -267,7 +267,7 @@ def test_a_bracketed_json_key_is_a_credential_name_like_a_bracketed_form_field()
 
 
 def test_a_signed_url_followed_by_punctuation_loses_its_query_and_the_punctuation_with_it():
-    """A query runs to the next space, so a full stop written straight after it is part of the query and goes with it."""
+    """A query runs to the next space, so a full stop written straight after it is part of the query, and goes too."""
     text = f"see https://bucket.example.test/a.png?X-Amz-Signature={CANARY}."
     kept, _ = request_history.redact_json({"content": text})
     assert CANARY not in json.dumps(kept)

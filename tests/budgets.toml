@@ -242,7 +242,10 @@
 # ends, 15 for JSON held in string literals and the record's JSON budget, 2 for a body forget that is whole before the
 # caller is known, 11 for default-ignorable characters in names).
 # collect-only 16449 -> 16498 (2026-10-23).
-pytest = 16498
+# Slice 5a round-7 review fixes: +39 cases in tests/test_request_history_s5a_r7_fixes.py (the URL rule, the decoded
+# literal, the budget check before a parse), and one test split in two in tests/test_request_history_redaction.py.
+# collect-only 16498 -> 16538 (2026-10-23).
+pytest = 16538
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
