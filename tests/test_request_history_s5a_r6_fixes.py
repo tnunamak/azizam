@@ -307,3 +307,11 @@ def test_r6_4_d_a_default_ignorable_character_does_not_make_a_name_a_credential(
     kept, found = request_history.redact_json({name: 5})
     assert kept == {name: 5}
     assert found == []
+
+
+def test_r6_2_k_a_string_literal_that_wraps_json_spends_the_budget_too():
+    budget = request_history.WorkBudget(max_bytes=10)
+    text = json.dumps(json.dumps({"a": 1}))  # 12 characters: a literal around 8 characters of JSON
+    kept, found = request_history.redact_json({"x": text}, budget=budget)
+    assert kept == {"x": {"omitted": "json_budget"}}
+    assert found == ["json_budget"]
