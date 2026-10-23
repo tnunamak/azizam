@@ -2257,7 +2257,7 @@ class MemberFailureCopyTests(unittest.TestCase):
         source = self._error(self.client.get("/me/api/media", params={"source": "x"}), 400, "invalid_source", "request")
         self.assertNotIn("app:<id>", source["message"])
         owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 400, "param_not_supported", "request")
-        self.assertIn("person", owner["message"])
+        self.assertIn("setting", owner["message"])
 
     def test_missing_file_is_not_called_expired(self) -> None:
         asset_id = "aud_" + "d" * 64
