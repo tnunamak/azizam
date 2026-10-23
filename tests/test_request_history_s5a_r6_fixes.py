@@ -269,3 +269,41 @@ def test_r6_3_b_a_body_whole_before_the_caller_is_known_is_kept_with_its_reply(m
     rows = _kept(media)
     assert len(rows) == 1 and "a sentence to keep" in rows[0]
     assert _free_slots() == MAX_SLOTS
+
+
+# ------------------------------------------------------------------ R6-4: every default-ignorable character is dropped from a name
+
+
+#: Default_Ignorable_Code_Point ranges that are not format characters (category Cf), as the round-6 finding lists them,
+#: plus the unassigned ones the property also covers (U+2065, U+FFF0-U+FFF8).
+DEFAULT_IGNORABLE_RANGES = [
+    (0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x2065, 0x2065), (0x3164, 0x3164),
+    (0xFE00, 0xFE0F), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xE0000, 0xE0FFF),
+]
+
+
+def test_r6_4_a_every_code_point_in_the_default_ignorable_ranges_is_dropped_from_a_credential_name():
+    for low, high in DEFAULT_IGNORABLE_RANGES:
+        for code in range(low, high + 1):
+            assert request_history.is_credential_name("pass" + chr(code) + "word"), hex(code)
+
+
+def test_r6_4_b_the_grapheme_joiner_inside_password_is_still_a_credential_name():
+    assert request_history.is_credential_name("pass\u034fword")
+
+
+@pytest.mark.parametrize("char", ["\u034f", "\u115f", "\u180b", "\u3164", "\ufe0f", "\uffa0", "\U000e0001", "\u200b"])
+def test_r6_4_c_a_default_ignorable_character_inside_a_credential_word_is_removed(char):
+    name = "pass" + char + "word"
+    kept, found = request_history.redact_json({name: SECRET})
+    assert SECRET not in json.dumps(kept)
+    assert kept == {name: "[removed]"}
+    assert found == ["credential_field"]
+
+
+def test_r6_4_d_a_default_ignorable_character_does_not_make_a_name_a_credential():
+    name = "max\u034ftokens"
+    assert not request_history.is_credential_name(name)
+    kept, found = request_history.redact_json({name: 5})
+    assert kept == {name: 5}
+    assert found == []
