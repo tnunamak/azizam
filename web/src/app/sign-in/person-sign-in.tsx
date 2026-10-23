@@ -14,7 +14,7 @@ import { PersonAvatar, generatedAvatarPalettes } from "@/components/product/pers
 import { authFetch, continueTo, type SignInOptions } from "./auth-api";
 import { notFreshFor } from "./sign-in-status";
 
-export type ProviderError = "provider" | "no_sign_in_time" | "not_fresh" | null;
+export type ProviderError = "provider" | "no_sign_in_time" | "not_fresh" | "tile_unknown" | null;
 
 function signInError(error: Error): string {
   if (error instanceof ApiError) {
@@ -117,6 +117,16 @@ export function ProviderNotices({ error }: { error: ProviderError }) {
         Your sign-in provider doesn’t tell Azizam when you signed in,
         so Azizam can’t tell that you just confirmed. Confirm with your
         Azizam password instead, or use an admin key for this action.
+      </p>
+    );
+  }
+  // A single sign-on name this browser no longer holds (DESIGN.md section 10, S10). The address carries no name, so the
+  // heading says "That name" where S10 names the person; the sentence after it is S10's, word for word.
+  if (error === "tile_unknown") {
+    return (
+      <p role="alert" className="text-body mb-6">
+        That name can’t sign in from this list. Try another way to sign in, or
+        ask the person who invited you for help.
       </p>
     );
   }

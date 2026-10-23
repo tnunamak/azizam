@@ -115,7 +115,9 @@ export default function SignInPage() {
       signedOut: readHandoff()?.state === "SIGNED_OUT",
       requestedReturn: params.get("return_to"),
       providerError:
-        error === "provider" || error === "no_sign_in_time" || error === "not_fresh" ? error : null,
+        error === "provider" || error === "no_sign_in_time" || error === "not_fresh" || error === "tile_unknown"
+          ? error
+          : null,
       providerSignOut: params.get("provider_sign_out") === "1",
       reset: new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
     });

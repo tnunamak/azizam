@@ -253,8 +253,11 @@ pytest = 16087
 # (the sign-out screen at two widths: with and without the provider's sign-out, Back, and the first-owner case, in place
 # of two inline-alert cases) and e2e/chooser-states.spec.ts +2 (the owner's remember-nobody at two widths, global-state).
 # Full vitest run measured 3251 (3242 + 9). playwright.config.ts 513, live-data 3, household 18: 534 listed.
-vitest = 3251
-playwright = 534
+# W5 follow-up (a stale single sign-on name opens the sign-in page with its notice): +1 vitest case in
+# web/src/app/sign-in/chooser.spec.tsx and +1 Playwright case in e2e/signin-shell.spec.ts. Full vitest run measured 3252.
+# playwright.config.ts 514, live-data 3, household 18: 535 listed.
+vitest = 3252
+playwright = 535
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
