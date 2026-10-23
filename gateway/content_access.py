@@ -227,9 +227,8 @@ def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHis
     if origin is None:
         return False
     if viewer.auth_kind == "app_key":
-        return (origin.auth_kind == "app_key" and bool(viewer.credential_id)
-                and origin.credential_id == viewer.credential_id
-                and bool(viewer.app_id) and record.app_id == viewer.app_id)
+        return (origin.auth_kind == "app_key" and bool(viewer.app_id)
+                and record.app_id == viewer.app_id)
     if viewer.auth_kind == "mcp_grant":
         return (origin.auth_kind == "mcp_grant" and bool(viewer.connection_id)
                 and origin.connection_id == viewer.connection_id)
