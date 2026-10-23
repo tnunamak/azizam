@@ -95,3 +95,34 @@ def test_concurrent_cold_readers_share_one_probe(monkeypatch):
 
     assert asked == [["chat"]], "five cold readers at once should make one probe"
     assert all(service_ids(result) == ["chat"] for result in results)
+
+
+def test_a_failing_service_in_a_shared_probe_does_not_fail_a_reader_of_another_service(monkeypatch):
+    """Reader 1 asks for A and B, reader 2 for B only, at once. The batch probe fails because of A. Reader 2 still
+    gets B's row, and reader 1 gets B's row plus an unknown row for A, instead of an exception."""
+    proxy._SERVICE_ROW_CACHE.clear()
+    proxy._SERVICE_ROW_PROBES.clear()
+
+    async def scenario():
+        gate = asyncio.Event()
+
+        async def probe(config):
+            services = sorted(config["backends"])
+            await gate.wait()
+            if "a" in services:
+                raise RuntimeError("engine a broke")
+            return [{"service_id": key, "key": key, "status": "up", "source": "http"} for key in services]
+
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+        both = asyncio.ensure_future(proxy._service_rows({"a": {"key": "a"}, "b": {"key": "b"}}))
+        await asyncio.sleep(0)
+        only_b = asyncio.ensure_future(proxy._service_rows({"b": {"key": "b"}}))
+        await asyncio.sleep(0)
+        gate.set()
+        return await both, await only_b
+
+    both, only_b = asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert [(row["key"], row["status"]) for row in only_b] == [("b", "up")]
+    assert sorted((row["key"], row["status"]) for row in both) == [("a", "unknown"), ("b", "up")]
+    assert next(row for row in both if row["key"] == "a")["last_error"] == "RuntimeError"

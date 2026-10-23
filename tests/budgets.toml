@@ -275,7 +275,7 @@
 # Status fallback and sampler round 4: tests/test_service_row_cache.py (new) adds 3 cases, tests/test_status_snapshot.py
 # adds 2, and tests/test_backend_health_sampler.py adds 2: collect-only 16869 -> 16876 (2026-10-23). The ceiling of
 # 16860 was already below the 16869 that 1104834e7 measures, so this sets it to the measured count.
-pytest = 16876
+pytest = 16877
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
