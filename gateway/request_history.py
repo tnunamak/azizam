@@ -32,8 +32,9 @@ KIND = retention.REQUEST_HISTORY
 REMOVED = "[removed]"
 #: A base64 string longer than this is media, not text (section 3.5, rule 5).
 MEDIA_STRING_LIMIT = 64 * 1024
-#: How deeply JSON may nest before the secret floor omits it: a whole body, or one tool call's ``arguments`` string. No
-#: request the routes accept nests this deep, and the limit keeps the cleaner's recursion far from Python's own limit.
+#: How deeply JSON may nest before the secret floor omits it: a whole body, or a string that holds JSON (such as a
+#: tool call's ``arguments``). No request the routes accept nests this deep, and the limit keeps the cleaner's recursion
+#: far from Python's own limit.
 JSON_DEPTH_LIMIT = 64
 #: Request headers kept by name. Nothing that carries a credential is on this list (rule 2).
 REQUEST_HEADERS = frozenset({"content-type", "accept", "x-azizam-prompts"})
@@ -210,9 +211,11 @@ class _TooDeep(Exception):
     """JSON nests past JSON_DEPTH_LIMIT. Raised deep in the cleaner, and caught where the JSON holding it is omitted."""
 
 
-def _redact_arguments(text: str, found: set[str], depth: int) -> Any:
-    """A tool call's ``arguments`` is a JSON string. Text that is not JSON is cleaned as text. A string that looks like
-    JSON (its first mark is ``{`` or ``[``) is cleaned as JSON, or omitted when it does not parse or nests too deep."""
+def _redact_string(text: str, found: set[str], depth: int, *, tool_arguments: bool = False) -> Any:
+    """A string that looks like JSON (its first mark, after whitespace, is ``{`` or ``[``) is cleaned as JSON and stored
+    compact. One that does not parse is cleaned as text, since prose may start with a bracket. A tool call's
+    ``arguments`` is always JSON, so one that does not parse is omitted. A string nested past JSON_DEPTH_LIMIT is
+    omitted."""
     if not text.lstrip().startswith(("{", "[")):
         return _redact_text(text, found)
     try:
@@ -221,6 +224,8 @@ def _redact_arguments(text: str, found: set[str], depth: int) -> Any:
         found.add("json_depth")
         return {"omitted": "json_depth"}
     except ValueError:
+        if not tool_arguments:
+            return _redact_text(text, found)
         found.add("unreadable_json")
         return {"omitted": "unreadable_json"}
     omissions: set[str] = set()
@@ -230,7 +235,7 @@ def _redact_arguments(text: str, found: set[str], depth: int) -> Any:
         found.add("json_depth")
         return {"omitted": "json_depth"}
     found.update(omissions)
-    return json.dumps(cleaned, ensure_ascii=False)
+    return json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
 
 
 def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
@@ -245,7 +250,7 @@ def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
                 result[key] = REMOVED
                 found.add("credential_field")
             elif key == "arguments" and isinstance(item, str):
-                result[key] = _redact_arguments(item, found, depth + 1)
+                result[key] = _redact_string(item, found, depth + 1, tool_arguments=True)
             else:
                 result[key] = _redact(item, found, depth + 1)
         return result
@@ -254,7 +259,7 @@ def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
             raise _TooDeep
         return [_redact(item, found, depth + 1) for item in value]
     if isinstance(value, str):
-        return _redact_text(value, found)
+        return _redact_string(value, found, depth)
     return value
 
 
