@@ -7,22 +7,52 @@ the caller's receipt.
 """
 from __future__ import annotations
 
+import threading
 from contextvars import ContextVar, Token
+from pathlib import Path
+from typing import Any, Callable
 
 
 class Slot:
-    def __init__(self, path: str, forget: bool = False) -> None:
+    def __init__(self, path: str, forget: bool = False, media_path: Path | None = None) -> None:
         self.path = path
         self.receipt_id: str | None = None
         #: The request carries ``X-Azizam-Prompts: forget``. The middleware strips the header, so the routes read it here.
         self.forget = forget
+        self.media_path = Path(media_path) if media_path is not None else None
+        self._lock = threading.Lock()
+        self._finalized = False
+        self._library_prompts: list[tuple[dict[str, Any], Callable | None]] = []
+
+    def defer_library_prompt(
+        self,
+        record: dict[str, Any],
+        *,
+        database_path: Path,
+        on_result: Callable | None,
+    ) -> bool:
+        """Hold a prompt for the capture writer when it shares the media database."""
+        if self.media_path is None or Path(database_path) != self.media_path:
+            return False
+        with self._lock:
+            if self._finalized:
+                return False
+            self._library_prompts.append((dict(record), on_result))
+            return True
+
+    def take_library_prompts(self) -> list[tuple[dict[str, Any], Callable | None]]:
+        """Close staging and hand pending prompts to the one request-finalization writer."""
+        with self._lock:
+            self._finalized = True
+            prompts, self._library_prompts = self._library_prompts, []
+            return prompts
 
 
 _CURRENT: ContextVar[Slot | None] = ContextVar("request_history_slot", default=None)
 
 
-def open_slot(path: str, *, forget: bool = False) -> Token:
-    return _CURRENT.set(Slot(path, forget))
+def open_slot(path: str, *, forget: bool = False, media_path: Path | None = None) -> Token:
+    return _CURRENT.set(Slot(path, forget, media_path))
 
 
 def close_slot(token: Token) -> None:
@@ -42,6 +72,17 @@ def prompts_forget() -> bool:
 def _canonical(path: str) -> str:
     """The route a path names. The OpenAI mount serves the same route as /v1 (``/openai/v1/x`` is ``/v1/x``)."""
     return path.removeprefix("/openai") if path.startswith("/openai/") else path
+
+
+def defer_library_prompt(
+    record: dict[str, Any],
+    *,
+    database_path: Path,
+    on_result: Callable | None = None,
+) -> bool:
+    """Stage a Library prompt when the active request can commit it with request history."""
+    slot = _CURRENT.get()
+    return bool(slot and slot.defer_library_prompt(record, database_path=database_path, on_result=on_result))
 
 
 def observe(receipt_id: str | None, path: str | None, parent: str | None) -> None:

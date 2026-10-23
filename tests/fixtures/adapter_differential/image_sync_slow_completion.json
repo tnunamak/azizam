@@ -294,6 +294,13 @@
     }
   ],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "img_f3b51772604a6b6908a27ebfe2c9fa7d34167cfdb752d650b46b669834a09551",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_jobs": [
       {
         "api_key_name": "test-app",
@@ -355,7 +362,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [

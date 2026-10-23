@@ -297,7 +297,12 @@
 # tests/test_request_history_member_choice.py and tests/test_request_history_capture.py.
 # Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 17039 (2026-10-23).
 # Train r103 step 3 (retention slice 5b1): 17107 + 51 (17039 - 16988) = 17158, provisional until the final hermetic collection.
-pytest = 17158
+# History/Library cascade and atomic-write coverage add three pytest cases.
+# Library cascade r2 adds six regression cases; full hermetic collect-only measured 16822 (2026-10-23).
+# Library cascade r3 adds four regression cases (a distinct request after a Library delete, a late write for the deleted
+# request, another member, a staged prompt's origin): collect-only 16822 -> 16826 (2026-10-23).
+# Train r103 step 4 (Library cascade): 17158 + 13 (16826 - 16813) = 17171, provisional until the final hermetic collection.
+pytest = 17171
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -848,7 +848,13 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
                metadata, actor_kind=actor_kind, actor_label=actor_label)
 
     if remove:
-        from gateway import prompt_memory
+        from gateway import media_jobs, prompt_memory, request_history
+
+        # Account removal is an explicit full-content erasure. Keep it separate
+        # from prompt_memory.delete_person's Library-only cascade.
+        request_history.delete_all_for_person(
+            user_id, admin_path=path, path=media_jobs.DB_PATH, now=ts,
+        )
         prompt_memory.delete_person(user_id)
 
 
