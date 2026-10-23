@@ -239,7 +239,7 @@ device. The server keeps the rows, and the page gets a tile for each name.
   (`password` or `sso`), `provider` and `hint`. The entry of the person this
   browser is signed in as also has `"you": true`; no other entry has that key.
   No email, person id, picture, role or session appears. Rate-limited to 60 reads
-  a minute per address.
+  a minute per address; `AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE` sets the 60.
 - `DELETE /auth/api/remembered/{tile}`: takes one name off this device's list. It
   does not sign anyone out or change their account. A tile from another device
   does nothing here.

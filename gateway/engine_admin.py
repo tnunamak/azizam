@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import log_scrub
 from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
+from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -98,15 +99,6 @@ class EngineRouteError(Exception):
         if self.check is not None:
             content["check"] = dict(self.check)
         return egress.plain_json_response(response_class="error", status_code=self.status_code, content=content, headers=self.headers)
-
-
-def _probe_limit(name: str, default: int) -> int:
-    """Invalid settings keep the safe default rather than disabling protection."""
-    try:
-        value = int(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
-    return value if value > 0 else default
 
 
 class _EngineProbeLimiter:
@@ -1520,8 +1512,8 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
     # Both endpoints consume one budget. Configure positive integers in the
     # gateway environment; changes take effect when the routes are registered.
     probe_limits = _EngineProbeLimiter(
-        max_concurrent=_probe_limit("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2),
-        per_minute=_probe_limit("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30),
+        max_concurrent=positive_int_env("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2),
+        per_minute=positive_int_env("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30),
     )
 
     def _error(exc: BaseException) -> JSONResponse:
