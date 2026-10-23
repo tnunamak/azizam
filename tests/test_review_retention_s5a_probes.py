@@ -276,7 +276,6 @@ def test_a_receipts_request_history_entry_is_masked_for_anyone_but_its_maker(tmp
 # ------------------------------------------------------------------ 4. cost
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: every request of an OFF member takes the admin.db write lock")
 def test_a_member_with_history_off_costs_no_admin_write_transaction(member_db, monkeypatch):
     """Every existing member starts OFF (12.3), so this is all of today's traffic."""
     db, media, person = member_db

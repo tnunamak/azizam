@@ -14,7 +14,8 @@ import json
 import re
 import sqlite3
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -378,23 +379,43 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def insert(record: Mapping[str, Any], *, path: Path | None = None) -> None:
+@contextmanager
+def write_transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """One write transaction on the media-jobs database, held until the block ends (REQUEST_RETENTION.md 3.6).
+
+    The request writer opens it before it takes the household's write lock, so that lock is never held while this
+    database is waited on. A block that raises rolls back.
+    """
     conn = connect(path)
     try:
-        conn.execute(
-            "INSERT INTO kept_requests(record_id, request_id, kind, person_id, app_id, origin_kind, origin_id, "
-            "engine_id, debug_window_id, created_at, kept_until, parts_json, omissions_json, policy_version, "
-            "linked_asset_ids, fact_revisions, summary_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, '[]', '[]', ?)",
-            (record["record_id"], record.get("request_id"), KIND, record["person_id"], record.get("app_id"),
-             record["origin_kind"], record.get("origin_id"), record["created_at"], record.get("kept_until"),
-             json.dumps(record["parts"], ensure_ascii=False, sort_keys=True),
-             json.dumps(record["omissions"], sort_keys=True), record["policy_version"],
-             json.dumps(record["summary"], ensure_ascii=False, sort_keys=True)),
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
         conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+
+
+def insert_record(conn: sqlite3.Connection, record: Mapping[str, Any]) -> None:
+    """Add one kept request inside the caller's transaction (see ``write_transaction``)."""
+    conn.execute(
+        "INSERT INTO kept_requests(record_id, request_id, kind, person_id, app_id, origin_kind, origin_id, "
+        "engine_id, debug_window_id, created_at, kept_until, parts_json, omissions_json, policy_version, "
+        "linked_asset_ids, fact_revisions, summary_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, '[]', '[]', ?)",
+        (record["record_id"], record.get("request_id"), KIND, record["person_id"], record.get("app_id"),
+         record["origin_kind"], record.get("origin_id"), record["created_at"], record.get("kept_until"),
+         json.dumps(record["parts"], ensure_ascii=False, sort_keys=True),
+         json.dumps(record["omissions"], sort_keys=True), record["policy_version"],
+         json.dumps(record["summary"], ensure_ascii=False, sort_keys=True)),
+    )
+
+
+def insert(record: Mapping[str, Any], *, path: Path | None = None) -> None:
+    with write_transaction(path) as conn:
+        insert_record(conn, record)
 
 
 # ------------------------------------------------------------------ reads, deletion and erasure (section 12)

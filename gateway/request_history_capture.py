@@ -5,28 +5,37 @@ reply as it streams out, and it waits for the request's end. The handler authent
 identity in the request state (``proxy.authenticate_request``), so the decision, the write and the receipt's
 retention entry are made then. A request that never authenticates is not recorded.
 
+The decision is made as soon as the caller is known. A request whose history is off, or that asks to forget, does
+not have its body parsed or its reply buffered, and it writes nothing but the receipt's entry (3.3, 12). The write
+runs on one dedicated worker thread, in a media-jobs transaction that is opened before the household's write lock is
+taken, so that lock is never held while this database is waited on (3.6).
+
 The per-request control is read here, for every data-plane route: ``extensions["com.azizam.prompts"]`` in a JSON or
 multipart body, and ``X-Azizam-Prompts: forget`` for a body the gateway does not parse. The header is removed before
-the handler runs. A forget keeps nothing but the receipt's structural entry.
+the handler runs and carried on the request's slot, which the Responses and media decisions read. A forget keeps
+nothing but the receipt's structural entry.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from starlette.responses import JSONResponse
 
-from gateway import receipt_store, request_history, request_history_slot, retention
+from gateway import admin_store, receipt_store, request_history, request_history_slot, retention
 from gateway.extensions import ExtensionError, multipart_extensions
 
 log = logging.getLogger("gateway.request_history")
 
 KIND = retention.REQUEST_HISTORY
+GROUP = retention.GROUP_REQUEST_HISTORY
 #: Where a request reaches the capture: the data plane. Maker routes and the gateway's own security operations
 #: (sign-in, keys, grants) are outside these prefixes, so they never hold content (section 3.5, rule 1).
 DATA_PLANE_PREFIXES = (
@@ -42,6 +51,12 @@ IDENTITY_STATE_KEY = "request_history_identity"
 #: How long the capture waits for the rest of a request body that the route did not read. A client that has sent its
 #: body finishes at once; a client that stalls leaves the record not kept.
 BODY_DRAIN_SECONDS = 30.0
+#: The one thread that writes request history, so a write never waits behind the shared pool's work (3.6).
+WRITER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="request-history")
+#: Captures in flight at once. Each holds its body in memory until its write is done. A request beyond this limit is
+#: not captured, and its receipt says storage_unavailable.
+MAX_PENDING_CAPTURES = 32
+_PENDING = threading.BoundedSemaphore(MAX_PENDING_CAPTURES)
 
 
 def is_captured(method: str, path: str) -> bool:
@@ -50,6 +65,10 @@ def is_captured(method: str, path: str) -> bool:
 
 def _header_map(raw: list[tuple[bytes, bytes]]) -> dict[str, str]:
     return {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in raw}
+
+
+def _identity(state: dict) -> Any:
+    return getattr(state.get(IDENTITY_STATE_KEY), "identity", None)
 
 
 def receipt_entry(outcome: retention.WriteOutcome, parts: list[str]) -> dict[str, Any]:
@@ -63,11 +82,23 @@ def receipt_entry(outcome: retention.WriteOutcome, parts: list[str]) -> dict[str
     return {"kind": KIND, "decision": "not_kept", "reason": outcome.reason}
 
 
+def _record_entry(receipt_id: str | None, outcome: retention.WriteOutcome, parts: list[str]) -> None:
+    if not receipt_id:
+        return
+    try:
+        receipt_store.update_retention(receipt_id, receipt_entry(outcome, parts))
+    except Exception:
+        log.warning("request history receipt update failed request_id=%s", receipt_id, exc_info=False)
+
+
 def _control_refusal(raw: bytes) -> JSONResponse | None:
     """Refuse an invalid per-request control before the route runs, as the media and Responses routes do (3.4)."""
+    # A control key has no escape-free spelling without these bytes; a key written with an escape has a backslash.
+    if b"extensions" not in raw and b"\\" not in raw:
+        return None
     try:
         parsed = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(parsed, dict) or "extensions" not in parsed:
         return None
@@ -109,6 +140,29 @@ def _multipart_forget(body: request_history.BodyCapture) -> bool:
         return True
 
 
+def _household_policy(admin_path: Path | None) -> dict[str, Any]:
+    """The household's values for this group: the kill switch, and the group's default and cap."""
+    row = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path or admin_store.DB_PATH)
+    return retention.household_view(row.get("value") if row else None, GROUP)
+
+
+def _origin_id(identity: Any) -> str | None:
+    kind = getattr(identity, "auth_kind", None)
+    if kind == "app_key":
+        return getattr(identity, "credential_id", None)
+    if kind == "mcp_grant":
+        return getattr(identity, "connection_id", None)
+    return None
+
+
+def _quietly(function: Callable[[bytes], None], chunk: bytes) -> None:
+    """Capture must never change what the caller receives: a failure only stops the capture."""
+    try:
+        function(chunk)
+    except Exception:
+        log.warning("request history capture stopped on a body chunk", exc_info=False)
+
+
 class RequestHistoryMiddleware:
     """Captures one request's history. ``admin_path`` and ``media_path`` are read at each request."""
 
@@ -116,6 +170,15 @@ class RequestHistoryMiddleware:
         self.app = app
         self._admin_path = admin_path
         self._media_path = media_path
+
+    def decide(self, identity: Any, *, forget: bool, now: int) -> retention.Decision:
+        """The decision for a request from this caller. It reads the member's switch and the household's, and writes
+        nothing: the one write, if there is one, runs under the household's lock and checks the setting again."""
+        admin_path = self._admin_path()
+        person_id = getattr(identity, "person_id", None)
+        member = retention.member_choice(admin_path, person_id, GROUP) if person_id else None
+        return retention.decide(KIND, person_id=person_id, member=member, household_policy=_household_policy(admin_path),
+                                request_body=None, request_forget=forget, now=now)
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] != "http" or not is_captured(scope["method"], scope["path"]):
@@ -138,142 +201,204 @@ class RequestHistoryMiddleware:
         state = scope.setdefault("state", {})
         state.pop(IDENTITY_STATE_KEY, None)
         limit = int(retention.bundled().data["kinds"][KIND]["max_record_bytes"])
-        body = request_history.BodyCapture(headers.get("content-type"), limit=limit)
-        reply_state: dict[str, Any] = {"status": None, "headers": {}, "body": request_history.BodyCapture(None, limit=limit)}
-        started = int(time.time())
-        began = time.monotonic()
-        slot_token = request_history_slot.open_slot(scope["path"], forget=header_forget)
-        #: ``complete``: the body's last chunk arrived (``more_body`` false). ``disconnected``: the client went away
-        #: first, so the body is incomplete whatever it held.
-        read = {"complete": False, "disconnected": False}
 
         if _is_small_json(headers, limit):
             # Read a known-size JSON body first, so an invalid control is refused before any route runs.
             chunks, complete = await _read_all(receive)
-            raw = b"".join(chunks)
-            refusal = _control_refusal(raw)
+            refusal = _control_refusal(b"".join(chunks))
             if refusal is not None:
-                request_history_slot.close_slot(slot_token)
                 await refusal(scope, receive, send)
                 return
             receive = _replay(chunks, receive, complete)  # the wrapper below feeds each replayed chunk, once
 
-        async def receive_wrapper() -> dict:
-            message = await receive()
-            if message["type"] == "http.request":
-                if not header_forget:
-                    _quietly(body.feed, message.get("body", b""))
-                read["complete"] = not message.get("more_body", False)
-            elif message["type"] == "http.disconnect":
-                read["disconnected"] = True
-            return message
-
-        async def send_wrapper(message: dict) -> None:
-            if message["type"] == "http.response.start":
-                reply_state["status"] = int(message["status"])
-                reply_state["headers"] = _header_map(message.get("headers", []))
-                reply_state["body"] = request_history.BodyCapture(
-                    reply_state["headers"].get("content-type"), limit=limit)
-            elif message["type"] == "http.response.body" and not header_forget:
-                _quietly(reply_state["body"].feed, message.get("body", b""))
-            await send(message)
-
+        capture = _Capture(self, state=state, headers=headers, header_forget=header_forget, limit=limit,
+                           route=scope["path"])
+        receive_capture = capture.receive_wrapped(receive)
+        slot_token = request_history_slot.open_slot(scope["path"], forget=header_forget)
         try:
-            await self.app(scope, receive_wrapper, send_wrapper)
+            await self.app(scope, receive_capture, capture.send_wrapped(send))
         finally:
-            authenticated = getattr(state.get(IDENTITY_STATE_KEY), "identity", None) is not None
-            if not read["complete"] and not header_forget and authenticated:
-                # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
-                await _drain(receive_wrapper, read)
+            # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
+            if _identity(state) is not None and capture.wants_body and not (capture.complete or capture.disconnected):
+                await _drain(capture, receive_capture)
             slot = request_history_slot.current()
             receipt_id = slot.receipt_id if slot is not None else None
             request_history_slot.close_slot(slot_token)
-            await _settle(self._finish, state=state, headers=headers, header_forget=header_forget, body=body,
-                          body_complete=read["complete"] and not read["disconnected"],
-                          reply=reply_state["body"], reply_state=reply_state,
-                          started=started, latency_ms=int((time.monotonic() - began) * 1000), route=scope["path"],
-                          receipt_id=receipt_id)
+            await _settle(capture, receipt_id)
 
-    def _finish(self, *, state: dict, headers: dict[str, str], header_forget: bool,
-                body: request_history.BodyCapture, body_complete: bool, reply: request_history.BodyCapture,
-                reply_state: dict[str, Any], started: int, latency_ms: int, route: str,
-                receipt_id: str | None) -> None:
-        """Decide, write and record the outcome on the receipt. Runs in a worker thread; never raises."""
-        auth = state.get(IDENTITY_STATE_KEY)
-        identity = getattr(auth, "identity", None)
+
+class _Capture:
+    """One captured request: its body and reply as they stream past, and the decision made about them at its end."""
+
+    def __init__(self, owner: RequestHistoryMiddleware, *, state: dict, headers: dict[str, str], header_forget: bool,
+                 limit: int, route: str) -> None:
+        self._owner = owner
+        self._state = state
+        self._limit = limit
+        self.header_forget = header_forget
+        self.route = route
+        self.request_headers = headers
+        self.started = int(time.time())
+        self._began = time.monotonic()
+        self.body = request_history.BodyCapture(headers.get("content-type"), limit=limit)
+        self.reply: request_history.BodyCapture | None = None
+        self.reply_status: int | None = None
+        self.reply_headers: dict[str, str] = {}
+        #: ``complete``: the body's last chunk arrived. ``disconnected``: the client went away first.
+        self.complete = False
+        self.disconnected = False
+        #: Every body chunk reached the body capture. False once the early decision said not to keep it.
+        self._fed = True
+        #: Whether this capture holds a slot in the writer's admission limit (released when its write is done).
+        self.admitted = _PENDING.acquire(blocking=False)
+        self._decision: retention.Decision | None = None
+
+    @property
+    def wants_body(self) -> bool:
+        return self.admitted and (self._decision is None or self._decision.keep)
+
+    async def _decision_once(self) -> retention.Decision | None:
+        """The early decision, made once the caller is known. None until then."""
+        if self._decision is None:
+            identity = _identity(self._state)
+            if identity is None:
+                return None
+            self._decision = await asyncio.to_thread(self._owner.decide, identity, forget=self.header_forget,
+                                                     now=self.started)
+        return self._decision
+
+    def receive_wrapped(self, receive: Callable) -> Callable:
+        async def wrapped() -> dict:
+            message = await receive()
+            if message["type"] == "http.request":
+                decision = await self._decision_once() if self.admitted else None
+                if self.admitted and (decision is None or decision.keep):
+                    _quietly(self.body.feed, message.get("body", b""))
+                else:
+                    self._fed = False
+                self.complete = not message.get("more_body", False)
+            elif message["type"] == "http.disconnect":
+                self.disconnected = True
+            return message
+
+        return wrapped
+
+    def send_wrapped(self, send: Callable) -> Callable:
+        async def wrapped(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                self.reply_status = int(message["status"])
+                self.reply_headers = _header_map(message.get("headers", []))
+                self.reply = None
+                decision = await self._decision_once() if self.admitted else None
+                if decision is not None and decision.keep and "received" in decision.parts:
+                    self.reply = request_history.BodyCapture(self.reply_headers.get("content-type"), limit=self._limit)
+            elif message["type"] == "http.response.body" and self.reply is not None:
+                _quietly(self.reply.feed, message.get("body", b""))
+            await send(message)
+
+        return wrapped
+
+    def finish(self, receipt_id: str | None) -> None:
+        """Decide, write and record the outcome on the receipt. Runs on the writer thread and never raises."""
+        try:
+            self._finish(receipt_id)
+        except Exception:
+            log.warning("request history finish failed request_id=%s", receipt_id or "-", exc_info=False)
+        finally:
+            if self.admitted:
+                _PENDING.release()
+
+    def _finish(self, receipt_id: str | None) -> None:
+        identity = _identity(self._state)
         if identity is None:
             return
-        person_id = getattr(identity, "person_id", None)
-        admin_path = self._admin_path()
-        body.result()  # reads the body's control values; the parts are built from the same memo below
-        if not header_forget and (not body_complete or not body.control_readable()):
+        decision = self._decision or self._owner.decide(identity, forget=self.header_forget, now=self.started)
+        if not decision.keep:
+            _record_entry(receipt_id, retention.WriteOutcome(False, decision.reason), [])
+            return
+        if not self.admitted:
+            _record_entry(receipt_id, retention.WriteOutcome(False, "storage_unavailable"), [])
+            return
+        if not self._fed or not (self.complete and not self.disconnected) or not self.body.control_readable():
             # The control could sit in a part that never arrived, or in a body that was too large or did not parse,
             # so nothing is kept: no row, and the receipt does not say kept.
-            if receipt_id:
-                _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
+            _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
             return
-        forget = header_forget or _forget_requested(body)
-        member = retention.member_choice(admin_path, person_id, retention.GROUP_REQUEST_HISTORY) if person_id else None
-        control = {"extensions": {retention.NAMESPACE: {"mode": "forget"}}} if forget else None
-        decision = retention.decide(KIND, person_id=person_id, member=member, household_policy=None,
-                                    request_body=control, now=started)
+        if _forget_requested(self.body):
+            _record_entry(receipt_id, retention.WriteOutcome(False, "request_forget"), [])
+            return
         parts: dict[str, Any] = {}
         omissions: set[str] = set()
         accepted_body: Any = None
-        if decision.keep:
-            if "accepted" in decision.parts:
-                part, found = request_history.capture_request(headers, body)
-                parts["accepted"], accepted_body = part, part["body"]
-                omissions.update(found)
-            if "received" in decision.parts and reply_state["status"] is not None:
-                part, found = request_history.capture_reply(reply_state["status"], reply_state["headers"], reply)
-                parts["received"] = part
-                omissions.update(found)
-        summary = request_history.summarize(route, accepted_body, reply_state["status"], latency_ms)
+        if "accepted" in decision.parts:
+            part, found = request_history.capture_request(self.request_headers, self.body)
+            parts["accepted"], accepted_body = part, part["body"]
+            omissions.update(found)
+        if "received" in decision.parts and self.reply_status is not None and self.reply is not None:
+            part, found = request_history.capture_reply(self.reply_status, self.reply_headers, self.reply)
+            parts["received"] = part
+            omissions.update(found)
+        latency_ms = int((time.monotonic() - self._began) * 1000)
+        summary = request_history.summarize(self.route, accepted_body, self.reply_status, latency_ms)
         record = {
-            "record_id": request_history.new_record_id(), "request_id": receipt_id, "person_id": person_id,
+            "record_id": request_history.new_record_id(), "request_id": receipt_id, "person_id": decision.person_id,
             "app_id": getattr(identity, "app_id", None), "origin_kind": getattr(identity, "auth_kind", "app_key"),
-            "origin_id": _origin_id(identity), "created_at": started, "parts": parts,
+            "origin_id": _origin_id(identity), "created_at": self.started, "parts": parts,
             "omissions": sorted(omissions), "policy_version": int(retention.bundled().data["format_version"]),
             "summary": summary,
         }
-        outcome = retention.WriteOutcome(False, "write_failed")
-        media_path = self._media_path()
+        self._write(decision, record, receipt_id)
 
-        def commit(deadline: int | None) -> None:
-            request_history.insert({**record, "kept_until": deadline}, path=media_path)
+    def _write(self, decision: retention.Decision, record: dict[str, Any], receipt_id: str | None) -> None:
+        admin_path = self._owner._admin_path()
+        media_path = self._owner._media_path()
+        outcome = retention.WriteOutcome(False, "write_failed")
 
         def remember(result: retention.WriteOutcome) -> None:
             nonlocal outcome
             outcome = result
 
         try:
-            retention.write(KIND, admin_path=admin_path, person_id=person_id, created_at=started, commit=commit,
-                            decision=decision, on_result=remember)
+            # The media transaction opens first. The household lock is taken inside it, so the lock is never held
+            # while this database is waited on. A commit that fails after the lock was released reports write_failed.
+            with request_history.write_transaction(media_path) as conn:
+                def commit(deadline: int | None) -> None:
+                    request_history.insert_record(conn, {**record, "kept_until": deadline})
+
+                retention.write(KIND, admin_path=admin_path, person_id=decision.person_id, created_at=self.started,
+                                commit=commit, decision=decision, on_result=remember)
         except Exception:
             log.warning("request history write failed request_id=%s", receipt_id or "-", exc_info=False)
             outcome = retention.WriteOutcome(False, "write_failed")
-        if receipt_id:
-            _record_entry(receipt_id, outcome, list(decision.parts))
+        _record_entry(receipt_id, outcome, list(decision.parts))
 
 
-async def _drain(receive_wrapper: Callable, read: dict) -> None:
+async def _drain(capture: _Capture, receive: Callable) -> None:
     """Read the rest of a body the route did not read, so the capture sees all of it. Bounded by BODY_DRAIN_SECONDS.
     A disconnect ends the drain at once: the body will not arrive, so the record is not kept."""
     async def rest() -> None:
-        while not (read["complete"] or read["disconnected"]):
-            await receive_wrapper()
+        while not (capture.complete or capture.disconnected):
+            await receive()
     try:
         await asyncio.wait_for(rest(), BODY_DRAIN_SECONDS)
     except (asyncio.TimeoutError, Exception):
         log.warning("request history body was not read to its end", exc_info=False)
 
 
-def _record_entry(receipt_id: str, outcome: retention.WriteOutcome, parts: list[str]) -> None:
+async def _settle(capture: _Capture, receipt_id: str | None) -> None:
+    """Hand the capture to the writer thread. The writer never raises into the request."""
     try:
-        receipt_store.update_retention(receipt_id, receipt_entry(outcome, parts))
+        future = asyncio.get_running_loop().run_in_executor(WRITER, capture.finish, receipt_id)
     except Exception:
-        log.warning("request history receipt update failed request_id=%s", receipt_id, exc_info=False)
+        # The writer did not take the capture, so its admission is returned here, and only here.
+        log.warning("request history finish could not be scheduled", exc_info=False)
+        if capture.admitted:
+            _PENDING.release()
+        return
+    try:
+        await future
+    except Exception:
+        log.warning("request history finish failed", exc_info=False)
 
 
 def _is_small_json(headers: dict[str, str], limit: int) -> bool:
@@ -312,27 +437,3 @@ def _replay(chunks: list[bytes], receive: Callable, complete: bool) -> Callable:
         return await receive()
 
     return replay
-
-
-def _origin_id(identity: Any) -> str | None:
-    kind = getattr(identity, "auth_kind", None)
-    if kind == "app_key":
-        return getattr(identity, "credential_id", None)
-    if kind == "mcp_grant":
-        return getattr(identity, "connection_id", None)
-    return None
-
-
-def _quietly(function: Callable[[bytes], None], chunk: bytes) -> None:
-    """Capture must never change what the caller receives: a failure only stops the capture."""
-    try:
-        function(chunk)
-    except Exception:
-        log.warning("request history capture stopped on a body chunk", exc_info=False)
-
-
-async def _settle(function: Callable[..., None], **kwargs: Any) -> None:
-    try:
-        await asyncio.to_thread(function, **kwargs)
-    except Exception:
-        log.warning("request history finish failed", exc_info=False)
