@@ -1,7 +1,8 @@
 """Owner visibility step 2: a person trusts an address for their own App from their signed-in session.
 
 This is the signed-in twin of the admin route. Only the App's accountable person may add an address, the
-address records that person as its creator, and another person's App is refused with not_your_app.
+address records that person as its creator. Another person's App is not found (404), the same answer as minting a
+key on it, and a disabled App is refused (403) the same way key minting refuses it.
 """
 
 from __future__ import annotations
@@ -47,8 +48,8 @@ def test_a_person_cannot_trust_an_address_for_someone_elses_app(gateway):
 
     refused = other.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(other), json={"address": "10.0.0.2"})
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error"]["code"] == "app_not_found"
     assert gateway.rows("SELECT COUNT(*) AS n FROM app_trusted_addresses")[0]["n"] == 0
 
 

@@ -175,8 +175,8 @@ def test_a_person_cannot_trust_an_address_for_an_app_they_do_not_answer_for(db):
     with pytest.raises(UserPortalError) as refused:
         user_runtime.add_user_trusted_address(_session(member), app["id"], {"address": "10.0.0.1"}, path=db)
 
-    assert refused.value.code == "not_your_app"
-    assert refused.value.status_code == 403
+    assert refused.value.code == "app_not_found"  # the same answer as minting a key on that App
+    assert refused.value.status_code == 404
     assert admin_store.list_trusted_addresses(app["id"], path=db) == []
 
 
