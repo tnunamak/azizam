@@ -147,7 +147,7 @@ GATEWAY_CODES = frozenset({
     "native_not_enabled", "native_owner_only", "native_remote_forbidden", "native_request_too_large", "no_access",
     "no_asset_store", "no_face", "not_found", "not_in_access_plan", "owner_needs_password", "owner_required",
     "paid_option_unsupported", "pose_rewritten", "pose_risks_likeness", "previous_response_not_found", "profile_result",
-    "prompt_erasure_unavailable", "prompt_not_accessible", "prompt_retention_pending", "provider_auth_failed", "provider_error",
+    "prompt_erasure_unavailable", "prompt_not_accessible", "prompt_retention_pending", "privacy_permission_required", "provider_auth_failed", "provider_error",
     "provider_model_list_invalid", "provider_native_paid_remote_forbidden", "provider_no_sign_in_time", "provider_not_found",
     "provider_passthrough_error", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable", "reconnect_required",
     "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "same_face", "secret_needed",

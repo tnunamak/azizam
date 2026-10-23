@@ -181,7 +181,7 @@ class BodyCapture:
         self._fields: dict[str, bytes] = {}
         self._field_bytes = 0
         self._files: list[dict[str, Any]] = []
-        self._part: dict[str, Any] | None = None
+        self._part: dict[str, Any] = {}
         self._parser: MultipartParser | None = None
         self._mode = "other"
         self._memo: tuple[Any, list[str]] | None = None
@@ -342,3 +342,153 @@ def insert(record: Mapping[str, Any], *, path: Path | None = None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# ------------------------------------------------------------------ reads, deletion and erasure (section 12)
+
+
+def _rows(sql: str, params: tuple, *, path: Path | None) -> list[dict[str, Any]]:
+    conn = connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
+
+
+def rows_for_person(person_id: str, *, after: int, now: int, path: Path | None = None) -> list[dict[str, Any]]:
+    """The person's kept requests that are not expired and not erased, newest first. Ownership is applied later."""
+    return _rows(
+        "SELECT * FROM kept_requests WHERE person_id=? AND kind=? AND created_at>? "
+        "AND (kept_until IS NULL OR kept_until>?) ORDER BY created_at DESC, record_id DESC",
+        (person_id, KIND, after, now), path=path)
+
+
+def get_row(record_id: str, *, path: Path | None = None) -> dict[str, Any] | None:
+    rows = _rows("SELECT * FROM kept_requests WHERE record_id=? AND kind=?", (record_id, KIND), path=path)
+    return rows[0] if rows else None
+
+
+def delete_row(record_id: str, *, path: Path | None = None) -> bool:
+    conn = connect(path)
+    try:
+        cursor = conn.execute("DELETE FROM kept_requests WHERE record_id=? AND kind=?", (record_id, KIND))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def _admin_connection(admin_path: Path) -> sqlite3.Connection:
+    from gateway import retention
+
+    return retention.connect(admin_path, timeout=retention.RETENTION_LOCK_TIMEOUT_SECONDS)
+
+
+def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path | None = None) -> int:
+    """Delete a person's kept requests created at or before ``cutoff`` (``*``: everyone's), then clear the intent.
+
+    The rows go first. If that fails, the intent stays, and maintenance settles it again (section 12).
+    """
+    from gateway import retention
+
+    conn = connect(path)
+    try:
+        if person_id == "*":
+            cursor = conn.execute("DELETE FROM kept_requests WHERE kind=? AND created_at<=?", (KIND, cutoff))
+        else:
+            cursor = conn.execute("DELETE FROM kept_requests WHERE kind=? AND person_id=? AND created_at<=?",
+                                  (KIND, person_id, cutoff))
+        conn.commit()
+        deleted = cursor.rowcount
+    finally:
+        conn.close()
+    admin = _admin_connection(admin_path)
+    try:
+        admin.execute("BEGIN IMMEDIATE")
+        if _has_table(admin, retention.ERASURE_INTENT_TABLE):
+            admin.execute(
+                f"DELETE FROM {retention.ERASURE_INTENT_TABLE} WHERE person_id=? AND grp=? AND cutoff_at<=?",
+                (person_id, retention.GROUP_REQUEST_HISTORY, cutoff))
+        admin.commit()
+    finally:
+        admin.close()
+    return deleted
+
+
+def delete_all_for_person(person_id: str, *, admin_path: Path, path: Path | None = None, now: int) -> int:
+    """Delete everything a person kept, and fence the group: a request that started before now cannot write after it."""
+    from gateway import admin_store, retention
+
+    admin = _admin_connection(admin_path)
+    try:
+        admin.execute("BEGIN IMMEDIATE")
+        admin_store._record_prompt_erasure(admin, person_id, now, groups=(retention.GROUP_REQUEST_HISTORY,))
+        admin.commit()
+    finally:
+        admin.close()
+    return settle_erasure(person_id, now, admin_path=admin_path, path=path)
+
+
+def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: list[str], admin_path: Path,
+                      path: Path | None = None, now: int) -> dict[str, Any]:
+    """Save a person's request history choice. Turning it off erases the group's records, as memory-off does (section 12)."""
+    from gateway import admin_store, retention
+
+    record = admin_store.put_prompt_memory_preference(
+        person_id, remember=keep, retention=retention_id, updated_by=person_id, now=now,
+        group=retention.GROUP_REQUEST_HISTORY, parts=parts, path=admin_path)
+    if not keep:
+        settle_erasure(person_id, int(record["updated_at"]), admin_path=admin_path, path=path)
+    else:
+        # The period now in force shortens the person's existing deadlines; it never lengthens them (section 12).
+        cap = retention.bundled().household_defaults(retention.REQUEST_HISTORY)["retention_cap"]
+        seconds = retention.seconds_map()[retention.effective_period(retention_id, cap, retention.REQUEST_HISTORY)]
+        if seconds is not None:
+            tighten(seconds, person_id=person_id, admin_path=admin_path, path=path)
+    return record
+
+
+def tighten(period_seconds: int, *, person_id: str, admin_path: Path | None = None, path: Path | None = None) -> int:
+    """A shorter period shortens existing deadlines of the person's records. A longer one never extends them (12)."""
+    conn = connect(path)
+    try:
+        cursor = conn.execute(
+            "UPDATE kept_requests SET kept_until=created_at+? WHERE person_id=? AND kind=? "
+            "AND (kept_until IS NULL OR kept_until>created_at+?)",
+            (int(period_seconds), person_id, KIND, int(period_seconds)))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def maintain(*, admin_path: Path, path: Path | None = None, now: int) -> dict[str, int]:
+    """Expiry and the request-history erasure intents. Each pass repeats until it succeeds."""
+    from gateway import retention
+
+    conn = connect(path)
+    try:
+        cursor = conn.execute("DELETE FROM kept_requests WHERE kept_until IS NOT NULL AND kept_until<=?", (now,))
+        conn.commit()
+        expired = cursor.rowcount
+    finally:
+        conn.close()
+    admin = _admin_connection(admin_path)
+    try:
+        intents = []
+        if _has_table(admin, retention.ERASURE_INTENT_TABLE):
+            intents = admin.execute(
+                f"SELECT person_id, cutoff_at FROM {retention.ERASURE_INTENT_TABLE} WHERE grp=?",
+                (retention.GROUP_REQUEST_HISTORY,)).fetchall()
+    finally:
+        admin.close()
+    settled = 0
+    for person_id, cutoff in intents:
+        settle_erasure(person_id, int(cutoff), admin_path=admin_path, path=path)
+        settled += 1
+    return {"expired": expired, "settled_intents": settled}

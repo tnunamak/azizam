@@ -3810,11 +3810,13 @@ def put_prompt_memory_preference(
     validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
     group: str = retention_contract.GROUP_PROMPTS,
+    parts: list[str] | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     if not user_id:
         raise ValueError("user_id is required")
     choices = retention_contract.bundled().data["groups"][group]["choices"]
+    parts_json = None if parts is None else json.dumps(sorted(parts))
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -3830,11 +3832,11 @@ def put_prompt_memory_preference(
         conn.execute(
             "INSERT INTO prompt_memory_preferences"
             "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?, NULL, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id, grp) DO UPDATE SET "
-            "remember=excluded.remember, retention=excluded.retention, "
+            "remember=excluded.remember, retention=excluded.retention, parts_json=excluded.parts_json, "
             "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
-            (user_id, group, 1 if remember else 0, retention, ts, updated_by),
+            (user_id, group, 1 if remember else 0, retention, parts_json, ts, updated_by),
         )
         row = conn.execute(
             "SELECT * FROM prompt_memory_preferences WHERE user_id=? AND grp=?", (user_id, group)

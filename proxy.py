@@ -102,7 +102,7 @@ from gateway import (
 )
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
-from gateway import request_history_capture
+from gateway import request_history, request_history_api, request_history_capture
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
@@ -14574,6 +14574,15 @@ app.include_router(
 )
 
 app.include_router(
+    request_history_api.create_request_history_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
+        admin_path=lambda: ADMIN_STORE.path,
+        media_path=lambda: media_jobs.DB_PATH,
+    )
+)
+
+app.include_router(
     me_prompt_memory.create_me_prompt_memory_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
@@ -20930,6 +20939,11 @@ def _maintain_household_prompt_memory() -> None:
     prompt_memory.tighten_retention(household["retention_cap"])
 
 
+def _maintain_request_history() -> None:
+    # Expiry, and the erasure intents of request history. Repeats until each succeeds (REQUEST_RETENTION.md 12).
+    request_history.maintain(admin_path=ADMIN_STORE.path, path=media_jobs.DB_PATH, now=int(time.time()))
+
+
 def _maintain_person_prompt_memory(person_id: str) -> None:
     # The cutoff only rises to when memory went off, read in the same
     # transaction, so prompts saved after switching back on survive.
@@ -20955,7 +20969,7 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
 def _maintain_prompt_memory() -> None:
     # Each step reads its own setting when it runs. A decision read at the
     # start of the pass can be stale by the time a slow step reaches it.
-    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory]
+    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory, _maintain_request_history]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)

@@ -1040,6 +1040,30 @@
       "access": "content:receipt:read"
     },
     {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.list_requests",
+      "method": "GET",
+      "path": "/gateway/v1/requests",
+      "access": "content:request_history:read"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.read_request",
+      "method": "GET",
+      "path": "/gateway/v1/requests/{record_id}",
+      "access": "content:request_history:read"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.delete_request",
+      "method": "DELETE",
+      "path": "/gateway/v1/requests/{record_id}",
+      "access": "content:request_history:delete"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.delete_all_requests",
+      "method": "DELETE",
+      "path": "/gateway/v1/requests",
+      "access": "content:request_history:delete"
+    },
+    {
       "handler": "gateway.api.create_gateway_router.<locals>.list_resources",
       "method": "GET",
       "path": "/gateway/v1/resources",
@@ -1468,6 +1492,18 @@
       "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.put_prompt_memory",
       "method": "PUT",
       "path": "/me/api/prompt-memory",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.get_my_retention",
+      "method": "GET",
+      "path": "/me/api/retention",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.put_my_retention",
+      "method": "PUT",
+      "path": "/me/api/retention",
       "access": "own-account"
     },
     {

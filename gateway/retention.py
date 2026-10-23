@@ -50,6 +50,7 @@ PROMPTS_VIEW_KEY = "prompt_memory"
 #: The member switch of the group ``prompts`` lives in this table; its rows are that group's rows.
 MEMBER_TABLE = "prompt_memory_preferences"
 ERASURE_CUTOFF_TABLE = "prompt_memory_erasure_cutoffs"
+ERASURE_INTENT_TABLE = "prompt_memory_erasure_intents"
 RETENTION_LOCK_TIMEOUT_SECONDS = 0.25
 
 #: Per-request control: ``extensions["com.azizam.prompts"] = {"mode": "forget"}``.
@@ -353,6 +354,22 @@ def validate_prompts_view(view: Mapping[str, Any], *, existing_cap: str | None =
 def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
     """The prompts group's household values: the owner's, over the bundled defaults."""
     return {**household_defaults(), **prompts_view(document)}
+
+
+def group_cutoff(admin_path: Path | None, person_id: str, group: str = GROUP_PROMPTS) -> int:
+    """The erasure fence for one person and group: the later of the household's and the person's cutoffs (0: none)."""
+    if admin_path is None:
+        return 0
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,)).fetchone() is None:
+            return 0
+        rows = conn.execute(
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id IN ('*', ?) AND grp=?", (person_id, group),
+        ).fetchall()
+    finally:
+        conn.close()
+    return max((int(row[0]) for row in rows), default=0)
 
 
 def member_choice(admin_path: Path | None, person_id: str, group: str = GROUP_PROMPTS) -> dict[str, Any] | None:
