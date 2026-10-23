@@ -97,4 +97,20 @@ describe("the record of who left", () => {
     await sessionEnd.endSession("sign-out");
     expect(lastRecord()).toBe("{}");
   });
+
+  // Pins today's name match, which the server's exact match will replace. The signed-in person has no display name
+  // (the session names them by email) and no remembered entry of their own, but another remembered person is named
+  // "lea", the local part of that email. Today the browser records that other person as the one who left, and the
+  // sign-in page would offer to forget them. When the server names the signed-in person's entry exactly, this case
+  // changes with it.
+  it("pins the name match today: a signed-in person who is not remembered is matched to another person named as their email's local part", async () => {
+    const other = { ...robin, tile: "t_other", name: "lea" };
+    routes.set("GET /me/api/session", () =>
+      json({ ...leaSession, user: { person_id: "usr_lea", name: "lea@example.test", email: "lea@example.test" } }),
+    );
+    routes.set("GET /auth/api/remembered", () => json({ remember: true, people: [robin, other] }));
+    await sessionEnd.endSession("sign-out");
+    expect(lastRecord()).toBe(JSON.stringify({ tile: "t_other" }));
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
+  });
 });
