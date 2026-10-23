@@ -268,7 +268,9 @@
 # Home engine rows, round 2: +7 cases in tests/test_home_engine_rows.py (a stale burst, a cold burst, a cancelled reader,
 # a failed refresh, and the probe deadline) and +10 in tests/test_health_connect_failures.py (refused, DNS and TLS
 # against a resident and an on-demand engine, and the cause of a failed connection). collect-only 16825 -> 16842 (2026-10-23).
-pytest = 16842
+# Home's cached health evidence (+3 in tests/test_home_engine_rows.py) and the health probe deadline (+1 in
+# tests/test_on_demand_health_probe.py): collect-only 16842 -> 16846.
+pytest = 16846
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
