@@ -245,7 +245,9 @@
 # Slice 5a round-7 review fixes: +39 cases in tests/test_request_history_s5a_r7_fixes.py (the URL rule, the decoded
 # literal, the budget check before a parse), and one test split in two in tests/test_request_history_redaction.py.
 # collect-only 16498 -> 16538 (2026-10-23).
-pytest = 16538
+# Slice 5a round-8 fixes: +15 cases in tests/test_request_history_s5a_r8_fixes.py (token-shaped URL path segments).
+# collect-only 16538 -> 16553 (2026-10-23).
+pytest = 16553
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
