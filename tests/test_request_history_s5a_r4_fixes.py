@@ -1,7 +1,8 @@
 """Round-4 fixes for request history slice 5a (docs/design/REQUEST_RETENTION.md, slice 5a review fixes).
 
 Each test names the round-4 finding it pins (R4-n). The round-2 probes are in
-``tests/test_review_retention_s5a_r2_probes.py``; the round-3 fixes are in ``tests/test_request_history_s5a_r3_fixes.py``.
+``tests/test_review_retention_s5a_r2_probes.py``; the round-3 fixes are in
+``tests/test_request_history_s5a_r3_fixes.py``.
 """
 from __future__ import annotations
 
@@ -191,7 +192,7 @@ def _scope(path: str = "/v1/responses") -> dict:
 
 
 def _one_body(raw: bytes) -> Callable:
-    """A receive that yields the body once, then reports a disconnect, as a client does after it has sent its request."""
+    """A receive that yields the body once, then reports a disconnect, as a client does after its request."""
     sent = {"body": False}
 
     async def receive() -> dict:
@@ -278,7 +279,8 @@ def test_r4_3_a_thirty_two_requests_cancelled_while_their_writes_are_queued_give
                                                                                                 held_writer):
     db, media, person = member_db
     pool, gate = held_writer
-    middleware = RequestHistoryMiddleware(_answer_after_reading(person), admin_path=lambda: db, media_path=lambda: media)
+    middleware = RequestHistoryMiddleware(_answer_after_reading(person), admin_path=lambda: db,
+                                          media_path=lambda: media)
 
     async def cancel_once():
         task = asyncio.create_task(middleware(_scope(), _one_body(KEEP_BODY), _ignore))

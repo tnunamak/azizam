@@ -207,7 +207,7 @@ def _scrub_urls_in_text(value: str, found: set[str]) -> str:
 
 
 class _TooDeep(Exception):
-    """JSON nests past JSON_DEPTH_LIMIT. Raised deep in the cleaner, and caught where the JSON that holds it is omitted."""
+    """JSON nests past JSON_DEPTH_LIMIT. Raised deep in the cleaner, and caught where the JSON holding it is omitted."""
 
 
 def _redact_arguments(text: str, found: set[str], depth: int) -> Any:
