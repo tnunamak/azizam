@@ -17,6 +17,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
 from gateway import accounts, admin_store, metrics_writer, providers, receipt_store
+from tests.support.app_keys import issue_app_key
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
@@ -246,10 +247,7 @@ def principals():
         app = case.client.post("/admin/api/apps", headers=case._auth(), json={
             "name": "auth-fixture", "access_plan": "person", "owner_user_id": accountable["id"]})
         assert app.status_code == 201, app.text
-        minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
-                                 headers=case._auth(), json={"label": "auth-fixture"})
-        assert minted.status_code == 201
-        case.app_key = minted.json()["credential"]["api_key"]
+        case.app_key = issue_app_key(case.db, app.json()["app"]["id"], label="auth-fixture")
         cookie = CookieConfig(secure=False)
         proxy.ADMIN_AUTH.signing_key = b"s" * 32
         proxy.ADMIN_AUTH.cookie = cookie

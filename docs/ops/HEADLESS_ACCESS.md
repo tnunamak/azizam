@@ -310,7 +310,7 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/apps/{app_id}/keys` | owner-bearer | denied | `gateway.admin_api.create_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PATCH /admin/api/apps/{app_id}/keys/{credential_id}` | owner-bearer | denied | `gateway.admin_api.rename_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; an administrator is refused on an App that answers to the owner (`app_outranks_you`) | owner |
 | `GET /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.list_trusted_addresses`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address | owner |
+| `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may trust an address (`not_your_app` otherwise) | accountable person |
 | `DELETE /admin/api/apps/{app_id}/trusted-addresses/{entry_id}` | owner-bearer | denied | `gateway.admin_api.delete_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/audit` | owner-bearer | denied | `gateway.admin_api.audit`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/audit-events` | owner-bearer | denied | `gateway.admin_api.audit_events`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -448,6 +448,7 @@ Selected successful workflows are exercised separately.
 | `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_rename_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/apps/{app_id}/keys` | session-only | denied | `proxy.user_portal_mint_key`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses` | session-only | denied | `proxy.user_portal_add_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
 | `POST /me/api/connection-test` | session-only | denied | `gateway.home_api.connection_test`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_rename_key`; Browser session; mutations require CSRF/action header | hidden |
