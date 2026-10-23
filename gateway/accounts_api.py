@@ -123,6 +123,9 @@ def signin_options(path, oidc: dict) -> dict:
             "oidc_label": oidc.get("label") or "single sign-on",
             # The owner's own password works whatever the switch says (see the login routes).
             "owner_password": True,
+            # True once single sign-on from this page is always fresh (account switcher A2). Until then the sign-in page
+            # keeps its refused-sign-in screen off (web/src/app/sign-in/page.tsx).
+            "fresh_sign_in": False,
             "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
     return result

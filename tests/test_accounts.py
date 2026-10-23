@@ -424,6 +424,12 @@ def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, acco
     assert options["built_in"] is True and options["oidc"] is False
 
 
+def test_options_do_not_report_fresh_sign_in_until_account_switcher_a2_ships(account_client):
+    # The sign-in page shows its refused-sign-in screen only when the gateway says every single sign-on is fresh.
+    client, _ = account_client
+    assert client.get("/auth/api/options").json()["fresh_sign_in"] is False
+
+
 def test_invalid_account_request_bodies_fail(account_client):
     client, _ = account_client
     assert client.post("/admin/api/invites", json={"access_plan": "unused", "expires_in": True}, headers=OWNER_HEADERS).status_code == 422
