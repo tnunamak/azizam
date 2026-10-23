@@ -164,10 +164,11 @@ const REQUIRED: Record<string, string[]> = {
   "/auth/api/options": ["/built_in", "/oidc", "/oidc_label", "/oidc_url"],
   "/health": ["/status"],
   "/me/api/home": [
-    "/aliases",
     "/authenticated",
     "/capabilities",
+    "/has_access_plan",
     "/receipts",
+    "/recent_chats",
     "/user",
     "/user/email",
     "/user/id",
@@ -377,12 +378,12 @@ export const REGISTRY: Endpoint[] = [
     ],
   }),
   reads("/me/api/home", {
-    open: ["/credential_aliases"],
     required: [
-      "/aliases",
       "/authenticated",
       "/capabilities",
+      "/has_access_plan",
       "/receipts",
+      "/recent_chats",
       "/user",
       "/user/email",
       "/user/id",
