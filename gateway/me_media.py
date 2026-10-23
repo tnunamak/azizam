@@ -1093,14 +1093,19 @@ def _maker_jobs(
         maker_person_id=person_id, outer_only=False, path=receipts_path,
     )
     job_ids = sorted({str(row["job_id"]) for row in receipt_rows if row.get("job_id")})
-    out: list[dict[str, Any]] = []
+    request_ids = sorted({str(row["request_id"]) for row in receipt_rows if row.get("request_id")})
+    out: dict[str, dict[str, Any]] = {}
     for start in range(0, len(job_ids), _JOB_ID_CHUNK):
         chunk = job_ids[start:start + _JOB_ID_CHUNK]
-        out.extend(media_jobs.recent(
-            len(chunk), job_ids=chunk, before=before, updated_since=updated_since,
-            include_active=include_active, path=jobs_path,
-        ))
-    return out
+        for job in media_jobs.recent(len(chunk), job_ids=chunk, before=before, updated_since=updated_since,
+                                     include_active=include_active, path=jobs_path):
+            out[str(job["job_id"])] = job
+    for start in range(0, len(request_ids), _JOB_ID_CHUNK):
+        chunk = request_ids[start:start + _JOB_ID_CHUNK]
+        for job in media_jobs.recent(len(chunk), request_ids=chunk, before=before, updated_since=updated_since,
+                                     include_active=include_active, path=jobs_path):
+            out.setdefault(str(job["job_id"]), job)
+    return list(out.values())
 
 
 def _scoped_jobs(

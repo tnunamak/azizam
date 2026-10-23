@@ -165,7 +165,7 @@ def test_job_status_actor_matrix(library_world, actor, route):
     path = "/me/api/jobs?watch=1" if route == "feed" else f"/me/api/jobs/{job_id}"
     if actor in SESSION_ACTORS:
         case.current_user = world["actors"][actor][0]
-        with patch("gateway.me_media.decide_own", wraps=content_access.decide_own) as decide:
+        with patch("gateway.me_media.decide", wraps=content_access.decide) as decide:
             response = case.client.get(path)
         assert response.status_code == 200, response.text
         if route == "feed":

@@ -222,16 +222,12 @@ def test_shared_app_receipt_route_masks_other_makers_retention(detail):
     key = mint_user_app_key(alice_session, detail.alice_app["id"], path=detail.admin_path)["api_key"]
     client = TestClient(proxy.app)
     headers = {"Authorization": f"Bearer {key}"}
+    # Owning the App is not making the request: Bob's receipt in Alice's App is not hers to read (D51).
     single = client.get("/gateway/v1/receipts/req_shared_app", headers=headers)
     listing = client.get("/gateway/v1/receipts", headers=headers)
-    assert single.status_code == listing.status_code == 200
-    assert single.json()["retention"] == [{"kind": "conversation", "decision": "kept"}]
-    assert next(row for row in listing.json()["receipts"] if row["request_id"] == "req_shared_app")["retention"] == [
-        {"kind": "conversation", "decision": "kept"}]
-    own = client.get("/gateway/v1/receipts/req_own_app", headers=headers)
-    assert own.status_code == 200
-    assert own.json()["retention"] == [entry]
-    assert next(row for row in listing.json()["receipts"] if row["request_id"] == "req_own_app")["retention"] == [entry]
+    assert single.status_code == 404
+    assert listing.status_code == 200
+    assert all(row["request_id"] != "req_shared_app" for row in listing.json()["receipts"])
 
 
 def test_every_non_internal_receipt_store_read_call_passes_viewer():

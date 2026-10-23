@@ -997,9 +997,10 @@ def recent(
     include_active: bool = False,
     before: tuple[int, str] | None = None,
     job_ids: list[str] | None = None,
+    request_ids: list[str] | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
-    """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids`` is a positive allow-list."""
+    """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids`` and ``request_ids`` are positive allow-lists."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if limit <= 0:
@@ -1037,11 +1038,16 @@ def recent(
     if before is not None:
         clauses.append("(updated_at, job_id) < (?, ?)")
         params.extend(before)
-    if job_ids is not None:
-        if not job_ids:
+    if job_ids is not None or request_ids is not None:
+        # One allow-list of job ids or of their request ids; an empty list matches nothing.
+        if not job_ids and not request_ids:
             return []
-        clauses.append(f"job_id IN ({','.join('?' for _ in job_ids)})")
-        params.extend(job_ids)
+        if job_ids:
+            clauses.append(f"job_id IN ({','.join('?' for _ in job_ids)})")
+            params.extend(job_ids)
+        if request_ids:
+            clauses.append(f"request_id IN ({','.join('?' for _ in request_ids)})")
+            params.extend(request_ids)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with _conn(path) as conn:

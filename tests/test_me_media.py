@@ -620,6 +620,10 @@ class MeMediaRouterTests(unittest.TestCase):
         self._write_asset(local_asset, [], request_id="req_local_cache", created_at=now)
         self._write_asset(recovered_asset, ["sha256:alice"], request_id="req_missing", created_at=now)
         self._write_asset(shared_asset, ["sha256:bob", "sha256:alice"], request_id="req_shared_missing", created_at=now)
+        # Two owner keys name two people; the recorded maker is the one who made it (D51).
+        meta = self._asset_metadata(shared_asset)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(shared_asset).write_text(json.dumps(meta))
         admin_store.revoke_credential(self.cred_a["id"], path=self.admin_db)
         self._receipt(self.app_a["id"], "req_alice")
         self._receipt(self.app_b["id"], "req_bob")
@@ -1223,6 +1227,9 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_deleted_shared_asset_stays_deleted_after_audit_churn(self) -> None:
         asset_id = "img_" + "7" * 64
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
         # One transaction for the churn: a commit per row made this test take
@@ -1235,8 +1242,9 @@ class MeMediaRouterTests(unittest.TestCase):
                     metadata=None, now=admin_store._now())
             conn.commit()
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        # Bob holds an owner key but made nothing and holds no share, so he never saw it (D51).
         self.current_user = self.bob
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
 
     def test_disabled_apps_keep_owned_history(self) -> None:
         asset_id = "img_" + "8" * 64
@@ -2038,17 +2046,17 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.calls), 1)
 
     def test_make_cannot_use_another_person_job_as_source_even_if_output_is_shared(self) -> None:
-        # Criterion 3: job boundary, independent of the asset boundary. Bob's
-        # output is explicitly shared with Alice, so only a job-ownership check
-        # can reject Bob's job as a source.
+        # Criterion 3: the job boundary. Bob made the output and holds no share
+        # for Alice (D51), so Alice cannot read it; the make job must refuse
+        # Bob's job as a source for that reason too, with nothing disclosed.
         canary = "bob-job-canary-41b9"
         with self._as(self.bob):
             foreign, shared_asset = self._completed_output("bob-source", prompt=canary)
         self._meta_path(shared_asset).write_text(json.dumps({
             "asset_id": shared_asset, "owner_key_hashes": ["sha256:bob", "sha256:alice"],
-            "updated_at": 1_700_000_000,
+            "maker_person_ids": [self.bob["id"]], "updated_at": 1_700_000_000,
         }))
-        self.assertEqual(self.client.get(f"/me/api/media/{shared_asset}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{shared_asset}").status_code, 404)
         own, own_asset = self._completed_output("own-source")
         _, own_edit = self._submit_make("own-job-edit", intent="image.edit", source_job_id=own["job_id"])
         self._finished(own_edit["job_id"])

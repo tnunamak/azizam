@@ -208,6 +208,9 @@ class MeMediaGapContractTests(unittest.TestCase):
     def test_deleted_asset_survives_same_person_audit_pagination(self) -> None:
         asset_id = "img_" + "b" * 64
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         response = self.client.delete(f"/me/api/media/{asset_id}", headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
@@ -223,8 +226,9 @@ class MeMediaGapContractTests(unittest.TestCase):
             )
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        # Bob holds an owner key but did not make it, so he never read it (D51); the file itself survives.
         self.current_user = self.bob
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.assertTrue(self._asset_path(asset_id).exists())
 
     def test_stale_owner_session_loses_everyone_access_immediately(self) -> None:
