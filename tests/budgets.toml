@@ -265,7 +265,9 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # History/Library cascade and atomic-write coverage add three pytest cases.
 # Library cascade r2 adds six regression cases; full hermetic collect-only measured 16822 (2026-10-23).
-pytest = 16822
+# Library cascade r3 adds four regression cases (a distinct request after a Library delete, a late write for the deleted
+# request, another member, a staged prompt's origin): collect-only 16822 -> 16826 (2026-10-23).
+pytest = 16826
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
