@@ -64,6 +64,7 @@ for (const width of [1440, 390]) {
     // History: the request is the newest row. Open it: what was sent, and the receipt's sentence.
     await page.goto("/history/");
     await expect(rows).toHaveCount(before + 1, { timeout: 30_000 });
+    await page.screenshot({ path: shot(width, "list"), fullPage: true });
     await rows.first().getByRole("button").click();
     const detail = page.getByRole("dialog");
     await expect(detail.getByRole("heading", { name: "What was sent" })).toBeVisible();
@@ -82,6 +83,7 @@ for (const width of [1440, 390]) {
     await page.goto("/try/?capability=chat");
     await page.getByRole("switch", { name: "Incognito" }).click();
     await expect(page.getByText("Incognito: this isn’t saved.", { exact: true })).toBeVisible();
+    await page.screenshot({ path: shot(width, "try-incognito"), fullPage: true });
     await page.getByRole("textbox", { name: "Prompt" }).fill(hidden);
     await page.getByRole("button", { name: "Run" }).click();
     await expect(page.getByRole("heading", { name: "Chat result" })).toBeVisible({ timeout: 60_000 });

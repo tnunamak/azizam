@@ -143,7 +143,7 @@ export function HistoryList() {
           {keeps
             ? period
               ? `Kept for ${period}.`
-              : "Kept for the time your settings allow."
+              : "Kept for as long as your settings allow."
             : "History is off. Nothing new is kept."}
         </p>
         <Button
