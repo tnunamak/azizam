@@ -22,6 +22,16 @@ from tests.test_secret_canary_matrix import REGISTRY, _etag, _plant
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
 
 M = canary.MARKERS
+
+
+@pytest.fixture(autouse=True)
+def _status_page_starts_empty(monkeypatch):
+    """A status page that an earlier test built can answer this test's first reading for up to 60 s, because the
+    page serves a stale build while it rebuilds. Start every test from an empty status cache, so both readings
+    come from this test's own configuration."""
+    import status_endpoint
+    monkeypatch.setattr(status_endpoint, "_CACHE", {"ts": 0.0, "data": None})
+    monkeypatch.setattr(status_endpoint, "_BUILD_TASK", None)
 EPOCH = re.compile(r"\b1[5-9]\d{8}(?:\.\d+)?\b")
 # The evidence times are the instants a health check or request produced the evidence. The status cache lives 12 s, so a
 # slow run that crosses it stamps a later second. The time is a clock reading, not a function of a secret's bytes.
