@@ -1292,17 +1292,27 @@ def claim_first_local_owner(
     owns the durable first-owner check and every write that makes the claim
     observable.
     """
-    with transaction(path) as tx:
-        return claim_first_local_owner_in(
-            tx.conn,
-            issuer=issuer,
-            subject=subject,
-            email=email,
-            display_name=display_name,
-            verifier=verifier,
-            granted_by=granted_by,
-            now=now,
-        )
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            user = claim_first_local_owner_in(
+                conn,
+                issuer=issuer,
+                subject=subject,
+                email=email,
+                display_name=display_name,
+                verifier=verifier,
+                granted_by=granted_by,
+                now=now,
+            )
+        except BaseException:
+            conn.rollback()
+            raise
+        if user is None:
+            conn.rollback()
+            return None
+        conn.commit()
+    return user
 
 
 def claim_first_local_owner_in(

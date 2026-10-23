@@ -72,9 +72,9 @@ GUARDED = {
 EXEMPT = {
     "gateway/app_binding_guard.py::self_test": "inserts its fixtures inside a savepoint that is rolled back before the install returns; no row survives",
     "gateway/admin_store.py::_insert_credential_in": "inserts inside the open transaction of its two callers, both guarded above",
-    "gateway/accounts.py::accept_invite": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
+    "gateway/accounts.py::accept_invite_in": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
     "gateway/accounts.py::reset_password": "the holder of a reset link; every sign-in of the person ends with it",
-    "gateway/admin_store.py::claim_first_local_owner": "first-run setup before any sign-in exists",
+    "gateway/admin_store.py::claim_first_local_owner_in": "first-run setup before any sign-in exists",
     "gateway/mcp_oauth_store.py::Store.save_code": "follows create_grant in the same consent (grant checked there); a code only redeems a grant",
     "gateway/mcp_oauth_store.py::Store.save_token": "the client redeeming a code or refresh token of a grant; no browser is involved",
 }
