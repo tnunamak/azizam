@@ -134,42 +134,18 @@ export function HomeComposer({
   const catalogRowFor = (name: string | null) =>
     name ? catalogRows.find((row) => row.id === name || row.use_names?.includes(name)) ?? null : null;
 
-  if (loading) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <ChooserSkeleton />
-        <ComposerFrame>
-          <Textarea
-            aria-label="Describe what you want"
-            placeholder="Describe what you want"
-            rows={3}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            className="min-h-24 resize-none border-0 px-3 pt-3 shadow-none focus-visible:ring-0"
-          />
-          <div className="flex items-center gap-3 px-3 pb-3">
-            <Skeleton className="h-8 w-28 motion-reduce:animate-none" />
-            <Button type="button" disabled aria-label="Make" className="ml-auto">
-              Make
-            </Button>
-          </div>
-        </ComposerFrame>
-      </div>
-    );
-  }
-  if (!selected) return null;
 
   const view = viewByKind.get(kind);
-  const notice = stateNotice(selected, view, owner, ownerName);
+  const notice = selected ? stateNotice(selected, view, owner, ownerName) : null;
   const facts = (() => {
-    if (!model) return null;
+    if (!selected || !model) return null;
     if (model === recommended) return selected;
     const entry = catalogRowFor(model);
     return entry ? factsFromCatalog(entry, selected) : null;
   })();
   const factsLine = facts ? runFacts(facts) : "";
   const cost = facts?.cost_hint?.kind;
-  const runnable = USABLE.has(view?.state ?? "ready") && !(paidOff && cost === "paid");
+  const runnable = !loading && selected !== null && USABLE.has(view?.state ?? "ready") && !(paidOff && cost === "paid");
   const verb = makeVerb(kind);
   const recording = needsRecording(kind);
   const canMake = runnable && (recording || prompt.trim().length > 0) && model !== null;
@@ -189,7 +165,7 @@ export function HomeComposer({
 
   function startWork(event?: FormEvent) {
     event?.preventDefault();
-    if (!canMake || !model) return;
+    if (!canMake || !model || !selected) return;
     const text = recording ? "" : prompt.trim();
     storeHomeHandoff({ capability: kind, model, prompt: text });
     const params = new URLSearchParams({ capability: kind, model });
@@ -203,11 +179,11 @@ export function HomeComposer({
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) startWork();
   }
 
-  const pickerNames = [...new Set([recommended, ...(selected.use_names ?? [])].filter(
-    (name): name is string => Boolean(name),
-  ))];
+  const pickerNames = selected
+    ? [...new Set([recommended, ...(selected.use_names ?? [])].filter((name): name is string => Boolean(name)))]
+    : [];
   const nameOf = (name: string) => {
-    if (name === recommended && selected.title) return selected.title;
+    if (selected && name === recommended && selected.title) return selected.title;
     const entry = catalogRowFor(name);
     return entry ? modelDisplayName(name, { models: [entry], aliases: [] }) : prettifyModelId(name);
   };
@@ -216,33 +192,39 @@ export function HomeComposer({
   return (
     <div className="min-w-0 space-y-3">
       <div className="flex min-w-0 items-center gap-2">
-        <Segmented<string>
-          label="What to make"
-          value={kind}
-          options={shown}
-          onChange={onKindChange}
-          className="min-w-0"
-        />
-        {more.length ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="shrink-0">
-                More
-                <ChevronDown aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuRadioGroup value={kind} onValueChange={onKindChange}>
-                {more.map((option) => (
-                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                    {option.label}
-                    {option.badge}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+        {loading || !selected ? (
+          <ChooserSkeleton />
+        ) : (
+          <>
+            <Segmented<string>
+              label="What to make"
+              value={kind}
+              options={shown}
+              onChange={onKindChange}
+              className="min-w-0"
+            />
+            {more.length ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="shrink-0">
+                    More
+                    <ChevronDown aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuRadioGroup value={kind} onValueChange={onKindChange}>
+                    {more.map((option) => (
+                      <DropdownMenuRadioItem key={option.value} value={option.value}>
+                        {option.label}
+                        {option.badge}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </>
+        )}
       </div>
       <ComposerFrame>
         {notice ? (
@@ -264,6 +246,7 @@ export function HomeComposer({
             <label htmlFor="home-prompt" className="sr-only">
               {placeholder}
             </label>
+            {/* One box for the whole page: it keeps what was typed while the list loads. */}
             <Textarea
               id="home-prompt"
               rows={3}
@@ -276,26 +259,30 @@ export function HomeComposer({
           </>
         )}
         <form onSubmit={startWork} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-3">
-          <DropdownMenu onOpenChange={setPickerOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="max-w-[60%] min-w-0 justify-start">
-                <span className="truncate">{model ? nameOf(model) : ""}</span>
-                <ChevronDown aria-hidden="true" className="shrink-0" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-              <DropdownMenuRadioGroup
-                value={model ?? ""}
-                onValueChange={(value) => setModelChoice((current) => ({ ...current, [kind]: value }))}
-              >
-                {pickerNames.map((name) => (
-                  <DropdownMenuRadioItem key={name} value={name}>
-                    {nameOf(name)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {selected ? (
+            <DropdownMenu onOpenChange={setPickerOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="max-w-[60%] min-w-0 justify-start">
+                  <span className="truncate">{model ? nameOf(model) : ""}</span>
+                  <ChevronDown aria-hidden="true" className="shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+                <DropdownMenuRadioGroup
+                  value={model ?? ""}
+                  onValueChange={(value) => setModelChoice((current) => ({ ...current, [kind]: value }))}
+                >
+                  {pickerNames.map((name) => (
+                    <DropdownMenuRadioItem key={name} value={name}>
+                      {nameOf(name)}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Skeleton className="h-8 w-28 motion-reduce:animate-none" />
+          )}
           {factsLine ? (
             <p className={cn("text-muted-foreground text-meta min-w-0", "max-sm:order-last max-sm:w-full")}>{factsLine}</p>
           ) : null}

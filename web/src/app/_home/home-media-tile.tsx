@@ -255,7 +255,10 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
   const title = prompt ?? label;
   const at = parseEpochSeconds(creation.created_at);
   const href = `/library/?asset=${encodeURIComponent(creation.asset_id)}`;
-  const caption = (
+  // A picture or video is one link, named by its caption (what is visible). Audio keeps its play control
+  // apart, so its link covers the tile only and the caption stays text.
+  const linkName = prompt ? `Open ${label} in Library: ${prompt}` : `Open ${label} in Library`;
+  const captionText = (
     <span className="mt-2 block min-w-0">
       <span className="text-foreground text-meta block truncate font-medium">{title}</span>
       <span className="text-muted-foreground text-badge block truncate">
@@ -281,27 +284,20 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
         <div className={tile}>
           {media}
           <MediaBadge icon={AudioLines} className="absolute bottom-2 left-2 z-10" />
-          <Link
-            prefetch={false}
-            href={href}
-            aria-label={`Open ${label} in Library: ${title}`}
-            className="rounded-media absolute inset-0"
-          />
+          <Link prefetch={false} href={href} aria-label={linkName} className="rounded-media absolute inset-0" />
         </div>
-        <Link prefetch={false} href={href} className="group block min-w-0">
-          {caption}
-        </Link>
+        {captionText}
       </li>
     );
   }
   return (
     <li className={cn("min-w-0", className)} data-slot="recent-tile">
-      <Link prefetch={false} href={href} aria-label={`Open ${label} in Library: ${title}`} className="group block min-w-0">
+      <Link prefetch={false} href={href} className="group block min-w-0">
         <div className={tile}>
           {media}
           {creation.kind === "video" ? <MediaBadge icon={Video} className="absolute bottom-2 left-2" /> : null}
         </div>
-        {caption}
+        {captionText}
       </Link>
     </li>
   );

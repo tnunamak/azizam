@@ -14,7 +14,6 @@ import { useOptionalProviderStatus } from "@/lib/provider-status";
 import { ownerEngineAlert, ownerProviderAlert } from "@/components/shell/use-owner-alert";
 import { appPlumbingCapabilities } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { AppMark } from "@/components/product/app-mark";
 import { CapNotice } from "@/components/product/cap-notice";
 import { ErrorState } from "@/components/product/error-state";
@@ -23,7 +22,7 @@ import { RelativeTime } from "@/components/product/relative-time";
 import { capabilityMeta } from "@/components/product/readiness";
 import { homeApi, type HomeCapability, type HomeSnapshot } from "./home-api";
 import { HomeComposer } from "./home-composer";
-import { Recent, RecentLoading } from "./home-recent";
+import { Recent } from "./home-recent";
 import { OwnerPanel } from "./home-owner-panel";
 import {
   capabilityLabel,
@@ -272,8 +271,7 @@ export default function HomePage() {
       </>
     );
   }
-  if (!home || !home.authenticated) {
-    if (homePending) return <HomeLoading greeting={greeting} />;
+  if (home && !home.authenticated) {
     return (
       <>
         <PageHeader title="Home" />
@@ -290,7 +288,19 @@ export default function HomePage() {
     );
   }
 
-  const composer = home.has_access_plan === false ? (
+  // One tree while the home read is pending and after it settles, so what was typed stays in the box.
+  const composer = homePending ? (
+    <HomeComposer
+      rows={[]}
+      views={[]}
+      loading
+      owner={false}
+      ownerName={null}
+      paidOff={false}
+      kind={null}
+      onKindChange={() => undefined}
+    />
+  ) : home?.has_access_plan === false ? (
     <NoPlanNotice owner={isOwner} ownerName={ownerName} />
   ) : rows.length ? (
     <HomeComposer
@@ -339,6 +349,7 @@ export default function HomePage() {
             <Recent
               items={items}
               now={now}
+              views={model.views}
               owner={isOwner}
               mediaState={mediaState}
               onRetry={() => void media.refetch()}
@@ -346,35 +357,12 @@ export default function HomePage() {
             />
           )}
         </div>
-        <div className="lg:col-span-2 lg:row-start-2">
-          <YourApps home={home} />
-        </div>
+        {home?.authenticated ? (
+          <div className="lg:col-span-2 lg:row-start-2">
+            <YourApps home={home} />
+          </div>
+        ) : null}
       </div>
-    </div>
-  );
-}
-
-/** Loading: the greeting and the composer at once, with skeletons where the data will go. */
-function HomeLoading({ greeting }: { greeting: string }) {
-  return (
-    <div className="min-w-0 space-y-8" aria-busy="true">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">{greeting}</h1>
-      </header>
-      <HomeComposer
-        rows={[]}
-        views={[]}
-        loading
-        owner={false}
-        ownerName={null}
-        paidOff={false}
-        kind={null}
-        onKindChange={() => undefined}
-      />
-      <section aria-labelledby="recent-heading">
-        <Skeleton className="mb-3 h-5 w-20 motion-reduce:animate-none" />
-        <RecentLoading />
-      </section>
     </div>
   );
 }

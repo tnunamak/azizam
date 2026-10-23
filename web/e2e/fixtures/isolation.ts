@@ -47,7 +47,7 @@ type GlobalSetting = {
 type OwnerApi = {
   get: (path: string) => Promise<Json>;
   send: (
-    method: "PUT" | "POST" | "DELETE",
+    method: "PATCH" | "PUT" | "POST" | "DELETE",
     path: string,
     data?: unknown,
     revision?: string,

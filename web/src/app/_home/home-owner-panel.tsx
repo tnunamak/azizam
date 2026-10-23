@@ -70,7 +70,7 @@ export function OwnerPanel({
               {" · "}
             </>
           ) : null}
-          <Link prefetch={false} href="/status/" className="text-link font-medium underline-offset-4 hover:underline">
+          <Link prefetch={false} href="/status/" className="text-link font-medium underline underline-offset-4">
             Open Status
           </Link>
         </p>

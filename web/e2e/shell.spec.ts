@@ -296,9 +296,8 @@ test("member shell hides owner controls and makes no owner API calls", async ({
         apps: [],
         receipts: [],
         capabilities: [],
-        aliases: [],
-        credential_aliases: {},
-        new_app_aliases: [],
+        has_access_plan: true,
+        recent_chats: [],
       },
       { response },
     );

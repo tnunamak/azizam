@@ -9,7 +9,8 @@ import { RelativeTime } from "@/components/product/relative-time";
 import { MAKING_COPY } from "@/components/product/making-tile";
 import { SectionHeading } from "@/components/product/readiness";
 import { MediaTile } from "./home-media-tile";
-import { makingProgress, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
+import { makingProgress, makingRisk, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
+import type { CapabilityView } from "@/lib/capability-state";
 
 /** Six tiles on a wide screen and four on a phone. Beside the owner's panel, four at every width from large up. */
 const TILE_BEYOND_FOUR = "max-sm:hidden";
@@ -35,7 +36,7 @@ export function RecentLoading() {
 }
 
 /** A make that is still running: its tile first, with the time left, then the result. */
-function MakingTileView({ item, now, className }: { item: Making; now: number; className?: string }) {
+function MakingTileView({ item, now, risk, className }: { item: Making; now: number; risk: string | null; className?: string }) {
   const progress = makingProgress(item, now);
   const timeLeft = makingTimeLeft(item, now);
   const overdue = timeLeft === "Taking longer than usual";
@@ -62,9 +63,10 @@ function MakingTileView({ item, now, className }: { item: Making; now: number; c
         ) : null}
       </div>
       <p className="text-foreground text-meta mt-2 truncate font-medium">{copy}</p>
-      <p className={cn("text-badge truncate", overdue ? "text-warning" : "text-muted-foreground")}>
+      <p className="text-muted-foreground text-badge truncate">
         {overdue ? timeLeft : `Making${timeLeft ? ` · ${timeLeft}` : ""}`}
       </p>
+      {risk ? <p className="text-warning text-badge">{risk}</p> : null}
     </li>
   );
 }
@@ -74,12 +76,7 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
   const { chat } = item;
   return (
     <li className={cn("min-w-0", className)} data-slot="recent-tile">
-      <Link
-        prefetch={false}
-        href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`}
-        aria-label={`Open chat: ${chat.title}`}
-        className="group block min-w-0"
-      >
+      <Link prefetch={false} href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`} className="group block min-w-0">
         <div className="bg-muted rounded-media flex aspect-square w-full flex-col gap-2 overflow-hidden p-3">
           <MessageSquare aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
           <p className="text-foreground text-meta line-clamp-4">{chat.title}</p>
@@ -105,6 +102,7 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
 export function Recent({
   items,
   now,
+  views,
   owner,
   mediaState,
   onRetry,
@@ -112,6 +110,8 @@ export function Recent({
 }: {
   items: RecentItem[];
   now: number;
+  /** Each capability's state, so a make on a capability that is not working says so. */
+  views: CapabilityView[];
   owner: boolean;
   mediaState: "pending" | "error" | "ready";
   onRetry: () => void;
@@ -159,7 +159,9 @@ export function Recent({
             {items.map((item, index) => {
               const className = index >= 4 ? tileClass : undefined;
               if (item.kind === "making")
-                return <MakingTileView key={item.key} item={item} now={now} className={className} />;
+                return (
+                  <MakingTileView key={item.key} item={item} now={now} risk={makingRisk(item, views)} className={className} />
+                );
               if (item.kind === "chat")
                 return <ChatTileView key={item.key} item={item} className={className} />;
               return <MediaTile key={item.key} creation={item.asset} className={className} />;

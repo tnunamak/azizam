@@ -8,6 +8,7 @@ import {
   greetingFor,
   kindOf,
   listFacts,
+  makingRisk,
   makingTimeLeft,
   orderChooser,
   promptPlaceholder,
@@ -161,6 +162,7 @@ describe("greeting and names", () => {
   it("uses the first word of a name", () => {
     expect(firstNameOf("Robin Okafor")).toBe("Robin");
     expect(firstNameOf("  ")).toBeNull();
+    expect(firstNameOf("robin@example.test")).toBeNull();
   });
 });
 
@@ -168,5 +170,15 @@ describe("H13 no model or engine names in the Home code", () => {
   it("gives placeholders by kind, with a plain default", () => {
     expect(promptPlaceholder("image")).toBe("Describe the picture you want");
     expect(promptPlaceholder("made-up-kind")).toBe("Describe what you want");
+  });
+});
+
+describe("a make on a capability that is not working says so", () => {
+  it("warns that a running make may not finish, and only when its capability is down", () => {
+    const item = { kind: "making" as const, key: "making:j", making: "image" as const, startedAt: NOW - 3, typicalSeconds: 9, capability: "image" };
+    const view = (state: string, word: string) => ({ key: "image", label: "Images", state, word }) as never;
+    expect(makingRisk(item, [view("down", "Down")])).toBe("Images down: it may not finish");
+    expect(makingRisk(item, [view("ready", "Ready")])).toBeNull();
+    expect(makingRisk(item, [])).toBeNull();
   });
 });

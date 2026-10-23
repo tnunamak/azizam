@@ -221,6 +221,16 @@ export function recentItems(input: {
   return [...making, ...done];
 }
 
+/**
+ * The warning a running make carries when its capability is not working: it may not finish. Null when the
+ * capability is ready or busy, or when no view knows it.
+ */
+export function makingRisk(item: Extract<RecentItem, { kind: "making" }>, views: CapabilityView[]): string | null {
+  const view = views.find((candidate) => candidate.key === item.capability);
+  if (!view || view.state === "ready" || view.state === "busy") return null;
+  return `${view.label} ${view.word.toLowerCase()}: it may not finish`;
+}
+
 /** How far through a making run the time is, 0 to 1, or null when no typical time is known. */
 export function makingProgress(item: Extract<RecentItem, { kind: "making" }>, now: number): number | null {
   if (!item.typicalSeconds || item.startedAt == null) return null;
@@ -289,7 +299,9 @@ export function greetingFor(now: Date, firstName: string | null, firstVisit: boo
   return name ? `${part}, ${name}` : part;
 }
 
+/** The first word of a display name, for the greeting. An address is never a name, so it gives none. */
 export function firstNameOf(name: string | null | undefined): string | null {
-  const first = name?.trim().split(/\s+/)[0];
-  return first ? first : null;
+  const trimmed = name?.trim() ?? "";
+  if (!trimmed || trimmed.includes("@")) return null;
+  return trimmed.split(/\s+/)[0];
 }

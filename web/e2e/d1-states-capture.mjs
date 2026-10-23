@@ -183,7 +183,7 @@ const TARGETS = {
     test: p => p === "/me/api/home",
     wrap: null,
     empty: j => Object.assign(j, {
-      capabilities: [], apps: [], receipts: [], aliases: [], new_app_aliases: [], credential_aliases: {},
+      capabilities: [], apps: [], receipts: [], has_access_plan: true, recent_chats: [],
       status: { state: "unavailable", reason_code: "no_capabilities", affected_capability_ids: [], counts: { total: 0, available: 0, affected: 0 } },
     }),
   }, {

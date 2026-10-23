@@ -242,7 +242,7 @@ describe("H6 Recent is the person's own work, and a make in progress comes first
     const tiles = within(list).getAllByRole("listitem");
     expect(tiles[0]).toHaveAttribute("data-making", "true");
     expect(within(tiles[0]).getByText(/about \d+ s left/)).toBeVisible();
-    const picture = await screen.findByRole("link", { name: /Open Image in Library: Garden/ });
+    const picture = await screen.findByRole("link", { name: /Garden/ });
     expect(picture.getAttribute("href")).toMatch(/^\/library\/?\?asset=asset-1$/);
   });
 
@@ -266,7 +266,7 @@ describe("H6 Recent is the person's own work, and a make in progress comes first
       "/me/api/media": () => ({ assets: [] }),
     });
     renderHome();
-    const link = await screen.findByRole("link", { name: "Open chat: Plan a two-day coastal trip" });
+    const link = await screen.findByRole("link", { name: /Plan a two-day coastal trip/ });
     // Next's link keeps or drops a trailing slash by config; the receipt is what matters.
     expect(link.getAttribute("href")).toMatch(/^\/usage\/?\?receipt=req-9$/);
   });

@@ -23,7 +23,7 @@ function tile(creation: HomeCreation) {
 describe("Recent media tiles", () => {
   it("opens a picture in Library's viewer, named by its prompt", () => {
     tile({ asset_id: "img-1", kind: "image", prompt: "Raised bed, late afternoon", download_url: "/pic.png", created_at: 1_700_000_000 });
-    const link = screen.getByRole("link", { name: "Open Image in Library: Raised bed, late afternoon" });
+    const link = screen.getByRole("link", { name: /Raised bed, late afternoon/ });
     expect(link.getAttribute("href")).toMatch(/^\/library\/?\?asset=img-1$/);
     expect(screen.getByRole("img", { name: "Raised bed, late afternoon" })).toBeVisible();
   });
