@@ -666,16 +666,19 @@ def test_an_administrator_service_account_is_named_by_its_name(gateway):
 
 def test_a_control_plane_key_that_held_the_owner_role_neither_blocks_nor_is_named(gateway):
     owner, owner_id, app_id = _owner_and_app(gateway)
-    for grant in gateway.rows("SELECT id FROM admin_role_assignments WHERE subject_kind = 'user' "
-                              "AND role IN ('admin', 'superadmin')"):
-        admin_store.revoke_admin_role(grant["id"], path=gateway.path)  # no administrator on record
+    _display_name(gateway, "helper@example.test", "Helper Person")
     tools = admin_store.create_service_account("Owner tools", path=gateway.path)
     admin_store.assign_admin_role(role="owner", subject_kind="service_account", subject_id=tools["id"], path=gateway.path)
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
 
-    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
 
+    # Not a keep_not_provable (it does not block), and not named: only the helper, who is an administrator, is.
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
     assert kept.status_code == 200, kept.text
     assert _creator_of_key(gateway, key_id) == owner_id
 
@@ -732,7 +735,7 @@ def test_keeping_an_address_asks_the_owner_to_confirm_the_administrators_on_reco
 def test_a_session_app_key_is_not_found_for_keep_or_replace_instead_of_a_server_error(gateway):
     owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
     owner_id = gateway.user(OWNER)["id"]
-    session_app_id = gateway.rows("SELECT app_id FROM session_apps WHERE user_id = ?", (owner_id,))[0]["app_id"]
+    session_app_id = admin_store.ensure_session_app_for_user(owner_id, name="Signed-in work", path=gateway.path)["id"]
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, session_app_id)
 
