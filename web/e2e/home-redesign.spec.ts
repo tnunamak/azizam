@@ -179,7 +179,7 @@ test("H9 the owner's panel holds operations only, each with one link to where it
   const links = panel.getByRole("link");
   const hrefs = await links.evaluateAll((items) => items.map((item) => item.getAttribute("href") ?? ""));
   for (const href of hrefs) expect(href).toMatch(/^\/(engines|providers|status|people)\b/);
-  expect(await panel.textContent()).not.toMatch(/prompt|photo|picture/i);
+  await expect(panel).not.toContainText(/prompt|photo|picture/i);
 });
 
 test("H10 a member never sees the gateway panel", async ({ isolated }) => {
@@ -195,7 +195,7 @@ test.describe("H10 at a phone width the owner sees one row that opens Status", (
     await page.goto("/");
     const row = page.getByRole("region", { name: "Your gateway" }).getByRole("link", { name: /Open Status/ });
     await expect(row).toBeVisible();
-    expect(await row.getAttribute("href")).toMatch(/^\/status\/?$/);
+    await expect(row).toHaveAttribute("href", /^\/status\/?$/);
   });
 });
 
