@@ -2,12 +2,13 @@
 
 docs/design/REQUEST_RETENTION.md sections 10 (surfaces), 12 (deletion, expiry, late writes), 16.1.4 (ownership before
 pagination), 16.1.7 (late writes and erasure) and 16.1.8 (a delegated credential without the privacy permission gets
-403 privacy_permission_required). The privacy permission itself is slice 5b, so no key or grant carries it here.
-Routes run through the real app with a personal App key per member; rows are written through the one store.
+403 privacy_permission_required). Routes run through the real app with a personal App key per member; rows are written
+through the one store.
 """
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,9 +139,27 @@ def test_an_expired_row_is_never_shown_even_before_maintenance_deletes_it(gatewa
 def test_the_owner_and_an_unauthenticated_caller_see_no_one_elses_history(gateway, monkeypatch):
     _store(gateway, _record(gateway["maker"]))
     monkeypatch.setitem(gateway_support._APP_KEY, "key", "")  # the client sends no default key
-    assert _call("GET", "/gateway/v1/requests", None).status_code == 401
     assert _call("GET", "/gateway/v1/requests", gateway["other"].key).json()["requests"] == []
     assert _call("GET", "/gateway/v1/requests", None).status_code == 401
+
+
+def test_a_delegated_credential_can_read_its_persons_retention_but_needs_permission_to_change_it(gateway):
+    read = _call("GET", "/gateway/v1/me/retention", gateway["maker"].key)
+    assert read.status_code == 200, read.text
+    assert read.json()["keep"] is True
+    assert _call("GET", "/me/api/retention", gateway["maker"].key).status_code == 401
+
+    payload = {"keep": False, "retention": "7_days", "parts": ["accepted"]}
+    refused = _call("PUT", "/gateway/v1/me/retention", gateway["maker"].key, json=payload)
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "privacy_permission_required"
+
+    with sqlite3.connect(gateway["db"]) as conn:
+        conn.execute("UPDATE credentials SET privacy_permission=1 WHERE id=?", (gateway["maker"].credential,))
+    changed = _call("PUT", "/gateway/v1/me/retention", gateway["maker"].key, json=payload)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["keep"] is False
+    assert _call("GET", "/gateway/v1/me/retention", gateway["maker"].key).json()["keep"] is False
 
 
 # ----------------------------------------------------------------------- delete

@@ -270,6 +270,9 @@
 # Sign-in round 2: +16 cases: a session that ends while the person is at the provider still signs them in (+1);
 # invite and first-owner write failures at each account and session step (+13); pins for a failed provider sign-in
 # expiring its binding cookie and for concurrent password sign-ins (+2). collect-only 16842 -> 16858 (2026-10-23).
+# Request retention slice 5b server: +20 collected cases across privacy permission, delegated retention,
+# MCP tools and the expanded request-history access matrix. Hermetic collect-only: 16813 -> 16833 (2026-10-23).
+# Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
 pytest = 16988
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and

@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "e89d2260c9cf65d7bcd95d0ce9959698138f0731a177848b6ae19b7523a5c46e",
+ "openapi_sha256": "b0091ae152f52fa4f09a787a1d3ba9f4f6cc6092680a6dc07f852a7ba066eb46",
  "policy": {
   "aliases": [
    {
@@ -6014,6 +6014,19 @@
    "type": "APIRoute"
   },
   {
+   "endpoint": "gateway.mcp_oauth.McpOAuth.register.<locals>.privacy_permission",
+   "include_in_schema": false,
+   "methods": [
+    "PUT"
+   ],
+   "name": "privacy_permission",
+   "openapi_extra": null,
+   "path": "/me/api/mcp/connections/{grant_id}/privacy-permission",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
    "endpoint": "gateway.mcp_oauth.McpOAuth.register.<locals>.register_client",
    "include_in_schema": false,
    "methods": [
@@ -6595,6 +6608,32 @@
    "name": "update_provider_models",
    "openapi_extra": null,
    "path": "/admin/api/providers/{provider_id}/models",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "gateway.request_history_api.create_request_history_router.<locals>.get_delegated_retention",
+   "include_in_schema": true,
+   "methods": [
+    "GET"
+   ],
+   "name": "get_delegated_retention",
+   "openapi_extra": null,
+   "path": "/gateway/v1/me/retention",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "gateway.request_history_api.create_request_history_router.<locals>.put_delegated_retention",
+   "include_in_schema": true,
+   "methods": [
+    "PUT"
+   ],
+   "name": "put_delegated_retention",
+   "openapi_extra": null,
+   "path": "/gateway/v1/me/retention",
    "response_class": null,
    "status_code": null,
    "type": "APIRoute"
@@ -9035,6 +9074,19 @@
    "name": "user_portal_delete_app",
    "openapi_extra": null,
    "path": "/me/api/apps/{app_id}",
+   "response_class": null,
+   "status_code": null,
+   "type": "APIRoute"
+  },
+  {
+   "endpoint": "proxy.user_portal_key_privacy_permission",
+   "include_in_schema": false,
+   "methods": [
+    "PUT"
+   ],
+   "name": "user_portal_key_privacy_permission",
+   "openapi_extra": null,
+   "path": "/me/api/credentials/{credential_id}/privacy-permission",
    "response_class": null,
    "status_code": null,
    "type": "APIRoute"

@@ -137,7 +137,7 @@ GATEWAY_CODES = frozenset({
     "image_generation_timeout", "image_post_processing_failed", "incomplete_rule", "invalid_client", "invalid_connection",
     "invalid_cursor", "invalid_decision", "invalid_defaults", "invalid_engine_connection", "invalid_extension",
     "invalid_gateway_extensions", "invalid_instance", "invalid_mask_dimensions", "invalid_native_path", "invalid_prompt_memory",
-    "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
+    "invalid_privacy_permission", "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
     "invalid_shots", "invalid_source", "invalid_stt_chunk_response", "invalid_stt_stream_response", "invalid_video_control",
     "invalid_workflow_extension",
     "generation_mismatch", "job_canceled", "keep_needs_confirmation", "keep_not_provable", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",

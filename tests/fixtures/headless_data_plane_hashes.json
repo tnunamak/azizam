@@ -31,6 +31,7 @@
     "/gateway/v1/extensions": "aca1b2f0a522086d962a6faa13f826fcba00481892faffae2c003ec106d705e9",
     "/gateway/v1/faces/likeness": "aba2d417a49f1e97701c25ff294a9b95e55a69276fefd55265d92800ac80ff01",
     "/gateway/v1/images/identity": "cd5c02a8be3297b7088c37a0d59d9d6368c7b19a801c3979761f726a36032cc1",
+    "/gateway/v1/me/retention": "19b4c00944e0156582cd02752f034758d390219bd57b65074685eea6547c8ae2",
     "/gateway/v1/media/jobs": "47f5e54a903ae9c4bda9e13276d23b61fa5e3df5a99868dabf6bf62879d1974f",
     "/gateway/v1/media/jobs/image-generations": "cb5259b4d441df612e27d07ffc8cd4fde6c74b40d0bd4064e57b1674e7d85def",
     "/gateway/v1/media/jobs/{job_id}": "3b7a0e5775f86bcde1e767c19ae5773c00f561999b2cb146c088605db7dd4f6f",

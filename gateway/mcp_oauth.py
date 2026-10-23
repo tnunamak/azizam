@@ -136,6 +136,7 @@ class Connection:
     client_id: str
     client_name: str
     scope: str
+    privacy_permission: bool = False
 
 
 @dataclass
@@ -749,7 +750,8 @@ class McpOAuth:
         if SCOPE not in scope_to_list(record.scope):
             return None
         store.touch_grant(grant)
-        return Connection(grant.id, grant.person_id, grant.client_id, grant.client_name, record.scope)
+        return Connection(grant.id, grant.person_id, grant.client_id, grant.client_name, record.scope,
+                          grant.privacy_permission)
 
     def connection_active(self, grant_id: str, person_id: str) -> bool:
         """Whether a connection's grant is still in force for ``person_id``.
@@ -1112,7 +1114,44 @@ class McpOAuth:
                 "redirect_host": urlsplit(grant.redirect_uri).hostname or urlsplit(grant.redirect_uri).scheme + ":",
                 "created_at": grant.created_at,
                 "last_used_at": grant.last_used_at,
+                "privacy_permission": grant.privacy_permission,
             } for grant in grants]}, headers=no_store)
+
+        @app.put("/me/api/mcp/connections/{grant_id}/privacy-permission", include_in_schema=False)
+        async def privacy_permission(grant_id: str, request: Request) -> Response:
+            found = await asyncio.to_thread(session_person, request)
+            if found is None:
+                return login_required()
+            session, person = found
+            refusal = self.deps.check_action(request, session)
+            if refusal is not None:
+                return refusal
+            stale = await asyncio.to_thread(self.deps.require_recent_sign_in, request, session)
+            if stale is not None:
+                return stale
+            try:
+                body = await request.json()
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            enabled = body.get("enabled") if isinstance(body, Mapping) else None
+            if not isinstance(enabled, bool):
+                return JSONResponse({"error": {"code": "invalid_privacy_permission",
+                                                "message": "enabled must be true or false"}},
+                                    status_code=400, headers=no_store)
+            person_id = str(person["id"])
+            try:
+                updated = await asyncio.to_thread(
+                    self.deps.store.set_privacy_permission, grant_id, person_id=person_id,
+                    enabled=enabled, session=BrowserSession.of(session, person_id))
+            except SessionEnded:
+                return login_required()
+            if not updated:
+                return JSONResponse({"error": {"code": "not_found", "message": "No such connection."}},
+                                    status_code=404, headers=no_store)
+            await asyncio.to_thread(self.deps.audit, "mcp.connection.privacy_permission", person_id=person_id,
+                                    grant_id=grant_id, enabled=enabled)
+            return JSONResponse({"connection": {"id": grant_id, "privacy_permission": enabled}},
+                                headers=no_store)
 
         @app.post("/me/api/mcp/connections/{grant_id}/revoke", include_in_schema=False)
         async def revoke_connection(grant_id: str, request: Request) -> Response:

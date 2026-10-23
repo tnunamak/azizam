@@ -44,6 +44,8 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/me/api/apps/*/trusted-addresses"),
     ("POST", "/me/api/credentials/*/adopt"),
     ("POST", "/me/api/credentials/*/replace"),
+    ("PUT", "/me/api/credentials/*/privacy-permission"),
+    ("PUT", "/me/api/mcp/connections/*/privacy-permission"),
     ("POST", "/me/api/apps/*/trusted-addresses/*/adopt"),
     ("POST", "/me/api/apps/*/trusted-addresses/*/readd"),
     ("POST", "/setup/first-app"),
