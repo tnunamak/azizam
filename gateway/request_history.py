@@ -466,8 +466,8 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
 def write_transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
     """One write transaction on the media-jobs database, held until the block ends (REQUEST_RETENTION.md 3.6).
 
-    The request writer opens it before it takes the household's write lock, so that lock is never held while this
-    database is waited on. A block that raises rolls back.
+    Open it inside the household's write lock (admin.db), never before: every writer takes admin.db first, so the two
+    databases are never waited on in opposite orders. A block that raises rolls back.
     """
     conn = connect(path)
     try:

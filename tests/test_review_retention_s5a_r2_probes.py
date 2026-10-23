@@ -198,38 +198,36 @@ def test_positive_control_with_fewer_long_requests_the_on_member_is_kept(member_
     assert len(rows) == 1
 
 
-# ------------------------------------------------------------------ lock order: media first, then admin
+# ------------------------------------------------------------------ lock order: admin.db first, then media_jobs.db
 
 
-@pytest.mark.xfail(strict=True, reason="R2-5: the writer takes media_jobs.db then admin.db; Library prompt writes "
-                                       "take admin.db then media_jobs.db, so the two orders collide")
 def test_a_history_write_survives_a_concurrent_library_prompt_write(member_db, monkeypatch):
-    """The history writer opens its media transaction, then a Library prompt write takes the household lock and waits
-    on media_jobs.db. The history writer then waits 0.25 s for the household lock, gives up (write_failed), and the
-    prompt write was blocked for that time. With one lock order, both writes would succeed."""
+    """The history writer holds the household lock (admin.db), then its media transaction. A Library prompt write asks
+    for the household lock meanwhile and waits for the history write, which is short, so both writes succeed. Before the
+    fix the history writer took media_jobs.db first, so the two writers waited on each other: the history write gave up
+    after 0.25 s and was lost, and the prompt write was blocked for that time (R2-5).
+
+    The hook used to hold the media transaction until the prompt write reached the household lock from inside put(). Under
+    one lock order the prompt write cannot reach that point while the history writer holds the lock. So the hook holds
+    both locks for a moment after the prompt write has started, which forces the overlap."""
     import threading
     from contextlib import contextmanager
-    from gateway import prompt_memory, retention
+    from gateway import prompt_memory
 
     db, media, person = member_db
     prompt_memory.init_db(path=media)
-    media_held, admin_held = threading.Event(), threading.Event()
-    real_transaction, real_connect = request_history.write_transaction, prompt_memory._connect
+    prompt_started, held = threading.Event(), threading.Event()
+    real_transaction = request_history.write_transaction
 
     @contextmanager
-    def pausing_transaction(path=None):
+    def holding_transaction(path=None):
         with real_transaction(path) as conn:
-            media_held.set()
-            admin_held.wait(5)
+            held.set()
+            prompt_started.wait(5)
+            time.sleep(0.05)  # both locks stay held while the prompt write waits on the household lock
             yield conn
 
-    def signalling_connect(path):
-        if threading.current_thread() is threading.main_thread():
-            admin_held.set()  # put() calls this inside the household lock, just before its media write
-        return real_connect(path)
-
-    monkeypatch.setattr(request_history, "write_transaction", pausing_transaction)
-    monkeypatch.setattr(prompt_memory, "_connect", signalling_connect)
+    monkeypatch.setattr(request_history, "write_transaction", holding_transaction)
     owner = RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
     identity = _identity(person)
     capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: identity}, headers={},
@@ -242,13 +240,12 @@ def test_a_history_write_survives_a_concurrent_library_prompt_write(member_db, m
               "summary": {"route": "/v1/responses", "model": "m", "status": 200, "latency_ms": 1}}
     writer = threading.Thread(target=capture._write, args=(decision, record, None))
     writer.start()
-    assert media_held.wait(5)
+    assert held.wait(5)
     started = time.monotonic()
+    prompt_started.set()
     prompt_memory.put("asset_probe", person, "a prompt", kept_until=None, path=media, admin_path=db)
     blocked_for = time.monotonic() - started
     writer.join(10)
-    if capture.admitted:
-        request_history_capture._PENDING.release()
     assert len(_kept(media)) == 1, f"history write lost; the prompt write was blocked {blocked_for:.2f}s"
 
 

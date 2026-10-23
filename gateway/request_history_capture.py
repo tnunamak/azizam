@@ -7,8 +7,8 @@ retention entry are made then. A request that never authenticates is not recorde
 
 The decision is made as soon as the caller is known. A request whose history is off, or that asks to forget, does
 not have its body parsed or its reply buffered, and it writes nothing but the receipt's entry (3.3, 12). The write
-runs on one dedicated worker thread, in a media-jobs transaction that is opened before the household's write lock is
-taken, so that lock is never held while this database is waited on (3.6).
+runs on one dedicated worker thread. It takes the household's write lock (admin.db) first, then a short media-jobs
+transaction, the order the Library and Responses writers use (3.6).
 
 The per-request control is read here, for every data-plane route: ``extensions["com.azizam.prompts"]`` in a JSON body
 (whatever its Content-Type) or in a form's fields, and ``X-Azizam-Prompts: forget`` for a body the gateway does not
@@ -384,15 +384,15 @@ class _Capture:
             nonlocal outcome
             outcome = result
 
-        try:
-            # The media transaction opens first. The household lock is taken inside it, so the lock is never held
-            # while this database is waited on. A commit that fails after the lock was released reports write_failed.
+        def commit(deadline: int | None) -> None:
+            # Runs inside the household lock (admin.db), as the Library writer's does, so admin.db is always taken before
+            # media_jobs.db. The media transaction is short: one insert and its commit.
             with request_history.write_transaction(media_path) as conn:
-                def commit(deadline: int | None) -> None:
-                    request_history.insert_record(conn, {**record, "kept_until": deadline})
+                request_history.insert_record(conn, {**record, "kept_until": deadline})
 
-                retention.write(KIND, admin_path=admin_path, person_id=decision.person_id, created_at=self.started,
-                                commit=commit, decision=decision, on_result=remember)
+        try:
+            retention.write(KIND, admin_path=admin_path, person_id=decision.person_id, created_at=self.started,
+                            commit=commit, decision=decision, on_result=remember)
         except Exception:
             log.warning("request history write failed request_id=%s", receipt_id or "-", exc_info=False)
             outcome = retention.WriteOutcome(False, "write_failed")

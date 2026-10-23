@@ -1939,10 +1939,12 @@ that they pin now passes with its mark removed. The tests the review did not pin
 - **Cost (sections 3.3, 3.6, 12).** The decision is made as soon as the caller is known. A member whose history is off,
   a forget, a request with no person, and the kill switch all skip body parsing, reply buffering, the write lock and
   any write except the receipt entry. A reply is buffered only when it may be kept. One writer thread
-  (`request_history_capture.WRITER`) does every write, and at most 32 captures are in flight. A request beyond that is
-  not captured, and its receipt says `storage_unavailable`. The media-jobs transaction opens before the household lock
-  is taken, so that lock is never held while the other database is waited on. A commit that fails after the lock is
-  released reports `write_failed`.
+  (`request_history_capture.WRITER`) does every write. At most 32 captures hold a body for a write at once. A request
+  takes one of those slots only when its decision says keep, and gives it back when its write is done (round 2, R2-4).
+  A request that finds no free slot is not captured, and its receipt says `storage_unavailable`. The history writer takes
+  the household lock (admin.db) first and opens its short media-jobs transaction inside it, as the Library and Responses
+  writers do, so the two databases are waited on in one order (round 2, R2-5). A commit that fails after the media row is
+  written reports `write_failed`. The row may then remain, as a Library row can after the same failure.
   - A body forget in an OFF member's request is reported `member_disabled`, because that body is not read. A header
     forget is reported `request_forget`, as before.
   - The Library and Responses writers still take the household lock around their own commit, as on main. Moving them
