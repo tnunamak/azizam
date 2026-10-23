@@ -150,6 +150,8 @@ def _deliberate(key: str) -> str | None:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
     if path.startswith("/me/api/apps/") and path.endswith("/trusted-addresses"):
         return "trusted-addresses"  # a person's own App's address, added after the baseline (tests/test_me_trusted_addresses.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/adopt", path) or re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+/adopt", path):
+        return "adopt"  # a person keeps an unproven binding on their own App (tests/test_me_binding_adoption.py)
     if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
             _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
         return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)

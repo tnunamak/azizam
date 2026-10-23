@@ -20,6 +20,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
     "/me/api/apps/{app_id}/trusted-addresses": "a person trusts an address for their own App; tests/test_me_trusted_addresses.py covers it",
+    "/me/api/credentials/{credential_id}/adopt": "a person keeps an unproven key on their own App; tests/test_me_binding_adoption.py covers it",
+    "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt": "a person keeps an unproven address on their own App; tests/test_me_binding_adoption.py covers it",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
@@ -61,6 +63,10 @@ ADDED_METHODS: dict[tuple[str, str], str] = {
                                                        "tests/test_rename_apps_keys.py covers it",
     ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "a person trusts an address for their own App (outside the OpenAPI "
                                                          "schema); tests/test_me_trusted_addresses.py covers it"
+    ("POST", "/me/api/credentials/{credential_id}/adopt"): "a person keeps an unproven key on their own App (outside the "
+                                                           "OpenAPI schema); tests/test_me_binding_adoption.py covers it",
+    ("POST", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt"): "a person keeps an unproven address on their own App "
+                                                                          "(outside the OpenAPI schema); tests/test_me_binding_adoption.py covers it",
 }
 
 
