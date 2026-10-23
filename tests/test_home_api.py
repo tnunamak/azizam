@@ -128,7 +128,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_home_owner_recent_defaults_to_instance_activity(home_case):
+def test_home_owner_recent_shows_only_owned_app_activity(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
@@ -139,14 +139,9 @@ def test_home_owner_recent_defaults_to_instance_activity(home_case):
 
     data = c.http.get("/me/api/home").json()
     projected = TypeAdapter(HomeProjection).validate_python(data)
-    assert [row["request_id"] for row in projected["receipts"]] == ["local", "service", "mine"]
-    local = projected["receipts"][0]
-    service_row = projected["receipts"][1]
-    assert local["source"]["kind"] == "local-network"
-    assert local["source_label"] == "Local network · no key"
-    assert service_row["source"]["app_id"] == service["id"]
-    assert service_row["source_label"] == "Daisy"
-    assert service_row["source"]["label"] == "Daisy"
+    assert [row["request_id"] for row in projected["receipts"]] == ["mine"]
+    assert all(row["request_id"] != "local" for row in projected["receipts"])
+    assert all(row.get("source", {}).get("app_id") != service["id"] for row in projected["receipts"])
 
 
 def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):

@@ -145,7 +145,7 @@ describe("the prompt in the viewer", () => {
         vi
           .mocked(fetch)
           .mock.calls.some(([input]) =>
-            String(input).includes("/img_kept/download?scope=me&metadata=full"),
+            String(input).includes("/img_kept/download?metadata=full"),
           ),
       ).toBe(true),
     );
@@ -225,16 +225,12 @@ describe("the prompt in the viewer", () => {
     ).toBeNull();
   });
 
-  test("the owner viewing everyone's media sees another person's item the same way", async () => {
-    const user = userEvent.setup();
+  test("the owner Library names what stays private and has no person selector", async () => {
     state.viewer = { role: "owner", name: "Sam", id: "usr_sam", admin: true };
     state.home = { receipts: [], user: { id: "usr_sam" } };
-    renderWith([othersView]);
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
-    (await screen.findByRole("combobox", { name: "Person" })).focus();
-    await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "Everyone" }));
-    const dialog = await openOnly(user);
-    expect(dialog.textContent ?? "").not.toMatch(/prompt|with details/i);
+    renderWith([]);
+    expect(await screen.findByText("Your creations and prompts are private to you.")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

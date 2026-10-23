@@ -304,20 +304,23 @@ class RemoveMissingTests(unittest.TestCase):
         signed_out = self.make_client(self._asset_path, session_provider=lambda request: None)
         self.assertEqual(signed_out.get("/me/api/media?folder_state=1").status_code, 401)
 
-    def test_owner_everyone_plan_only_counts_owners_items_and_cursor_has_no_plan(self) -> None:
+    def test_owner_removal_plan_stays_operational_and_scope_free(self) -> None:
         self.seed()
         owner_app = admin_store.create_app(
             "Owner", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
         )
         self._receipt(owner_app["id"], "owner_missing")
         self._job("owner_missing", asset("f"))
+        self._write_asset(asset("g"), ["sha256:owner"], prompt="owner stored", request_id="owner_stored")
+        self._receipt(owner_app["id"], "owner_stored")
+        self._job("owner_stored", asset("g"))
         self.current_user = self.owner
-        plan = self.client.get("/me/api/media?folder_state=1&scope=everyone&removal_plan=1").json()
+        plan = self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()
         self.assertEqual(plan["removal_plan"], {"missing_items": 1})
-        page = self.client.get("/me/api/media?scope=everyone&limit=1").json()
+        page = self.client.get("/me/api/media?limit=1").json()
         self.assertIsNotNone(page["next_cursor"])
         with patch("gateway.me_media._viewer_removal", side_effect=AssertionError("cursor plan")):
-            response = self.client.get("/me/api/media?scope=everyone&removal_plan=1&cursor=" + page["next_cursor"])
+            response = self.client.get("/me/api/media?removal_plan=1&cursor=" + page["next_cursor"])
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("removal_plan", response.json())
 

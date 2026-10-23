@@ -138,12 +138,12 @@ def test_filters_narrow_the_pages_and_facets_cover_the_whole_library(library: Li
     assert library.client.get("/me/api/media?cursor=not-a-cursor").status_code == 400
 
 
-def test_scope_still_denies_other_people_and_everyone_for_members(library: Library) -> None:
+def test_scope_stays_own_and_removed_scope_keys_are_rejected(library: Library) -> None:
     mine = library.add(library.app_a, created_at=1_700_000_000)
     theirs = library.add(library.app_b, created_at=1_700_000_001)
     assert library.ids("limit=100") == [mine]
-    assert library.client.get("/me/api/media?scope=everyone").status_code == 403
-    assert library.client.get("/me/api/media?person=" + library.bob["id"]).status_code == 403
+    assert library.client.get("/me/api/media?scope=everyone").status_code == 400
+    assert library.client.get("/me/api/media?person=" + library.bob["id"]).status_code == 400
     assert library.client.get(f"/me/api/media/{theirs}").status_code == 404
     library.user = library.bob
     assert library.ids("limit=100") == [theirs]

@@ -100,7 +100,7 @@ for (const mode of ["light", "dark"] as const) {
         mediaRequests.push(route.request().url());
         return fulfilJson(route, mediaFixture);
       });
-      await page.route("**/me/api/media/asset_image_1/download?*", (route) => fulfilJson(route, { download_url: mediaFixture.assets[0].download_url }));
+      await page.route("**/me/api/media/asset_image_1/download**", (route) => fulfilJson(route, { download_url: mediaFixture.assets[0].download_url }));
       await page.goto("/library/");
       // Tiles are named by their prompt; the caption shows its subject.
       const tile = page.getByRole("button", {
@@ -235,8 +235,6 @@ test("library delete confirms before mutation", async ({ page }) => {
     return fulfilJson(route, { ok: true });
   });
   await page.goto("/library/");
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   const viewer = page.getByRole("dialog", {
     name: "A clean product render of a teal fish gateway on a desk",
@@ -269,13 +267,10 @@ test("library delete confirms before mutation", async ({ page }) => {
   await expect(page).not.toHaveURL(/asset=/);
 });
 
-for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep link"] as const) {
-  test(`owner Library keeps explicit own scope after ${lifecycle}`, async ({ page }) => {
+for (const lifecycle of ["first load", "reload", "kind filter", "deep link"] as const) {
+  test(`owner Library sends no person scope after ${lifecycle}`, async ({ page }) => {
     const paths: string[] = [];
     const signedRequests: string[] = [];
-    const returningToMine = lifecycle === "clear filters" || lifecycle === "Mine";
-    let everyoneSeen = false;
-    if (returningToMine) await page.clock.install();
     const own = {
       ...mediaFixture.assets[0], asset_id: "owner-image", prompt: "Owner image",
       owner_name: "UI owner", workflow: "image.generate",
@@ -283,7 +278,6 @@ for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep 
       thumbnail_url: "/library-fixture/owner-thumb",
     };
     const detail = { ...own, asset_id: "owner-detail", prompt: "Owner detail", thumbnail_url: null };
-    const other = { ...own, asset_id: "other-image", prompt: "Other image", owner_name: "Other", source: { id: "app:other", kind: "app", label: "Other app", app_id: "other" }, thumbnail_url: "/library-fixture/other-thumb" };
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "share", { configurable: true, value: async () => { (window as unknown as { shared: boolean }).shared = true; } });
       Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
@@ -298,11 +292,10 @@ for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep 
       if (url.searchParams.has("folder_state")) return route.continue();
       paths.push(url.toString());
       if (url.pathname === "/me/api/media") {
-        if (url.searchParams.get("scope") === "everyone") everyoneSeen = true;
         return fulfilJson(route, {
-        assets: url.searchParams.get("scope") === "me" ? (returningToMine && !everyoneSeen ? [] : [own, {
+        assets: [own, {
           ...mediaFixture.assets[1], asset_id: "owner-video", prompt: "Owner video", source: own.source, poster_asset_id: "owner-poster",
-        }]) : [other], models: [], next_cursor: null,
+        }], models: [], next_cursor: null,
         });
       }
       if (url.pathname.endsWith("/download")) return fulfilJson(route, {
@@ -311,30 +304,22 @@ for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep 
       return fulfilJson(route, { asset: detail });
     });
     await page.goto(lifecycle === "deep link" ? "/library/?asset=owner-detail" : "/library/");
-    if (returningToMine) await expect(page.getByRole("region", { name: "No creations yet" })).toBeVisible();
-    else await expect(page.getByRole("button", { name: /^Open Owner image,/, includeHidden: true })).toBeAttached();
+    await expect(page.getByText("Your creations and prompts are private to you.")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Open Owner image,/, includeHidden: true })).toBeAttached();
     if (lifecycle === "reload") {
       paths.length = 0;
       signedRequests.length = 0;
       await page.reload();
       await expect(page.getByRole("button", { name: /^Open Owner image,/ })).toBeVisible();
     }
-    if (lifecycle === "clear filters" || lifecycle === "Mine") {
-      await page.getByRole("combobox", { name: "Person", exact: true }).click();
-      await page.getByRole("option", { name: "Everyone", exact: true }).click();
-      await expect(page.getByRole("button", { name: /^Open Other image,/ })).toBeVisible();
-      // Expire the 30-second query cache so Clear filters also exercises a new list request.
-      await page.clock.fastForward(31_000);
-      paths.length = 0;
-      signedRequests.length = 0;
-      if (lifecycle === "Mine") {
-        await page.getByRole("combobox", { name: "Person", exact: true }).click();
-        await page.getByRole("option", { name: "Mine", exact: true }).click();
-      } else await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+    if (lifecycle === "kind filter") {
+      const previousRequestCount = paths.length;
+      await page.getByRole("group", { name: "Kind" }).getByRole("button", { name: "Images", exact: true }).click();
+      await expect.poll(() => paths.length).toBeGreaterThan(previousRequestCount);
       await expect(page.getByRole("button", { name: /^Open Owner image,/ })).toBeVisible();
     }
-    await expect(page.getByRole("button", { name: /^Open Other image,/ })).toHaveCount(0);
-    await expect.poll(() => paths.some((url) => url.includes("/owner-poster/download?"))).toBe(true);
+    await expect.poll(() => paths.some((url) => url.includes("/owner-poster/download"))).toBe(true);
     await expect.poll(() => signedRequests.some((url) => url.endsWith("/owner-thumb"))).toBe(true);
     expect(signedRequests.some((url) => url.includes("/other-thumb"))).toBe(false);
     if (lifecycle !== "deep link") {
@@ -348,31 +333,28 @@ for (const lifecycle of ["first load", "reload", "clear filters", "Mine", "deep 
     await expect.poll(() => page.evaluate(() => (window as unknown as { shared: boolean }).shared)).toBe(true);
     expect(paths.some((url) => new URL(url).pathname === "/me/api/media")).toBe(true);
     expect(paths.some((url) => new URL(url).pathname === "/me/api/media/owner-detail")).toBe(true);
-    expect(paths.filter((url) => url.includes("/owner-detail/download?")).length).toBeGreaterThanOrEqual(3);
+    expect(paths.filter((url) => url.includes("/owner-detail/download")).length).toBeGreaterThanOrEqual(3);
     for (const path of paths) {
       const params = new URL(path).searchParams;
-      expect(params.getAll("scope"), path).toEqual(["me"]);
+      expect(params.has("scope"), path).toBe(false);
       expect(params.has("person"), path).toBe(false);
     }
   });
 }
 
-test("empty Everyone to Mine offers creation instead of clearing identical filters", async ({ page }) => {
+test("empty owner Library says creations and prompts are private", async ({ page }) => {
   await page.route("**/me/api/media?**", (route) => fulfilJson(route, { assets: [], models: [], next_cursor: null }));
   await page.goto("/library/");
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  await expect(page.getByRole("region", { name: "No matching creations" })).toBeVisible();
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
   const empty = page.getByRole("region", { name: "No creations yet" });
   await expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
+  await expect(page.getByText("Your creations and prompts are private to you.")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
   await expect(empty.getByRole("link", { name: "Make an image" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear filters", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Filters/ })).not.toContainText("1");
 });
 
-test("library filters dates and everyone, pages forward and preserves prior items", async ({
+test("library filters dates, pages forward and preserves prior items", async ({
   page,
 }) => {
   const requests: string[] = [];
@@ -398,8 +380,8 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await expect(
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toContainText("Mine");
-  expect(new URL(requests[0]).searchParams.get("scope")).toBe("me");
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
+  expect(new URL(requests[0]).searchParams.has("scope")).toBe(false);
   expect(new URL(requests[0]).searchParams.has("person")).toBe(false);
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(
@@ -409,31 +391,19 @@ test("library filters dates and everyone, pages forward and preserves prior item
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
   expect(requests.at(-1)).toContain("cursor=cursor_next");
-  // Model, date and app live in Filters; the owner filter is "Person".
+  // Model and date filters live under Filters.
   await page.getByRole("button", { name: /^Filters/ }).click();
   await page.getByRole("combobox", { name: "Date created", exact: true }).click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
   await page.keyboard.press("Escape");
-  const person = page.getByRole("combobox", { name: "Person", exact: true });
-  await person.click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
-  await person.click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
-  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
-  await person.click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  await expect(person).toContainText("Everyone");
-  expect(requests.some((url) => url.includes("scope=everyone"))).toBe(true);
   await page
     .getByRole("button", { name: /Open A clean product render/ })
     .click();
   await expect(
     page.getByRole("button", { name: "Delete", exact: true }),
-  ).toHaveCount(0);
-  // The gateway sent this item's details download, so the viewer is its
-  // maker's: the file with details is offered, Delete is not.
+  ).toHaveCount(1);
+  // The gateway returned this person's item, so normal maker actions apply.
   await page
     .getByRole("dialog")
     .getByRole("button", { name: /^Actions for / })
@@ -480,7 +450,7 @@ test("library audio plays independently and video uses its recorded poster", asy
     fulfilBytes(route, { contentType: "audio/wav", body: wav }),
   );
   // Opening the viewer renews playback independently of the tile's URL.
-  await page.route("**/me/api/media/asset_audio_1/download?*", (route) => {
+  await page.route("**/me/api/media/asset_audio_1/download**", (route) => {
     audioRenewals.push(route.request().url());
     return fulfilJson(route, { download_url: renewedAudioUrl });
   });
@@ -522,7 +492,7 @@ test("library audio plays independently and video uses its recorded poster", asy
   const viewerAudio = detail.getByLabel("Generated audio");
   await expect(viewerAudio).toHaveAttribute("src", renewedAudioUrl);
   expect(audioRenewals).toHaveLength(1);
-  expect(new URL(audioRenewals[0]).searchParams.get("scope")).toBe("me");
+  expect(new URL(audioRenewals[0]).searchParams.has("scope")).toBe(false);
   await expect(audio).toHaveAttribute("src", "/test-audio.wav");
   await expect(detail.getByRole("slider", { name: "Position" })).toBeVisible();
   await detail
@@ -536,18 +506,8 @@ test("library audio plays independently and video uses its recorded poster", asy
   await detail.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).not.toHaveURL(/asset=/);
   await expect(detail).toBeHidden();
-  await expect
-    .poll(() => posterRequests.at(-1) ?? "")
-    .toContain("scope=me");
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
-  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  await expect(
-    page.getByRole("combobox", { name: "Person", exact: true }),
-  ).toContainText("Everyone");
-  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=everyone");
+  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("/poster/download");
+  expect(posterRequests.every((url) => !new URL(url).searchParams.has("scope"))).toBe(true);
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);
 });

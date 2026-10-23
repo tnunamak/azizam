@@ -245,7 +245,7 @@ describe("LibraryPage batch J provenance", () => {
       fireEvent.error(audio);
       fireEvent.click(screen.getByRole("button", { name: "Play Renew audio" }));
       await waitFor(() => expect(audio).toHaveAttribute("src", "/fresh-audio"));
-      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/me/api/media/asset_audio_1/download?scope=me")).toHaveLength(1);
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/me/api/media/asset_audio_1/download")).toHaveLength(1);
       expect(play).toHaveBeenCalledTimes(2);
       fireEvent.pause(audio);
       fireEvent.click(screen.getByRole("button", { name: "Play Renew audio" }));
@@ -412,7 +412,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(
       await screen.findByRole("heading", { name: "A deep linked image" }),
     ).toBeVisible();
-    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1?scope=me", expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1", expect.objectContaining({
       credentials: "same-origin",
       signal: expect.any(AbortSignal),
     }));
@@ -473,7 +473,7 @@ describe("LibraryPage batch J provenance", () => {
     // The viewer also loads the creation's receipt, so answer by URL rather
     // than by call order.
     vi.mocked(fetch).mockImplementation(async (input) =>
-      String(input).includes("/download?")
+      String(input).includes("/download")
         ? Response.json({ download_url: "https://signed.example/media.png" })
         : String(input).startsWith("/me/api/receipts/")
           ? Response.json({ request_id: "req_image_123" })
@@ -497,7 +497,7 @@ describe("LibraryPage batch J provenance", () => {
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        "/me/api/media/asset_image_1/download?scope=me",
+        "/me/api/media/asset_image_1/download",
         expect.objectContaining({
           credentials: "same-origin",
           signal: expect.any(AbortSignal),
@@ -711,7 +711,7 @@ function routeFetch(route: Route) {
       if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: null });
       return (
         (await route(path)) ??
-        (path.includes("/download?") ? Response.json({ download_url: "/renewed-media" }) : undefined) ??
+        (path.includes("/download") ? Response.json({ download_url: "/renewed-media" }) : undefined) ??
         Response.json({ assets: [], models: [], next_cursor: null })
       );
     }),
@@ -739,16 +739,6 @@ const picture = (id: string, prompt: string, extra: object = {}) => ({
   ...extra,
 });
 
-async function choosePerson(name: string) {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: () => {},
-  });
-  screen.getByRole("combobox", { name: "Person" }).focus();
-  await userEvent.keyboard("{Enter}");
-  await userEvent.click(await screen.findByRole("option", { name }));
-}
-
 describe("Library honesty and access", () => {
   beforeEach(() => {
     navigation.searchParams = new URLSearchParams();
@@ -769,6 +759,7 @@ describe("Library honesty and access", () => {
     renderLibrary();
     const empty = await screen.findByRole("region", { name: "No creations yet" });
     expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
+    expect(screen.getByText("Your creations and prompts are private to you.")).toBeVisible();
     expect(within(empty).getAllByRole("link")).toHaveLength(1);
     expect(within(empty).getByRole("link", { name: "Make an image" })).toHaveAttribute("href", "/try?capability=image");
 
@@ -779,7 +770,7 @@ describe("Library honesty and access", () => {
     expect(within(filtered).queryByRole("link")).toBeNull();
     await userEvent.setup().click(within(filtered).getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("region", { name: "No creations yet" })).toBeVisible();
-    if (role === "member") expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
   });
 
   test("two workflows sharing an intent keep their own name in the viewer", async () => {
@@ -799,7 +790,7 @@ describe("Library honesty and access", () => {
   test("renewal failure offers a retry and hides expiry copy after recovery", async () => {
     let attempts = 0;
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("retry", "Retry picture")])
-      : path.includes("/download?") ? ++attempts === 1 ? new Response("failed", { status: 503 }) : Response.json({ download_url: "/fresh?expires=2000000000" }) : undefined);
+      : path.includes("/download") ? ++attempts === 1 ? new Response("failed", { status: 503 }) : Response.json({ download_url: "/fresh?expires=2000000000" }) : undefined);
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Retry picture, ") }));
     const dialog = await screen.findByRole("dialog");
@@ -819,49 +810,26 @@ describe("Library honesty and access", () => {
     sessionStorage.clear();
   });
 
-  test("9a offers Delete in Everyone view only for the viewer's own creations", async () => {
+  test("owner Library names what stays private and offers no person selector", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     session.home = {
       receipts: [],
       user: { id: "alex" },
       apps: [{ id: "app-alex" }],
     };
-    const sams = picture("sam1", "Sam's lighthouse", {
-      owner_name: "Sam",
-      source: { id: "app:app-sam", kind: "app", label: "Sam's phone", app_id: "app-sam" },
-    });
     const alexs = picture("alex1", "Alex's harbour", {
       source: { id: "app:app-alex", kind: "app", label: "Alex's laptop", app_id: "app-alex" },
     });
-    const unknown = picture("unknown1", "Nobody's field");
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
-        ? list([sams, alexs, unknown], {
-            sources: [
-              { id: "app:app-sam", label: "Sam's phone", app_id: "app-sam", owner_user_id: "sam" },
-            ],
-          })
+        ? list([alexs])
         : undefined,
     );
     renderLibrary();
-    await choosePerson("Everyone");
-
-    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") }));
-    let dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Sam")).toBeVisible();
-    expect(within(dialog).queryByText("Alex")).toBeNull();
-    expect(within(dialog).queryByRole("button", { name: /^Actions for/ })).toBeNull();
-    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Nobody's field, ") }));
-    dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByRole("button", { name: /^Actions for/ })).toBeNull();
-    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Alex's harbour, ") }));
-    dialog = await screen.findByRole("dialog");
+    expect(await screen.findByText("Your creations and prompts are private to you.")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Alex's harbour, ") }));
+    const dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByRole("button", { name: "Actions for Alex's harbour" }),
     ).toBeVisible();
@@ -879,15 +847,16 @@ describe("Library honesty and access", () => {
       });
       const view = renderLibrary();
       await waitFor(() => expect(paths.length).toBeGreaterThan(0));
-      expect(new URL(paths[0], "https://test.invalid").searchParams.get("scope")).toBe("me");
+      expect(new URL(paths[0], "https://test.invalid").searchParams.has("scope")).toBe(false);
       expect(new URL(paths[0], "https://test.invalid").searchParams.has("person")).toBe(false);
-      if (role === "owner") expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Mine");
+      expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+      expect(screen.getByText("Your creations and prompts are private to you.")).toBeVisible();
       view.unmount();
     }
   });
 
-  test.each(["first load", "remount", "clear filters", "Mine", "deep link"])(
-    "owner requests only their own assets after %s",
+  test.each(["first load", "remount", "kind filter", "deep link"])(
+    "test_owner_library_all_fetches_are_own (%s)",
     async (lifecycle) => {
       session.viewer = { role: "owner", name: "Alex", id: "alex" };
       session.home = { receipts: [], user: { id: "alex" }, apps: [] };
@@ -895,19 +864,24 @@ describe("Library honesty and access", () => {
       const own = picture("alex-image", "Alex image", {
         owner_name: "Alex", source: ownSource, thumbnail_url: "/signed/alex-thumb",
       });
-      const detail = picture("alex-detail", "Alex detail", { owner_name: "Alex", source: ownSource });
-      const other = picture("sam-image", "Sam image", { owner_name: "Sam", source: { id: "app:sam", kind: "app", label: "Sam app", app_id: "sam" } });
+      const detail = picture("alex-detail", "Alex detail", {
+        owner_name: "Alex", source: ownSource, workflow_download_url: "/workflow/alex-detail",
+      });
       const paths: string[] = [];
       routeFetch((path) => {
+        if (path.startsWith("/me/api/receipts/")) {
+          paths.push(path);
+          return Response.json({ request_id: "req-alex-detail" });
+        }
         if (!path.startsWith("/me/api/media")) {
           if (path === "/signed/alex-detail") return new Response("png", { headers: { "content-type": "image/png" } });
           return undefined;
         }
         paths.push(path);
         const url = new URL(path, "https://test.invalid");
-        if (url.pathname === "/me/api/media") return list(url.searchParams.get("scope") === "me" ? [own, {
+        if (url.pathname === "/me/api/media") return list([own, {
           ...picture("alex-video", "Alex video"), kind: "video", source: ownSource, poster_asset_id: "alex-poster",
-        }] : [other]);
+        }]);
         if (url.pathname.endsWith("/download")) {
           const id = url.pathname.split("/")[4];
           return Response.json({ download_url: `/signed/${id}` });
@@ -927,17 +901,13 @@ describe("Library honesty and access", () => {
           view = renderLibrary();
           await screen.findByRole("button", { name: /^Open Alex image,/ });
         }
-        if (lifecycle === "clear filters" || lifecycle === "Mine") {
-          await choosePerson("Everyone");
-          await screen.findByRole("button", { name: /^Open Sam image,/ });
+        if (lifecycle === "kind filter") {
+          fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
           paths.length = 0;
-          if (lifecycle === "Mine") await choosePerson("Mine");
-          else fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
           await screen.findByRole("button", { name: /^Open Alex image,/ });
         }
-        expect(screen.queryByRole("button", { name: /^Open Sam image,/ })).toBeNull();
         expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
-        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download?"))).toBe(true));
+        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
         if (lifecycle !== "deep link") {
           navigation.searchParams.set("asset", "alex-detail");
           // Keep the same tree shape as renderLibrary, or React remounts LibraryPage and resets the owner filter.
@@ -948,12 +918,15 @@ describe("Library honesty and access", () => {
         await waitFor(() => expect(anchorClick).toHaveBeenCalled());
         fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
         await waitFor(() => expect(share).toHaveBeenCalledOnce());
+        fireEvent.click(within(dialog).getByRole("button", { name: "Actions for Alex detail" }));
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Download with details" }));
+        await waitFor(() => expect(paths.some((path) => path.includes("/alex-detail/download?metadata=full"))).toBe(true));
         expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media")).toBe(true);
-        expect(paths.some((path) => path.includes("/alex-detail?"))).toBe(true);
-        expect(paths.filter((path) => path.includes("/alex-detail/download?")).length).toBeGreaterThanOrEqual(3);
+        expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media/alex-detail")).toBe(true);
+        expect(paths.filter((path) => path.includes("/alex-detail/download")).length).toBeGreaterThanOrEqual(3);
         for (const path of paths) {
           const params = new URL(path, "https://test.invalid").searchParams;
-          expect(params.getAll("scope"), path).toEqual(["me"]);
+          expect(params.has("scope"), path).toBe(false);
           expect(params.has("person"), path).toBe(false);
         }
         view.queryClient.clear();
@@ -965,48 +938,39 @@ describe("Library honesty and access", () => {
     },
   );
 
-  test("empty Everyone to Mine is the unfiltered empty Library", async () => {
+  test("empty owner Library explains that prompts and creations are private", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([]) : undefined);
     renderLibrary();
-    await choosePerson("Everyone");
-    await screen.findByRole("region", { name: "No matching creations" });
-    await choosePerson("Mine");
     const empty = await screen.findByRole("region", { name: "No creations yet" });
     expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Filters/ })).not.toHaveTextContent("1");
+    expect(screen.getByText("Your creations and prompts are private to you.")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
   });
 
-  test("9a never leaves another person's results openable after the person filter changes", async () => {
+  test("owner Library keeps media requests scoped by the server", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     session.home = { receipts: [], user: { id: "alex" }, apps: [] };
-    let finish!: () => void;
+    const paths: string[] = [];
     routeFetch((path) => {
       if (!path.startsWith("/me/api/media?")) return undefined;
-      if (path.includes("scope=me"))
-        return new Promise<Response>((resolve) => {
-          finish = () => resolve(list([picture("mine1", "My own kite")]));
-        });
-      return list([picture("sam1", "Sam's lighthouse", { owner_name: "Sam" })]);
+      paths.push(path);
+      return list([picture("mine1", "My own kite")]);
     });
     renderLibrary();
-    await choosePerson("Everyone");
-    await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") });
-
-    await choosePerson("Mine");
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
-    // Sam's result belongs to the previous filter: it is not shown or openable.
-    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") })).toBeNull();
-    expect(screen.getByRole("status", { name: "Loading library" })).toBeVisible();
-
-    finish();
     fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open My own kite, ") }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Alex")).toBeVisible();
     expect(
       within(dialog).getByRole("button", { name: "Actions for My own kite" }),
     ).toBeVisible();
+    await waitFor(() => expect(paths.length).toBeGreaterThan(0));
+    for (const path of paths) {
+      const params = new URL(path, "https://test.invalid").searchParams;
+      expect(params.has("scope"), path).toBe(false);
+      expect(params.has("person"), path).toBe(false);
+    }
   });
 
   test("9b says 'no longer stored' only for a confirmed reason and names only what remains", async () => {
@@ -1024,7 +988,7 @@ describe("Library honesty and access", () => {
             }),
             picture("lost3", "", { available: false, unavailable_reason: null }),
           ])
-        : path.includes("/download?") ? Response.json({}, { status: 404 })
+        : path.includes("/download") ? Response.json({}, { status: 404 })
         : path.startsWith("/me/api/receipts/")
           ? Response.json({})
           : undefined,
@@ -1187,7 +1151,7 @@ describe("Library honesty and access", () => {
     let renew!: (response: Response) => void;
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([picture("expired", "An old picture", { download_url: "/expired?expires=1" })])
-      : path.includes("/download?") ? new Promise<Response>((resolve) => { renew = resolve; }) : undefined);
+      : path.includes("/download") ? new Promise<Response>((resolve) => { renew = resolve; }) : undefined);
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open An old picture, ") }));
     const dialog = await screen.findByRole("dialog");
@@ -1223,7 +1187,7 @@ describe("Library honesty and access", () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([{ ...picture("p1", "A birthday cake"), media_type: "image/png" }])
-        : path.includes("/download?")
+        : path.includes("/download")
           ? Response.json({ download_url: "https://signed.example/p1.png" })
           : path === "https://signed.example/p1.png"
             ? new Response("png", { headers: { "content-type": "image/png" } })
@@ -1252,7 +1216,7 @@ describe("Library honesty and access", () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([picture("p1", "A picture to keep")])
-        : path.includes("/download?")
+        : path.includes("/download")
           ? new Promise<Response>((resolve) => {
               ready = () => resolve(Response.json({ download_url: "https://signed.example/p1.png" }));
             })
@@ -1270,7 +1234,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(download);
     await waitFor(() => expect(ready).toBeTypeOf("function"));
     expect(fetch).toHaveBeenCalledWith(
-      "/me/api/media/p1/download?scope=me",
+      "/me/api/media/p1/download",
       expect.objectContaining({
         credentials: "same-origin",
         signal: expect.any(AbortSignal),
@@ -1280,7 +1244,7 @@ describe("Library honesty and access", () => {
     expect(preparing).toBeDisabled();
     fireEvent.click(preparing);
     expect(
-      vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/download?")),
+      vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/download")),
     ).toHaveLength(2); // Opening renews playback; Download renews independently.
     ready();
     await waitFor(() => expect(click).toHaveBeenCalledOnce());
@@ -1451,115 +1415,24 @@ describe("Library media identity and tile playback", () => {
     vi.unstubAllGlobals();
   });
 
-  test("names every tile maker and explains the mark on hover and keyboard focus", async () => {
+  test("owner Library hides maker labels and names what is private", async () => {
     session.viewer = { role: "owner", name: "Alex" };
-    routeFetch((path) => path.startsWith("/me/api/media?")
-      ? list([
-          picture("maker-image", "Maker picture", { owner_name: "Sam" }),
-          { ...audioAsset, prompt: "Maker audio", owner_name: "Sam" },
-          { ...picture("maker-video", "Maker video"), kind: "video", owner_name: "Alex" },
-        ])
-      : undefined);
+    const own = picture("own-image", "My own picture", {
+      owner_name: "Alex",
+      source: { id: "app:alex", kind: "app", label: "Alex app", app_id: "alex", person_id: "alex" },
+    });
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([own]) : undefined);
     renderLibrary();
-    await choosePerson("Everyone");
-    await screen.findByRole("button", { name: (name) => name.startsWith("Open Maker picture, ") });
-    for (const [title, person] of [["Maker picture", "Sam"], ["Maker audio", "Sam"], ["Maker video", "Alex"]]) {
-      const open = screen.getByRole("button", { name: (name) => name.startsWith(`Open ${title}, `) });
-      const tile = open.closest("article")!;
-      expect(within(tile).getByRole("img", { name: person })).toHaveAttribute("data-slot", "person-mark");
-      expect(within(tile).queryByRole("tooltip")).toBeNull();
-      await userEvent.hover(tile);
-      expect(within(tile).getByRole("tooltip")).toHaveTextContent(`Made by ${person}`);
-      await userEvent.unhover(tile);
-      expect(within(tile).queryByRole("tooltip")).toBeNull();
-      open.focus();
-      await waitFor(() => expect(within(tile).getByRole("tooltip")).toHaveTextContent(`Made by ${person}`));
-      await userEvent.keyboard("{Escape}");
-      expect(within(tile).queryByRole("tooltip")).toBeNull();
-      expect(screen.queryByRole("dialog")).toBeNull();
-      open.blur();
-    }
-  });
-
-  test("draws each maker's mark from the person id and their chosen avatar, and a rename keeps the colour", async () => {
-    const markFill = async (samName: string, avatars: Record<string, { choice: string; picture_url: string | null }>) => {
-      session.viewer = { role: "owner", name: "Alex", id: "usr_alex" } as typeof session.viewer;
-      routeFetch((path) =>
-        path.startsWith("/me/api/media?")
-          ? list([
-              picture("sam-image", "Sam image", { owner_name: samName }),
-              { ...audioAsset, prompt: "Alex audio", owner_name: "Alex" },
-            ])
-          : path.includes("/admin/api/users")
-            ? Response.json({ users: [{ id: "usr_sam", display_name: samName }, { id: "usr_alex", display_name: "Alex" }] })
-            : path.endsWith("/me/api/profile/avatars")
-              ? Response.json({ people: avatars })
-              : undefined,
-      );
-      const view = renderLibrary();
-      await choosePerson("Everyone");
-      const key = await screen.findByRole("group", { name: "Creation makers" });
-      const fill = (name: string) =>
-        (within(key).getByRole("img", { name }).firstElementChild as HTMLElement).style.backgroundImage;
-      await waitFor(() => expect(fill(samName)).not.toBe(""));
-      const fills = { sam: fill(samName), alex: fill("Alex") };
-      view.unmount();
-      return fills;
-    };
-    const before = await markFill("Sam", {});
-    const renamed = await markFill("Samantha Quill", {});
-    // Same id, new name, same colour.
-    expect(renamed.sam).toBe(before.sam);
-    expect(before.sam).toBe(getGeneratedAvatar("usr_sam").background);
-    expect(before.alex).toBe(getGeneratedAvatar("usr_alex").background);
-    // A chosen avatar shows in the marks of other people too.
-    const chosen = await markFill("Sam", { usr_sam: { choice: "v4", picture_url: null } });
-    expect(chosen.sam).toBe(getGeneratedAvatar("usr_sam", "v4").background);
-  });
-
-  test("shows a one-line key for distinct visible makers and hides it when a filter leaves one", async () => {
-    session.viewer = { role: "owner", name: "Alex" };
-    const assets = [
-      picture("sam-image", "Sam image", { owner_name: "Sam" }),
-      picture("sam-image-2", "Another Sam image", { owner_name: "Sam" }),
-      { ...audioAsset, prompt: "Alex audio", owner_name: "Alex" },
-    ];
-    routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
-    renderLibrary();
-    await choosePerson("Everyone");
-    const key = await screen.findByRole("group", { name: "Creation makers" });
-    expect(within(key).getAllByRole("img")).toHaveLength(2);
-    for (const name of ["Sam", "Alex"]) {
-      expect(within(key).getByRole("img", { name })).toHaveAttribute("data-slot", "person-mark");
-      expect(within(key).getByText(name)).toBeVisible();
-    }
-    expect(key).toHaveClass("whitespace-nowrap");
-    expect(key.closest("section")).toHaveAccessibleName("Library filters");
-    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
-    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Sam image, ") })).toBeVisible();
-    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
-    expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
-    await choosePerson("Mine");
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
-  });
-
-  test("counts unavailable makers in the key only while their creations are expanded", async () => {
-    session.viewer = { role: "owner", name: "Alex" };
-    routeFetch((path) => path.startsWith("/me/api/media?")
-      ? list([
-          picture("stored", "Stored picture", { owner_name: "Sam" }),
-          picture("gone", "Gone picture", { owner_name: "Alex", available: false }),
-        ])
-      : undefined);
-    renderLibrary();
-    await choosePerson("Everyone");
-    await screen.findByRole("button", { name: (name) => name.startsWith("Open Stored picture, ") });
+    expect(await screen.findByText("Your creations and prompts are private to you.")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    const tile = screen.getByRole("button", { name: /^Open My own picture,/ });
+    await userEvent.hover(tile.closest("article")!);
     expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
-    fireEvent.click(screen.getByText("Show them"));
-    expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
-    fireEvent.click(screen.getByText("Show them"));
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.click(tile);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).not.toHaveTextContent("Made by Alex");
+    expect(dialog).not.toHaveTextContent("Alex app");
   });
 
   test("keeps the audio tile quiet: length and play, no prompt text, no invented bars", async () => {
@@ -1589,7 +1462,6 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
-    await choosePerson("Everyone");
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Morning birds, ") });
     for (const [title, duration, icon] of [["Morning birds", "2:05", "lucide-audio-lines"], ["Short film", "0:09", "lucide-video"]] as const) {
       const button = screen.getByRole("button", { name: `Play ${title}` });
@@ -1605,7 +1477,7 @@ describe("Library media identity and tile playback", () => {
       expect(tile.querySelectorAll("[data-tile-cue]")).toHaveLength(2);
       expect(tile.querySelector('[data-tile-cue="day"]')).toBeTruthy();
       expect(tile.querySelector('[data-tile-cue="playback"]')).toBe(button);
-      expect(within(tile).getByLabelText("Sam")).toHaveClass("opacity-0", "group-focus-within:opacity-100");
+      expect(within(tile).queryByLabelText("Sam")).toBeNull();
     }
     const still = screen.getByRole("button", { name: (name) => name.startsWith("Open Still picture, ") }).closest("article")!;
     expect(within(still).queryByRole("button", { name: /^Play / })).toBeNull();
@@ -1866,7 +1738,7 @@ describe("Library response and media boundaries", () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([{ ...picture("p2", "Octet cake"), media_type: "image/png" }])
-        : path.includes("/download?")
+        : path.includes("/download")
           ? Response.json({ download_url: "https://signed.example/p2" })
           : path === "https://signed.example/p2"
             ? new Response("png", { headers: { "content-type": "application/octet-stream" } })
@@ -2128,7 +2000,7 @@ describe("Library accessibility", () => {
     navigation.searchParams = new URLSearchParams("asset=gone-focus");
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([picture("visible", "Visible picture"), picture("gone-focus", "Hidden picture", { available: false })])
-      : path.startsWith("/me/api/media/gone-focus") && !path.includes("/download?")
+      : path.startsWith("/me/api/media/gone-focus") && !path.includes("/download")
         ? Response.json({ asset: picture("gone-focus", "Hidden picture", { available: false }) })
         : undefined);
     renderLibrary();
@@ -2290,7 +2162,7 @@ describe("Library items whose files are gone", () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([oldGone("old", "An old fox"), newGone("new", "A new owl")])
-        : path.includes("/download?") ? Response.json({}, { status: 404 }) : undefined,
+        : path.includes("/download") ? Response.json({}, { status: 404 }) : undefined,
     );
     renderLibrary();
     fireEvent.click(await screen.findByText("Show them"));
@@ -2316,7 +2188,7 @@ describe("Library items whose files are gone", () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([justBefore("before"), atCutoff("at")])
-        : path.includes("/download?") ? Response.json({}, { status: 404 }) : undefined,
+        : path.includes("/download") ? Response.json({}, { status: 404 }) : undefined,
     );
     renderLibrary();
     fireEvent.click(await screen.findByText("Show them"));

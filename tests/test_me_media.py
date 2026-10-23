@@ -76,12 +76,18 @@ class MeMediaRouterTests(unittest.TestCase):
             prefix="test_bob",
             path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_b["id"]))
         self.current_user = self.alice
+        self.signed_asset_ids: list[str] = []
+
+        def signed_url_builder(_request: Request, asset_id: str, mode: str) -> str:
+            self.signed_asset_ids.append(asset_id)
+            return f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test"
+
         app = FastAPI()
         app.include_router(
             me_media.create_me_media_router(
                 session_provider=self._session,
                 mutation_validator=self._mutation_validator,
-                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
+                signed_url_builder=signed_url_builder,
                 asset_path_resolver=self._asset_path,
                 asset_media_type_resolver=lambda asset_id, path: "image/png",
                 asset_deleter=self._delete_unshared,
@@ -126,7 +132,9 @@ class MeMediaRouterTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _session(self, _request: Request) -> AdminSession:
+    def _session(self, request: Request) -> AdminSession | None:
+        if request is not None and request.headers.get("authorization"):
+            return None
         return AdminSession(
             subject=self.current_user["id"],
             email=self.current_user["email"],
@@ -253,20 +261,18 @@ class MeMediaRouterTests(unittest.TestCase):
             path=self.jobs_db,
         )
 
-    def test_item_without_recorded_origin_or_time_stays_unknown(self) -> None:
-        # No receipt, no job, no provenance and an owner key no App holds:
-        # nothing shows where it came from or when it was made.
+    def test_cache_asset_without_receipt_recovers_its_owned_app_source(self) -> None:
+        # The key links this cache item to Alice's App even when no receipt or job exists.
         asset_id = "img_" + "f" * 64
         self._asset_path(asset_id).write_bytes(PNG_1X1)
-        self._meta_path(asset_id).write_text(json.dumps({"asset_id": asset_id, "owner_key_hashes": ["sha256:nobody"]}))
-        self.current_user = self.owner
-        item = next(asset for asset in self.client.get("/me/api/media?scope=everyone").json()["assets"]
+        self._meta_path(asset_id).write_text(json.dumps({"asset_id": asset_id, "owner_key_hashes": ["sha256:alice"]}))
+        item = next(asset for asset in self.client.get("/me/api/media").json()["assets"]
                     if asset["asset_id"] == asset_id)
-        self.assertEqual((item["source"]["kind"], item["source"]["label"]), ("unknown", "Source unknown"))
+        self.assertEqual((item["source"]["kind"], item["source"]["label"]), ("app", "Alice"))
         self.assertIsNone(item["created_at"], "file time is not creation time")
         self.assertIsNone(item["provenance"]["created_at"])
         self.assertEqual(item["file_modified_at"], int(self._asset_path(asset_id).stat().st_mtime))
-        self.assertEqual(item["title"], "Picture by Source unknown")
+        self.assertEqual(item["title"], "Picture by Alice")
         self.assertNotIn("1970", item["title"])
 
     def test_legacy_receipt_without_source_kind_is_not_called_local_network(self) -> None:
@@ -318,9 +324,9 @@ class MeMediaRouterTests(unittest.TestCase):
         default = self.client.get("/me/api/media").json()
         self.assertEqual((default["scope"], default["assets"]), ("me", []))
         self.assertEqual(default["default_scope"], "self")
-        everyone = self.client.get("/me/api/media", params={"scope": "everyone"}).json()
-        self.assertEqual(len(everyone["assets"]), 1)
-        self.assertEqual(everyone["default_scope"], "explicit")
+        removed = self.client.get("/me/api/media", params={"scope": "everyone"})
+        self.assertEqual(removed.status_code, 400)
+        self.assertEqual(removed.json()["error"]["code"], "param_not_supported")
 
     def _complete_history(self) -> None:
         with sqlite3.connect(self.receipts_db) as conn:
@@ -476,7 +482,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(own.json()["asset"]["prompt"], "misty lake")
         self.assertEqual(own.json()["asset"]["title"], "misty lake")
 
-    def test_owner_everyone_scope_is_role_gated_and_audited(self) -> None:
+    def test_owner_cannot_broaden_library_scope(self) -> None:
         alice_asset = "img_" + "c" * 64
         bob_asset = "img_" + "d" * 64
         self._write_asset(alice_asset, ["sha256:alice"])
@@ -486,22 +492,17 @@ class MeMediaRouterTests(unittest.TestCase):
         self._job("req_alice", alice_asset)
         self._job("req_bob", bob_asset)
 
-        denied = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(denied.status_code, 403)
         self.current_user = self.owner
-        allowed = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(allowed.status_code, 200, allowed.text)
-        self.assertEqual({item["asset_id"] for item in allowed.json()["assets"]}, {alice_asset, bob_asset})
-        self.assertTrue(all(item["prompt"] is None and item["title"].startswith("Picture by ")
-                            and "misty lake" not in item["title"] for item in allowed.json()["assets"]))
-        foreign = self.client.get(f"/me/api/media?person={self.alice['id']}")
-        self.assertEqual(foreign.status_code, 200, foreign.text)
-        self.assertTrue(all(item["prompt"] is None and "misty lake" not in item["title"]
-                            for item in foreign.json()["assets"]))
-        audit = admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db)
-        self.assertEqual(len(audit), 1)
+        own = self.client.get("/me/api/media")
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["assets"], [])
+        for query in ("scope=everyone", f"person={self.alice['id']}"):
+            response = self.client.get(f"/me/api/media?{query}")
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(response.json()["error"]["code"], "param_not_supported")
+        self.assertEqual(admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db), [])
 
-    def test_owner_sees_own_prompt_in_instance_library_only(self) -> None:
+    def test_owner_sees_own_saved_prompt(self) -> None:
         owner_app = admin_store.create_app(
             "Owner personal", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
         )
@@ -553,14 +554,11 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").status_code, 403)
 
         self.current_user = self.owner
-        all_media = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(all_media.status_code, 200, all_media.text)
-        source_ids = {source["id"] for source in all_media.json()["sources"]}
-        self.assertNotIn("local-network", source_ids)
-        self.assertIn(f"app:{self.service_app['id']}", source_ids)
-        service = self.client.get(f"/me/api/media?scope=everyone&source=app:{self.service_app['id']}")
-        self.assertEqual([item["asset_id"] for item in service.json()["assets"]], [service_asset])
-        self.assertEqual(self.client.get("/me/api/media?scope=everyone&source=local-network").status_code, 400)
+        own_media = self.client.get("/me/api/media")
+        self.assertEqual(own_media.status_code, 200, own_media.text)
+        self.assertEqual(own_media.json()["assets"], [])
+        self.assertEqual(self.client.get(f"/me/api/media?source=app:{self.service_app['id']}").status_code, 403)
+        self.assertEqual(self.client.get("/me/api/media?source=local-network").status_code, 400)
         service_usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}")
         self.assertEqual(service_usage.status_code, 200, service_usage.text)
         self.assertEqual(service_usage.json()["media_count"], 1)
@@ -681,7 +679,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(source["label"], "Local network · no key · Open WebUI")
         self.assertEqual(source["client_hint"], "Open WebUI")
 
-    def test_owner_missing_receipt_jobs_recover_source_from_job_identity(self) -> None:
+    def test_owner_library_does_not_recover_foreign_source_from_job_identity(self) -> None:
         keyed_asset = "img_" + "8" * 64
         service_asset = "img_" + "7" * 64
         self._write_asset(keyed_asset, ["sha256:alice"], request_id="req_missing_keyed", created_at=time.time())
@@ -716,13 +714,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual([item["asset_id"] for item in member_media.json()["assets"]], [keyed_asset])
 
         self.current_user = self.owner
-        owner_media = self.client.get("/me/api/media?scope=everyone")
+        owner_media = self.client.get("/me/api/media")
         self.assertEqual(owner_media.status_code, 200, owner_media.text)
-        sources = {item["asset_id"]: item["source"] for item in owner_media.json()["assets"]}
-        self.assertEqual(sources[keyed_asset]["label"], "Alice")
-        self.assertEqual(sources[keyed_asset]["recovered_from"], "asset_owner_key")
-        self.assertEqual(sources[service_asset]["label"], "Daisy")
-        self.assertEqual(sources[service_asset]["recovered_from"], "media_job")
+        self.assertEqual(owner_media.json()["assets"], [])
         usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_a['id']}")
         self.assertEqual(usage.status_code, 200, usage.text)
         self.assertEqual(usage.json()["media_count"], 1)
@@ -968,10 +962,13 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_keyless_local_network_is_no_longer_a_source_or_person(self) -> None:
         self._receipt(None, "req_unattributed")
         self.current_user = self.owner
-        for path in ("/me/api/usage/summary?person=all", "/me/api/media?scope=everyone"):
+        for path in ("/me/api/usage/summary?person=all", "/me/api/media"):
             body = self.client.get(path).json()
-            self.assertNotIn("local-network", {source["id"] for source in body["sources"]}, path)
-            self.assertNotIn("Local network · no key", json.dumps(body["sources"]), path)
+            if path.endswith("/media"):
+                self.assertNotIn("Local network · no key", json.dumps(body), path)
+            else:
+                self.assertNotIn("local-network", {source["id"] for source in body["sources"]}, path)
+                self.assertNotIn("Local network · no key", json.dumps(body["sources"]), path)
         self.assertNotIn("local-network", {p["id"] for p in self.client.get("/me/api/usage/summary").json()["people"]})
         self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").status_code, 400)
 
@@ -1106,12 +1103,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/media?workflow=wf").json()["assets"], [])
 
         self.current_user = self.owner
-        everyone = self.client.get("/me/api/media?scope=everyone&workflow=wf.image")
-        self.assertEqual(everyone.status_code, 200, everyone.text)
-        self.assertEqual(
-            {item["asset_id"] for item in everyone.json()["assets"]},
-            {alice_asset, bob_asset},
-        )
+        owner_library = self.client.get("/me/api/media?workflow=wf.image")
+        self.assertEqual(owner_library.status_code, 200, owner_library.text)
+        self.assertEqual(owner_library.json()["assets"], [])
 
     def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
         asset_id = "img_" + "5" * 64
@@ -1121,21 +1115,21 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 404)
         self.assertTrue(self._asset_path(asset_id).exists())
 
-    def test_owner_detail_is_explicit_and_audited_but_cannot_delete_foreign(self) -> None:
+    def test_owner_cannot_open_or_prepare_foreign_library_items(self) -> None:
         asset_id = "img_" + "6" * 64
         self._write_asset(asset_id, ["sha256:alice"])
         self.current_user = self.owner
-        detail = self.client.get(f"/me/api/media/{asset_id}?scope=everyone")
-        self.assertEqual(detail.status_code, 200)
-        self.assertIsNone(detail.json()["asset"]["prompt"])
-        self.assertIsNone(detail.json()["asset"]["workflow_download_url"])
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?scope=everyone&metadata=full").status_code, 403)
-        self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
+        detail = self.client.get(f"/me/api/media/{asset_id}")
+        self.assertEqual(detail.status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        for query in ("scope=everyone", "scope=me", "owner=", "person="):
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}?{query}").status_code, 400)
+        self.assertEqual(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db), [])
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
-        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
+        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 404)
         admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=self.bob["id"], path=self.admin_db)
         self.current_user = self.bob
-        self.assertEqual(self.client.get("/me/api/media?scope=everyone").status_code, 403)
+        self.assertEqual(self.client.get("/me/api/media?scope=everyone").status_code, 400)
         self.assertEqual(self.client.get("/me/api/usage/summary?person=all").status_code, 403)
 
     def test_deleted_shared_asset_stays_deleted_after_audit_churn(self) -> None:
@@ -2262,8 +2256,8 @@ class MemberFailureCopyTests(unittest.TestCase):
         self.assertNotIn("period=", period["message"])
         source = self._error(self.client.get("/me/api/media", params={"source": "x"}), 400, "invalid_source", "request")
         self.assertNotIn("app:<id>", source["message"])
-        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 403, "owner_required", "account")
-        self.assertIn("Choose your own work", owner["message"])
+        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 400, "param_not_supported", "request")
+        self.assertIn("person", owner["message"])
 
     def test_missing_file_is_not_called_expired(self) -> None:
         asset_id = "aud_" + "d" * 64
