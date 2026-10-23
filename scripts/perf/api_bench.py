@@ -140,8 +140,9 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
     return None if missing else path
 
 
-# Home and the owner's status page read the status snapshot, which a background build refreshes every
-# status_endpoint.SNAPSHOT_INTERVAL_S. A read after idle must meet the defaults in budgets.toml like any other.
+# Home and the owner's status page read the status snapshot. A read after idle gets the stored snapshot at once and
+# starts a background refresh (status_endpoint.open_snapshot); the refresh runs every SNAPSHOT_INTERVAL_S until no
+# read has come for SNAPSHOT_IDLE_WINDOW_S. A read after idle must meet the defaults in budgets.toml like any other.
 # The waits are the ones this harness used before the snapshot, so a before and after run share the same idle time.
 COLD_HOME_ROUTE = "/me/api/home (after idle)"
 COLD_HOME_WAIT_S = 61

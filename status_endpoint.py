@@ -48,13 +48,35 @@ from gateway.model_presentation import declared_health_success, service_health_e
 
 _log = logging.getLogger(__name__)
 
-# The status snapshot: one full build runs in the background on a schedule, and every reader gets the latest
-# one. No request waits for a probe. A section that does not answer in a build keeps its last answer, and its
-# age in the snapshot keeps growing until it answers again.
+# The status snapshot: one full build, run in the background, that every reader takes its answer from. No request
+# waits for a probe. A build runs only while something reads the snapshot. A read keeps it wanted for
+# SNAPSHOT_IDLE_WINDOW_S; while it is wanted the refresher builds every SNAPSHOT_INTERVAL_S, and it stops once the
+# window has passed with no read. The next read starts it again. A section that does not answer keeps its last
+# answer, and its age in the snapshot keeps growing until it answers again.
 SNAPSHOT_INTERVAL_S = 15.0
+SNAPSHOT_IDLE_WINDOW_S = 300.0
+# Availability decisions trust a snapshot no older than this. An older row is probed, not trusted.
+SNAPSHOT_FRESH_S = 60.0
 _SNAPSHOT: dict[str, Any] = {}  # built_at (epoch), built (monotonic), payload, section_at {name: monotonic}
 _SNAPSHOT_TASK: asyncio.Task | None = None
+_SNAPSHOT_BUILD: Callable[[], Awaitable[dict]] | None = None  # registered by open_snapshot; the refresher runs it
+_SNAPSHOT_WANTED_UNTIL = 0.0  # monotonic: the refresher runs while now is before this
+_SNAPSHOT_CLOSED = False  # set by stop_snapshot at shutdown, so no read starts a refresher after it
 _SECTION_AT: dict[str, float] = {}  # when each section last answered, monotonic time
+# The 24-hour backend history has its own light sampler, which runs as long as the gateway does. It probes the HTTP
+# health URLs only, so it starts no process; the snapshot's status grid keeps the lifecycle checks.
+BACKEND_SAMPLE_INTERVAL_S = 60.0
+_SAMPLE_TASK: asyncio.Task | None = None
+
+
+def _now() -> float:
+    """The clock the snapshot reads. Tests replace it, so a schedule of minutes runs without waiting."""
+    return time.monotonic()
+
+
+async def _sleep(seconds: float) -> None:
+    """The wait between ticks of the refresher and the sampler. Tests replace it with a fake clock."""
+    await asyncio.sleep(seconds)
 
 
 def _resolve_commit_hash() -> Optional[str]:
@@ -3676,7 +3698,7 @@ async def gather_sections(
             errors[name] = _safe_err(e)
             return None
         _SECTION_LAST[name] = value
-        _SECTION_AT[name] = time.monotonic()
+        _SECTION_AT[name] = _now()
         return value
 
     names = list(sections)
@@ -3870,20 +3892,13 @@ async def build_status_payload(config: dict) -> dict:
     auth_keys_window = first["auth_keys_window"] or {}
     recent_events = first["recent_events"] or []
 
-    # Phase 2: the sections that read phase 1 answers. Recording the backend samples comes before the
-    # metrics read, which includes them.
-    async def record_then_measure():
-        try:
-            await _section(_record_backend_health_samples, backends)
-        except Exception as e:  # noqa: BLE001
-            errors["service_health_samples"] = _safe_err(e)
-        return await _section(_metrics_section, gpus_raw, disk, backends)
-
+    # Phase 2: the sections that read phase 1 answers. The backend history is read here and written by the backend
+    # sampler, at its own cadence. A build adds no samples, so they do not come at the times a build happens to run.
     second = await gather_sections({
         "models": _section(_build_models, config, props, slots, voxtral_health=voxtral_health),
         "gpu_workloads": _gpu_workloads(gpus_raw, comfy_queue, slots),
         "vram_attribution": _section(_vram_attribution, gpus_raw, config),
-        "metrics": record_then_measure(),
+        "metrics": _section(_metrics_section, gpus_raw, disk, backends),
     }, errors=errors, stale=stale)
     models = second["models"]
     gpus = second["gpu_workloads"] if second["gpu_workloads"] is not None else gpus_raw
@@ -4304,13 +4319,40 @@ def _store_snapshot(payload: dict) -> None:
     global _SNAPSHOT
     _SNAPSHOT = {
         "built_at": time.time(),
-        "built": time.monotonic(),
+        "built": _now(),
         "payload": payload,
         "section_at": dict(_SECTION_AT),
     }
 
 
+def open_snapshot(build: Callable[[], Awaitable[dict]]) -> None:
+    """Register the build that readers may start. Nothing builds until the first read."""
+    global _SNAPSHOT_BUILD, _SNAPSHOT_CLOSED
+    _SNAPSHOT_BUILD = build
+    _SNAPSHOT_CLOSED = False
+
+
+def _note_read() -> None:
+    """A read keeps the snapshot wanted for the idle window, and starts the refresher if it has stopped.
+
+    Readers run on the event loop, which is where the refresher runs. A read with no loop running, from a thread,
+    still extends the window; the next read on the loop starts the refresher.
+    """
+    global _SNAPSHOT_TASK, _SNAPSHOT_WANTED_UNTIL
+    _SNAPSHOT_WANTED_UNTIL = _now() + SNAPSHOT_IDLE_WINDOW_S
+    if _SNAPSHOT_BUILD is None or _SNAPSHOT_CLOSED:
+        return
+    if _SNAPSHOT_TASK is not None and not _SNAPSHOT_TASK.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _SNAPSHOT_TASK = loop.create_task(_snapshot_loop(_SNAPSHOT_BUILD))
+
+
 async def _snapshot_loop(build: Callable[[], Awaitable[dict]]) -> None:
+    """Build, wait one interval, and build again while the snapshot is wanted. The first check after the window ends it."""
     while True:
         try:
             _store_snapshot(await build())
@@ -4318,19 +4360,15 @@ async def _snapshot_loop(build: Callable[[], Awaitable[dict]]) -> None:
             raise
         except Exception as error:  # noqa: BLE001 - the last snapshot stays; only the type is logged, as the message can carry a path
             _log.error("status snapshot build failed: %s", type(error).__name__)
-        await asyncio.sleep(SNAPSHOT_INTERVAL_S)
-
-
-def start_snapshot(build: Callable[[], Awaitable[dict]]) -> None:
-    """Start the background build that keeps the snapshot current. A build already running is kept."""
-    global _SNAPSHOT_TASK
-    if _SNAPSHOT_TASK is None or _SNAPSHOT_TASK.done():
-        _SNAPSHOT_TASK = asyncio.get_running_loop().create_task(_snapshot_loop(build))
+        await _sleep(SNAPSHOT_INTERVAL_S)
+        if _now() >= _SNAPSHOT_WANTED_UNTIL:
+            return
 
 
 async def stop_snapshot() -> None:
-    """Cancel the background build and wait until it has ended, so none writes the snapshot after shutdown."""
-    global _SNAPSHOT_TASK
+    """Close the snapshot, cancel its build if one runs, and wait until it has ended. No read starts one after this."""
+    global _SNAPSHOT_TASK, _SNAPSHOT_CLOSED
+    _SNAPSHOT_CLOSED = True
     task, _SNAPSHOT_TASK = _SNAPSHOT_TASK, None
     if task is None:
         return
@@ -4339,23 +4377,32 @@ async def stop_snapshot() -> None:
 
 
 def latest_payload() -> Mapping[str, Any]:
-    """The latest snapshot's payload, or {} before the first build has finished. Never probes."""
-    return _SNAPSHOT.get("payload", {})
+    """The latest snapshot's payload for an availability answer, or {} when none is fresh enough to trust.
+
+    {} means no snapshot yet, or one older than SNAPSHOT_FRESH_S. The caller then probes the services it needs.
+    The read keeps the snapshot wanted, as any read does.
+    """
+    _note_read()
+    if not _SNAPSHOT or _now() - _SNAPSHOT["built"] > SNAPSHOT_FRESH_S:
+        return {}
+    return _SNAPSHOT["payload"]
 
 
 async def get_cached_status(config: dict) -> dict:
-    """The latest snapshot, for every status reader. It never probes, so no reader waits for a probe.
+    """The latest snapshot, for every status reader. It never waits for a probe: it returns the snapshot as it is, with
+    its age, and a read after idle starts the refresh in the background.
 
     Before the first build has finished, the answer says it is checking, and its engines read as unknown.
     Each section carries its age in ``snapshot.section_age_s``.
     """
+    _note_read()
     if not _SNAPSHOT:
         return {
             "checking": True,
             "backends": checking_backend_rows(config),
             "snapshot": {"built_at": None, "age_s": None, "section_age_s": {}},
         }
-    now = time.monotonic()
+    now = _now()
     age = round(now - _SNAPSHOT["built"], 2)
     data = dict(_SNAPSHOT["payload"])
     data["cache_age_s"] = age
@@ -4365,3 +4412,54 @@ async def get_cached_status(config: dict) -> dict:
         "section_age_s": {name: round(now - at, 2) for name, at in _SNAPSHOT["section_at"].items()},
     }
     return data
+
+
+async def _sample_backend_health(config: dict) -> None:
+    """One light sample: the health URL of each HTTP backend, probed as the status grid probes it.
+
+    The grid also asks each backend's lifecycle driver, which runs `systemctl`. The sampler does not, so an idle gateway
+    starts no process for its history. A backend with no health URL has no HTTP row, so it has no sample here. Its
+    recorded uptime was always zero before this change: a lifecycle state alone never reads as up.
+    """
+    backends = config.get("backends", {}) or {}
+    targets = _resolve_backend_targets(config)
+    if not targets:
+        return
+    ssl_context = await _shared_probe_ssl_context()
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
+        rows = await asyncio.gather(*(
+            _within_deadline(
+                _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"], service=backends.get(t["key"], {})),
+                _BACKEND_GRID_DEADLINE_S, t, _overdue_http_row,
+            )
+            for t in targets
+        ))
+    await _section(_record_backend_health_samples, rows)
+
+
+async def _backend_sample_loop(get_config: Callable[[], dict]) -> None:
+    while True:
+        try:
+            await _sample_backend_health(get_config())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - only the type is logged, as for the snapshot
+            _log.error("backend health sample failed: %s", type(error).__name__)
+        await _sleep(BACKEND_SAMPLE_INTERVAL_S)
+
+
+def start_backend_samples(get_config: Callable[[], dict]) -> None:
+    """Start the sampler: one sample at once, then one every BACKEND_SAMPLE_INTERVAL_S, for as long as the gateway runs."""
+    global _SAMPLE_TASK
+    if _SAMPLE_TASK is None or _SAMPLE_TASK.done():
+        _SAMPLE_TASK = asyncio.get_running_loop().create_task(_backend_sample_loop(get_config))
+
+
+async def stop_backend_samples() -> None:
+    """Cancel the sampler and wait until it has ended, so no sample is written after shutdown."""
+    global _SAMPLE_TASK
+    task, _SAMPLE_TASK = _SAMPLE_TASK, None
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)

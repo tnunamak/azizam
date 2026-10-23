@@ -13092,11 +13092,15 @@ async def _serve(app: FastAPI):
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
 
-    status_endpoint.start_snapshot(_build_status_snapshot)
+    # The status snapshot builds only while something reads it. The backend history needs samples whether or not
+    # anyone reads, so its sampler runs as long as the gateway does, and shutdown joins both.
+    status_endpoint.open_snapshot(_build_status_snapshot)
+    status_endpoint.start_backend_samples(lambda: config)
 
     yield
 
     await status_endpoint.stop_snapshot()
+    await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
     metadata_migration_task.cancel()
@@ -13947,7 +13951,8 @@ async def _capabilities_availability_evidence(
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
-    """The latest status snapshot's payload, for availability answers that need no probe. Empty before the first build."""
+    """The latest status snapshot's payload, for availability answers that need no probe. Empty before the first build,
+    and once the snapshot is too old to trust: the caller then probes the services it needs."""
     return status_endpoint.latest_payload()
 
 
@@ -13985,8 +13990,9 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
 
 
 async def _build_status_snapshot() -> dict[str, Any]:
-    """One full status build, run in the background on a schedule. Every section probes on its own budget, and the
-    availability evidence is worked out from the result. Readers take the result from the snapshot; none waits for it."""
+    """One full status build, run in the background while something reads the snapshot. Every section probes on its own
+    budget, and the availability evidence is worked out from the result. Readers take the result from the snapshot;
+    none waits for it."""
     payload = await _status_payload_with_protocol_issues(await status_endpoint.build_status_payload(config))
     return await _with_availability(payload)
 
@@ -16462,10 +16468,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         health_evidence = {}
-    try:
-        status_payload = await status_endpoint.get_cached_status(config)
-    except Exception:  # noqa: BLE001
-        status_payload = _cached_status_payload_for_availability()
+    # Availability takes the snapshot only while it is fresh. An older row is probed below, not trusted.
+    status_payload = _cached_status_payload_for_availability()
     try:
         status_payload = await _status_payload_with_service_rows(
             status_payload or {}, service_records,

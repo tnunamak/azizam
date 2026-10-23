@@ -15,8 +15,9 @@ processes = 0         # no request starts a process (ffprobe, systemctl, ...)
 # reason, and the table may only shrink.
 [api.routes]
 # No route has its own limits. Every route meets the defaults above, including the cold reads of Home and the
-# owner's status page (api_bench.py). The status page and Home read a background snapshot and never probe, so the
-# defaults hold. test_perf_harness.py fails if a row is added here.
+# owner's status page (api_bench.py). The status page and Home read the stored snapshot and never wait for a probe.
+# A read after idle starts a background refresh; its process starts count against the read only if they begin while
+# the read is in flight. test_perf_harness.py fails if a row is added here.
 
 # A cold read must not hold the event loop: api_bench.py measures the largest /health latency while
 # the read runs, less the idle median, and check.py judges it here. Every request waits for the
