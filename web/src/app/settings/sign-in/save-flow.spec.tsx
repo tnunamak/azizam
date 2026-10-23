@@ -312,6 +312,8 @@ describe("Save", () => {
       name: "Keycloak",
     });
     await runTest(user);
+    // The passed test unlocks the switch; the switch is what turns single sign-on on.
+    await user.click(screen.getByRole("switch", { name: "Keycloak" }));
     await until(() =>
       expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeEnabled(),
     );
@@ -348,9 +350,10 @@ describe("Save", () => {
 
   it("Save for later saves the connection with the provider off and no test", async () => {
     const { user } = await mountSignIn(firstRunSnapshot(), {
-      preview: emptyPreview({
-        blockers: [{ code: "test_required", message: "Test." }],
-      }),
+      preview: (proposal, testId) =>
+        testId || !proposal.methods.provider
+          ? emptyPreview()
+          : emptyPreview({ blockers: [{ code: "test_required", message: "Test." }] }),
     });
     expect(screen.getByRole("button", { name: "Save for later" })).toBeDisabled();
     await fillConnection(user, {
@@ -362,7 +365,7 @@ describe("Save", () => {
     await until(() =>
       expect(screen.getByRole("button", { name: "Save for later" })).toBeEnabled(),
     );
-    expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Keycloak" })).toHaveAttribute("aria-disabled", "true");
     mocked.save.mockResolvedValue({
       snapshot: firstRunSnapshot({ revision: "rev-2" }),
       applied: { provider_turned_on: false, admin_removed: [] },

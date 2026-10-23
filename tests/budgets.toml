@@ -256,7 +256,10 @@ pytest = 16087
 # W5 follow-up (a stale single sign-on name opens the sign-in page with its notice): +1 vitest case in
 # web/src/app/sign-in/chooser.spec.tsx and +1 Playwright case in e2e/signin-shell.spec.ts. Full vitest run measured 3252.
 # playwright.config.ts 514, live-data 3, household 18: 535 listed.
-vitest = 3252
+# W5 round 2 (saving with single sign-on off): +3 vitest cases in web/src/app/settings/sign-in/test-before-save.spec.tsx
+# (single sign-on off saves directly; on and unchanged saves without a test; on and changed still asks for one).
+# The S12 e2e case is reworked to a password-only install, so Playwright does not change. Full vitest run measured 3255.
+vitest = 3255
 playwright = 535
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

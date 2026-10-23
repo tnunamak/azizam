@@ -9,7 +9,7 @@
 // adds that choice to Settings and its capture belongs with it.
 import type { Page } from "@playwright/test";
 import { expect, GLOBAL_STATE_TAG, ownerApi, test } from "./fixtures/isolation";
-import { CHOOSER_HEADING, twoPeopleOnOneBrowser } from "./chooser-journey";
+import { CHOOSER_HEADING, expectChooser, twoPeopleOnOneBrowser } from "./chooser-journey";
 
 // The chooser's reads of the remembered list share one budget with every other test on the same gateway: 60 reads a
 // minute per address (gateway/accounts.py, throttle_remembered), and every worker in the gate comes from 127.0.0.1.
@@ -123,7 +123,9 @@ for (const viewport of WIDTHS) {
 
       // Léa's name is removed on the gateway while this page still shows it: the next sign-in finds no such name.
       // The gateway answers 60 list reads a minute per address, shared by every test on this server, and a refused read
-      // shows the plain form. So read again until the minute turns.
+      // shows the plain form, so the read is repeated until the minute turns. Remove this wait once the base has
+      // AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE (gateway/accounts.py reads it; scripts/ui/serve.py sets it to 600 for the
+      // UI gateways), because no read is then refused.
       let leaTile = "";
       await expect(async () => {
         await page.goto("/sign-in/");
@@ -150,8 +152,7 @@ for (const viewport of WIDTHS) {
       await api.send("PUT", "/fixture/operator-settings/sign_in", { mode: "built-in" });
 
       const { page: device } = await twoPeopleOnOneBrowser(isolated);
-      await device.goto("/sign-in/");
-      await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible();
+      await expectChooser(device);
 
       await owner.setViewportSize({ width: viewport.width, height: viewport.height });
       await owner.goto("/settings/");
