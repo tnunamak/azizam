@@ -19,7 +19,7 @@ import tempfile
 from functools import lru_cache
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
@@ -787,13 +787,10 @@ def ensure_try_session_key(
     session: AdminSession,
     *,
     reuse_id: str | None = None,
-    before_mint: Callable[[], None] | None = None,
     now: int | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the Try page's key for this sign-in, minting one only if needed.
-
-    ``before_mint`` runs just before a new key is made, never for a reused one; it can refuse by raising.
 
     The key expires with the sign-in session and is revoked when it signs
     out. The secret is shown once, so the browser keeps it and passes its id
@@ -828,8 +825,6 @@ def ensure_try_session_key(
         out = _sanitize_credential(reused)
         out.update(active=True, reused=True, app_name=app_name)
         return out
-    if before_mint is not None:
-        before_mint()
     admin_store.revoke_older_session_credentials(
         str(app["id"]), session.family_id, keep=1, now=ts, path=path,
     )

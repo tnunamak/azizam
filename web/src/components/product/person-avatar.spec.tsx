@@ -166,18 +166,27 @@ describe("the sign-in picture", () => {
     expect(getAvatarPictureUrl(value as string | null | undefined)).toBeUndefined();
   });
 
-  it("loads the picture only when the person chose it", () => {
+  it("is the default avatar when the provider shared one, before any generated disc", () => {
+    for (const selection of [null, { kind: "auto" }, { kind: "sign-in" }] as const) {
+      const shown = render(<PersonAvatar personId="u" name="Mira" selection={selection} pictureUrl={PICTURE} />);
+      expect(shown.container.firstElementChild).toHaveAttribute("data-avatar-selection", "sign-in");
+      shown.unmount();
+    }
+  });
+
+  it("keeps a generated disc the person chose, even when a picture exists", () => {
     const chosen = render(
-      <PersonAvatar personId="u" name="Mira" selection={{ kind: "sign-in" }} pictureUrl={PICTURE} />,
+      <PersonAvatar personId="u" name="Mira" selection={{ kind: "generated", variant: "v2" }} pictureUrl={PICTURE} />,
     );
-    const root = chosen.container.firstElementChild as HTMLElement;
-    expect(root).toHaveAttribute("data-avatar-selection", "sign-in");
-    chosen.unmount();
-    for (const selection of [null, { kind: "auto" }, { kind: "generated", variant: "v2" }] as const) {
-      const other = render(<PersonAvatar personId="u" name="Mira" selection={selection} pictureUrl={PICTURE} />);
-      expect(other.container.querySelector("img")).toBeNull();
-      expect(other.container.firstElementChild).toHaveAttribute("data-avatar-selection", "generated");
-      other.unmount();
+    expect(chosen.container.firstElementChild).toHaveAttribute("data-avatar-selection", "generated");
+  });
+
+  it("falls back to the generated disc by default when the provider shared no picture", () => {
+    for (const selection of [null, { kind: "auto" }, { kind: "sign-in" }] as const) {
+      const plain = render(<PersonAvatar personId="u" name="Mira" selection={selection} />);
+      expect(plain.container.querySelector("img")).toBeNull();
+      expect(plain.container.firstElementChild).toHaveAttribute("data-avatar-selection", "generated");
+      plain.unmount();
     }
   });
 
@@ -303,14 +312,27 @@ describe("avatar picker", () => {
     expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: "v2" });
   });
 
-  it("offers the sign-in picture only when the provider shared one", async () => {
+  it("offers the sign-in picture only when the provider shared one", () => {
     const without = setup();
     expect(screen.queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
     without.unmount();
+    setup({ pictureUrl: PICTURE });
+    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeVisible();
+  });
+
+  it("checks the picture for the default choice, since that is the avatar the person sees", async () => {
     const { onChange } = setup({ pictureUrl: PICTURE, value: { kind: "auto" } });
     const picture = screen.getByRole("radio", { name: "Use my sign-in picture" });
-    expect(picture).not.toBeChecked();
-    await userEvent.click(picture);
+    expect(picture).toBeChecked();
+    expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toEqual([picture]);
+    await userEvent.click(screen.getByRole("radio", { name: "Rose" }));
+    expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: "v4" });
+  });
+
+  it("checks a generated swatch the person chose over the picture, and picking the picture stores it", async () => {
+    const { onChange } = setup({ pictureUrl: PICTURE, value: { kind: "generated", variant: "v4" } });
+    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("radio", { name: "Use my sign-in picture" }));
     expect(onChange).toHaveBeenCalledWith({ kind: "sign-in" });
   });
 

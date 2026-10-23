@@ -77,10 +77,10 @@ for (const viewport of viewports) {
       animations: "disabled",
     });
 
+    // The line opens the App's keys on the key that needs its remedy, which takes focus.
     await checkLine.click();
-    await page.locator(`#app-actions-${target.appId}`).click();
-    await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
     const keys = page.getByRole("dialog", { name: /^Keys for / });
+    await expect(keys.getByRole("button", { name: /^(Keep|Replace) key / })).toBeFocused();
     await expect(keys).toBeVisible();
     await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toBeVisible();
     await noSideways(page, "the keys dialog with the keep notice");
@@ -133,10 +133,10 @@ for (const viewport of viewports) {
     const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
     await expect(checkLine).toBeVisible();
     await noSideways(page, "the Apps page with the check line");
+    // The line opens the App's keys on the key that needs its remedy, which takes focus.
     await checkLine.click();
-    await page.getByRole("button", { name: /^Actions for / }).click();
-    await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
     const keys = page.getByRole("dialog", { name: /^Keys for / });
+    await expect(keys.getByRole("button", { name: /^(Keep|Replace) key / })).toBeFocused();
     await expect(keys.getByText(REPLACE_NOTICE, { exact: true })).toBeVisible();
     await expect(keys.getByRole("button", { name: /^Keep key / })).toHaveCount(0);
     await noSideways(page, "the keys dialog with the replace notice");
@@ -221,10 +221,10 @@ for (const viewport of viewports) {
       await page.goto("/apps/");
       const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
       await expect(checkLine).toBeVisible();
+      // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      await page.locator(`#app-actions-${app.id}`).click();
-      await page.getByRole("menuitem", { name: "Trusted addresses", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toBeVisible();
       await noSideways(page, "the trusted addresses dialog with the add-again notice");
       await page.screenshot({
@@ -287,10 +287,10 @@ for (const viewport of viewports) {
     await page.goto("/apps/");
     const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
     await expect(checkLine).toBeVisible();
+    // The line opens the App's keys on the key that needs its remedy, which takes focus.
     await checkLine.click();
-    await page.locator(`#app-actions-${target.appId}`).click();
-    await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
     const keys = page.getByRole("dialog", { name: /^Keys for / });
+    await expect(keys.getByRole("button", { name: /^(Keep|Replace) key / })).toBeFocused();
     await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toBeVisible();
 
     await keys.getByRole("button", { name: /^Keep key / }).click();
@@ -369,10 +369,10 @@ for (const viewport of viewports) {
       await page.goto("/apps/");
       const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
       await expect(checkLine).toBeVisible();
+      // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      await page.locator(`#app-actions-${app.id}`).click();
-      await page.getByRole("menuitem", { name: "Trusted addresses", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADDRESS_KEEP_NOTICE, { exact: true })).toBeVisible();
 
       await dialog.getByRole("button", { name: `Keep address ${ADDRESS}` }).click();

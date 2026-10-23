@@ -16219,23 +16219,8 @@ async def _step_up_gate(request: Request, call_next):
     if step_up.is_sensitive(request.method, path):
         denial = await asyncio.to_thread(_step_up_denial, request)
         if denial is not None:
-            if path.startswith("/setup/"):
-                # A form post: say it in words, not as JSON.
-                return HTMLResponse(
-                    "<!doctype html><title>Sign in again</title><main><h1>Sign in again</h1>"
-                    "<p>It has been a while since you signed in, so no App or key was made.</p>"
-                    '<p><a href="/login?return_to=/setup/console">Sign in again</a>, then go back and create the App.</p></main>',
-                    status_code=401, headers={"Cache-Control": "no-store"})
             return denial
     return await call_next(request)
-
-
-def _require_recent_sign_in_for_administrator(session) -> None:
-    """Raise ``StepUpRequired`` for an owner or administrator whose sign-in is older than the window."""
-    roles = admin_store.effective_admin_roles("user", session.subject, path=ADMIN_STORE.path)
-    if ADMIN_CONTROL_ROLES & roles:
-        step_up.require_recent(
-            authenticated_at=session.last_authenticated, subject=session.subject, window_seconds=_step_up_window())
 
 
 def _mcp_require_recent_sign_in(request: Request, session) -> Response | None:
@@ -17041,7 +17026,6 @@ async def user_portal_try_key(request: Request):
         credential = ensure_try_session_key(
             session,
             reuse_id=str(reuse_id) if reuse_id else None,
-            before_mint=lambda: _require_recent_sign_in_for_administrator(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:

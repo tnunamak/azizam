@@ -125,25 +125,30 @@ person's sign-in. It is not recorded, never renews, and ends after the fixed
 A session whose last sign-in or confirmation is older than the confirmation
 window gets `401` with the code `reauth_required` on the actions below. The web
 app shows a password prompt (or sends you to your identity provider), then
-repeats the action. Owners, administrators and members are asked alike, except
-where noted (decision D36).
+repeats the action. Owners, administrators and members are asked alike.
 
 - Export the configuration, or the effective settings (the inline view and the download).
-- Make a credential: an App key (administrator or the person's own, **members too**), an admin
-  key, a LiteLLM key, the first key on the setup page. A new Try key asks owners and
-  administrators only; the Try page reuses the key it holds without asking, and a member's Try key
-  ends with their sign-in. Allowing an MCP client to connect asks (refusing one does not).
+- Make an admin key or a LiteLLM key. Allowing an MCP client to connect asks (refusing one does not).
 - Add a provider, or replace or clear a provider key.
 - Change where a stored credential is sent or what it is: any save to the service registry that
   adds, replaces, clears or moves a key, sets a lifecycle driver or changes the address of an
   engine that holds a key (`credential_binding_changes`). This covers the whole-registry save, adding
   or editing a service, the engine page, fixing a left-out record, secret commands and enabling an
   extension package. A save that only renames or switches a service does not ask.
-- Trust an address for an App, or enable an extension package.
+- Enable an extension package.
 - Turn on or off running commands on this computer.
 - Invite a person, copy an invitation link, change or remove a person, create a password reset link.
 - Change sign-in settings (providers, rules, the owner's password).
 - Change the session settings.
+
+Not asked, because each one is a person's own: an App key on an App they answer for (the Apps & keys page, the
+admin route for that App, and the first key on the setup page), a Try key, a trusted address on such an App,
+adding an address again, and keeping or replacing their own key or address. The admin routes for an App refuse
+everyone but the App's accountable person, owners included, so an owner cannot key or trust an address on
+someone else's App through them. This reverses the member-key rule of decision D36 for a person's own Apps
+(walkthrough, 2026-10-23): a stale session cookie can now make a permanent key for its own App. A key for anyone
+else is refused on those routes, and provider keys and everything above still ask. No key or grant carries the
+privacy permission yet (`docs/design/REQUEST_RETENTION.md`); when one does, minting that key must ask again.
 
 The lists are `SENSITIVE_ROUTES` (the middleware asks) and `HANDLER_GATED` (the handler asks,
 because only some requests to the route are risky) in `gateway/step_up.py`.

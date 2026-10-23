@@ -102,8 +102,8 @@ async function accountRequest<T>(
       !renewed
     )
       return accountRequest<T>(path, init, retried, confirmed, true);
-    // Making a key (or connecting a client) from an old sign-in asks the person to confirm
-    // it is them first, then sends the request once more.
+    // Connecting a client from an old sign-in asks the person to confirm it is them first,
+    // then sends the request once more. A person's own keys are not asked (gateway/step_up.py).
     const reauth =
       response.status === 401 && !confirmed ? parseReauth(payload) : null;
     if (reauth && (await requestReauth(reauth)))

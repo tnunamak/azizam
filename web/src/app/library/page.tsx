@@ -15,6 +15,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import NextImage from "next/image";
 import { flushSync } from "react-dom";
@@ -36,6 +37,8 @@ import {
   FileDown,
   ImageIcon,
   ListFilter,
+  Maximize,
+  Minimize,
   MoreHorizontal,
   Pause,
   Play,
@@ -1850,6 +1853,61 @@ function QueryFeedback({ label, query }: {
   );
 }
 
+/**
+ * The viewer's full screen. Where the browser has the Fullscreen API, the picture or video element itself fills
+ * the screen; a video then shows its native controls, since its own bar sits outside the element. Where there is
+ * no such API (iPhones, for a picture), the stage covers the window instead. The button and Escape both leave.
+ */
+function useFullScreen(stage: RefObject<HTMLDivElement | null>) {
+  const [mode, setMode] = useState<"off" | "browser" | "fallback">("off");
+  // The element the browser made full screen, while it does.
+  const taken = useRef<HTMLElement | null>(null);
+
+  function giveBack() {
+    if (taken.current instanceof HTMLVideoElement) taken.current.controls = false;
+    taken.current = null;
+  }
+
+  useEffect(() => {
+    // The browser can leave on its own (Escape); the viewer follows.
+    const onChange = () => {
+      if (document.fullscreenElement) return;
+      giveBack();
+      setMode((current) => (current === "browser" ? "off" : current));
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      if (taken.current && document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+      giveBack();
+    };
+  }, []);
+
+  async function enter() {
+    const media = stage.current?.querySelector<HTMLElement>("video, img:not([hidden])") ?? null;
+    if (media && document.fullscreenEnabled && typeof media.requestFullscreen === "function") {
+      if (media instanceof HTMLVideoElement) media.controls = true;
+      taken.current = media;
+      try {
+        await media.requestFullscreen();
+        setMode("browser");
+        return;
+      } catch {
+        giveBack();
+      }
+    }
+    setMode("fallback");
+  }
+
+  async function leave() {
+    if (taken.current && document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+    giveBack();
+    setMode("off");
+  }
+
+  return { mode, enter, leave };
+}
+
 function CreationViewer({
   asset,
   assets,
@@ -1916,6 +1974,8 @@ function CreationViewer({
     retry: false,
   });
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const fullScreen = useFullScreen(stageRef);
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
@@ -1972,6 +2032,12 @@ function CreationViewer({
         <DialogPrimitive.Content
           aria-describedby={undefined}
           aria-modal="true"
+          onEscapeKeyDown={(event) => {
+            // Escape leaves full screen first; a second Escape closes the viewer.
+            if (fullScreen.mode === "off") return;
+            event.preventDefault();
+            void fullScreen.leave();
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             titleRef.current?.focus();
@@ -2004,7 +2070,15 @@ function CreationViewer({
           }}
           className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
         >
-          <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
+          <div
+            ref={stageRef}
+            data-fullscreen={fullScreen.mode}
+            className={cn(
+              "bg-media-stage flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0",
+              // One position per mode: the fallback covers the window, and the stage is the frame for its controls.
+              fullScreen.mode === "fallback" ? "fixed inset-0 z-10 min-h-0" : "relative",
+            )}
+          >
             <div
               className={cn(
                 "flex size-full items-center justify-center",
@@ -2070,6 +2144,17 @@ function CreationViewer({
             >
               <X aria-hidden="true" className="size-5" />
             </DialogPrimitive.Close>
+            {asset.kind !== "audio" && renewed && !renewalFailed ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={fullScreen.mode === "off" ? "Full screen" : "Exit full screen"}
+                onClick={() => void (fullScreen.mode === "off" ? fullScreen.enter() : fullScreen.leave())}
+                className="bg-chrome/70 text-chrome-foreground hover:bg-chrome absolute top-3 right-3 size-11 rounded-full"
+              >
+                {fullScreen.mode === "off" ? <Maximize aria-hidden="true" /> : <Minimize aria-hidden="true" />}
+              </Button>
+            ) : null}
           </div>
           <aside className="flex min-h-0 min-w-0 flex-col md:overflow-y-auto md:border-l">
             <div className="flex-1 space-y-5 p-5">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch } from "@/lib/api";
 import {
@@ -53,11 +53,14 @@ function messageOf(caught: unknown, fallback: string): string {
 export function TrustedAddressesDialog({
   app,
   appName,
+  focusCheck = false,
   onClose,
   onChanged,
 }: {
   app: { id: string } | null;
   appName: string;
+  /** Opened from the page's quick-check line: the first address with a remedy is brought into view and focused. */
+  focusCheck?: boolean;
   onClose: () => void;
   /** An address was kept or added again: the account's Apps list shows the new count. */
   onChanged: () => void;
@@ -96,6 +99,20 @@ export function TrustedAddressesDialog({
       setBusy(false);
     }
   }
+
+  // Opened from the quick-check line: once the list is in, the first address with a remedy is brought into view and
+  // focused, once per opening.
+  const checkFocused = useRef(false);
+  useEffect(() => {
+    if (app === null) checkFocused.current = false;
+    if (!focusCheck || checkFocused.current || !data) return;
+    const entry = data.find((item) => item.cutover !== undefined);
+    if (!entry) return;
+    checkFocused.current = true;
+    const row = document.getElementById(`address-row-${entry.id}`);
+    row?.scrollIntoView({ block: "center" });
+    row?.querySelector("button")?.focus();
+  }, [app, data, focusCheck]);
 
   // After a keep the entry's Keep button is gone, so focus its Remove button once the change has settled.
   useEffect(() => {
@@ -226,6 +243,7 @@ export function TrustedAddressesDialog({
             {data.map((entry) => (
               <li
                 key={entry.id}
+                id={`address-row-${entry.id}`}
                 className="flex items-center justify-between gap-3 py-2"
               >
                 <span className="min-w-0">

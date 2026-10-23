@@ -65,6 +65,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { LeaveGuard } from "./leave-guard";
 import { ReauthGate } from "./reauth-gate";
 import { SessionCoverFromStore } from "./session-cover";
 import { ToastGate } from "./toast-gate";
@@ -1141,6 +1142,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Shell>{children}</Shell>
         </SessionBoundary>
         <ReauthGate />
+        <LeaveGuard />
         <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>

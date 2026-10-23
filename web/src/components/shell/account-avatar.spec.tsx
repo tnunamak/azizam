@@ -170,8 +170,15 @@ describe("account menu avatar", () => {
     expect(preview.style.backgroundImage).toBe(getGeneratedAvatar(PERSON, target.id).background);
   });
 
-  it("offers the sign-in picture when the provider shared one, and saves it as the word picture", async () => {
+  it("shows the sign-in picture as the default when the provider shared one, with nothing to save", async () => {
     current = snapshot({ choice: "auto", picture_url: PICTURE });
+    const { dialog } = await openAvatarDialog();
+    expect(within(dialog).getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
+    expect(saves).toEqual([]);
+  });
+
+  it("saves the picture as the word picture when the person picks it over a generated avatar", async () => {
+    current = snapshot({ choice: "v3", picture_url: PICTURE });
     const { user, dialog } = await openAvatarDialog();
     await user.click(within(dialog).getByRole("radio", { name: "Use my sign-in picture" }));
     await waitFor(() => expect(saves).toEqual([expect.objectContaining({ body: { choice: "picture" } })]));
@@ -190,7 +197,7 @@ describe("account menu avatar", () => {
   });
 
   it("shows the gateway's own sentence when the picture is no longer available", async () => {
-    current = snapshot({ choice: "auto", picture_url: PICTURE });
+    current = snapshot({ choice: "v3", picture_url: PICTURE });
     saveResponse = () =>
       json({ error: { code: "picture_unavailable", message: "Your sign-in provider has not shared a picture." } }, 409);
     const { user, dialog } = await openAvatarDialog();

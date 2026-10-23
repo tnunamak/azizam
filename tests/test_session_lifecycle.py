@@ -434,8 +434,6 @@ def stale_owner(g, *, authenticated_ago=20 * MINUTE, sid="stale_owner_session_1"
 def asks_again(response) -> bool:
     if response.status_code != 401:
         return False
-    if response.headers.get("content-type", "").startswith("text/html"):
-        return "Sign in again" in response.text           # a form post on the setup page: asked in words
     try:
         return response.json()["error"]["code"] == "reauth_required"
     except (ValueError, KeyError, TypeError):
@@ -466,6 +464,42 @@ def test_the_risky_route_list_names_routes_that_exist(sg):
     missing = [(method, path) for method, path in step_up.SENSITIVE_ROUTES if (method, path) not in templates]
 
     assert missing == []
+
+
+# A person's own keys and addresses on their own Apps, and their first App: routine, so an old sign-in is not
+# asked. The answer is the handler's own (here a missing App or key), never reauth_required.
+OWN_ACCOUNT_ROUTES = (
+    ("POST", "/me/api/apps/*/keys"),
+    ("POST", "/me/api/apps/*/trusted-addresses"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/adopt"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/readd"),
+    ("POST", "/me/api/credentials/*/adopt"),
+    ("POST", "/me/api/credentials/*/replace"),
+    ("POST", "/me/api/try-key"),
+    ("POST", "/setup/first-app"),
+    ("POST", "/admin/api/apps/*/keys"),
+    ("POST", "/admin/api/apps/*/trusted-addresses"),
+)
+
+
+@pytest.mark.parametrize("method, route", OWN_ACCOUNT_ROUTES)
+def test_routine_own_account_actions_do_not_ask_a_stale_session(sg, method, route, monkeypatch):
+    async def status(_config):
+        return {"generated_at": 0, "banner": "ok", "errors": {}}
+
+    monkeypatch.setattr(sg.proxy.status_endpoint, "get_cached_status", status)
+    stale = stale_owner(sg)
+
+    answer = stale.request(method, concrete(route), headers={**csrf(stale), "x-azizam-user-action": "1"})
+
+    assert not asks_again(answer), (answer.status_code, answer.text[:200])
+
+
+def test_the_own_account_list_names_routes_that_exist(sg):
+    routes = {(method, route.path) for route in sg.proxy.app.routes for method in getattr(route, "methods", ()) or ()}
+    templates = {(method, re.sub(r"\{[^}]+\}", "*", path).rstrip("/")) for method, path in routes}
+
+    assert [key for key in OWN_ACCOUNT_ROUTES if key not in templates] == []
 
 
 def test_other_owner_routes_are_not_asked_to_confirm(sg):

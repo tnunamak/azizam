@@ -55,6 +55,16 @@ REVIEWED_SAFE = {
         "credential, and the write goes through _persist_service_registry, which asks before any binding moves",
     ("DELETE", "/admin/api/operator/services/*"): "removing a service moves no credential",
     ("DELETE", "/admin/api/operator/service-registry/excluded/*/*"): "dropping a left-out record moves no credential",
+    # Routine own-account actions (gateway/step_up.py): a person's own keys, addresses, Try key and first App are not
+    # asked for. The admin routes refuse everyone but the App's accountable person, owners included.
+    ("POST", "/admin/api/apps/*/keys"): "a key on an App only its accountable person can key (create_credential refuses "
+        "anyone else, a control-plane key included), so it is that person's own key",
+    ("POST", "/admin/api/apps/*/trusted-addresses"): "an address on an App only its accountable person can change "
+        "(add_trusted_address refuses anyone else, a control-plane key included)",
+    ("POST", "/me/api/apps/*/keys"): "a person's own key on an App they answer for",
+    ("POST", "/me/api/apps/*/trusted-addresses"): "a person's own address on an App they answer for",
+    ("POST", "/me/api/try-key"): "the person's own Try key for this sign-in; the page reuses the one it holds",
+    ("POST", "/setup/first-app"): "the first App and key a person makes on the setup page",
 }
 
 
