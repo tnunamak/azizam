@@ -215,7 +215,7 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router, create_request_retention_router
-from gateway.request_source import note_connection, note_trusted_address
+from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -2322,6 +2322,9 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     result = _authenticate_request(request, request_path)
     if isinstance(result, AuthContext):
         setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
+        if result.identity is not None:
+            # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
+            note_maker(result.identity.app_id, result.identity.person_id)
     return result
 
 

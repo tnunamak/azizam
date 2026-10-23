@@ -65,6 +65,11 @@ const destinationList = [
     answer: "Does it work, and what does the request look like?",
   },
   {
+    title: "History",
+    href: "/history",
+    answer: "What did I ask, and what came back?",
+  },
+  {
     title: "Apps & keys",
     href: "/apps",
     answer: "Which apps can use my account?",

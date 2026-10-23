@@ -16,6 +16,7 @@ const account = vi.hoisted(() => ({
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => account.params }));
@@ -101,6 +102,14 @@ beforeEach(() => {
   });
   account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   account.promptMemory.mockResolvedValue(memory());
+  account.requestHistory.mockResolvedValue({
+    keep: true,
+    retention: "7_days",
+    parts: ["accepted"],
+    choices: ["1_day", "7_days", "30_days"],
+    allowed_parts: ["accepted", "received"],
+    notice_due: false,
+  });
   fetchMock.mockReset().mockImplementation(async (url: string) => {
     if (url === SUBMIT)
       return json({ object: "media.job", id: "job_1", status: "queued" }, 202);
@@ -128,13 +137,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Try: Don't keep this prompt", () => {
+describe("Try: Incognito and prompt keeping", () => {
   it("shows what happens to the prompt before Run, and keeps it by default", async () => {
     const user = userEvent.setup();
     renderTry();
     await ready();
     const toggle = await screen.findByRole("switch", {
-      name: "Don’t keep this prompt",
+      name: "Incognito",
     });
     expect(toggle).not.toBeChecked();
     expect(
@@ -153,7 +162,7 @@ describe("Try: Don't keep this prompt", () => {
     renderTry();
     await ready();
     await user.click(
-      await screen.findByRole("switch", { name: "Don’t keep this prompt" }),
+      await screen.findByRole("switch", { name: "Incognito" }),
     );
     expect(
       screen.getByText("The picture still goes to Library."),
@@ -164,13 +173,14 @@ describe("Try: Don't keep this prompt", () => {
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    expect(screen.getByText("Prompt not kept")).toBeVisible();
+    expect(screen.getByText("Incognito: this isn’t saved")).toBeVisible();
+    expect(screen.queryByText("Prompt not kept")).toBeNull();
 
     cleanup();
     renderTry();
     await ready();
     expect(
-      await screen.findByRole("switch", { name: "Don’t keep this prompt" }),
+      await screen.findByRole("switch", { name: "Incognito" }),
     ).toBeChecked();
   });
 
@@ -220,18 +230,17 @@ describe("Try: Don't keep this prompt", () => {
     ).toHaveAttribute("href", "/settings#prompts");
   });
 
-  it("is not offered where nothing is kept, or to someone signed out", async () => {
+  it("is offered on a chat, which History keeps, and not to someone signed out", async () => {
     account.params = new URLSearchParams("capability=chat");
     renderTry();
-    await waitFor(() => expect(account.promptMemory).toHaveBeenCalled());
-    expect(screen.queryByText("Don’t keep this prompt")).toBeNull();
+    expect(await screen.findByRole("switch", { name: "Incognito" })).toBeVisible();
     cleanup();
     account.promptMemory.mockClear();
     account.params = new URLSearchParams("capability=image");
     renderTry({ ...member, authenticated: false });
     await ready();
     expect(account.promptMemory).not.toHaveBeenCalled();
-    expect(screen.queryByText("Don’t keep this prompt")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Incognito" })).toBeNull();
   });
 });
 
@@ -280,7 +289,7 @@ it("explains unreadable prompt settings while preserving the privacy fact", asyn
     ),
   ).toBeVisible();
   expect(
-    screen.getByRole("switch", { name: "Don’t keep this prompt" }),
+    screen.getByRole("switch", { name: "Incognito" }),
   ).toBeVisible();
 });
 
@@ -349,7 +358,7 @@ it.each(["sign-out", "unmount"] as const)(
         expect(screen.getByRole("combobox", { name: "Model" }))
           .toHaveTextContent("Fixture speech"),
       );
-      await screen.findByRole("switch", { name: "Don’t keep this prompt" });
+      await screen.findByRole("switch", { name: "Incognito" });
       await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
       await waitFor(() => expect(account.promptMemory).toHaveBeenCalledTimes(2));
       expect(account.tryKey).toHaveBeenCalledTimes(1);

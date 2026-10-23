@@ -94,6 +94,12 @@ def test_the_list_shows_only_the_makers_own_rows_newest_first_and_no_content(gat
     assert items[0]["summary"]["route"] == "/v1/chat/completions"
 
 
+def test_each_row_names_the_app_it_came_through(gateway):
+    _store(gateway, _record(gateway["maker"], created=NOW), _record(gateway["other"], created=NOW + 1))
+    items = _call("GET", "/gateway/v1/requests", gateway["maker"].key).json()["requests"]
+    assert [item["app_name"] for item in items] == ["maker app"]
+
+
 def test_paging_runs_over_the_visible_rows_so_a_page_is_never_empty_because_of_other_members(gateway):
     mine = [_record(gateway["maker"], created=NOW - index) for index in range(5)]
     _store(gateway, *mine, *[_record(gateway["other"], created=NOW + index) for index in range(10)])

@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SignOutEverywhereSection } from "./sign-out-everywhere";
+import { RequestHistorySection } from "./request-history-section";
 import { accountApi } from "@/lib/account-api";
 import { useOwnerName } from "@/lib/use-owner-name";
 import {
@@ -75,6 +76,7 @@ export default function AccountPage() {
         ) : (
           <>
             <PromptsSection />
+            <RequestHistorySection />
             <SignOutEverywhereSection />
           </>
         )}

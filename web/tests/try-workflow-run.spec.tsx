@@ -17,11 +17,21 @@ import { ViewerContext, type Viewer } from "@/components/shell/session";
 // in a browser (e2e/workflow-try.spec.ts); the request goes through a stubbed
 // fetch here, with the catalog rows and answers copied from that spec.
 
+const HISTORY_ON = {
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+};
+
 const account = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => account.params }));
@@ -313,6 +323,7 @@ beforeEach(() => {
   account.promptMemory.mockResolvedValue({
     prompt_memory: { remember: true, retention: "never", effective_remember: true, effective_retention: "never", household: { default_remember: true, never_keep: false, retention_cap: "never" } },
   });
+  account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
   catalog = workflowsCatalog;
   answer = () => undefined;
   fetchMock.mockReset().mockImplementation(async (url: string, init?: RequestInit) => {

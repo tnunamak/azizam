@@ -263,6 +263,10 @@
 # Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
 # punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
+# Slice 5b1 round 2 (the household switch on the choice, the list preview): +15 cases, 1 in
+# tests/test_request_history_notice.py and 14 in tests/test_request_history_preview.py. The base commit c0402b68e
+# collects 16837: slice 5b1 added cases without moving the ceiling, so this sets the measured count, not the sum.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 16852 (2026-10-23).
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
 # A4 throttle memo: +3; LTX frame-rate: +1; sign-in write failures: +25 cases.
@@ -288,7 +292,12 @@
 # SENSITIVE_ROUTES cases drop nine; the own-account cases add ten plus one list check; one review test (a confirmed
 # key) is retired. collect-only 16988 -> 16989.
 # Train r103 step 2 (key reveal): 17106 + 1 (16989 - 16988) = 17107, provisional until the final hermetic collection.
-pytest = 17107
+# Slice 5b1 round 3 (the maker on each receipt, replies kept by default, the account switch's household-off state): +12
+# cases, 9 in tests/test_receipt_maker_retention.py and one each in tests/test_request_history_contract.py,
+# tests/test_request_history_member_choice.py and tests/test_request_history_capture.py.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 17039 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 17107 + 51 (17039 - 16988) = 17158, provisional until the final hermetic collection.
+pytest = 17158
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -317,7 +326,13 @@ pytest = 17107
 # Key reveal holds (2026-10-23): +4 unsaved-work cases (the new-key line, the secret hold and its release), +3 SecretReveal
 # cases, +11 leave-guard cases (links, Back, closing the tab, release) and +2 Apps key-reveal cases. Full run: 221 files,
 # 3266 cases, all passed.
-vitest = 3266
+# Slice 5b1 round 2: src/lib/request-content.spec.ts (34 cases), src/app/history/history-kinds.spec.tsx (16), the
+# History page spec rewritten for the list and the drawer, and two Home notice cases. Full run: 223 files, 3327 cases,
+# all passed (2026-10-23).
+# Slice 5b1 round 3: +1 case in src/app/account/request-history.spec.tsx (the owner's switch off for everyone).
+# vitest list measured 3328 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 3266 + 96 (3328 - 3232) = 3362, provisional until the final vitest list.
+vitest = 3362
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -329,7 +344,11 @@ vitest = 3266
 # playwright.config.ts 510, live-data 3, household 18: 531.
 # Key reveal holds (2026-10-23): +4 cases in e2e/key-reveal-leave.spec.ts (create and replace a key, at 1440 and 390 px).
 # playwright.config.ts 514, live-data 3, household 18: 535.
-playwright = 535
+# Slice 5b1 round 2: the two e2e/request-history.spec.ts journeys (1440 and 390 px) were not in the ceiling, so the
+# count moved from 504 to 506 when measured again. Round 2 adds no Playwright case. Gate lists: 506 + live-data 3 +
+# household 18 = 527 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 535 + 2 (527 - 525) = 537, provisional until the final Playwright lists.
+playwright = 537
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

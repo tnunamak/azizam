@@ -2,6 +2,13 @@ import { networkFetch } from "./network-error";
 import { ApiError, type AdministratorsOnRecord, type Credential, type MintedCredential } from "./api";
 import { parseReauth, requestReauth } from "./reauth";
 import {
+  REQUEST_HISTORY_PAGE_SIZE,
+  type ReceiptRetentionEntry,
+  type RequestHistoryChoice,
+  type RequestHistoryPage,
+  type RequestHistoryRecord,
+} from "./request-history";
+import {
   learnContract,
   rejectPendingCleanup,
   type DeletePromptsResponse,
@@ -295,6 +302,53 @@ export const accountApi = {
     })
       .then(rejectPendingCleanup)
       .then(learnContract),
+  /** The signed-in person's request history choice (REQUEST_RETENTION.md section 10). */
+  requestHistory: () => accountRequest<RequestHistoryChoice>("/me/api/retention"),
+  /** Saves the choice. Turning it off erases what was kept, so a screen refetches the list after it. */
+  saveRequestHistory: (value: { keep: boolean; retention: string; parts: string[] }) =>
+    accountRequest<RequestHistoryChoice>("/me/api/retention", {
+      method: "PUT",
+      body: value,
+    }),
+  /** Dismisses the one-time notice for a member who predates request history. The choice does not change. */
+  dismissRequestHistoryNotice: () =>
+    accountRequest<{ notice_due: boolean }>("/me/api/retention/notice-seen", {
+      method: "POST",
+    }),
+  /** One page of the person's kept requests, newest first. Metadata only. */
+  requestHistoryPage: (cursor: string | null) =>
+    accountRequest<RequestHistoryPage>(
+      `/gateway/v1/requests?limit=${REQUEST_HISTORY_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  /** One kept request with its content. */
+  requestHistoryRecord: (recordId: string) =>
+    accountRequest<RequestHistoryRecord>(
+      `/gateway/v1/requests/${encodeURIComponent(recordId)}`,
+    ),
+  deleteRequestHistoryRecord: (recordId: string) =>
+    accountRequest(`/gateway/v1/requests/${encodeURIComponent(recordId)}`, {
+      method: "DELETE",
+    }),
+  /** Deletes every kept request. `pending` means the rows are hidden now and deleted in the background. */
+  deleteAllRequestHistory: () =>
+    accountRequest<{ deleted: number; pending?: boolean }>("/gateway/v1/requests", {
+      method: "DELETE",
+    }),
+  /** The receipt for one request, as far as the person may read it. Its `retention` list says what was kept. */
+  receiptRetention: (requestId: string) =>
+    accountRequest<{ retention?: ReceiptRetentionEntry[] }>(
+      `/me/api/receipts/${encodeURIComponent(requestId)}`,
+    ),
+  /**
+   * The Library item this request made, or null when it made none. The Library is searched by the start of the
+   * prompt (the search is a substring match), and the item must name this request.
+   */
+  libraryItemForRequest: (requestId: string, prompt: string) =>
+    accountRequest<{ assets?: Array<{ asset_id?: string; request_id?: string | null }> }>(
+      `/me/api/media?q=${encodeURIComponent(prompt.slice(0, 100))}`,
+    ).then(
+      (page) => page.assets?.find((asset) => asset.request_id === requestId)?.asset_id ?? null,
+    ),
   /** The signed-in person's avatar choice. */
   avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
   /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */

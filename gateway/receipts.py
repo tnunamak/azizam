@@ -331,7 +331,7 @@ def new_request_id() -> str:
 # protocol loopback, the LiteLLM round trip) knows only its parent's request id,
 # so its receipt takes the caller from here. Bounded: a child of an evicted
 # parent records no caller, as before.
-_CALLER_FIELDS = ("app_id", "api_key_name", "owner_key_hash", "app_profile")
+_CALLER_FIELDS = ("app_id", "api_key_name", "owner_key_hash", "app_profile", "maker_person_id")
 _CALLERS: OrderedDict[str, tuple[Any, ...]] = OrderedDict()
 _CALLERS_MAX = 4096
 _CALLERS_LOCK = threading.Lock()
@@ -404,8 +404,9 @@ class RouteReceipt:
     # feed to one user. None when there is no owning App (unauthenticated,
     # legacy config keys, or provider-native passthrough without identity).
     app_id: str | None = None
-    # The person who made a content-bearing request. Internal only; an App's
-    # owner is not necessarily the maker of every request through that App.
+    # The person the request ran as, written when the receipt is created from
+    # the request's own authentication. Internal only. It is never inferred
+    # from who owns the App: a request with no person has no maker.
     maker_person_id: str | None = None
     api_key_name: str | None = None
     # The MCP sign-in connection (``mcp_oauth_grants.id``) that made the request.
@@ -462,7 +463,7 @@ class RouteReceipt:
 
     def __post_init__(self) -> None:
         from gateway.request_source import (
-            connection_for, current_client_hint, current_gateway_ui, trusted_address_for,
+            connection_for, current_client_hint, current_gateway_ui, maker_for, trusted_address_for,
         )
 
         if self.parent_request_id and self.app_id is None:
@@ -470,6 +471,7 @@ class RouteReceipt:
             if caller is not None:
                 for name, value in zip(_CALLER_FIELDS, caller):
                     setattr(self, name, value)
+        self.maker_person_id = self.maker_person_id or maker_for(self.app_id)
         if self.app_id:
             _remember_caller(self)
         self.client_address = self.client_address or trusted_address_for(self.app_id)

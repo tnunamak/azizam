@@ -725,11 +725,72 @@ def capture_reply(status: int, headers: Mapping[str, str], body: BodyCapture) ->
     return {"status": int(status), "headers": allowed_response_headers(headers), "body": kept}, omissions
 
 
+#: How much of what a request asked a list row shows. The preview is cut when the record is kept, from the kept body, so a
+#: list never loads a body (REQUEST_RETENTION.md section 17, slice 5b1 r2).
+PREVIEW_CHARACTERS = 120
+_REMOVED_VALUE = re.compile(r"\s*(?:" + re.escape(REMOVED) + "|" + re.escape(URL_REMOVED) + ")")
+
+
+def _words_of(content: Any) -> str | None:
+    """One message's words: its string content, or the text parts of a list of content parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = [part.get("text") if isinstance(part, Mapping) else part for part in content]
+        return " ".join(text for text in texts if isinstance(text, str)) or None
+    return None
+
+
+def _asked(body: Mapping[str, Any]) -> str | None:
+    """What the request asked, as the kept body holds it: the first user message, the input, or the prompt."""
+    messages = body.get("messages")
+    for message in messages if isinstance(messages, list) else ():
+        if isinstance(message, Mapping) and message.get("role") == "user" and (words := _words_of(message.get("content"))):
+            return words
+    model_input = body.get("input")
+    if isinstance(model_input, str):
+        return model_input
+    for item in model_input if isinstance(model_input, list) else ():
+        if isinstance(item, str):
+            return item  # an embeddings input: the first of its strings
+        if isinstance(item, Mapping) and item.get("role") == "user" and (words := _words_of(item.get("content"))):
+            return words
+    prompt = body.get("prompt")
+    if isinstance(prompt, str):
+        return prompt
+    fields = body.get("fields")  # a multipart form keeps its text fields here
+    if isinstance(fields, Mapping) and isinstance(fields.get("prompt"), str):
+        return fields["prompt"]
+    return None
+
+
+def preview_of(accepted_body: Any) -> str | None:
+    """One line of what the request asked, with no removed value in it; None when it asked nothing in words."""
+    asked = _asked(accepted_body) if isinstance(accepted_body, Mapping) else None
+    if asked is None:
+        return None
+    words = " ".join(_REMOVED_VALUE.sub(" ", asked).split())
+    if len(words) > PREVIEW_CHARACTERS:
+        words = words[: PREVIEW_CHARACTERS - 1].rstrip() + "…"
+    return words or None
+
+
 def summarize(route: str, accepted_body: Any, status: int | None, latency_ms: int) -> dict[str, Any]:
-    """The structural summary a kept record keeps after its receipt is gone: route, model, status and latency."""
-    model = accepted_body.get("model") if isinstance(accepted_body, Mapping) else None
+    """The structural summary a kept record keeps after its receipt is gone: route, model, status, latency and the
+    preview of what was asked."""
+    model = _model_of(accepted_body)
     return {"route": route, "model": model[:200] if isinstance(model, str) else None,
-            "status": status, "latency_ms": int(latency_ms)}
+            "status": status, "latency_ms": int(latency_ms), "preview": preview_of(accepted_body)}
+
+
+def _model_of(accepted_body: Any) -> Any:
+    """The model a request named: its JSON ``model``, or the ``model`` field of a multipart form (transcription, edits)."""
+    if not isinstance(accepted_body, Mapping):
+        return None
+    if "model" in accepted_body:
+        return accepted_body["model"]
+    fields = accepted_body.get("fields")
+    return fields.get("model") if isinstance(fields, Mapping) else None
 
 
 # ------------------------------------------------------------------ the store
@@ -974,6 +1035,50 @@ def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: l
         if seconds is not None:
             tighten(seconds, person_id=person_id, admin_path=admin_path, path=path)
     return record
+
+
+def household_policy(admin_path: Path | None) -> dict[str, Any]:
+    """The owner's values for request history: the kill switch, which is off for everyone whatever a member chose, and
+    the group's default and cap. ``decide`` reads them at capture, and ``GET /me/api/retention`` reports the switch."""
+    from gateway import admin_store
+
+    row = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path or admin_store.DB_PATH)
+    return retention.household_view(row.get("value") if row else None, retention.GROUP_REQUEST_HISTORY)
+
+
+#: Members who dismissed the notice that request history is available (admin store; see ``admin_store._SCHEMA``).
+NOTICE_TABLE = "request_history_notice_seen"
+
+
+def notice_due(person_id: str, *, admin_path: Path) -> bool:
+    """Whether to tell a member that request history is available (REQUEST_RETENTION.md section 12, item 3).
+
+    It is due for a member whose history switch is still off and whom nothing has changed: the row the schema 17
+    upgrade wrote, with no last writer (``retention_migration.migrate_group_keys``). Turning the switch on or off
+    answers it, and so does dismissing it.
+    """
+    conn = _admin_connection(admin_path)
+    try:
+        row = conn.execute(f"SELECT remember, updated_by FROM {retention.MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                           (person_id, retention.GROUP_REQUEST_HISTORY)).fetchone()
+        if row is None or row[0] or row[1]:
+            return False
+        if not _has_table(conn, NOTICE_TABLE):
+            return True
+        return conn.execute(f"SELECT 1 FROM {NOTICE_TABLE} WHERE person_id=?", (person_id,)).fetchone() is None
+    finally:
+        conn.close()
+
+
+def mark_notice_seen(person_id: str, *, admin_path: Path, now: int) -> None:
+    """Dismiss the notice. The member's choice does not change."""
+    conn = _admin_connection(admin_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(f"INSERT OR IGNORE INTO {NOTICE_TABLE}(person_id, seen_at) VALUES (?, ?)", (person_id, int(now)))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def tighten(period_seconds: int, *, person_id: str, admin_path: Path | None = None, path: Path | None = None) -> int:
