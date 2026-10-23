@@ -97,7 +97,9 @@ def _seed_incoming_session(gateway, client, person_id):
         conn.execute(
             "INSERT INTO account_session_lineage(session_id,family_id,retired_at,expires_at,used_at,superseded) "
             "VALUES(?,?,?,?,?,?)",
-            (session.session_id, family, None, int(session.expires_at), None, 0),
+            # Model an established session so request middleware does not record its first use
+            # outside the sign-in transaction while the test exercises a failed sign-in.
+            (session.session_id, family, None, int(session.expires_at), int(session.issued_at), 0),
         )
     client.cookies.set(
         gateway.config.cookie.name,
@@ -122,6 +124,11 @@ def _state_snapshot(gateway):
         }
 
 
+def _throttle_snapshot(gateway):
+    with accounts.connection(gateway.path, invalidate_asset_cache=False) as conn:
+        return [tuple(row) for row in conn.execute("SELECT * FROM account_login_limits ORDER BY bucket")]
+
+
 def _inject_write_failure(gateway, flow, failure):
     triggers = {
         ("password", "login_timestamp"): "BEFORE UPDATE OF last_login_at ON users",
@@ -141,6 +148,7 @@ def _inject_write_failure(gateway, flow, failure):
         ("oidc", "app_audit"): "BEFORE INSERT ON audit_events WHEN NEW.action='app.self_create'",
         ("oidc", "bootstrap_owner_grant"): "BEFORE INSERT ON admin_role_assignments WHEN NEW.role='owner'",
         ("oidc", "starter_plan"): "BEFORE INSERT ON access_plans WHEN NEW.name='Local only'",
+        ("oidc", "confirm_lineage"): "BEFORE INSERT ON account_session_lineage",
         ("oidc", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
         ("oidc", "session_issue"): "BEFORE INSERT ON account_sessions",
         ("oidc", "remembered_people"): "BEFORE UPDATE ON remembered_people",
@@ -164,7 +172,7 @@ def _inject_write_failure(gateway, flow, failure):
         ("oidc", failure) for failure in (
             "user_update", "verification", "refusal_clear", "identity_claims", "admin_grant",
             "rule_plan", "avatar", "app_provision", "app_audit", "incoming_revoke", "session_issue",
-            "remembered_people", "bootstrap_owner_grant", "starter_plan",
+            "remembered_people", "confirm_lineage", "bootstrap_owner_grant", "starter_plan",
         )
     ],
 )
@@ -183,6 +191,7 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
         gateway.set_config(replace(gateway.config, admin_emails=frozenset({OIDC_EMAIL})))
 
     before = _state_snapshot(gateway)
+    throttle_before = _throttle_snapshot(gateway)
     _inject_write_failure(gateway, flow, failure)
 
     if flow == "password":
@@ -196,7 +205,7 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
             sub="failure-injection-person",
             email=OIDC_EMAIL,
             groups=() if failure in {"bootstrap_owner_grant", "starter_plan"} else ("/Trusted",),
-            start={"remember": "1"},
+            start={"remember": "1", **({"reauth": "1"} if failure == "confirm_lineage" else {})},
             picture="https://avatar.example/picture.png" if failure == "avatar" else None,
         )
 
@@ -219,3 +228,5 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
         assert parse_qs(urlsplit(response.headers["location"]).query)["error"] == ["provider"]
     assert "injected sign-in write failure" not in response.text
     assert _state_snapshot(gateway) == before
+    # Abuse throttles must commit before the sign-in transaction so failed writes still count.
+    assert _throttle_snapshot(gateway) != throttle_before

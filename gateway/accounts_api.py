@@ -194,7 +194,9 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             # A guess counts too, so one address cannot try tiles without limit.
             accounts.throttle(client_ip(request), "tile:" + body.tile, path=path_provider())
             raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
-        return accounts.login_as(person["person_id"], body.password, client_ip(request), path=path_provider())
+        return accounts.authenticate_login_as(
+            person["person_id"], body.password, client_ip(request), path=path_provider(),
+        )
 
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
@@ -203,19 +205,37 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             path, cookie = path_provider(), cookie_provider()
             token = remembered_people.device_token(request, secure=cookie.secure)
             if body.tile is None:
-                user = accounts.login(body.email, body.password, client_ip(request), path=path)
+                user = accounts.authenticate_login(body.email, body.password, client_ip(request), path=path)
             else:
                 user = remembered_sign_in(request, body, token)
-            # The owner's own password always works. For everyone else the switch decides,
-            # and only a correct password learns that it is off.
-            if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
-                    "user", user["id"], path=path):
-                raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
-            # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
-            accounts.clear_signin_refusal(str(user["id"]), path=path)
-            response = issue(request, user, {"next": safe_browser_return_to(body.return_to)})
-            minted = remembered_people.keep(path=path, token=token, person_id=str(user["id"]), method="password",
-                                            issuer=None, remember=body.remember, from_tile=body.tile is not None)
+            built_in = options()["built_in"]
+            key = signing_key_provider()
+            if not key:
+                raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+            user_id = str(user["id"])
+            with admin_store.transaction(path) as tx:
+                conn = tx.conn
+                roles = admin_store.effective_user_roles_in(conn, user_id)
+                # The owner's own password always works. For everyone else the switch decides.
+                if not built_in and "owner" not in roles:
+                    raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+                accounts.clear_signin_refusal_in(conn, user_id)
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cookie, signing_key=key, path=path,
+                )
+                role = "owner" if "owner" in roles else "admin" if "admin" in roles else "none"
+                session = browser_sessions.issue_in(
+                    conn, {"sub": user_id, "email": user["email"]}, role=role,
+                    cookie=cookie, path=path,
+                )
+                accounts.record_successful_login_in(conn, user_id)
+                minted = remembered_people.keep_in(
+                    conn, token=token, person_id=user_id, method="password", issuer=None,
+                    remember=body.remember, from_tile=body.tile is not None,
+                )
+            accounts.invalidate_asset_families()
+            response = JSONResponse({"next": safe_browser_return_to(body.return_to)})
+            browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
             if minted:
                 remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
             return response

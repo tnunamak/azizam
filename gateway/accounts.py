@@ -472,17 +472,27 @@ def record_signin_refusal_in(conn: sqlite3.Connection, user_id: str) -> None:
 def clear_signin_refusal(user_id: str, *, path: Path) -> None:
     """A successful sign-in lifts the pause on the person's keys."""
     with connection(path) as conn:
-        conn.execute("DELETE FROM account_signin_refusals WHERE user_id=?", (user_id,))
+        clear_signin_refusal_in(conn, user_id)
+
+
+def clear_signin_refusal_in(conn: sqlite3.Connection, user_id: str) -> None:
+    """Clear a refusal inside the sign-in transaction that owns ``conn``."""
+    conn.execute("DELETE FROM account_signin_refusals WHERE user_id=?", (user_id,))
 
 
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
-        if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
-            raise AccountError("account_disabled", "This account is disabled.", 403)
-        conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (int(time.time()),))
-        conn.execute("INSERT INTO account_sessions VALUES(?,?,?)", (session_id, user_id, expires_at))
+        register_session_in(conn, user_id, session_id, expires_at)
+
+
+def register_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, expires_at: int) -> None:
+    """Register a session without committing the caller's transaction."""
+    state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
+    if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
+        raise AccountError("account_disabled", "This account is disabled.", 403)
+    conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (int(time.time()),))
+    conn.execute("INSERT INTO account_sessions VALUES(?,?,?)", (session_id, user_id, expires_at))
 
 
 def throttle(ip: str, email: str, *, path: Path, now: int | None = None):
@@ -534,6 +544,14 @@ def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
 
 
 def login(email: str, password: str, ip: str, *, path: Path) -> dict:
+    user = authenticate_login(email, password, ip, path=path)
+    with connection(path) as conn:
+        record_successful_login_in(conn, str(user["id"]))
+    return user
+
+
+def authenticate_login(email: str, password: str, ip: str, *, path: Path) -> dict:
+    """Count and verify a password attempt without writing successful-login state."""
     throttle(ip, email, path=path)
     email = email.strip().lower()
     with connection(path) as conn:
@@ -541,7 +559,7 @@ def login(email: str, password: str, ip: str, *, path: Path) -> dict:
         # by password, and the owner, who can set one whatever provider made their account.
         row = conn.execute("SELECT u.*,p.verifier FROM users u JOIN local_password_credentials p "
                            "ON p.user_id=u.id WHERE LOWER(u.email)=? ORDER BY u.created_at LIMIT 1", (email,)).fetchone()
-    return _verified_login(row, password, path=path)
+    return _verified_user(row, password, path=path)
 
 
 def login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
@@ -549,24 +567,35 @@ def login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
 
     The attempt counts toward the same per-email limit as an email sign-in, so the two cannot be tried in turn.
     """
+    user = authenticate_login_as(person_id, password, ip, path=path)
+    with connection(path) as conn:
+        record_successful_login_in(conn, str(user["id"]))
+    return user
+
+
+def authenticate_login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
+    """Verify a remembered tile's password without writing successful-login state."""
     with connection(path) as conn:
         row = conn.execute("SELECT u.*,p.verifier FROM users u LEFT JOIN local_password_credentials p "
                            "ON p.user_id=u.id WHERE u.id=?", (person_id,)).fetchone()
     throttle(ip, (row["email"] or person_id) if row else person_id, path=path)
-    return _verified_login(row, password, path=path)
+    return _verified_user(row, password, path=path)
 
 
-def _verified_login(row, password: str, *, path: Path) -> dict:
+def _verified_user(row, password: str, *, path: Path) -> dict:
     verifier = row["verifier"] if row and row["verifier"] else _DUMMY_VERIFIER
     valid = verify_password(password, verifier)
     state = access(row["id"], path=path) if row else None
     if not valid or not row or (state and (state["disabled_at"] is not None or state["removed_at"] is not None)):
         raise AccountError("invalid_login", "Email or password is incorrect.", 401)
-    ts = int(time.time())
-    with connection(path) as conn:
-        conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (ts, row["id"]))
-        _audit(conn, "account.login", row["id"], row["id"], ts)
     return {k: v for k, v in dict(row).items() if k != "verifier"}
+
+
+def record_successful_login_in(conn: sqlite3.Connection, user_id: str, *, now: int | None = None) -> None:
+    """Write the login timestamp and audit in the caller's successful-sign-in transaction."""
+    ts = int(time.time()) if now is None else int(now)
+    conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (ts, user_id))
+    _audit(conn, "account.login", user_id, user_id, ts)
 
 
 def _public_link(row) -> dict:
@@ -803,8 +832,13 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
 def record_oidc_verification(user_id: str, verified: bool, *, path: Path):
     initialize(path)
     with connection(path) as conn:
-        conn.execute("INSERT INTO account_oidc_verification VALUES(?,?) ON CONFLICT(user_id) "
-                     "DO UPDATE SET email_verified=excluded.email_verified", (user_id, int(verified)))
+        record_oidc_verification_in(conn, user_id, verified)
+
+
+def record_oidc_verification_in(conn: sqlite3.Connection, user_id: str, verified: bool) -> None:
+    """Save provider verification inside the successful-sign-in transaction."""
+    conn.execute("INSERT INTO account_oidc_verification VALUES(?,?) ON CONFLICT(user_id) "
+                 "DO UPDATE SET email_verified=excluded.email_verified", (user_id, int(verified)))
 
 
 def oidc_email_verified(user_id: str, *, path: Path) -> bool:

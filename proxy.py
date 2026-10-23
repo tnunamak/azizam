@@ -18039,6 +18039,113 @@ def _browser_signin_failure(request: Request, *, return_to: str | None = None, r
     )
 
 
+class _OidcBootstrapRefused(Exception):
+    """A first-owner race changed the admission decision during sign-in."""
+
+
+class _OidcAccountDisabled(Exception):
+    """The OIDC identity belongs to a disabled or removed person."""
+
+
+def _complete_oidc_signin(
+    request: Request,
+    state,
+    cfg,
+    claims: Mapping[str, Any],
+    decision,
+    bootstrap_owner: bool,
+):
+    """Commit every successful OIDC sign-in write together and return its session and device cookie."""
+    path = ADMIN_STORE.path
+    accounts.initialize(path)
+    previous = browser_sessions.decode_incoming(
+        request, cookie=cfg.cookie, signing_key=cfg.signing_key,
+    ) if state.reauth else None
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.upsert_oidc_user_in(
+            conn, cfg.issuer, str(claims["sub"]),
+            email=str(claims.get("email") or ""),
+            display_name=str(claims.get("name") or claims.get("email") or ""),
+        )
+        person_id = str(user["id"])
+        account_state = conn.execute(
+            "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
+        ).fetchone()
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            raise _OidcAccountDisabled()
+        accounts.record_oidc_verification_in(conn, person_id, claims.get("email_verified") is True)
+        accounts.clear_signin_refusal_in(conn, person_id)
+        oidc_access_names = access_names_from_oidc_claims(
+            claims, client_id=cfg.client_id, groups_claim=cfg.groups_claim,
+        )
+        admin_store.replace_user_identity_claims_in(conn, person_id, oidc_access_names)
+
+        owner_claimed = False
+        if bootstrap_owner:
+            owner_claimed = admin_store.claim_first_owner_in(
+                conn, person_id, granted_by="oidc-bootstrap",
+            )
+            if owner_claimed:
+                admin_store.seed_first_owner_plan_in(conn, person_id)
+            else:
+                # Another first sign-in won ownership while this request waited for the write lock.
+                decision = signin_admin.decide(
+                    path, claims, issuer=cfg.issuer, client_id=cfg.client_id,
+                    groups_claim=cfg.groups_claim, bootstrap_owner=False,
+                )
+                if not decision.outcome.admitted:
+                    raise _OidcBootstrapRefused()
+
+        effective_grants = admin_store.reconcile_oidc_admin_roles_in(
+            conn, person_id, {"admin"} if decision.outcome.admin else set(),
+        )
+        signin_admin.sync_rule_plan_in(conn, person_id, decision.outcome)
+        effective_roles = {grant["role"] for grant in effective_grants}
+        role = "owner" if owner_claimed or "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
+        avatars.record_sign_in_picture_in(conn, person_id, claims.get("picture"))
+        label = user.get("email") or user.get("display_name") or user["id"]
+        app = admin_store.ensure_personal_app_for_user_in(
+            conn, person_id, name=f"{label} personal access",
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=person_id,
+            actor_label=str(user.get("display_name") or user.get("email") or person_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "oidc_login",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+
+        if previous is not None and previous.subject != person_id:
+            raise ValueError("re-authentication was completed by a different person")
+        session_claims = {"sub": person_id, "email": claims.get("email") or ""}
+        provider_time = _provider_auth_time(claims)
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            session = browser_sessions.confirm_in(
+                conn, previous, path=path, authenticated_at=authenticated_at,
+            )
+        else:
+            if not state.reauth:
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cfg.cookie, signing_key=cfg.signing_key, path=path,
+                )
+            session = browser_sessions.issue_in(
+                conn, session_claims, role=role, cookie=cfg.cookie, path=path,
+                authenticated_at=authenticated_at,
+            )
+        minted = remembered_people.keep_in(
+            conn,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=person_id, method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=bool(state.tile_person_id),
+        )
+    accounts.invalidate_asset_families()
+    return user, session, minted
+
+
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
     error = request.query_params.get("error")
@@ -18103,105 +18210,24 @@ async def admin_oidc_callback(request: Request):
             # A refused person keeps nothing the identity provider gave them.
             await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
             raise
-        user = admin_store.upsert_oidc_user(
-            cfg.issuer,
-            str(claims["sub"]),
-            email=str(claims.get("email") or ""),
-            display_name=str(claims.get("name") or claims.get("email") or ""),
-            path=ADMIN_STORE.path,
-        )
-        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
-        accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
-        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
-        oidc_access_names = access_names_from_oidc_claims(
-            claims,
-            client_id=cfg.client_id,
-            groups_claim=cfg.groups_claim,
-        )
-        admin_store.replace_user_identity_claims(
-            str(user["id"]),
-            oidc_access_names,
-            path=ADMIN_STORE.path,
-        )
-        # Whether an owner already exists is decided inside the write's own
-        # transaction, so two first sign-ins cannot both become owner.
-        if bootstrap_owner and admin_store.claim_first_owner(
-            str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
-        ):
-            admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-        elif bootstrap_owner:
-            # Another first sign-in won the owner role; this person is an ordinary one.
-            decision, _ = await _decide_oidc_signin(cfg, claims, bootstrap_owner=False)
-            if not decision.outcome.admitted:
-                await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
-                raise SignInRefused("sign-in rules do not let this person in")
-        # Rule-derived grants are re-derived at every sign-in; a grant no rule
-        # supports any more ends here. Grants the owner gave by hand stay.
-        effective_grants = admin_store.reconcile_oidc_admin_roles(
-            str(user["id"]), {"admin"} if decision.outcome.admin else set(),
-            path=ADMIN_STORE.path,
-        )
-        signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
-        effective_roles = {grant["role"] for grant in effective_grants}
-        role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
-        # Kept only for a person who is let in: the URL the provider shared (https and short);
-        # the browser never loads it (gateway/me_avatar.py serves it).
-        await asyncio.to_thread(avatars.record_sign_in_picture, str(user["id"]), claims.get("picture"), path=ADMIN_STORE.path)
-        label = user.get("email") or user.get("display_name") or user["id"]
-        app = admin_store.ensure_personal_app_for_user(
-            str(user["id"]),
-            name=f"{label} personal access",
-            path=ADMIN_STORE.path,
-        )
-        admin_store.record_audit(
-            "app.self_create",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-            target_kind="app",
-            target_id=str(app["id"]),
-            metadata={"email": user.get("email"), "via": "oidc_login",
-                      "access_plan": app.get("access_plan")},
-            path=ADMIN_STORE.path,
-        )
-        session_claims = {
-            "sub": user["id"],
-            "email": claims.get("email") or "",
-        }
-        previous = await asyncio.to_thread(_oidc_session_from_request, request) if state.reauth else None
-        if previous is not None and previous.subject != str(user["id"]):
-            # Confirming is for the person who asked. Someone else's login is not a confirmation.
-            raise ValueError("re-authentication was completed by a different person")
-        # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
-        # "now": the session is signed in and never recent (decision D40).
-        provider_time = _provider_auth_time(claims)
-        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
-        if previous is not None:
-            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
-            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
-            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
-                                              authenticated_at=authenticated_at)
-        else:
-            if not state.reauth:
-                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-            session = await asyncio.to_thread(
-                browser_sessions.issue,
-                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-                authenticated_at=authenticated_at,
+        try:
+            user, session, minted = await asyncio.to_thread(
+                _complete_oidc_signin, request, state, cfg, claims, decision, bootstrap_owner,
             )
+        except _OidcBootstrapRefused:
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise SignInRefused("sign-in rules do not let this person in") from None
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
-        minted = await asyncio.to_thread(
-            remembered_people.keep, path=ADMIN_STORE.path,
-            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
-            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
-            remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         return clear_browser_binding(response, state)
+    except _OidcAccountDisabled:
+        response = JSONResponse(
+            {"error": {"code": "account_disabled", "message": "This account is disabled."}},
+            status_code=403,
+        )
+        return clear_browser_binding(response, state) if state else response
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
         response = _browser_signin_failure(
