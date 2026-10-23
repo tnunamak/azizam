@@ -374,7 +374,7 @@ export default function SignInPage() {
         />,
       );
     case "forget": {
-      const forgot = notice?.kind === "forgot" ? statusFor("forgot", { name: notice.name }).text : null;
+      const forgot = notice?.kind === "forgot" ? statusFor("forgot", { name: notice.name }) : null;
       return card(
         <ForgetList
           people={people}
