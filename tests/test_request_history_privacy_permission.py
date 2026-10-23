@@ -147,7 +147,8 @@ def test_mcp_connection_permission_is_session_only_and_is_returned_by_connection
                 "UPDATE mcp_oauth_grants SET privacy_permission=? WHERE id=? AND person_id=? AND revoked_at IS NULL",
                 (int(enabled), grant_id, person_id),
             ).rowcount
-        updates.append((grant_id, person_id, enabled))
+        if changed == 1:
+            updates.append((grant_id, person_id, enabled))
         return changed == 1
 
     monkeypatch.setattr(world.store, "set_privacy_permission", set_permission)
