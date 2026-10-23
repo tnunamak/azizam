@@ -12904,6 +12904,12 @@ def _retry_prompt_deadline_repair() -> None:
         _PROMPT_DEADLINE_REPAIR_PENDING = False
 
 
+def _release_late_hold(acquisition: asyncio.Future, path: Path) -> None:
+    """Release a hold that landed after its start-up was cancelled: no lifespan is left to release it."""
+    if not acquisition.cancelled() and acquisition.exception() is None:
+        gateway_lifetime.release(path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """The gateway's run, with the lifetime lock on its database held around the start-up and the shutdown.
@@ -12913,7 +12919,14 @@ async def lifespan(app: FastAPI):
     visibility step 2, design §8.1).
     """
     path = ADMIN_STORE.path
-    await asyncio.to_thread(gateway_lifetime.hold, path)  # waits while the cut-over holds the file exclusively
+    # Waits while the cut-over holds the file exclusively. The worker thread keeps waiting after a cancelled await, so the
+    # wait is a task that the shield keeps running: a hold that lands after the cancel is released by the callback.
+    acquisition = asyncio.create_task(asyncio.to_thread(gateway_lifetime.hold, path))
+    try:
+        await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        acquisition.add_done_callback(lambda done: _release_late_hold(done, path))
+        raise
     try:
         async with _serve(app):
             yield
