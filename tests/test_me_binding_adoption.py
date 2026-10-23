@@ -64,7 +64,7 @@ def _creator_of_address(g, entry_id):
 
 
 def _audit(g, action):
-    return g.rows("SELECT actor_kind, actor_id, target_kind, target_id, metadata FROM audit_events WHERE action = ?", (action,))
+    return g.rows("SELECT actor_kind, actor_id, target_kind, target_id, metadata_json FROM audit_events WHERE action = ?", (action,))
 
 
 def test_a_person_keeps_an_unproven_key_on_their_own_app_as_their_own(gateway):
