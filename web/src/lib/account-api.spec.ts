@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import { accountApi } from "./account-api";
+import { requestReauth } from "./reauth";
+
+vi.mock("./reauth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./reauth")>()),
+  requestReauth: vi.fn(),
+}));
 
 // A rename is a PATCH to the person's own routes with the headers every other /me write sends.
 type Sent = { path: string; method: string; body: unknown; headers: Headers };
@@ -10,6 +16,7 @@ let reply: { status: number; body: unknown };
 beforeEach(() => {
   sent = [];
   reply = { status: 200, body: {} };
+  vi.mocked(requestReauth).mockReset();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -64,4 +71,67 @@ it("turns a refusal into an ApiError with the gateway's code, words and status",
     message: "You already have an app with that name.",
     status: 409,
   });
+});
+
+const reauthRequired = {
+  status: 401,
+  body: {
+    error: {
+      code: "reauth_required",
+      message: "Confirm it is you to continue.",
+      reauth: { methods: ["password"], window_seconds: 900, oidc_url: "/login?reauth=1" },
+    },
+  },
+};
+
+it("keepKey posts to the key's adopt route with the user-action and csrf headers and returns the kept key", async () => {
+  reply.body = { credential: { id: "key-1", created_by: "person-1" } };
+  const key = await accountApi.keepKey("key-1");
+  expect(key).toEqual({ id: "key-1", created_by: "person-1" });
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("POST");
+  expect(sent[0].path).toBe("/me/api/credentials/key-1/adopt");
+  expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
+  expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
+});
+
+it("keepTrustedAddress posts to the entry's adopt route with the same headers", async () => {
+  await accountApi.keepTrustedAddress("app-1", "tad-1");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("POST");
+  expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses/tad-1/adopt");
+  expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
+  expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
+});
+
+it("keepKey asks for a recent sign-in, then sends the keep again once the person confirms", async () => {
+  const kept = { id: "key-1", created_by: "person-1" };
+  reply = reauthRequired;
+  vi.mocked(requestReauth).mockImplementation(async () => {
+    reply = { status: 200, body: { credential: kept } };
+    return true;
+  });
+  const key = await accountApi.keepKey("key-1");
+  expect(key).toEqual(kept);
+  expect(requestReauth).toHaveBeenCalledTimes(1);
+  expect(requestReauth).toHaveBeenCalledWith(
+    expect.objectContaining({ methods: ["password"], windowSeconds: 900 }),
+  );
+  expect(sent.map((request) => request.path)).toEqual([
+    "/me/api/credentials/key-1/adopt",
+    "/me/api/credentials/key-1/adopt",
+  ]);
+});
+
+it("keepKey keeps nothing when the person does not confirm, and returns the gateway's words", async () => {
+  reply = reauthRequired;
+  vi.mocked(requestReauth).mockResolvedValue(false);
+  const failure = await accountApi.keepKey("key-1").catch((e: unknown) => e);
+  expect(failure).toBeInstanceOf(ApiError);
+  expect(failure).toMatchObject({
+    code: "reauth_required",
+    message: "Confirm it is you to continue.",
+    status: 401,
+  });
+  expect(sent).toHaveLength(1);
 });

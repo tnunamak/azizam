@@ -115,6 +115,14 @@ function mintBlockedReason(app: AccountApp): string {
   return "You can't create keys for this app. Ask the owner to update its access.";
 }
 
+/** Keys and addresses with no recorded creator: the cut-over revokes them unless the person keeps them. */
+function unkeptCount(app: AccountApp): number {
+  return (
+    app.credentials.filter((key) => key.created_by === null).length +
+    (app.addresses_without_creator ?? 0)
+  );
+}
+
 // A rotation whose old keys could not all be revoked. The new key is already
 // saved, so the member may finish later; the old key ids (never secrets) are
 // kept until revoked, across reloads.
@@ -443,7 +451,7 @@ function AppsContents() {
     void refresh();
   }
 
-  function putKey(saved: Credential) {
+  function putKey(saved: Credential, message = "Key renamed") {
     queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
       current
         ? {
@@ -457,7 +465,7 @@ function AppsContents() {
           }
         : current,
     );
-    toast.success("Key renamed");
+    toast.success(message);
     void refresh();
   }
 
@@ -660,6 +668,8 @@ function AppsContents() {
         .filter(Boolean)
         .join(". ")
     : "";
+  const needsCheck = apps.filter((app) => unkeptCount(app) > 0);
+  const checkCount = needsCheck.reduce((total, app) => total + unkeptCount(app), 0);
   return (
     <div className="space-y-8">
       <PageHeader
@@ -680,6 +690,18 @@ function AppsContents() {
         <p role="status" className="text-destructive text-meta">
           This browser could not save the reminder about old keys that still
           work. It is lost if you reload, so revoke them before you leave.
+        </p>
+      )}
+      {needsCheck.length > 0 && (
+        <p className="text-meta">
+          <Link
+            href={`/apps/?app=${encodeURIComponent(needsCheck[0].id)}`}
+            className="underline"
+          >
+            {checkCount}{" "}
+            {checkCount === 1 ? "key or address needs" : "keys or addresses need"}{" "}
+            a quick check
+          </Link>
         </p>
       )}
       {accountPending ? (
@@ -1121,6 +1143,7 @@ function AppsContents() {
             : ""
         }
         onClose={() => setTrustingApp(null)}
+        onKept={() => void refresh()}
       />
       <RenameAppDialog
         app={renamingApp}
@@ -1143,6 +1166,7 @@ function AppsContents() {
           keysApp ? formatAppName(keysApp.name, accountData?.user?.email) : ""
         }
         onSaved={putKey}
+        onKept={(saved) => putKey(saved, "Key kept")}
         onClose={() => setRenamingKeysOf(null)}
         onCloseAutoFocus={restoreDialogFocus}
       />

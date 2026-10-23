@@ -240,7 +240,11 @@ function KeyRow({
   keyRecord,
   editing,
   disabled,
+  keeping,
+  keepDisabled,
+  keepFailure,
   onEdit,
+  onKeep,
   onSaved,
   onCancel,
 }: {
@@ -248,11 +252,20 @@ function KeyRow({
   editing: boolean;
   /** Another row is being saved or edited. */
   disabled: boolean;
+  /** This key is being kept. */
+  keeping: boolean;
+  /** Keep is unavailable: another row is being edited, or a key is being kept. */
+  keepDisabled: boolean;
+  /** Why the last Keep of this key failed. */
+  keepFailure: string | null;
   onEdit: () => void;
+  onKeep: () => void;
   onSaved: (key: Credential) => void;
   onCancel: () => void;
 }) {
   const label = keyRecord.display_name;
+  // A key made before its creator was recorded: the cut-over revokes it unless the person keeps it.
+  const unkept = keyRecord.created_by === null;
   return (
     <li className="space-y-2 py-3">
       {editing ? (
@@ -277,37 +290,65 @@ function KeyRow({
                 "Never used"
               )}
             </p>
+            {unkept ? (
+              <p className="text-muted-foreground text-meta">
+                Made before Azizam recorded who made keys. Keep it, or it stops
+                working at the next ownership update.
+              </p>
+            ) : null}
           </div>
-          <Button
-            id={`rename-key-${keyRecord.id}`}
-            variant="outline"
-            disabled={disabled}
-            aria-label={`Rename key ${label}`}
-            onClick={onEdit}
-          >
-            Rename
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            {unkept ? (
+              <Button
+                variant="outline"
+                disabled={keepDisabled}
+                aria-label={`Keep key ${label}`}
+                onClick={onKeep}
+              >
+                {keeping ? "Keeping…" : "Keep"}
+              </Button>
+            ) : null}
+            <Button
+              id={`rename-key-${keyRecord.id}`}
+              variant="outline"
+              disabled={disabled}
+              aria-label={`Rename key ${label}`}
+              onClick={onEdit}
+            >
+              Rename
+            </Button>
+          </div>
         </div>
       )}
+      {keepFailure ? (
+        <p role="alert" className="text-destructive text-meta">
+          {keepFailure}
+        </p>
+      ) : null}
     </li>
   );
 }
 
-/** One app's keys, each with a Rename button. One key is edited at a time. */
+/** One app's keys, each with a Rename button and, for a key with no recorded creator, a Keep button.
+ * One key is edited at a time. */
 export function RenameKeysDialog({
   app,
   appName,
   onSaved,
+  onKept,
   onClose,
   onCloseAutoFocus,
 }: {
   app: AccountApp | null;
   appName: string;
   onSaved: (key: Credential) => void;
+  onKept: (key: Credential) => void;
   onClose: () => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [keeping, setKeeping] = useState<string | null>(null);
+  const [keepFailure, setKeepFailure] = useState<{ id: string; message: string } | null>(null);
   // The row that had the edit, so its Rename button gets focus back.
   const returnTo = useRef<string | null>(null);
 
@@ -321,6 +362,23 @@ export function RenameKeysDialog({
   function stopEditing(id: string) {
     returnTo.current = id;
     setEditing(null);
+  }
+
+  async function keep(keyRecord: Credential) {
+    setKeeping(keyRecord.id);
+    setKeepFailure(null);
+    try {
+      onKept(await accountApi.keepKey(keyRecord.id));
+      // The Keep button goes once the key is kept; its Rename button stays, so focus moves there.
+      document.getElementById(`rename-key-${keyRecord.id}`)?.focus();
+    } catch (caught) {
+      setKeepFailure({
+        id: keyRecord.id,
+        message: failure(caught, "The key could not be kept. Try again."),
+      });
+    } finally {
+      setKeeping(null);
+    }
   }
 
   function close() {
@@ -360,7 +418,11 @@ export function RenameKeysDialog({
                 keyRecord={keyRecord}
                 editing={editing === keyRecord.id}
                 disabled={editing !== null && editing !== keyRecord.id}
+                keeping={keeping === keyRecord.id}
+                keepDisabled={editing !== null || keeping !== null}
+                keepFailure={keepFailure?.id === keyRecord.id ? keepFailure.message : null}
                 onEdit={() => setEditing(keyRecord.id)}
+                onKeep={() => void keep(keyRecord)}
                 onSaved={(saved) => {
                   onSaved(saved);
                   stopEditing(keyRecord.id);
