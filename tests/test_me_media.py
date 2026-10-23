@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from gateway import (
+    accounts,
     admin_store,
     mcp_oauth_store,
     media_delivery,
@@ -688,6 +689,22 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(deleted, 1)
         self.assertIsNone(request_history.get_row(stored[library_request_id]["record_id"], path=self.jobs_db))
         self.assertIsNotNone(request_history.get_row(stored[chat_request_id]["record_id"], path=self.jobs_db))
+
+    def test_removing_a_person_explicitly_erases_all_request_history(self) -> None:
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": "req_account_removal_chat",
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "chat"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/chat/completions", "model": "chat", "status": 200, "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        with patch.object(media_jobs, "DB_PATH", self.jobs_db):
+            accounts.change_person(self.alice["id"], self.owner["id"], remove=True, path=self.admin_db)
+
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
 
     def test_deleting_old_asset_uses_its_receipt_after_an_idempotency_key_is_reused(self) -> None:
         old_asset = "img_" + "8" * 64

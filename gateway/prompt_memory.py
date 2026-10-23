@@ -465,15 +465,19 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:
-    """Delete a person's Library prompts, hides and request history in one transaction."""
+    """Delete a person's Library prompts, hides and linked request history in one transaction."""
     conn = _connect(path)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
-        media_jobs.delete_person_hides_in(conn, person_id)
+        asset_ids = [str(row[0]) for row in conn.execute(
+            "SELECT asset_id FROM asset_prompts WHERE person_id=?", (person_id,),
+        ).fetchall()]
+        request_ids = media_jobs.request_ids_for_assets_in(conn, asset_ids)
         from gateway import request_history
 
-        request_history.delete_person_in(conn, person_id)
+        request_history.delete_linked_in(conn, person_id, request_ids)
+        count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
+        media_jobs.delete_person_hides_in(conn, person_id)
         conn.commit()
         return count
     except BaseException:

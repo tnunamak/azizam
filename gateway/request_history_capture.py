@@ -453,6 +453,7 @@ class _Capture:
         outcome = no_history_outcome
         written: list[str] = []
         prompt_outcomes: list[retention.WriteOutcome] = []
+        erased_by_library = False
 
         def commit(
             history_values: tuple[int | None, tuple[str, ...]] | None,
@@ -460,8 +461,24 @@ class _Capture:
         ) -> None:
             # The one admin lock is held by retention.write_media_capture. Keep prompt and history writes in the same
             # short media transaction, with admin.db always acquired first.
-            nonlocal written
+            nonlocal written, erased_by_library
             with request_history.write_transaction(self.media_path) as conn:
+                origins = {
+                    str(value)
+                    for value in (
+                        (record or {}).get("request_id"), receipt_id,
+                        *media_jobs.request_ids_for_assets_in(
+                            conn, [str(prompt["asset_id"]) for prompt in prompt_records if prompt.get("asset_id")],
+                        ),
+                    )
+                    if value
+                }
+                if person_id and any(
+                    media_jobs.library_origin_erased_in(conn, person_id, origin)
+                    for origin in origins
+                ):
+                    erased_by_library = True
+                    return
                 for prompt in prompt_records:
                     from gateway import prompt_memory
 
@@ -480,6 +497,9 @@ class _Capture:
                 admin_path=admin_path, person_id=person_id, created_at=created_at or self.started,
                 decision=decision, prompts=[prompt for prompt, _ in prompts], commit=commit,
             )
+            if erased_by_library:
+                history_result = retention.WriteOutcome(False, "erasure_cutoff")
+                prompt_outcomes = [retention.WriteOutcome(False, "erasure_cutoff") for _ in prompts]
             if record is not None:
                 outcome = history_result
         except Exception:

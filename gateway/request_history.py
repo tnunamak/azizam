@@ -756,9 +756,14 @@ def delete_row(record_id: str, *, path: Path | None = None) -> bool:
 
 
 def delete_linked_in(conn: sqlite3.Connection, person_id: str, request_ids: Iterable[str]) -> int:
-    """Delete one person's history rows for these media request IDs inside the caller's transaction."""
+    """Fence and delete this person's history for Library origins inside the caller's transaction."""
     ids = sorted({str(request_id) for request_id in request_ids if request_id})
-    if not ids or not _has_table(conn, "kept_requests"):
+    if not ids:
+        return 0
+    from gateway import media_jobs
+
+    media_jobs.fence_library_origins_in(conn, person_id, ids)
+    if not _has_table(conn, "kept_requests"):
         return 0
     deleted = 0
     for offset in range(0, len(ids), 500):
@@ -770,14 +775,6 @@ def delete_linked_in(conn: sqlite3.Connection, person_id: str, request_ids: Iter
         )
         deleted += cursor.rowcount
     return deleted
-
-
-def delete_person_in(conn: sqlite3.Connection, person_id: str) -> int:
-    """Delete all of one person's request history inside the caller's transaction."""
-    if not _has_table(conn, "kept_requests"):
-        return 0
-    cursor = conn.execute("DELETE FROM kept_requests WHERE kind=? AND person_id=?", (KIND, person_id))
-    return cursor.rowcount
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
