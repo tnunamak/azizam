@@ -2181,8 +2181,14 @@ def _owner_only_ever(conn: sqlite3.Connection, person_id: str) -> bool:
     ).fetchone() is not None
 
 
-def _keep_provable(conn: sqlite3.Connection, person_id: str, creations: list[tuple[str, str | None]]) -> bool:
-    """A binding is kept only when nobody else could have made it: the owner, and no audit event names another maker."""
+def _keep_provable(conn: sqlite3.Connection, person_id: str, recorded: str | None,
+                   creations: list[tuple[str, str | None]]) -> bool:
+    """A binding is kept only when nobody else could have made it.
+
+    That needs the owner, a creator on record that is unknown or the person, and no audit event that names another maker.
+    """
+    if recorded not in (None, "", person_id):
+        return False
     return _owner_only_ever(conn, person_id) and all(
         kind == "user" and actor == person_id for kind, actor in creations)
 
@@ -2233,7 +2239,7 @@ def adopt_app_credential(
         if row["created_by"] == person_id:
             conn.rollback()
             return _credential_row_to_dict(row)
-        if not _keep_provable(conn, person_id, _key_creations(conn, cred_id)):
+        if not _keep_provable(conn, person_id, row["created_by"], _key_creations(conn, cred_id)):
             conn.rollback()
             raise KeepNotProvable("this key cannot be kept")
         conn.execute("UPDATE credentials SET created_by = ? WHERE id = ?", (person_id, cred_id))
@@ -2271,7 +2277,7 @@ def adopt_trusted_address(
         if row["created_by"] == person_id:
             conn.rollback()
             return _row_to_dict(row)
-        if not _keep_provable(conn, person_id, _address_creations(conn, app_id, entry_id)):
+        if not _keep_provable(conn, person_id, row["created_by"], _address_creations(conn, app_id, entry_id)):
             conn.rollback()
             raise KeepNotProvable("this address cannot be kept")
         conn.execute("UPDATE app_trusted_addresses SET created_by = ? WHERE id = ?", (person_id, entry_id))
