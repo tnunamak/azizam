@@ -130,10 +130,12 @@ def test_r7_1_k_punctuation_after_a_query_goes_with_the_query_and_after_a_path_i
     assert kept == {"a": "see https://h.test/a?[removed] then", "b": "see https://h.test/a."}
 
 
-def test_r7_1_l_a_scheme_inside_a_query_starts_a_new_url():
-    kept, _ = request_history.redact_json({"u": "https://h.test/a?next=" + _url("u:" + SECRET, "x.test/")})
+def test_r7_1_l_a_scheme_inside_a_query_does_not_start_a_url():
+    """Round 9 (R9-1) replaces this rule: a scheme after ``=`` begins no token, so the whole URL is replaced."""
+    kept, found = request_history.redact_json({"u": "https://h.test/a?next=" + _url("u:" + SECRET, "x.test/")})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"u": "https://h.test/a?[removed][url removed]"}
+    assert kept == {"u": "[url removed]"}
+    assert found == ["url_parts_removed"]
 
 
 @pytest.mark.parametrize("text", [("a" * 100_000) + " " + ("a" * 100_000), ("a1" * 100_000) + " x"])
@@ -146,11 +148,12 @@ def test_r7_1_m_a_long_run_of_letters_is_read_in_linear_time(text):
     assert found == []
 
 
-def test_r7_1_n_many_schemes_in_one_value_are_each_replaced_in_linear_time():
+def test_r7_1_n_many_schemes_in_one_token_are_replaced_as_one_in_linear_time():
+    """A token that holds many ``://`` is replaced once, as one ambiguous token (R9-1), in linear time."""
     started = time.perf_counter()
     kept, _ = request_history.redact_json({"content": "a://" * 20_000})
     assert time.perf_counter() - started < 5
-    assert kept == {"content": "[url removed]" * 20_000}
+    assert kept == {"content": "[url removed]"}
 
 
 # ------------------------------------------------------------------ R7-2: a literal's decoded text is cleaned as text
