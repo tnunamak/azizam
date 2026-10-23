@@ -262,6 +262,7 @@ def create_request_history_router(
             "retention": member.get("retention", defaults["retention"]),
             "parts": member.get("parts", list(retention.bundled().parts(retention.REQUEST_HISTORY))),
             "choices": list(retention.bundled().data["groups"][GROUP]["choices"]),
+            "allowed_parts": list(retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["parts"]["allowed"]),
             "notice_due": request_history.notice_due(person_id, admin_path=admin_path()),
         }
 
