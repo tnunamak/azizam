@@ -192,6 +192,9 @@ def writers() -> set[str]:
 # SQL that is not one written-out string, in the modules that write credential tables, with why it cannot hide a
 # credential write. Each function is listed, not each call; the strings in it are still searched (``writers_in``).
 DYNAMIC_SQL = {
+    "gateway/app_binding_guard.py::install": "runs each guard's DROP and CREATE from the module's own GUARDS constant; writes no credential row",
+    "gateway/app_binding_guard.py::_refused": "runs one forbidden statement from self_test inside its rolled-back savepoint; only the self-test's fixtures are written",
+    "gateway/app_binding_guard.py::self_test": "runs the forbidden and permitted statements listed in its own tuples inside a savepoint that is rolled back before it returns",
     "gateway/admin_store.py::_exec_schema": "executes the module's own schema and migration text",
     "gateway/admin_store.py::_drop_identity_profile_grants": "drops and counts retired tables by a name from a fixed tuple",
     "gateway/admin_store.py::get_users": "SELECT with a placeholder per id",

@@ -624,19 +624,25 @@ class SessionAppStoreTests(unittest.TestCase):
         return "cred_legacy"
 
     def test_no_one_can_create_a_key_for_a_session_app(self) -> None:
-        from gateway.admin_api import AdminContext
+        from gateway.admin_api import AdminContext, NotYourApp
         from gateway.admin_runtime import AdminSQLiteStore
 
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
                                                hash="h" * 64, prefix="opk_x", path=self.admin, created_by=accountable_person(self.admin, app["id"]))
-        for actor in ("admin", self.user["id"]):
-            with self.subTest(actor=actor), self.assertRaises(ValueError):
-                AdminSQLiteStore(self.admin).create_credential(
-                    app_id=app["id"], data={},
-                    actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"owner"})),
-                )
+        # An administrator is not the person the session App answers for: not_your_app. That person is refused
+        # because a session App never holds a key (ValueError).
+        with self.subTest(actor="admin"), self.assertRaises(NotYourApp):
+            AdminSQLiteStore(self.admin).create_credential(
+                app_id=app["id"], data={},
+                actor=AdminContext(subject="admin", actor_id="admin", roles=frozenset({"owner"})),
+            )
+        with self.subTest(actor="the person"), self.assertRaises(ValueError):
+            AdminSQLiteStore(self.admin).create_credential(
+                app_id=app["id"], data={},
+                actor=AdminContext(subject=self.user["id"], actor_id=self.user["id"], roles=frozenset({"owner"})),
+            )
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
