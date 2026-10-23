@@ -15,6 +15,11 @@ processes = 0         # no request starts a process (ffprobe, systemctl, ...)
 # reason, and the table may only shrink.
 [api.routes]
 # "/some/route" = { p95_ms = 250, reason = "..." }
+# Home's first read after the 12 s status cache expires (api_bench.py cold_home_row). This row is new with the
+# change that stopped Home from running the whole status page (GPU, disks, logs, git). Before it: 38 processes,
+# 308 statements, 1.1 s on the fixture (p95). After: 13 processes, 45 statements, 0.14 s. The 13 are one
+# systemctl check per lifecycle engine in the engine grid; processes are the exemption and should shrink.
+"/me/api/home (status cache expired)" = { p95_ms = 1500, statements = 120, processes = 20, reason = "cold engine grid: one systemctl check per lifecycle engine" }
 
 [ui]
 ready_ms = 500        # last change to <main> after navigation, warm HTTP cache, 1440 px wide
