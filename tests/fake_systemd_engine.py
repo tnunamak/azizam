@@ -92,11 +92,18 @@ class FakeEngine:
                 return line.removeprefix("# Activation profile: ").strip()
         return "unknown"
 
-    async def run(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
-        # The seam the gateway calls (off_loop_spawn.run): the same fake answer, as a CompletedProcess.
-        proc = await self.exec(*argv, **kwargs)
-        stdout, stderr = await proc.communicate()
-        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    async def run(self, argv: list[str], *, timeout: float | None = None, **kwargs: Any) -> subprocess.CompletedProcess:
+        # The seam the gateway calls (off_loop_spawn.run): the same fake answer, as a CompletedProcess. A call past
+        # its timeout raises TimeoutExpired, as subprocess.run does, so a gate the fake holds cannot hang a test.
+        async def call() -> subprocess.CompletedProcess:
+            proc = await self.exec(*argv, **kwargs)
+            stdout, stderr = await proc.communicate()
+            return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+
+        try:
+            return await asyncio.wait_for(call(), timeout)
+        except asyncio.TimeoutError as error:
+            raise subprocess.TimeoutExpired(argv, timeout) from error
 
     async def exec(self, *cmd: str, **_kwargs: Any) -> _Proc:
         verb = cmd[2] if cmd[1] == "--user" else cmd[1]
