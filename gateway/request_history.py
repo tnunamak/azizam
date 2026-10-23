@@ -116,9 +116,10 @@ def segments(name: str) -> list[str]:
 def _forms(word: str) -> set[str]:
     """What a word may mean: as written without its digits, and without one trailing ``s``. ``password1`` and
     ``secrets`` read as ``password`` and ``secret``; ``access`` reads as itself, as it is a credential word."""
-    stem = word
-    while stem and stem[-1].isdecimal():  # a backwards scan: re ``\d+$`` retries from every digit, which is quadratic
-        stem = stem[:-1]
+    end = len(word)
+    while end and word[end - 1].isdecimal():  # one backwards scan: re ``\d+$`` retried from every digit, quadratic
+        end -= 1
+    stem = word[:end]
     forms = {stem}
     if len(stem) > 1 and stem.endswith("s"):
         forms.add(stem[:-1])

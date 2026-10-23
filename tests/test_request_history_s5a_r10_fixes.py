@@ -41,4 +41,5 @@ def test_a_long_run_of_digits_in_a_name_is_read_in_linear_time():
     import time
     start = time.monotonic()
     request_history.is_credential_name("1" * 200_000 + "a")
+    request_history.is_credential_name("password" + "1" * 200_000)
     assert time.monotonic() - start < 2.0
