@@ -1,18 +1,26 @@
 import type { Page } from "@playwright/test";
 import { fulfilJson } from "./fixtures/intercept";
-import { expect, test } from "./fixtures/isolation";
+import { expect, ownerApi, test } from "./fixtures/isolation";
 
-// A person keeps a key that was made before its creator was recorded, from the Apps page. The gateway
-// records a creator for every key it makes now, so the snapshot the browser reads first says this key has
-// none (a slice of the real response, checked by fulfilJson). Keeping goes to the real gateway, and every
-// snapshot after it is the real one, so the notice and the check line go away only because the gateway said so.
+// A binding the App-binding cut-over would remove shows the one remedy the gateway names, on the Apps page. Each flow
+// changes the browser's copy of the snapshot to say what the gateway would say for that binding, then sends the
+// action to the real gateway. Every snapshot after the action is the real one, so the notice and the check line go
+// away only because the gateway said so.
+//
+// Who may keep decides the flow. Only the owner keeps, and only a key nobody else could have made: the owner's own
+// key is kept (the gateway already records the owner). A member cannot keep their key, so the member replaces it.
 const viewports = [
   { label: "desktop", width: 1440, height: 900 },
   { label: "phone", width: 390, height: 844 },
 ] as const;
 
-const KEY_NOTICE =
+const KEEP_NOTICE =
   "Made before Azizam recorded who made keys. Keep it, or it stops working at the next ownership update.";
+const REPLACE_NOTICE =
+  "Made before Azizam recorded who made keys. It stops working at the next ownership update. Replace it with a new key.";
+const ADD_AGAIN_NOTICE =
+  "Made by Alex. It stops working at the next ownership update. Add it again yourself to keep it.";
+const ADDRESS = "10.42.7.9";
 
 async function noSideways(page: Page, where: string) {
   const { scrollWidth, clientWidth } = await page.evaluate(() => ({
@@ -23,11 +31,7 @@ async function noSideways(page: Page, where: string) {
 }
 
 for (const viewport of viewports) {
-  test(`keep a key made before its creator was recorded, from the Apps page (${viewport.label})`, async ({
-    isolated,
-  }) => {
-    const member = await isolated.member({ name: "Keep member" });
-    const page = member.page;
+  test(`keep a key the cut-over would remove, from the Apps page (${viewport.label})`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
 
     let kept = false;
@@ -36,15 +40,22 @@ for (const viewport of viewports) {
         kept = true;
       }
     });
+    // The owner's first key, on the first App that has one: the browser's copy says the cut-over would remove it and
+    // that the owner keeps it. The gateway records the owner as its maker, so the keep leaves it as it is.
+    let target = { appId: "", keyId: "" };
     await page.route("**/me/api/session", async (route) => {
       if (kept) return route.continue();
       const response = await route.fetch();
       const actual = await response.json();
+      const app = actual.apps.find((item: { credentials: unknown[] }) => item.credentials.length > 0);
+      target = { appId: app.id, keyId: app.credentials[0].id };
       const before = {
         ...actual,
-        apps: actual.apps.map((app: { credentials: { created_by: string | null }[] }) => ({
-          ...app,
-          credentials: app.credentials.map((key) => ({ ...key, created_by: null })),
+        apps: actual.apps.map((item: { id: string; credentials: { id: string }[] }) => ({
+          ...item,
+          credentials: item.credentials.map((key) =>
+            key.id === target.keyId ? { ...key, created_by: null, cutover: "keep" } : key,
+          ),
         })),
       };
       await fulfilJson(route, before, { response });
@@ -60,11 +71,11 @@ for (const viewport of viewports) {
     });
 
     await checkLine.click();
-    await page.getByRole("button", { name: /^Actions for / }).click();
+    await page.locator(`#app-actions-${target.appId}`).click();
     await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
     const keys = page.getByRole("dialog", { name: /^Keys for / });
     await expect(keys).toBeVisible();
-    await expect(keys.getByText(KEY_NOTICE, { exact: true })).toBeVisible();
+    await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toBeVisible();
     await noSideways(page, "the keys dialog with the keep notice");
     await page.screenshot({
       path: `test-results/screens/keep-binding-keys-${viewport.width}.png`,
@@ -72,7 +83,7 @@ for (const viewport of viewports) {
     });
 
     await keys.getByRole("button", { name: /^Keep key / }).click();
-    await expect(keys.getByText(KEY_NOTICE, { exact: true })).toHaveCount(0);
+    await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toHaveCount(0);
     await expect(keys.getByRole("button", { name: /^Keep key / })).toHaveCount(0);
     await expect(keys.getByRole("button", { name: /^Rename key / })).toBeFocused();
     await keys.getByRole("button", { name: "Done", exact: true }).click();
@@ -81,7 +92,152 @@ for (const viewport of viewports) {
 
     // The kept key stays kept after a reload: the snapshot now comes from the gateway itself.
     await page.reload();
+    await expect(page.getByRole("button", { name: /^Actions for / }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+  });
+
+  test(`replace a key the cut-over would remove, from the Apps page (${viewport.label})`, async ({ isolated }) => {
+    const member = await isolated.member({ name: "Replace member" });
+    const page = member.page;
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+
+    let replaced = false;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && /\/me\/api\/credentials\/[^/]+\/replace$/.test(new URL(request.url()).pathname)) {
+        replaced = true;
+      }
+    });
+    // The member's key: the owner exists and is the only one who may keep, so the gateway says replace.
+    await page.route("**/me/api/session", async (route) => {
+      if (replaced) return route.continue();
+      const response = await route.fetch();
+      const actual = await response.json();
+      const before = {
+        ...actual,
+        apps: actual.apps.map((app: { credentials: Record<string, unknown>[] }) => ({
+          ...app,
+          credentials: app.credentials.map((key) => ({ ...key, created_by: null, cutover: "replace" })),
+        })),
+      };
+      await fulfilJson(route, before, { response });
+    });
+
+    await page.goto("/apps/");
+    const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
+    await expect(checkLine).toBeVisible();
+    await noSideways(page, "the Apps page with the check line");
+    await checkLine.click();
+    await page.getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
+    const keys = page.getByRole("dialog", { name: /^Keys for / });
+    await expect(keys.getByText(REPLACE_NOTICE, { exact: true })).toBeVisible();
+    await expect(keys.getByRole("button", { name: /^Keep key / })).toHaveCount(0);
+    await noSideways(page, "the keys dialog with the replace notice");
+    await page.screenshot({
+      path: `test-results/screens/keep-binding-replace-keys-${viewport.width}.png`,
+      animations: "disabled",
+    });
+
+    await keys.getByRole("button", { name: /^Replace key / }).click();
+    const reveal = page.getByRole("dialog", { name: /^Connect / });
+    await expect(reveal.getByRole("textbox", { name: "Your key" })).toHaveValue(/^opk_/);
+    await expect(reveal.getByText("Copy the key now. It is shown only once.")).toBeVisible();
+    // The old key is revoked now. The member's principal lives on under the new key, which the teardown checks.
+    member.key = await reveal.getByRole("textbox", { name: "Your key" }).inputValue();
+    await noSideways(page, "the new key reveal");
+    await page.screenshot({
+      path: `test-results/screens/keep-binding-replace-reveal-${viewport.width}.png`,
+      animations: "disabled",
+    });
+
+    await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
+    await expect(reveal).not.toBeVisible();
+    await expect(keys.getByText(REPLACE_NOTICE, { exact: true })).toHaveCount(0);
+    await expect(keys.getByRole("button", { name: /^Replace key / })).toHaveCount(0);
+    await expect(keys.getByRole("button", { name: /^Rename key / })).toBeFocused();
+    await keys.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(keys).not.toBeVisible();
+    await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+
+    // The new key stays after a reload, and the old one is gone from the gateway's answer.
+    await page.reload();
     await expect(page.getByRole("button", { name: /^Actions for / })).toBeVisible();
     await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+  });
+
+  test(`add an address again, from the Apps page (${viewport.label})`, async ({ page, request }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    // The owner's own App takes a real address made by the owner. The browser's copy says another person made it,
+    // so the gateway would remove it and the owner adds it again. The address is removed when the test ends.
+    const owner = await ownerApi(request);
+    const { apps } = await (await page.request.get("/me/api/session")).json();
+    const app = apps.find((item: { disabled_at: unknown }) => !item.disabled_at) ?? apps[0];
+    const added = (await owner.send("POST", `/admin/api/apps/${app.id}/trusted-addresses`, {
+      address: ADDRESS,
+      note: "Hall speaker",
+    })) as { trusted_address: { id: string } };
+    const entryId = added.trusted_address.id;
+    try {
+      let readded = false;
+      page.on("request", (request) => {
+        if (request.method() === "POST" && new URL(request.url()).pathname === `/me/api/apps/${app.id}/trusted-addresses`) {
+          readded = true;
+        }
+      });
+      await page.route("**/me/api/session", async (route) => {
+        if (readded) return route.continue();
+        const response = await route.fetch();
+        const actual = await response.json();
+        const before = {
+          ...actual,
+          apps: actual.apps.map((item: { id: string }) =>
+            item.id === app.id ? { ...item, addresses_to_check: 1 } : item,
+          ),
+        };
+        await fulfilJson(route, before, { response });
+      });
+      await page.route(`**/admin/api/apps/${app.id}/trusted-addresses`, async (route) => {
+        if (readded || route.request().method() !== "GET") return route.continue();
+        const response = await route.fetch();
+        const actual = await response.json();
+        const before = {
+          trusted_addresses: actual.trusted_addresses.map((entry: { id: string }) =>
+            entry.id === entryId
+              ? { ...entry, created_by: "someone-else", made_by_name: "Alex", cutover: "readd" }
+              : entry,
+          ),
+        };
+        await fulfilJson(route, before, { response });
+      });
+
+      await page.goto("/apps/");
+      const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
+      await expect(checkLine).toBeVisible();
+      await checkLine.click();
+      await page.locator(`#app-actions-${app.id}`).click();
+      await page.getByRole("menuitem", { name: "Trusted addresses", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toBeVisible();
+      await noSideways(page, "the trusted addresses dialog with the add-again notice");
+      await page.screenshot({
+        path: `test-results/screens/keep-binding-readd-${viewport.width}.png`,
+        animations: "disabled",
+      });
+
+      await dialog.getByRole("button", { name: `Add address ${ADDRESS} again` }).click();
+      await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toHaveCount(0);
+      await expect(dialog.getByRole("button", { name: /^Add address / })).toHaveCount(0);
+      await expect(dialog.getByRole("button", { name: `Remove ${ADDRESS}` })).toBeFocused();
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+    } finally {
+      const listed = (await owner.get(`/admin/api/apps/${app.id}/trusted-addresses`)) as {
+        trusted_addresses: { id: string; address: string }[];
+      };
+      for (const entry of listed.trusted_addresses.filter((item) => item.address === ADDRESS)) {
+        await owner.send("DELETE", `/admin/api/apps/${app.id}/trusted-addresses/${entry.id}`);
+      }
+    }
   });
 }

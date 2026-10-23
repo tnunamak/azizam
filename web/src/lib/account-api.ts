@@ -24,8 +24,13 @@ export interface AccountApp {
   } | null;
   can_mint_keys: boolean;
   credentials: Credential[];
-  /** Trusted addresses on this app that have no recorded creator. Sent to the owner only. */
-  addresses_without_creator?: number;
+  /** Trusted addresses on this app that the cut-over would remove, each with a remedy. Sent to the owner only. */
+  addresses_to_check?: number;
+}
+/** A replacement: the new key (its secret, shown once, in `credential.api_key`) and the id of the key it replaced. */
+export interface ReplacedKey {
+  credential: MintedCredential;
+  replaced_credential_id: string;
 }
 /** The Try page's key for this sign-in. A reused key comes without its
  * secret: the browser kept it from the mint. */
@@ -194,6 +199,30 @@ export const accountApi = {
     accountRequest(
       `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/adopt`,
       { method: "POST" },
+    ),
+  /** Replace a key that cannot be kept: a new key on the same app, and this one revoked. The secret comes back once. */
+  replaceKey: (credentialId: string) =>
+    accountRequest<ReplacedKey>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}/replace`,
+      { method: "POST" },
+    ),
+  /** Trust an address on an app the person answers for. An app holds each address once. */
+  addTrustedAddress: (
+    appId: string,
+    entry: { address: string; note: string },
+  ) =>
+    accountRequest<{ trusted_address: { id: string } }>(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses`,
+      {
+        method: "POST",
+        body: entry,
+      },
+    ),
+  /** Stop trusting one address on an app the person answers for. */
+  removeTrustedAddress: (appId: string, entryId: string) =>
+    accountRequest(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}`,
+      { method: "DELETE" },
     ),
   deleteApp: (appId: string) =>
     accountRequest(`/me/api/apps/${encodeURIComponent(appId)}`, {

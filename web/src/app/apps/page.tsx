@@ -18,6 +18,7 @@ import {
   accountApi,
   type AccountApp,
   type AccountSnapshot,
+  type ReplacedKey,
 } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,11 +116,12 @@ function mintBlockedReason(app: AccountApp): string {
   return "You can't create keys for this app. Ask the owner to update its access.";
 }
 
-/** Keys and addresses with no recorded creator: the cut-over revokes them unless the person keeps them. */
-function unkeptCount(app: AccountApp): number {
+/** Keys and addresses the cut-over would remove from this app. Each one has a remedy the gateway names: keep it,
+ * replace it, or add it again. */
+function needsCheckCount(app: AccountApp): number {
   return (
-    app.credentials.filter((key) => key.created_by === null).length +
-    (app.addresses_without_creator ?? 0)
+    app.credentials.filter((key) => key.cutover !== undefined).length +
+    (app.addresses_to_check ?? 0)
   );
 }
 
@@ -207,6 +209,10 @@ function AppsContents() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  // The key row that takes focus when a replacement's reveal closes (its keys dialog may still be open).
+  const revealFocusId = useRef<string | null>(null);
+  // The personal app's key being replaced from its row.
+  const [replacingKeyId, setReplacingKeyId] = useState<string | null>(null);
   const [action, setAction] = useState<KeyAction | null>(null);
   const [trustingApp, setTrustingApp] = useState<AccountApp | null>(null);
   const [renamingApp, setRenamingApp] = useState<AccountApp | null>(null);
@@ -320,6 +326,15 @@ function AppsContents() {
 
   function restoreDialogFocus(event: Event) {
     event.preventDefault();
+    // A replaced key's new row takes focus when its reveal closes, if its keys dialog is still open.
+    const replacedRow = revealFocusId.current
+      ? document.getElementById(revealFocusId.current)
+      : null;
+    revealFocusId.current = null;
+    if (replacedRow) {
+      replacedRow.focus();
+      return;
+    }
     // A create/rotate dialog may be handing focus to the key reveal.
     if (
       creating ||
@@ -467,6 +482,61 @@ function AppsContents() {
     );
     toast.success(message);
     void refresh();
+  }
+
+  /** A key was replaced: its old row goes at once and the new key is shown once in the reveal. The secret stays
+   * out of the cached list, which keeps only the new key's record. */
+  function showReplacement(app: AccountApp, replaced: ReplacedKey) {
+    const { api_key: secret, prompt_memory: prompt, ...record } = replaced.credential;
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) =>
+              item.id !== app.id
+                ? item
+                : {
+                    ...item,
+                    credentials: [
+                      ...item.credentials.filter((key) => key.id !== replaced.replaced_credential_id),
+                      record,
+                    ],
+                  },
+            ),
+          }
+        : current,
+    );
+    revealFocusId.current = `rename-key-${record.id}`;
+    setGuideApp(guideForName(app.name));
+    setSaved(false);
+    setReveal({
+      secret,
+      appId: app.id,
+      app: formatAppName(app.name, accountData?.user?.email),
+      oldIds: [],
+      note: keyPromptNote(prompt),
+    });
+    void refresh();
+  }
+
+  /** The personal app's one replacement, from its row. Its keys dialog is not open, so focus returns to the row. */
+  async function replaceFromRow(app: AccountApp, keyRecord: Credential) {
+    rememberAppFocus(app.id);
+    setBusy(true);
+    setReplacingKeyId(keyRecord.id);
+    setError(null);
+    try {
+      showReplacement(app, await accountApi.replaceKey(keyRecord.id));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "The key could not be replaced. Try again.",
+      );
+    } finally {
+      setReplacingKeyId(null);
+      setBusy(false);
+    }
   }
 
   async function changeAccess() {
@@ -668,8 +738,8 @@ function AppsContents() {
         .filter(Boolean)
         .join(". ")
     : "";
-  const needsCheck = apps.filter((app) => unkeptCount(app) > 0);
-  const checkCount = needsCheck.reduce((total, app) => total + unkeptCount(app), 0);
+  const needsCheck = apps.filter((app) => needsCheckCount(app) > 0);
+  const checkCount = needsCheck.reduce((total, app) => total + needsCheckCount(app), 0);
   return (
     <div className="space-y-8">
       <PageHeader
@@ -753,19 +823,25 @@ function AppsContents() {
             const oldKeys = (unfinished[app.id] ?? []).filter((id) =>
               activeIds.has(id),
             );
-            // Keys with no recorded creator still work but cannot save the
-            // member's prompts; only a personal app's key acts as its member.
-            const needsNewKey =
-              app.kind === "personal" &&
-              app.credentials.some((key) => key.created_by === null);
+            // A personal app's key the cut-over removes, and the person must replace: its keys cannot save the
+            // member's prompts. The row offers that replacement only when one key needs it; the keys dialog
+            // offers the same replacement for each key.
+            const replaceable =
+              app.kind === "personal"
+                ? app.credentials.filter((key) => key.cutover === "replace")
+                : [];
+            const needsNewKey = replaceable.length > 0;
+            const rowReplace =
+              needsNewKey && app.can_mint_keys && replaceable.length === 1
+                ? replaceable[0]
+                : null;
             const blockedReason = app.can_mint_keys
               ? null
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
             // A notice must stay whole on a phone, where there is no hover:
             // its meta line wraps and a row action moves under it.
-            const hasAction =
-              oldKeys.length > 0 || (needsNewKey && app.can_mint_keys);
+            const hasAction = oldKeys.length > 0 || rowReplace !== null;
             const hasNotice = hasAction || blockedReason !== null;
             return (
               <ListRow
@@ -844,17 +920,13 @@ function AppsContents() {
                       >
                         Create key
                       </Button>
-                    ) : needsNewKey && app.can_mint_keys ? (
+                    ) : rowReplace !== null ? (
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={(event) => {
-                          rememberAppFocus(app.id, event.currentTarget);
-                          setAction({ kind: "rotate", app });
-                          setError(null);
-                        }}
+                        onClick={() => void replaceFromRow(app, rowReplace)}
                       >
-                        Replace key
+                        {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
                       </Button>
                     ) : null}
                     <DropdownMenu>
@@ -1143,7 +1215,7 @@ function AppsContents() {
             : ""
         }
         onClose={() => setTrustingApp(null)}
-        onKept={() => void refresh()}
+        onChanged={() => void refresh()}
       />
       <RenameAppDialog
         app={renamingApp}
@@ -1167,6 +1239,9 @@ function AppsContents() {
         }
         onSaved={putKey}
         onKept={(saved) => putKey(saved, "Key kept")}
+        onReplaced={(replaced) => {
+          if (keysApp) showReplacement(keysApp, replaced);
+        }}
         onClose={() => setRenamingKeysOf(null)}
         onCloseAutoFocus={restoreDialogFocus}
       />
