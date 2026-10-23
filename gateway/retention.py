@@ -598,41 +598,66 @@ def guard(admin_path: Path | None, person_id: str | None = None,
     across gateway processes because it is a SQLite transaction. The member row
     and the erasure cutoffs are the ones of ``group`` (section 3.2).
     """
+    with guard_groups(admin_path, person_id, (group,)) as policies:
+        yield policies[group]
+
+
+@contextmanager
+def guard_groups(
+    admin_path: Path | None, person_id: str | None, groups: tuple[str, ...],
+) -> Iterator[dict[str, dict[str, Any]]]:
+    """Hold one admin write lock while reading policy for several content groups.
+
+    Media capture uses this to fence its Library prompt and request-history writes together. The groups still have
+    separate choices and erasure cutoffs; they share only the SQLite transaction that keeps policy stable while the
+    media database transaction commits.
+    """
+    if not groups or len(set(groups)) != len(groups) or any(group not in GROUP_KINDS for group in groups):
+        raise ValueError("one or more known retention groups are required")
     contract = bundled()
-    kind = GROUP_KINDS[group][0]
-    defaults = contract.household_defaults(kind)
-    member_default = contract.member_defaults(kind)
     if admin_path is None:
-        yield {**defaults, **member_default}
+        yield {
+            group: {**contract.household_defaults(GROUP_KINDS[group][0]),
+                    **contract.member_defaults(GROUP_KINDS[group][0])}
+            for group in groups
+        }
         return
     conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (SETTING_KEY,)).fetchone()
-        household_policy = {**defaults, **(household_view(json.loads(row[0]), group) if row else {})}
+        household_document = json.loads(row[0]) if row else None
         ensure_erasure_cutoff_table(conn)
-        erased = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp=?", (group,),
+        policies: dict[str, dict[str, Any]] = {}
+        user_exists = (not person_id or conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone()
+                       is not None)
+        account_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
         ).fetchone()
-        household_cutoff = int(erased[0]) if erased else 0
-        member = None
-        person_enabled = True
-        forgot_before = household_cutoff
-        if person_id:
+        access = (conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,)).fetchone()
+                  if person_id and user_exists and account_table is not None else None)
+        person_enabled = user_exists and (access is None or (access[0] is None and access[1] is None))
+        for group in groups:
+            kind = GROUP_KINDS[group][0]
+            defaults = contract.household_defaults(kind)
+            member_default = contract.member_defaults(kind)
+            household_policy = {**defaults, **(household_view(household_document, group) if household_document else {})}
             erased = conn.execute(
-                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp=?", (person_id, group),
+                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp=?", (group,),
             ).fetchone()
-            forgot_before = max(household_cutoff, int(erased[0]) if erased else 0)
-            member = conn.execute(
-                f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
-                (person_id, group),
-            ).fetchone()
-            user_exists = conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is not None
-            if not user_exists:
-                person_enabled = False
-            else:
-                if member is None:
+            forgot_before = int(erased[0]) if erased else 0
+            member = None
+            if person_id:
+                erased = conn.execute(
+                    f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp=?", (person_id, group),
+                ).fetchone()
+                forgot_before = max(forgot_before, int(erased[0]) if erased else 0)
+                member = conn.execute(
+                    f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                    (person_id, group),
+                ).fetchone()
+                if user_exists and member is None:
                     conn.execute(
                         f"INSERT OR IGNORE INTO {MEMBER_TABLE}"
                         "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
@@ -644,23 +669,16 @@ def guard(admin_path: Path | None, person_id: str | None = None,
                         f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
                         (person_id, group),
                     ).fetchone()
-                account_table = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
-                ).fetchone()
-                if account_table is not None:
-                    access = conn.execute(
-                        "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
-                    ).fetchone()
-                    person_enabled = access is None or (access[0] is None and access[1] is None)
-        policy = {**household_policy,
-                  "remember": bool(member[0]) if member else household_policy["default_remember"],
-                  "retention": member[1] if member else member_default["retention"],
-                  "forgot_before": forgot_before}
-        if member and member[2]:
-            # A member's chosen parts (request history's "also keep replies"); absent means the kind's default.
-            policy["parts"] = json.loads(member[2])
-        policy["remember"] = bool(policy["remember"]) and person_enabled
-        yield policy
+            policy = {**household_policy,
+                      "remember": bool(member[0]) if member else household_policy["default_remember"],
+                      "retention": member[1] if member else member_default["retention"],
+                      "forgot_before": forgot_before}
+            if member and member[2]:
+                # A member's chosen parts (request history's "also keep replies"); absent means the kind's default.
+                policy["parts"] = json.loads(member[2])
+            policy["remember"] = bool(policy["remember"]) and person_enabled
+            policies[group] = policy
+        yield policies
         conn.commit()
     except Exception:
         conn.rollback()
@@ -793,3 +811,54 @@ def write(
     if on_result is not None:
         on_result(outcome)
     return outcome.kept
+
+
+def write_media_capture(
+    *, admin_path: Path | None, person_id: str | None, created_at: int,
+    decision: Decision | None, prompts: list[Mapping[str, Any]],
+    commit: Callable[[tuple[int | None, tuple[str, ...]] | None, list[dict[str, Any]]], Any],
+) -> tuple[WriteOutcome, list[WriteOutcome]]:
+    """Policy-check a request history row and its Library prompts, then commit them under one admin lock.
+
+    ``commit`` receives only rows allowed by the current policy. The caller writes them in one media database
+    transaction. A prompt can still be kept when request history is disabled or incomplete.
+    """
+    history_values: tuple[int | None, tuple[str, ...]] | None = None
+    history_outcome = WriteOutcome(False, decision.reason if decision is not None else "incomplete")
+    prompt_outcomes: list[WriteOutcome] = []
+    prompt_records: list[dict[str, Any]] = []
+    groups = (GROUP_PROMPTS, GROUP_REQUEST_HISTORY) if decision is not None else (GROUP_PROMPTS,)
+    with guard_groups(admin_path, person_id, groups) as policies:
+        if decision is not None:
+            history_values_holder: list[tuple[int | None, tuple[str, ...]]] = []
+            history_outcome = _request_history_outcome(
+                policies[GROUP_REQUEST_HISTORY], decision, created_at,
+                lambda deadline, parts: history_values_holder.append((deadline, parts)),
+            )
+            history_values = history_values_holder[0] if history_values_holder else None
+
+        prompt_policy = policies[GROUP_PROMPTS]
+        for record in prompts:
+            started = int(record["created_at"])
+            kept_until = record.get("kept_until")
+            allowed, deadline = _library_prompt_gate(prompt_policy, started, kept_until)
+            if allowed:
+                prompt_records.append({**record, "kept_until": deadline})
+                prompt_outcomes.append(WriteOutcome(
+                    True, "kept", deadline, _library_limit_source(prompt_policy, started, kept_until),
+                ))
+            else:
+                prompt_outcomes.append(WriteOutcome(
+                    False, _write_denial_reason(prompt_policy, started, deadline),
+                ))
+        if history_values is not None or prompt_records:
+            try:
+                commit(history_values, prompt_records)
+            except Exception:
+                if history_outcome.kept:
+                    history_outcome = WriteOutcome(False, "write_failed")
+                prompt_outcomes = [
+                    WriteOutcome(False, "write_failed") if result.kept else result
+                    for result in prompt_outcomes
+                ]
+    return history_outcome, prompt_outcomes

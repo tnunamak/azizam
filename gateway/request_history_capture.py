@@ -29,7 +29,7 @@ from typing import Any
 
 from starlette.responses import JSONResponse
 
-from gateway import admin_store, receipt_store, request_history, request_history_slot, retention
+from gateway import admin_store, media_jobs, receipt_store, request_history, request_history_slot, retention
 from gateway.extensions import ExtensionError, multipart_extensions
 
 log = logging.getLogger("gateway.request_history")
@@ -217,10 +217,11 @@ class RequestHistoryMiddleware:
                 return
             receive = _replay(chunks, receive, complete)  # the wrapper below feeds each replayed chunk, once
 
+        media_path = Path(self._media_path() or media_jobs.DB_PATH)
         capture = _Capture(self, state=state, headers=headers, header_forget=header_forget, limit=limit,
-                           route=scope["path"])
+                           route=scope["path"], media_path=media_path)
         receive_capture = capture.receive_wrapped(receive)
-        slot_token = request_history_slot.open_slot(scope["path"], forget=header_forget)
+        slot_token = request_history_slot.open_slot(scope["path"], forget=header_forget, media_path=media_path)
         try:
             await self.app(scope, receive_capture, capture.send_wrapped(send))
         finally:
@@ -235,19 +236,20 @@ class RequestHistoryMiddleware:
                 slot = request_history_slot.current()
                 receipt_id = slot.receipt_id if slot is not None else None
                 request_history_slot.close_slot(slot_token)
-                await _settle(capture, receipt_id)
+                await _settle(capture, receipt_id, slot)
 
 
 class _Capture:
     """One captured request: its body and reply as they stream past, and the decision made about them at its end."""
 
     def __init__(self, owner: RequestHistoryMiddleware, *, state: dict, headers: dict[str, str], header_forget: bool,
-                 limit: int, route: str) -> None:
+                 limit: int, route: str, media_path: Path) -> None:
         self._owner = owner
         self._state = state
         self._limit = limit
         self.header_forget = header_forget
         self.route = route
+        self.media_path = media_path
         self.request_headers = headers
         self.started = int(time.time())
         self._began = time.monotonic()
@@ -360,10 +362,10 @@ class _Capture:
 
         return wrapped
 
-    def finish(self, receipt_id: str | None) -> None:
+    def finish(self, receipt_id: str | None, slot: request_history_slot.Slot | None) -> None:
         """Decide, write and record the outcome on the receipt. Runs on the writer thread and never raises."""
         try:
-            self._finish(receipt_id)
+            self._finish(receipt_id, slot)
         except Exception:
             log.warning("request history finish failed request_id=%s", receipt_id or "-", exc_info=False)
         finally:
@@ -375,32 +377,41 @@ class _Capture:
             self.admitted = False
             _PENDING.release()
 
-    def _finish(self, receipt_id: str | None) -> None:
+    def _finish(self, receipt_id: str | None, slot: request_history_slot.Slot | None) -> None:
+        prompts = slot.take_library_prompts() if slot is not None else []
         identity = _identity(self._state)
         if identity is None:
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, "no_person"))
             return
         if self._decision is None:
             # A cancellation ended the request before its decision was read, so nothing is kept (R4-3).
-            _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, "incomplete"))
             return
         decision = self._decision
         if not decision.keep:
-            _record_entry(receipt_id, retention.WriteOutcome(False, decision.reason), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, decision.reason))
             return
         if self._early_reason is not None:
             # The body's controls settled this as the body completed, and the slot was given back then (R4-4).
-            _record_entry(receipt_id, retention.WriteOutcome(False, self._early_reason), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, self._early_reason))
             return
         if not self.admitted:
-            _record_entry(receipt_id, retention.WriteOutcome(False, "storage_unavailable"), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, "storage_unavailable"))
             return
         if not self._fed or not (self.complete and not self.disconnected) or not self.body.control_readable():
             # The control could sit in a part that never arrived, or in a body that was too large or did not parse,
             # so nothing is kept: no row, and the receipt does not say kept.
-            _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, "incomplete"))
             return
         if _forget_requested(self.body):
-            _record_entry(receipt_id, retention.WriteOutcome(False, "request_forget"), [])
+            self._write_media_capture(None, None, None, prompts, receipt_id,
+                                      retention.WriteOutcome(False, "request_forget"))
             return
         parts: dict[str, Any] = {}
         omissions_by_part: dict[str, list[str]] = {}
@@ -422,34 +433,67 @@ class _Capture:
             "omissions_by_part": omissions_by_part, "policy_version": int(retention.bundled().data["format_version"]),
             "summary": summary,
         }
-        self._write(decision, record, receipt_id)
+        self._write_media_capture(decision, record, self.started, prompts, receipt_id,
+                                  retention.WriteOutcome(False, "write_failed"))
 
-    def _write(self, decision: retention.Decision, record: dict[str, Any], receipt_id: str | None) -> None:
+    def _write_media_capture(
+        self,
+        decision: retention.Decision | None,
+        record: dict[str, Any] | None,
+        created_at: int | None,
+        prompts: list[tuple[dict[str, Any], Callable | None]],
+        receipt_id: str | None,
+        no_history_outcome: retention.WriteOutcome,
+    ) -> None:
         admin_path = self._owner._admin_path()
-        media_path = self._owner._media_path()
-        outcome = retention.WriteOutcome(False, "write_failed")
+        person_id = decision.person_id if decision is not None else (
+            prompts[0][0].get("person_id") if prompts else None
+        )
+        outcome = no_history_outcome
         written: list[str] = []
+        prompt_outcomes: list[retention.WriteOutcome] = []
 
-        def remember(result: retention.WriteOutcome) -> None:
-            nonlocal outcome
-            outcome = result
-
-        def commit(deadline: int | None, parts: tuple[str, ...]) -> None:
-            # Runs inside the household lock (admin.db), as the Library writer's does, so admin.db is always taken before
-            # media_jobs.db. The media transaction is short: one insert and its commit. The parts are the ones the member
-            # keeps now, read under this lock, not the ones chosen when the request started (R2-6).
+        def commit(
+            history_values: tuple[int | None, tuple[str, ...]] | None,
+            prompt_records: list[dict[str, Any]],
+        ) -> None:
+            # The one admin lock is held by retention.write_media_capture. Keep prompt and history writes in the same
+            # short media transaction, with admin.db always acquired first.
             nonlocal written
-            kept = _kept_record(record, parts, deadline)
-            with request_history.write_transaction(media_path) as conn:
-                request_history.insert_record(conn, kept)
-            written = list(kept["parts"])
+            with request_history.write_transaction(self.media_path) as conn:
+                for prompt in prompt_records:
+                    from gateway import prompt_memory
+
+                    prompt_memory.insert_prompt_in(conn, prompt)
+                if history_values is not None and record is not None:
+                    deadline, parts = history_values
+                    kept = _kept_record(record, parts, deadline)
+                    request_history.insert_record(conn, kept)
+                    written = list(kept["parts"])
 
         try:
-            retention.write(KIND, admin_path=admin_path, person_id=decision.person_id, created_at=self.started,
-                            commit=commit, decision=decision, on_result=remember)
+            if record is None and not prompts:
+                _record_entry(receipt_id, outcome, [])
+                return
+            history_result, prompt_outcomes = retention.write_media_capture(
+                admin_path=admin_path, person_id=person_id, created_at=created_at or self.started,
+                decision=decision, prompts=[prompt for prompt, _ in prompts], commit=commit,
+            )
+            if record is not None:
+                outcome = history_result
         except Exception:
             log.warning("request history write failed request_id=%s", receipt_id or "-", exc_info=False)
-            outcome = retention.WriteOutcome(False, "write_failed")
+            if record is not None:
+                outcome = retention.WriteOutcome(False, "write_failed")
+            prompt_outcomes = [retention.WriteOutcome(False, "write_failed") for _ in prompts]
+        if outcome.reason == "write_failed" or any(item.reason == "write_failed" for item in prompt_outcomes):
+            log.warning("media retention transaction failed request_id=%s", receipt_id or "-", exc_info=False)
+        for (_, callback), prompt_outcome in zip(prompts, prompt_outcomes):
+            if callback is not None:
+                try:
+                    callback(prompt_outcome)
+                except Exception:
+                    log.warning("Library prompt outcome callback failed", exc_info=False)
         _record_entry(receipt_id, outcome, written)
 
 
@@ -473,16 +517,22 @@ async def _drain(capture: _Capture, receive: Callable) -> None:
         log.warning("request history body was not read to its end", exc_info=False)
 
 
-async def _settle(capture: _Capture, receipt_id: str | None) -> None:
+async def _settle(capture: _Capture, receipt_id: str | None, slot: request_history_slot.Slot | None) -> None:
     """Hand the capture to the writer thread and wait for the write. The writer never raises into the request.
 
     The write is shielded, so a request that is cancelled does not cancel its write. A write that is still queued
     runs later and gives the capture's slot back (R4-3). A write that cannot be scheduled gives it back here."""
     try:
-        future = asyncio.get_running_loop().run_in_executor(WRITER, capture.finish, receipt_id)
+        future = asyncio.get_running_loop().run_in_executor(WRITER, capture.finish, receipt_id, slot)
     except Exception:
         log.warning("request history finish could not be scheduled", exc_info=False)
         capture.release()
+        for _, callback in slot.take_library_prompts() if slot is not None else []:
+            if callback is not None:
+                try:
+                    callback(retention.WriteOutcome(False, "write_failed"))
+                except Exception:
+                    log.warning("Library prompt outcome callback failed", exc_info=False)
         return
     try:
         await asyncio.shield(future)

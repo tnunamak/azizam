@@ -20,7 +20,16 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import os
 
-from gateway import admin_store, directory_index, media_jobs, media_metadata, private_io, request_connections, retention
+from gateway import (
+    admin_store,
+    directory_index,
+    media_jobs,
+    media_metadata,
+    private_io,
+    request_connections,
+    request_history_slot,
+    retention,
+)
 from gateway.sqlite_startup import connect, connect_readonly
 from gateway.public_failure import PublicFailure
 
@@ -238,15 +247,10 @@ def put(
     def insert(deadline: int | None) -> None:
         conn = _connect(path)
         try:
-            conn.execute(
-                "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
-                "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
-                "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
-                "created_at=excluded.created_at,kept_until=excluded.kept_until",
-                (asset_id, person_id, prompt_text,
-                 json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
-                 started, deadline),
-            )
+            insert_prompt_in(conn, {
+                "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
+                "metadata": metadata, "created_at": started, "kept_until": deadline,
+            })
             conn.commit()
         finally:
             conn.close()
@@ -254,6 +258,20 @@ def put(
     return retention.write(
         retention.LIBRARY_PROMPT, admin_path=admin_path, person_id=person_id, created_at=started,
         kept_until=kept_until, commit=insert, on_result=on_result,
+    )
+
+
+def insert_prompt_in(conn: sqlite3.Connection, record: Mapping[str, Any]) -> None:
+    """Insert one Library prompt inside the caller's media-jobs transaction."""
+    metadata = record.get("metadata")
+    conn.execute(
+        "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
+        "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
+        "created_at=excluded.created_at,kept_until=excluded.kept_until",
+        (record["asset_id"], record["person_id"], record["prompt_text"],
+         json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
+         record["created_at"], record.get("kept_until")),
     )
 
 
@@ -265,6 +283,19 @@ def safe_put(
 ) -> bool:
     """Best-effort prompt write; storage contention cannot fail media delivery."""
     try:
+        started = int(time.time()) if created_at is None else created_at
+        if asset_id and person_id and isinstance(prompt_text, str) and prompt_text:
+            target = Path(path or media_jobs.DB_PATH)
+            if request_history_slot.defer_library_prompt(
+                {
+                    "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
+                    "metadata": dict(metadata) if metadata else None, "created_at": started,
+                    "kept_until": kept_until,
+                },
+                database_path=target,
+                on_result=on_result,
+            ):
+                return True
         return put(
             asset_id, person_id, prompt_text, kept_until=kept_until, metadata=metadata,
             path=path, admin_path=admin_path, created_at=created_at, on_result=on_result,
