@@ -3,8 +3,8 @@
 It opens one admin.db read-only and prints what the cut-over would do: every App with its accountable
 person, every live key and trusted address with its recorded creator and whether that creator is proven,
 the revocations and removals that would follow, and the Apps that apply would refuse to stop while in use.
-It writes nothing, and it is not the apply: the owner reviews this output and its digest before any
-apply, and the apply and its acceptance are not part of this module.
+It writes nothing. The owner accepts the digest it prints, and gateway/app_binding_cutover.py applies it
+(docs/ops/OWNER_BINDINGS.md).
 
     python -m gateway.app_binding_preview --admin-db COPY_OF_ADMIN_DB [--json] [--as-of EPOCH]
 """
