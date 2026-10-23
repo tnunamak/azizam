@@ -732,18 +732,15 @@ def test_keeping_an_address_asks_the_owner_to_confirm_the_administrators_on_reco
     assert _creator_of_address(gateway, entry_id) == owner_id
 
 
-def test_a_session_app_key_is_not_found_for_keep_or_replace_instead_of_a_server_error(gateway):
-    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
-    owner_id = gateway.user(OWNER)["id"]
-    session_app_id = admin_store.ensure_session_app_for_user(owner_id, name="Signed-in work", path=gateway.path)["id"]
+def test_a_key_on_an_app_that_became_a_session_app_is_not_found_for_keep_or_replace(gateway):
+    owner, owner_id, _plan, _admin = owner_and_admin(gateway)
+    app_id = _own_app(owner)
     before_the_cut_over(gateway.path)
-    # A key a database stored on a session App before the guard refused such keys: written directly, as it was.
-    key_id = f"cred_{uuid.uuid4().hex[:10]}"
+    key_id = _unproven_key(gateway, app_id)
+    # The App becomes the owner's signed-in App after its key exists: the key stays, and keep and replace must refuse it.
     conn = sqlite3.connect(gateway.path)
     try:
-        conn.execute("INSERT INTO credentials(id, subject_kind, subject_id, app_id, hash, prefix, created_at, created_by) "
-                     "VALUES (?, 'app', ?, ?, ?, 'opk_legacy', 1, NULL)",
-                     (key_id, session_app_id, session_app_id, f"sha256:{uuid.uuid4().hex}"))
+        conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (owner_id, app_id))
         conn.commit()
     finally:
         conn.close()
@@ -753,7 +750,7 @@ def test_a_session_app_key_is_not_found_for_keep_or_replace_instead_of_a_server_
 
     assert (kept.status_code, kept.json()["error"]["code"]) == (404, "credential_not_found")
     assert (replaced.status_code, replaced.json()["error"]["code"]) == (404, "credential_not_found")
-    assert _live_keys_on(gateway, session_app_id) == [key_id]
+    assert _live_keys_on(gateway, app_id) == [key_id]
 
 
 def _remedy(g, kind, binding_id, app_id, person_id):
