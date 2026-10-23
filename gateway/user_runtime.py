@@ -223,16 +223,27 @@ def _live_role_for_user(user_id: str, *, path: Path) -> str:
     return "none"
 
 
+def _addresses_without_creator(apps: list[dict[str, Any]], *, path: Path) -> dict[str, int]:
+    """How many trusted addresses on each of these Apps have no recorded creator (owner visibility step 2)."""
+    app_ids = {str(app["id"]) for app in apps}
+    counts: dict[str, int] = {}
+    for entry in admin_store.list_trusted_addresses(path=path):
+        if entry.get("created_by") is None and entry["app_id"] in app_ids:
+            counts[entry["app_id"]] = counts.get(entry["app_id"], 0) + 1
+    return counts
+
+
 def _app_payload(
     app: Mapping[str, Any],
     *,
     path: Path,
     credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
     plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
+    addresses_without_creator: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
     plan = _plan_summary(app, path=path, listing=plan_listing)
-    return {
+    payload: dict[str, Any] = {
         "id": app.get("id"),
         "kind": app.get("kind"),
         "name": app.get("name"),
@@ -244,6 +255,11 @@ def _app_payload(
         "active_credentials": len(credentials),
         "created_at": app.get("created_at"),
     }
+    # Sent to the owner only: the owner is the one who lists and keeps an App's trusted addresses. Keys carry
+    # their creator in `credentials`, so the Apps page counts those itself.
+    if addresses_without_creator is not None:
+        payload["addresses_without_creator"] = addresses_without_creator.get(str(app["id"]), 0)
+    return payload
 
 
 def build_user_portal_snapshot(
@@ -288,8 +304,15 @@ def build_user_portal_snapshot(
         admin_store.person_plan_id(str(user["id"]), path=path),
         {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
     ) if listed else None
+    role = _live_role_for_user(str(user["id"]), path=path)
+    addresses_without_creator = (
+        _addresses_without_creator(listed, path=path) if listed and role == "owner" else None
+    )
     apps: list[dict[str, Any]] = [
-        _app_payload(app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing)
+        _app_payload(
+            app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing,
+            addresses_without_creator=addresses_without_creator,
+        )
         for app in listed
     ]
 
@@ -306,7 +329,7 @@ def build_user_portal_snapshot(
             "avatar": avatars.public_view(person_id, avatars.get(person_id, path=path), viewer_id=person_id),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
-            "role": _live_role_for_user(str(user["id"]), path=path),
+            "role": role,
             # A new App starts on this plan ("Same as you"), so the New app
             # dialog can say what it will be allowed to use before it exists.
             "access_plan": _plan_summary(
