@@ -318,7 +318,7 @@ test.describe("Try: Don't keep this prompt", () => {
       new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
     await page.goto("/try/?capability=speech");
-    const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
+    const toggle = page.getByRole("switch", { name: "Incognito" });
     await expect(toggle).not.toBeChecked();
     await expect(
       page.getByText("Azizam tries to keep the prompt with the audio."),
@@ -354,7 +354,7 @@ test.describe("Try: Don't keep this prompt", () => {
     expect((await forgetSubmit).postDataJSON().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    await expect(page.getByText("Prompt not kept")).toBeVisible({
+    await expect(page.getByText("Incognito: this isn’t saved", { exact: true })).toBeVisible({
       timeout: 60_000,
     });
 

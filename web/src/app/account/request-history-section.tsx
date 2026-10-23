@@ -42,7 +42,8 @@ export function RequestHistorySection() {
     queryFn: accountApi.requestHistory,
   });
   const save = useMutation({
-    mutationFn: accountApi.saveRequestHistory,
+    mutationFn: (value: { keep: boolean; retention: string; parts: string[] }) =>
+      accountApi.saveRequestHistory(value),
     onSuccess: (next) => {
       queryClient.setQueryData(requestHistoryKey, next);
       void queryClient.invalidateQueries({ queryKey: ["account", "request-history", "list"] });
