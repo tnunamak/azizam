@@ -238,7 +238,11 @@
 # collect-only 16322 -> 16394 (2026-10-23).
 # Slice 5a round-5 review fixes: +55 cases in tests/test_request_history_s5a_r5_fixes.py (12 for JSON carried in a
 # string value, 43 for format characters in a credential name). collect-only 16394 -> 16449 (2026-10-23).
-pytest = 16449
+# Slice 5a round-6 review fixes: +48 cases in tests/test_request_history_s5a_r6_fixes.py (21 for where the authority
+# ends, 14 for JSON held in string literals and the record's JSON budget, 2 for a body forget that is whole before the
+# caller is known, 11 for default-ignorable characters in names, 1 for a literal's own decode in the JSON budget).
+# collect-only 16449 -> 16498 (2026-10-23).
+pytest = 16498
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
