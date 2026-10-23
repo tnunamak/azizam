@@ -5,14 +5,20 @@ Each test names the round-4 finding it pins (R4-n). The round-2 probes are in
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import queue
 import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
+from starlette.responses import JSONResponse
 
 from gateway import request_history, request_history_capture
-from tests.test_review_retention_s5a_probes import _drive, _kept, member_db  # noqa: F401 - fixture
+from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
+from tests.test_review_retention_s5a_probes import _drive, _identity, _kept, member_db  # noqa: F401 - fixture
 
 SECRET = "SYNTHETIC_MARKER"
 MAX_SLOTS = request_history_capture.MAX_PENDING_CAPTURES
@@ -20,6 +26,7 @@ MAX_SLOTS = request_history_capture.MAX_PENDING_CAPTURES
 USER_INFO_DELIMITERS = "!$&'()*+,;=\""
 #: The same, minus ``&``, which separates query items and so is not part of a value.
 QUERY_DELIMITERS = "!$'()*+,;=\""
+KEEP_BODY = json.dumps({"model": "m", "input": "a sentence to keep"}).encode()
 
 
 @pytest.fixture(autouse=True)
@@ -172,3 +179,149 @@ def test_r4_2_h_a_fullwidth_name_that_is_not_a_credential_is_kept():
     name = _fullwidth("max_tokens")
     kept, _ = request_history.redact_json({name: 5})
     assert kept == {name: 5}
+
+
+# ------------------------------------------------------------------ R4-3: a cancelled request gives its slot back
+
+
+def _scope(path: str = "/v1/responses") -> dict:
+    return {"type": "http", "method": "POST", "path": path, "headers": [(b"content-type", b"application/json")],
+            "query_string": b"", "state": {}}
+
+
+def _one_body(raw: bytes) -> Callable:
+    """A receive that yields the body once, then reports a disconnect, as a client does after it has sent its request."""
+    sent = {"body": False}
+
+    async def receive() -> dict:
+        if sent["body"]:
+            return {"type": "http.disconnect"}
+        sent["body"] = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    return receive
+
+
+async def _ignore(message: dict) -> None:
+    return None
+
+
+async def _read_body(receive: Callable) -> None:
+    """Read a route's whole body, as a route that parses its JSON reads it."""
+    while True:
+        message = await receive()
+        if not message.get("more_body", False):
+            return
+
+
+def _answer_after_reading(person: str, *, hold: asyncio.Event | None = None) -> Callable:
+    """A route that authenticates, reads its whole body, waits for ``hold`` if one is given, then answers."""
+    async def route(scope, receive, send):
+        scope["state"][IDENTITY_STATE_KEY] = _identity(person)
+        await _read_body(receive)
+        if hold is not None:
+            await hold.wait()
+        await JSONResponse({"ok": True})(scope, receive, send)
+
+    return route
+
+
+class _QueuedWriter(ThreadPoolExecutor):
+    """A one-thread writer that reports each job as it is queued, so a test knows when a write is waiting."""
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=1, thread_name_prefix="request-history-r4")
+        self.queued: queue.SimpleQueue[None] = queue.SimpleQueue()
+
+    def submit(self, fn, /, *args, **kwargs):
+        self.queued.put(None)
+        return super().submit(fn, *args, **kwargs)
+
+
+@pytest.fixture
+def held_writer(monkeypatch):
+    """A writer whose only thread is held by a gate. A write queued behind it waits until the test opens the gate."""
+    pool = _QueuedWriter()
+    gate = threading.Event()
+    ThreadPoolExecutor.submit(pool, gate.wait)
+    monkeypatch.setattr(request_history_capture, "WRITER", pool)
+    yield pool, gate
+    gate.set()
+    pool.shutdown(wait=True)
+
+
+@pytest.fixture
+def own_writer(monkeypatch):
+    pool = _QueuedWriter()
+    monkeypatch.setattr(request_history_capture, "WRITER", pool)
+    yield pool
+    pool.shutdown(wait=True)
+
+
+def _free_slots() -> int:
+    """How many capture admission slots are free now. Takes each one and gives it back."""
+    taken = 0
+    while request_history_capture._PENDING.acquire(blocking=False):
+        taken += 1
+    for _ in range(taken):
+        request_history_capture._PENDING.release()
+    return taken
+
+
+async def _repeat(step: Callable, times: int) -> None:
+    for _ in range(times):
+        await step()
+
+
+def test_r4_3_a_thirty_two_requests_cancelled_while_their_writes_are_queued_give_back_their_slots(member_db,
+                                                                                                held_writer):
+    db, media, person = member_db
+    pool, gate = held_writer
+    middleware = RequestHistoryMiddleware(_answer_after_reading(person), admin_path=lambda: db, media_path=lambda: media)
+
+    async def cancel_once():
+        task = asyncio.create_task(middleware(_scope(), _one_body(KEEP_BODY), _ignore))
+        await asyncio.to_thread(pool.queued.get)   # the request has reached its write, which waits for the one thread
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def scenario():
+        await _repeat(cancel_once, MAX_SLOTS)
+        gate.set()
+        await asyncio.to_thread(pool.shutdown, True)   # the queued writes run now, as they do once the thread is free
+
+    asyncio.run(scenario())
+    assert _free_slots() == MAX_SLOTS
+
+
+def test_r4_3_b_thirty_two_requests_cancelled_while_their_bodies_drain_give_back_their_slots(member_db, own_writer):
+    db, media, person = member_db
+
+    async def answer_without_reading(scope, receive, send):
+        scope["state"][IDENTITY_STATE_KEY] = _identity(person)
+        await JSONResponse({"error": {"message": "refused early"}}, status_code=413)(scope, receive, send)
+
+    middleware = RequestHistoryMiddleware(answer_without_reading, admin_path=lambda: db, media_path=lambda: media)
+
+    async def cancel_during_drain():
+        stalled = asyncio.Event()
+        reads = 0
+
+        async def receive() -> dict:
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                return {"type": "http.request", "body": b'{"model":"m",', "more_body": True}
+            stalled.set()
+            await asyncio.sleep(3600)   # the rest of the body never arrives; only the cancel below ends this wait
+            return {"type": "http.disconnect"}
+
+        task = asyncio.create_task(middleware(_scope(), receive, _ignore))
+        await stalled.wait()   # the capture is draining the body, and is waiting for the rest of it
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_repeat(cancel_during_drain, MAX_SLOTS))
+    assert _free_slots() == MAX_SLOTS
