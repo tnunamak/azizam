@@ -218,6 +218,8 @@ function AppsContents() {
   const [renamingApp, setRenamingApp] = useState<AccountApp | null>(null);
   // Only the id: the keys dialog reads the live app, so a saved name shows at once.
   const [renamingKeysOf, setRenamingKeysOf] = useState<string | null>(null);
+  // Set while a dialog was opened from the quick-check line: its first item that needs a check is brought into view.
+  const [focusCheck, setFocusCheck] = useState(false);
   const [saved, setSaved] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
   // Only the owner and admins may give an app a different plan.
@@ -317,6 +319,18 @@ function AppsContents() {
       target.focus();
     }
   }, [requestedApp, accountData, creating, action, reveal]);
+
+  /** The quick-check line opens the App's keys when a key needs its remedy, or (for an owner) its addresses. Any
+   * other App is only reached through its row, as before. */
+  function openFirstCheck(event: MouseEvent<HTMLAnchorElement>, app: AccountApp) {
+    const keyNeedsCheck = app.credentials.some((key) => key.cutover !== undefined);
+    if (!keyNeedsCheck && !(app.addresses_to_check && accountData?.user?.role === "owner")) return;
+    event.preventDefault();
+    rememberAppFocus(app.id, event.currentTarget);
+    setFocusCheck(true);
+    if (keyNeedsCheck) setRenamingKeysOf(app.id);
+    else setTrustingApp(app);
+  }
 
   function rememberAppFocus(appId: string, opener?: HTMLElement) {
     dialogReturnFocus.current =
@@ -767,6 +781,7 @@ function AppsContents() {
           <Link
             href={`/apps/?app=${encodeURIComponent(needsCheck[0].id)}`}
             className="underline"
+            onClick={(event) => openFirstCheck(event, needsCheck[0])}
           >
             {checkCount}{" "}
             {checkCount === 1 ? "key or address needs" : "keys or addresses need"}{" "}
@@ -1214,7 +1229,11 @@ function AppsContents() {
             ? formatAppName(trustingApp.name, accountData?.user?.email)
             : ""
         }
-        onClose={() => setTrustingApp(null)}
+        focusCheck={focusCheck}
+        onClose={() => {
+          setTrustingApp(null);
+          setFocusCheck(false);
+        }}
         onChanged={() => void refresh()}
       />
       <RenameAppDialog
@@ -1242,7 +1261,11 @@ function AppsContents() {
         onReplaced={(replaced) => {
           if (keysApp) showReplacement(keysApp, replaced);
         }}
-        onClose={() => setRenamingKeysOf(null)}
+        focusCheck={focusCheck}
+        onClose={() => {
+          setRenamingKeysOf(null);
+          setFocusCheck(false);
+        }}
         onCloseAutoFocus={restoreDialogFocus}
       />
       <Dialog open={reveal !== null} onOpenChange={() => {}}>
