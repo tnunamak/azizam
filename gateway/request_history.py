@@ -53,7 +53,7 @@ _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
 _URL_START = re.compile(_URL_SCHEME)
 _URL_IN_TEXT = re.compile(_URL_SCHEME + r"\S+")
-#: Closing marks that are not part of a URL in prose. A quote here cannot be user info: user info ends at the last ``@``.
+#: Closing marks that are not part of a URL in prose. A quote cannot be user info, which ends at the last ``@``.
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\">"
 
 _TABLE = """
