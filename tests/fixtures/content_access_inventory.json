@@ -3043,6 +3043,12 @@
       "access": "own-account"
     },
     {
+      "handler": "proxy.user_portal_readd_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd",
+      "access": "own-account"
+    },
+    {
       "handler": "proxy.user_portal_replace_key",
       "method": "POST",
       "path": "/me/api/credentials/{credential_id}/replace",

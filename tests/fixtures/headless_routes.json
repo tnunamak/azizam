@@ -1290,6 +1290,14 @@
   {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_readd_trusted_address",
+    "method": "POST",
+    "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
     "handler": "proxy.user_portal_replace_key",
     "method": "POST",
     "path": "/me/api/credentials/{credential_id}/replace",
