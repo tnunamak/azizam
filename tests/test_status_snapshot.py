@@ -394,6 +394,52 @@ def test_availability_does_not_trust_a_snapshot_older_than_the_freshness_bound(c
     assert stale == {}, "a row that has not been refreshed is probed, not trusted"
 
 
+def test_a_backend_section_that_timed_out_is_not_trusted_however_fresh_the_build(clock, snapshot_state, monkeypatch):
+    """A backend answered "up" at t=0. At t=3600 its section times out and carries that old row forward, and the build
+    stored after it is fresh. Availability must probe the service and not take the old row as up. The status page
+    still shows the row, labelled with its age."""
+    from types import SimpleNamespace
+
+    from gateway.availability import evidence_from_status_rows
+
+    monkeypatch.setattr(status_endpoint, "_SECTION_LAST", {})
+    probed: list[list[str]] = []
+
+    async def probe_chat(config):
+        probed.append(sorted(config["backends"]))
+        return [{"service_id": "chat", "key": "chat", "live_status": "down", "status": "down", "source": "http"}]
+
+    async def answers_up():
+        return [{"service_id": "chat", "key": "chat", "live_status": "up", "status": "up", "source": "http"}]
+
+    async def never_answers():
+        await asyncio.Event().wait()
+
+    async def scenario():
+        errors: dict[str, str] = {}
+        stale: list[str] = []
+        await status_endpoint.gather_sections({"backends": answers_up()}, errors=errors, stale=stale, budgets={"backends": 1.0})
+        clock.now += 3_600
+        values = await status_endpoint.gather_sections(
+            {"backends": never_answers()}, errors=errors, stale=stale, budgets={"backends": 0.01})
+        assert stale == ["backends"], "the backend section should have timed out"
+        status_endpoint._store_snapshot({"generated_at": int(clock.now), "backends": values["backends"]})
+        monkeypatch.setattr(proxy.service_registry, "runtime_backends", lambda _records: {"chat": {"key": "chat"}})
+        monkeypatch.setattr(proxy, "_runtime_availability_evidence",
+                            lambda records, status_payload=None, health_evidence=None:
+                            evidence_from_status_rows(status_payload["backends"]))
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe_chat)
+        evidence = await proxy._capabilities_availability_evidence([SimpleNamespace(policy_available=True, backend="chat")], {})
+        return evidence, await status_endpoint.get_cached_status(CONFIG)
+
+    evidence, display = run(scenario())
+
+    assert evidence["chat"]["available"] is not True, "an old backend row was trusted as up"
+    assert probed == [["chat"]], "availability should probe the service it needs"
+    assert display["snapshot"]["section_age_s"]["backends"] == 3600.0
+    assert display["backends"][0]["live_status"] == "up", "the status page still shows the row, with its age"
+
+
 def test_the_lifespan_opens_the_snapshot_and_its_sampler_before_serving_and_joins_both_after():
     """Checked on the source, not by running the lifespan: its startup probes ComfyUI, which the hermetic sandbox
     refuses. The order is what matters: each opens before the app serves, and shutdown joins it."""
