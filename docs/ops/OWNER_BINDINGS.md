@@ -139,6 +139,10 @@ keys and addresses alike:
 A key or address that names another person is removed by the apply too. The Apps page
 flags it with its remedy, so it no longer waits for a check in the preview.
 
+When administrators on record could also have made a binding, Keep opens a dialog that names them first, with
+the title "Keep this key?" or "Keep this address?". Confirming sends the confirmation body below. Cancelling sends
+nothing. A keep that the gateway asks to confirm, on a page that was not up to date, opens the same dialog.
+
 A keep can also be sent by hand. From the browser console on the signed-in Azizam page, the
 owner keeps a key like this. If the answer is `409 keep_needs_confirmation`, read its
 `administrators`, then send the same request with the confirmation body:
