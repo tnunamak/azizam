@@ -224,15 +224,18 @@ class RequestHistoryMiddleware:
         try:
             await self.app(scope, receive_capture, capture.send_wrapped(send))
         finally:
-            # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
-            if _identity(state) is not None:
-                await capture.decide_once()
-            if capture.wants_body and not (capture.complete or capture.disconnected):
-                await _drain(capture, receive_capture)
-            slot = request_history_slot.current()
-            receipt_id = slot.receipt_id if slot is not None else None
-            request_history_slot.close_slot(slot_token)
-            await _settle(capture, receipt_id)
+            try:
+                # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
+                if _identity(state) is not None:
+                    await capture.decide_once()
+                if capture.wants_body and not (capture.complete or capture.disconnected):
+                    await _drain(capture, receive_capture)
+            finally:
+                # However the request ends, even cancelled, the capture goes to the writer, which gives its slot back.
+                slot = request_history_slot.current()
+                receipt_id = slot.receipt_id if slot is not None else None
+                request_history_slot.close_slot(slot_token)
+                await _settle(capture, receipt_id)
 
 
 class _Capture:
@@ -330,14 +333,23 @@ class _Capture:
         except Exception:
             log.warning("request history finish failed request_id=%s", receipt_id or "-", exc_info=False)
         finally:
-            if self.admitted:
-                _PENDING.release()
+            self.release()
+
+    def release(self) -> None:
+        """Give back this capture's admission slot. A slot is taken once and given back once, so this may run again."""
+        if self.admitted:
+            self.admitted = False
+            _PENDING.release()
 
     def _finish(self, receipt_id: str | None) -> None:
         identity = _identity(self._state)
         if identity is None:
             return
-        decision = self._decision or self._owner.decide(identity, forget=self.header_forget, now=self.started)
+        if self._decision is None:
+            # A cancellation ended the request before its decision was read, so nothing is kept (R4-3).
+            _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
+            return
+        decision = self._decision
         if not decision.keep:
             _record_entry(receipt_id, retention.WriteOutcome(False, decision.reason), [])
             return
@@ -424,17 +436,18 @@ async def _drain(capture: _Capture, receive: Callable) -> None:
 
 
 async def _settle(capture: _Capture, receipt_id: str | None) -> None:
-    """Hand the capture to the writer thread. The writer never raises into the request."""
+    """Hand the capture to the writer thread and wait for the write. The writer never raises into the request.
+
+    The write is shielded, so a request that is cancelled does not cancel its write. A write that is still queued
+    runs later and gives the capture's slot back (R4-3). A write that cannot be scheduled gives it back here."""
     try:
         future = asyncio.get_running_loop().run_in_executor(WRITER, capture.finish, receipt_id)
     except Exception:
-        # The writer did not take the capture, so its admission is returned here, and only here.
         log.warning("request history finish could not be scheduled", exc_info=False)
-        if capture.admitted:
-            _PENDING.release()
+        capture.release()
         return
     try:
-        await future
+        await asyncio.shield(future)
     except Exception:
         log.warning("request history finish failed", exc_info=False)
 
