@@ -752,7 +752,7 @@ def chats_for_person(person_id: str, *, after: int, now: int, limit: int, path: 
     accepted part, so ``first_user_text`` reads no title from it.
     """
     return _rows(
-        "SELECT record_id, request_id, created_at, parts_json FROM kept_requests "
+        f"SELECT {_METADATA}, parts_json FROM kept_requests "
         "WHERE person_id=? AND kind=? AND created_at>? AND (kept_until IS NULL OR kept_until>?) "
         "AND json_extract(summary_json, '$.route') LIKE '%/chat/completions' "
         "ORDER BY created_at DESC, record_id DESC LIMIT ?",
