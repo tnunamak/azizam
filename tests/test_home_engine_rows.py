@@ -298,12 +298,12 @@ def test_home_health_evidence_is_served_from_the_cache_while_a_probe_runs(monkey
     asyncio.run(scenario())
 
 
-def test_home_health_evidence_with_nothing_cached_waits_only_the_first_wait(monkeypatch):
+def test_home_health_evidence_with_nothing_cached_does_not_wait_for_the_probe(monkeypatch):
     async def scenario():
         release = asyncio.Event()
 
         async def probe(service_records, *, service_ids):
-            await release.wait()
+            await release.wait()  # the probe is still running when the read returns
             return {}
 
         monkeypatch.setattr(proxy, "_models_catalog_health_evidence", probe)
@@ -314,7 +314,7 @@ def test_home_health_evidence_with_nothing_cached_waits_only_the_first_wait(monk
         evidence = await asyncio.wait_for(proxy._home_health_evidence(_registry(), service_ids=["chat"]), timeout=2.0)
 
         assert evidence == {}
-        assert time.monotonic() - started < 1.0
+        assert time.monotonic() - started < 0.2
         release.set()
         await asyncio.wait_for(proxy._HOME_HEALTH_TASK, timeout=1.0)
 

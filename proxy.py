@@ -14066,7 +14066,7 @@ async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str
         service_records, no_auth_capabilities = await asyncio.to_thread(
             lambda: (ADMIN_STORE.get_service_registry(), _gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)))
         execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
-        # Home reads the cached evidence and waits at most for the first wait; the full status page probes.
+        # Home reads the cached evidence without waiting; the full status page probes.
         health_probe = _models_catalog_health_evidence if full else _home_health_evidence
         health_evidence = await health_probe(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
@@ -16472,8 +16472,8 @@ async def _models_catalog_health_evidence(
     return kept
 
 
-# Home reads the health evidence the catalog probe keeps. A refresh that is still running is not waited for
-# past the first wait, so one slow health endpoint cannot hold up a Home read.
+# Home reads the health evidence the catalog probe keeps. A refresh that is still running is not waited for,
+# so one slow health endpoint cannot hold up a Home read.
 _HOME_HEALTH_TASK: asyncio.Task | None = None
 
 
@@ -16492,6 +16492,11 @@ def _cached_health_evidence(service_records: Mapping[str, Any], service_ids: lis
 
 
 async def _home_health_evidence(service_records: Mapping[str, Any], *, service_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """The health evidence Home can use now, without waiting for a probe.
+
+    A read is served what the cache holds, up to the stale limit, while a refresh runs. The refresh lands in
+    the cache for the next read. A read with nothing cached gets none, and its services read as not measured.
+    """
     global _HOME_HEALTH_TASK
     wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
     fresh = _cached_health_evidence(service_records, wanted, _HEALTH_EVIDENCE_TTL_S)
@@ -16501,14 +16506,7 @@ async def _home_health_evidence(service_records: Mapping[str, Any], *, service_i
         _HOME_HEALTH_TASK = asyncio.get_running_loop().create_task(
             _models_catalog_health_evidence(service_records, service_ids=wanted))
         _HOME_HEALTH_TASK.add_done_callback(lambda task: _log_home_probe_failure("health evidence", task))
-    served = _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
-    if not served:
-        try:
-            await asyncio.wait_for(asyncio.shield(_HOME_HEALTH_TASK), timeout=_ENGINE_ROWS_FIRST_WAIT_S)
-        except Exception:  # noqa: BLE001 - a late or failed probe leaves its services unmeasured for this read
-            pass
-        served = _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
-    return served
+    return _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
