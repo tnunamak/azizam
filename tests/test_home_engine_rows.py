@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 import status_endpoint
+from tests.support.fake_upstream.loopback import LoopbackServer
 
 
 def _rows() -> list[dict]:

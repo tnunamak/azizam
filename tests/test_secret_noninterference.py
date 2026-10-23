@@ -30,8 +30,8 @@ def _status_page_starts_empty(monkeypatch):
     page serves a stale build while it rebuilds. Start every test from an empty status cache, so both readings
     come from this test's own configuration."""
     import status_endpoint
-    monkeypatch.setattr(status_endpoint, "_CACHE", {"ts": 0.0, "data": None})
-    monkeypatch.setattr(status_endpoint, "_BUILD_TASK", None)
+    monkeypatch.setattr(status_endpoint, "_SNAPSHOT", {})
+    monkeypatch.setattr(status_endpoint, "_SNAPSHOT_TASK", None)
 EPOCH = re.compile(r"\b1[5-9]\d{8}(?:\.\d+)?\b")
 # The evidence times are the instants a health check or request produced the evidence. The status cache lives 12 s, so a
 # slow run that crosses it stamps a later second. The time is a clock reading, not a function of a secret's bytes.
@@ -92,8 +92,13 @@ def isolated_media_folder(gateway, tmp_path, monkeypatch) -> None:
 
 
 def _reading(gateway, owner) -> dict[str, str]:
+    import asyncio
+
     from tests.test_admin_secret_sweep import _fill, _get_routes, EXCLUDED_ROUTES
 
+    # The status pages read the latest snapshot, and the background build does not run under a test: build one now,
+    # from the configuration this reading is about, so the reading shows that configuration.
+    gateway.proxy.status_endpoint._store_snapshot(asyncio.run(gateway.proxy._build_status_snapshot()))
     out: dict[str, str] = {}
     for path in _get_routes(gateway.proxy.app):
         if path in EXCLUDED_ROUTES or path in NOT_A_FUNCTION_OF_STATE:

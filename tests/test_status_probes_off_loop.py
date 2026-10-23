@@ -124,23 +124,16 @@ def test_a_section_that_misses_its_budget_shows_its_last_answer_marked_stale():
 
 
 def test_an_availability_failure_is_logged_as_one_line_with_only_its_type(monkeypatch, capsys):
-    async def status_without_probes(_config):
-        return {}
-
-    async def same_payload(payload):
-        return payload
-
+    """The availability step runs in the background build, and a failure there is logged as its type only."""
     def registry_fails():
         raise ValueError("/var/lib/azizam/admin.db is locked")  # a path and a message: neither may reach the log
 
-    monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", status_without_probes)
-    monkeypatch.setattr(proxy, "_status_payload_with_protocol_issues", same_payload)
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", registry_fails)
-    payload = asyncio.run(proxy._status_payload_with_availability())
+    payload = asyncio.run(proxy._with_availability({"backends": []}))
     lines = [line for line in capsys.readouterr().out.splitlines() if "status availability" in line]
     assert len(lines) == 1 and "ValueError" in lines[0]
     assert "/var/lib" not in lines[0] and "locked" not in lines[0]
-    assert payload == {}
+    assert payload == {"backends": []}
 
 
 def test_a_row_past_its_deadline_leaves_the_shared_systemd_batch_running_for_the_rest(monkeypatch):
