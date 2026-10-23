@@ -660,6 +660,89 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
         self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
 
+    def test_deleting_all_library_prompts_preserves_unrelated_chat_history(self) -> None:
+        asset_id = "img_" + "c" * 64
+        library_request_id = "req_library_scope"
+        chat_request_id = "req_unrelated_chat"
+        self._receipt(self.app_a["id"], library_request_id)
+        self._job(library_request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=library_request_id)
+        stored: dict[str, dict] = {}
+        for request_id, route in (
+            (library_request_id, "/v1/images/generations"),
+            (chat_request_id, "/v1/chat/completions"),
+        ):
+            record = {
+                "record_id": request_history.new_record_id(), "request_id": request_id,
+                "person_id": self.alice["id"], "app_id": self.app_a["id"],
+                "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+                "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+                "omissions": [], "policy_version": 1,
+                "summary": {"route": route, "model": "image", "status": 200, "latency_ms": 5},
+            }
+            request_history.insert(record, path=self.jobs_db)
+            stored[request_id] = record
+
+        deleted = prompt_memory.delete_person(self.alice["id"], path=self.prompt_db)
+
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(request_history.get_row(stored[library_request_id]["record_id"], path=self.jobs_db))
+        self.assertIsNotNone(request_history.get_row(stored[chat_request_id]["record_id"], path=self.jobs_db))
+
+    def test_deleting_old_asset_uses_its_receipt_after_an_idempotency_key_is_reused(self) -> None:
+        old_asset = "img_" + "8" * 64
+        new_asset = "img_" + "9" * 64
+        old_receipt = "receipt_before_replay_release"
+        new_receipt = "receipt_after_replay_release"
+        idem_key = "same_idempotency_key"
+        old_job = media_jobs.create(media_jobs.MediaJob(
+            job_id="job_before_replay_release", request_id=idem_key, parent_request_id=old_receipt,
+            intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": old_asset, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        with media_jobs._conn(self.jobs_db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at=1 WHERE job_id=?", (old_job.job_id,))
+            conn.commit()
+        new_job = media_jobs.create(media_jobs.MediaJob(
+            job_id="job_after_replay_release", request_id=idem_key, parent_request_id=new_receipt,
+            intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": new_asset, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        self.assertEqual(
+            media_jobs.get(old_job.job_id, audience="internal", path=self.jobs_db)["creating_receipt_id"],
+            old_receipt,
+        )
+        self.assertEqual(
+            media_jobs.get(new_job.job_id, audience="internal", path=self.jobs_db)["creating_receipt_id"],
+            new_receipt,
+        )
+        self._receipt(self.app_a["id"], old_receipt)
+        self._receipt(self.app_a["id"], new_receipt)
+        self._write_asset(old_asset, ["sha256:alice"], request_id=old_receipt)
+        self._write_asset(new_asset, ["sha256:alice"], request_id=new_receipt)
+        records: dict[str, dict] = {}
+        for request_id in (old_receipt, new_receipt):
+            record = {
+                "record_id": request_history.new_record_id(), "request_id": request_id,
+                "person_id": self.alice["id"], "app_id": self.app_a["id"],
+                "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+                "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+                "omissions": [], "policy_version": 1,
+                "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                            "latency_ms": 5},
+            }
+            request_history.insert(record, path=self.jobs_db)
+            records[request_id] = record
+
+        deleted = self.client.delete(
+            f"/me/api/media/{old_asset}",
+            headers={"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"},
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertIsNone(request_history.get_row(records[old_receipt]["record_id"], path=self.jobs_db))
+        self.assertIsNotNone(request_history.get_row(records[new_receipt]["record_id"], path=self.jobs_db))
+
     def test_cache_fallback_survives_without_job_or_receipt(self) -> None:
         asset_id = "img_" + "f" * 64
         self._write_asset(asset_id, ["sha256:alice"], prompt="orange boat")

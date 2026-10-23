@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -74,6 +75,63 @@ def _post(body: dict):
     return asyncio.run(call())
 
 
+def _settle_staged_media_capture(admin_db: Path, media_db: Path, person_id: str, request_id: str,
+                                asset_id: str, *, created_at: int) -> None:
+    """Run the same combined writer after a Library delete wins the media transaction."""
+    capture = object.__new__(request_history_capture._Capture)
+    capture._owner = SimpleNamespace(_admin_path=lambda: admin_db)
+    capture.media_path = media_db
+    decision = retention.Decision(
+        person_id, True, "remembered", created_at=created_at,
+        kind=retention.REQUEST_HISTORY, parts=("accepted",),
+    )
+    record = {
+        "record_id": request_history.new_record_id(), "request_id": request_id,
+        "person_id": person_id, "app_id": None, "origin_kind": "app_key", "origin_id": "fixture-key",
+        "created_at": created_at,
+        "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+        "omissions_by_part": {"accepted": []}, "policy_version": 1,
+        "summary": {"route": "/v1/images/generations", "model": "image", "status": 200, "latency_ms": 1},
+    }
+    prompt = {
+        "asset_id": asset_id, "person_id": person_id, "prompt_text": "a late staged prompt",
+        "metadata": None, "created_at": created_at, "kept_until": None,
+    }
+    capture._write_media_capture(
+        decision, record, created_at, [(prompt, None)], request_id,
+        retention.WriteOutcome(False, "write_failed"),
+    )
+
+
+def _publish_prompt_job(media_db: Path, person_id: str, request_id: str, asset_id: str) -> None:
+    media_jobs.create(media_jobs.MediaJob(
+        request_id=request_id, parent_request_id=request_id, intent="image.generate",
+        status=media_jobs.STATUS_SUCCEEDED,
+        assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+    ), path=media_db)
+    assert prompt_memory.put(
+        asset_id, person_id, "the visible prompt", kept_until=None, path=media_db,
+    )
+
+
+def _capture_stores(monkeypatch, tmp_path) -> tuple[str, Path, Path]:
+    admin_db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user(
+        "https://fixture.test", "late-capture-person", path=admin_db,
+    )["id"]
+    for group, kind in (
+        (retention.GROUP_PROMPTS, retention.LIBRARY_PROMPT),
+        (retention.GROUP_REQUEST_HISTORY, retention.REQUEST_HISTORY),
+    ):
+        admin_store.put_prompt_memory_preference(
+            person_id, remember=True, retention=retention.bundled().member_defaults(kind)["retention"],
+            group=group, path=admin_db,
+        )
+    media_db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(media_db)
+    return person_id, media_db, admin_db
+
+
 def _kept_rows(media: Path) -> list[sqlite3.Row]:
     """The kept records. A database with no kept request has no kept_requests table yet, which is no rows."""
     conn = sqlite3.connect(media)
@@ -99,6 +157,36 @@ def test_a_chat_request_from_a_new_member_is_kept_once_with_its_accepted_body(ch
     assert row["kept_until"] is not None
     assert SENTENCE in row["parts_json"]
     assert "received" not in row["parts_json"]  # default parts: accepted only (registry/retention.yml)
+
+
+def test_item_delete_before_capture_settles_does_not_restore_prompt_or_history(monkeypatch, tmp_path):
+    person_id, media_db, admin_db = _capture_stores(monkeypatch, tmp_path)
+    request_id, asset_id = "receipt_deleted_before_settle", "img_deleted_before_settle"
+    _publish_prompt_job(media_db, person_id, request_id, asset_id)
+
+    assert prompt_memory.delete_asset_for_person(asset_id, person_id, path=media_db) == 1
+    _settle_staged_media_capture(
+        admin_db, media_db, person_id, request_id, asset_id, created_at=int(time.time()) - 1,
+    )
+
+    assert prompt_memory.get(asset_id, person_id, path=media_db) is None
+    with sqlite3.connect(media_db) as conn:
+        assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=?", (request_id,)).fetchone() is None
+
+
+def test_library_delete_all_before_capture_settles_does_not_restore_prompt_or_history(monkeypatch, tmp_path):
+    person_id, media_db, admin_db = _capture_stores(monkeypatch, tmp_path)
+    request_id, asset_id = "receipt_erased_before_settle", "img_erased_before_settle"
+    _publish_prompt_job(media_db, person_id, request_id, asset_id)
+
+    assert prompt_memory.delete_person(person_id, path=media_db) == 1
+    _settle_staged_media_capture(
+        admin_db, media_db, person_id, request_id, asset_id, created_at=int(time.time()) - 1,
+    )
+
+    assert prompt_memory.get(asset_id, person_id, path=media_db) is None
+    with sqlite3.connect(media_db) as conn:
+        assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=?", (request_id,)).fetchone() is None
 
 
 def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(chat_gateway):
