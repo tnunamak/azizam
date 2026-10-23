@@ -271,54 +271,56 @@ function KeyRow({
       {editing ? (
         <KeyNameForm keyRecord={keyRecord} onSaved={onSaved} onCancel={onCancel} />
       ) : (
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p
-              className="text-body font-medium break-words [overflow-wrap:anywhere]"
-              title={label}
-            >
-              {label}
-            </p>
-            <p className="text-muted-foreground text-meta">
-              <span className="font-mono">{keyStart(keyRecord.prefix)}</span>
-              {" · "}
-              {keyRecord.last_used_at != null ? (
-                <>
-                  Last used <RelativeTime ts={keyRecord.last_used_at} />
-                </>
-              ) : (
-                "Never used"
-              )}
-            </p>
-            {unkept ? (
-              <p className="text-muted-foreground text-meta">
-                Made before Azizam recorded who made keys. Keep it, or it stops
-                working at the next ownership update.
-              </p>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {unkept ? (
-              <Button
-                variant="outline"
-                disabled={keepDisabled}
-                aria-label={`Keep key ${label}`}
-                onClick={onKeep}
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p
+                className="text-body font-medium break-words [overflow-wrap:anywhere]"
+                title={label}
               >
-                {keeping ? "Keeping…" : "Keep"}
+                {label}
+              </p>
+              <p className="text-muted-foreground text-meta">
+                <span className="font-mono">{keyStart(keyRecord.prefix)}</span>
+                {" · "}
+                {keyRecord.last_used_at != null ? (
+                  <>
+                    Last used <RelativeTime ts={keyRecord.last_used_at} />
+                  </>
+                ) : (
+                  "Never used"
+                )}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {unkept ? (
+                <Button
+                  variant="outline"
+                  disabled={keepDisabled}
+                  aria-label={`Keep key ${label}`}
+                  onClick={onKeep}
+                >
+                  {keeping ? "Keeping…" : "Keep"}
+                </Button>
+              ) : null}
+              <Button
+                id={`rename-key-${keyRecord.id}`}
+                variant="outline"
+                disabled={disabled}
+                aria-label={`Rename key ${label}`}
+                onClick={onEdit}
+              >
+                Rename
               </Button>
-            ) : null}
-            <Button
-              id={`rename-key-${keyRecord.id}`}
-              variant="outline"
-              disabled={disabled}
-              aria-label={`Rename key ${label}`}
-              onClick={onEdit}
-            >
-              Rename
-            </Button>
+            </div>
           </div>
-        </div>
+          {unkept ? (
+            <p className="text-muted-foreground text-meta">
+              Made before Azizam recorded who made keys. Keep it, or it stops
+              working at the next ownership update.
+            </p>
+          ) : null}
+        </>
       )}
       {keepFailure ? (
         <p role="alert" className="text-destructive text-meta">
