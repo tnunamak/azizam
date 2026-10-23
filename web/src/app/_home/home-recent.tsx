@@ -102,7 +102,7 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
       >
         <div className="bg-card border-border group-hover:border-input rounded-media flex aspect-square w-full flex-col overflow-hidden border p-4 transition-colors duration-(--motion-fast)">
           <MessageSquare aria-hidden="true" className="text-capability-chat size-4 shrink-0" />
-          <p className="text-foreground text-meta mt-3 line-clamp-6">{chat.title}</p>
+          <p className="text-foreground text-meta mt-3 line-clamp-4">{chat.title}</p>
         </div>
         <span className="mt-2 block min-w-0">
           <span className="text-foreground text-meta block truncate font-medium">Chat</span>

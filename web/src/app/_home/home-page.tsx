@@ -125,14 +125,14 @@ function YourApps({ home }: { home: HomeSnapshot }) {
 
 /**
  * Columns by how many tiles there are, so no row ends with one tile beside empty cells:
- * four sit two by two.
+ * four sit two by two, then in one row once Home's column is at its full width.
  */
 const STARTER_COLUMNS = [
   "",
   "",
   "sm:grid-cols-2",
   "sm:grid-cols-3",
-  "sm:grid-cols-2",
+  "sm:grid-cols-2 xl:grid-cols-4",
   "sm:grid-cols-2 lg:grid-cols-3",
 ];
 
