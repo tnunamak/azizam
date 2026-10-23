@@ -1917,7 +1917,8 @@ that they pin now passes with its mark removed. The tests the review did not pin
   `secrets`, `password1`, `apiKeys` and `access_tokens` are credential names too, and a credential name removes its
   whole value, however deep. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. A URL is
   any `scheme://`, in any letter case (`postgres://`, `wss://`, `HTTPS://`), as a whole value or inside a longer string.
-  Each one is scrubbed with the whole-URL helper, and the punctuation after it is kept. A tool call's
+  Each one is scrubbed with the whole-URL helper, and the punctuation after it is kept. A query item with no `=` is
+  removed whole, since it may be a token written as a bare key. A tool call's
   `arguments` string is parsed and its JSON is cleaned like any JSON. Text that is not JSON is cleaned as text. Two
   other name checks exist and were left alone: `redaction.is_forbidden_key` is an exact-key set for receipts and media
   jobs, and `legacy_credential_rules` tokenizes command-line flags. Neither splits request-history names.
