@@ -501,6 +501,31 @@ def test_remembered_list_is_rate_limited_per_ip(tls):
     assert statuses[60] == 429
 
 
+def test_the_list_read_cap_is_sixty_a_minute_when_the_gateway_sets_none(tls, monkeypatch):
+    monkeypatch.delenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", raising=False)
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(61)]
+
+    assert statuses[:60] == [200] * 60 and statuses[60] == 429
+
+
+def test_the_gateway_setting_replaces_the_list_read_cap(tls, monkeypatch):
+    monkeypatch.setenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", "3")
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(4)]
+
+    assert statuses == [200, 200, 200, 429]
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many"])
+def test_an_invalid_gateway_setting_keeps_the_list_read_cap_at_sixty(tls, monkeypatch, setting):
+    monkeypatch.setenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", setting)
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(61)]
+
+    assert statuses[:60] == [200] * 60 and statuses[60] == 429
+
+
 # ---------------------------------------------------------------------------
 # Who is kept, how many, and for how long
 # ---------------------------------------------------------------------------
