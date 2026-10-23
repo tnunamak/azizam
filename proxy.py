@@ -14253,7 +14253,10 @@ async def _maker_browser_session_request(request: Request) -> bool:
     path = request.url.path
     if path != "/gateway/v1/requests" and not path.startswith("/gateway/v1/requests/"):
         return False
-    if request.headers.get("authorization"):
+    # Any credential the key layer would read, in any form it reads one, keeps the call on that layer: a key
+    # presented with a session cookie is judged as the key, never as the session.
+    if (request.headers.get("authorization") or request.headers.get(_INTERNAL_IDENTITY_HEADER)
+            or _resolve_client_api_key(request)):
         return False
     return await asyncio.to_thread(_oidc_session_from_request, request) is not None
 
