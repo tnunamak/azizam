@@ -2299,7 +2299,8 @@ def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapp
     Returns ``{"remedy": "keep" | "replace" | "readd", "administrators": [...]}``. The remedy is ``keep`` when the binding
     already names ``person_id`` as its creator, or can be kept now. Otherwise a key is ``replace`` and an address is
     ``readd``. ``administrators`` is not empty only when keeping an unproven binding needs the owner's confirmation.
-    The keep route, the cut-over preview and the session snapshot's ``cutover`` field all ask this one function.
+    The keep route, the cut-over preview, and the snapshot and address lists (through ``cutover_for_bindings``) all ask
+    this one function.
     ``binding`` needs ``id`` and ``created_by``.
     """
     owner = conn.execute("SELECT owner_user_id FROM apps WHERE id = ?", (app_id,)).fetchone()

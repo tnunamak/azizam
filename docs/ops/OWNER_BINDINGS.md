@@ -98,16 +98,18 @@ The audit event names the administrators confirmed, in `confirmed_administrators
   A key that is missing, revoked, not an App key, or on a session App is `404 credential_not_found`.
 
 **Add an address again.** An address that cannot be kept is refused with
-`409 keep_not_provable`. The person removes the old entry with
-`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`, then adds the address again
-with `POST /me/api/apps/{app_id}/trusted-addresses`, with the same note. The order matters:
-an App holds each address once, so the add is refused with `400 invalid_trusted_address`
-while the old entry remains. The removal returns `200` and is audited. Another person's
-App gets `404 app_not_found`.
+`409 keep_not_provable`. The person adds it again with
+`POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd`. The gateway removes the old
+entry and adds the same address, with its note, as the person's own entry. Both happen in one
+transaction with the audit event, so a failed step leaves the old entry in place. The answer
+is `201` with the new `trusted_address` and the `replaced_entry_id`. It asks for a recent
+sign-in, as adding an address does. Another person's App, and a session App, get
+`404 app_not_found`. An entry that the App does not hold gets `404 trusted_address_not_found`.
 
 Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`). Each
 replacement writes `credential.replace`, naming both keys. Each removal writes
-`app.trusted_address.remove`.
+`app.trusted_address.remove`. Each add-again writes `app.trusted_address.readd`, naming the
+entry it replaced.
 
 The gateway names the one remedy each binding the apply would remove needs. The
 snapshot at `/me/api/session` carries it, and so does the owner's trusted-address list:
@@ -129,8 +131,8 @@ keys and addresses alike:
   old key's name and is on the same App, and it is shown once. The old key's row goes
   away. A personal App's row offers the same replacement when one key needs it.
 - A trusted address with `keep` shows the keep notice and button in the **Trusted
-  addresses** list of its App. With `readd` it shows **Add again**, which removes the
-  entry and adds the address again. Only the owner can open that list.
+  addresses** list of its App. With `readd` it shows **Add again**, which adds the address
+  again in one step. Only the owner can open that list.
 - Above the list of Apps, one line counts the bindings with a `cutover`, and links to
   the first App that has one.
 

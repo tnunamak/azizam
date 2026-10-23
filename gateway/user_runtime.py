@@ -607,11 +607,10 @@ KEEP_KEY_REFUSED = (
     "Nobody can prove who made this key, so it cannot be kept. Replace it instead: "
     "POST /me/api/credentials/{credential_id}/replace issues a new key on this App (shown once) and revokes this one."
 )
-# The address must be removed before it is added again: an App holds each address once, so the add would be refused.
+# One step: an App holds each address once, so a separate add could not come before the removal of the old entry.
 KEEP_ADDRESS_REFUSED = (
-    "Nobody can prove who added this address, so it cannot be kept. Remove it with "
-    "DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}, then add it again yourself with "
-    "POST /me/api/apps/{app_id}/trusted-addresses."
+    "Nobody can prove who added this address, so it cannot be kept. Add it again with "
+    "POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd, which replaces it in one step."
 )
 KEEP_NEEDS_CONFIRMATION = (
     "Administrators at the time could also have made this {what}: {names}. Confirm that and keep it again with "
@@ -707,7 +706,7 @@ def adopt_user_trusted_address(
     """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator.
 
     Only the owner keeps, and only an address nobody else could have added. Any other address is refused with
-    ``keep_not_provable``: the person removes this entry and then adds the address again. Another person's App is
+    ``keep_not_provable``: the person adds the address again (``readd_user_trusted_address``). Another person's App is
     not found (404), as it is for adding an address to it.
     """
     user = _user_from_session(session, path=path)

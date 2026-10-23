@@ -187,8 +187,7 @@ def test_a_member_who_is_not_the_owner_cannot_keep_an_address_and_is_told_to_add
     assert refused.status_code == 409, refused.text
     error = refused.json()["error"]
     assert error["code"] == "keep_not_provable"
-    assert f"DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}" in error["message"]
-    assert f"POST /me/api/apps/{app_id}/trusted-addresses" in error["message"]
+    assert f"POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd" in error["message"]
     assert error["message"].index("DELETE") < error["message"].index("POST")  # removed first: an App holds each address once
     assert _creator_of_address(gateway, entry_id) is None
     assert _audit(gateway, "app.trusted_address.adopt") == []
