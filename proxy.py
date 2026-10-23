@@ -13990,8 +13990,43 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     return {**payload, "protocol_issues": issues, "health_sources": sources}
 
 
-async def _status_payload_with_availability() -> Mapping[str, Any]:
-    payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
+# Home's engine rows, kept for the status cache's TTL. The lock makes a burst of
+# Home reads wait for one probe pass instead of starting one each.
+_ENGINE_ROWS: dict[str, Any] = {}
+_ENGINE_ROWS_LOCK = asyncio.Lock()
+
+
+async def _engine_rows_payload() -> dict[str, Any]:
+    """The engine rows of one status pass, without the rest of the status page.
+
+    A fresh status page already holds them. Otherwise only the engine probes run, the
+    same probes the status page runs, so Home never waits for the GPU, disk, log and
+    git reads that it does not show.
+    """
+    cached = _cached_status_payload_for_availability()
+    if cached:
+        return {"backends": list(cached.get("backends") or []), "generated_at": cached.get("generated_at")}
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    async with _ENGINE_ROWS_LOCK:
+        held = _ENGINE_ROWS.get("payload")
+        if held is not None and time.monotonic() - float(_ENGINE_ROWS.get("ts", 0.0)) < ttl:
+            return held
+        backends = await status_endpoint._backend_grid(config)
+        payload = {"backends": backends, "generated_at": int(time.time())}
+        _ENGINE_ROWS.update(ts=time.monotonic(), payload=payload)
+        return payload
+
+
+async def _home_status_payload() -> Mapping[str, Any]:
+    return await _status_payload_with_availability(full=False)
+
+
+async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str, Any]:
+    payload = (
+        await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
+        if full
+        else await _engine_rows_payload()
+    )
     try:
         # Registry and capability resolution read SQLite; keep them off the loop.
         service_records, no_auth_capabilities = await asyncio.to_thread(
@@ -16271,7 +16306,7 @@ app.include_router(create_home_router(
     capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
     aliases=_gateway_aliases_provider,
     public_base_url=lambda request: _public_base_url(request),
-    status_provider=_status_payload_with_availability,
+    status_provider=_home_status_payload,
     admin_auth=ADMIN_AUTH,
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,

@@ -37,6 +37,10 @@ def _cold_home(monkeypatch, grid) -> None:
     monkeypatch.setattr(proxy, "_ENGINE_ROWS_LOCK", asyncio.Lock())
     monkeypatch.setattr(proxy, "_models_catalog_health_evidence", no_catalog_evidence)
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: _registry())
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda context: [])
+    monkeypatch.setattr(proxy, "service_for_capability", lambda capability: None)
+    monkeypatch.setattr(proxy, "_highest_priority_chat_backend", lambda: None)
+    monkeypatch.setattr(proxy, "_runtime_availability_evidence", lambda *args, **kwargs: {})
     monkeypatch.setattr(proxy, "config", {})
 
 
