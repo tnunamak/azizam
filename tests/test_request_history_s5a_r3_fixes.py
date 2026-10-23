@@ -21,7 +21,14 @@ from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F
 from tests.support.gateway import gateway_client, use_admin_db
 from tests.test_media_provenance import comfy_png
 from tests.test_request_history_capture import _kept_rows, _mint_member_key
-from tests.test_review_retention_s5a_probes import SENTENCE, _drive, _identity, _kept, member_db  # noqa: F401 - fixture
+from tests.test_review_retention_s5a_probes import (  # noqa: F401 - fixture
+    CANARY,
+    SENTENCE,
+    _drive,
+    _identity,
+    _kept,
+    member_db,
+)
 
 FORGET = {"com.azizam.prompts": {"mode": "forget"}}
 FORGET_FIELD = "extensions[com.azizam.prompts][mode]"
@@ -81,6 +88,16 @@ def test_r2_1_control_a_text_plain_json_body_without_a_forget_is_kept_with_its_b
     _drive(db, media, person, chunks=[raw], content_type="text/plain")
     rows = _kept(media)
     assert len(rows) == 1 and SENTENCE not in rows[0] and "unsupported_container" in rows[0]
+
+
+# ------------------------------------------------------------------ R2-3: a bare query token is removed too
+
+
+def test_r2_3_a_bare_query_token_is_removed_whole_and_inside_text():
+    whole, _ = request_history.redact_json({"image_url": f"https://h.test/a.png?{CANARY}"})
+    inside, found = request_history.redact_json({"content": f"see https://h.test/a.png?{CANARY}, thanks"})
+    assert CANARY not in json.dumps(whole) and CANARY not in json.dumps(inside)
+    assert "url_parts_removed" in found and json.dumps(inside).endswith(', thanks"}')
 
 
 # ------------------------------------------------------------------ R2-4: a slot is held only by a request that keeps

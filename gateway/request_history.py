@@ -119,6 +119,19 @@ def allowed_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {name.lower(): value for name, value in headers.items() if name.lower() in RESPONSE_HEADERS}
 
 
+def _query_without_values(query: str) -> str:
+    """Rule 4: query names are kept and values removed. An item with no ``=`` has no value, so its text is the only thing
+    it carries, and it may be a token written as a bare key. It is removed."""
+    items: list[str] = []
+    for item in query.split("&"):
+        if "=" not in item:
+            if item:
+                items.append(REMOVED)
+            continue
+        items.extend(f"{name}={REMOVED}" for name, _ in parse_qsl(item, keep_blank_values=True))
+    return "&".join(items)
+
+
 def _scrub_url(value: str) -> tuple[str, bool] | None:
     """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go."""
     if _URL_START.match(value) is None or any(char.isspace() for char in value):
@@ -133,7 +146,7 @@ def _scrub_url(value: str) -> tuple[str, bool] | None:
         host = f"[{host}]"
     netloc = f"{host}:{port}" if port else host
     userinfo = f"{REMOVED}@" if parts.username is not None or parts.password is not None else ""
-    query = "&".join(f"{name}={REMOVED}" for name, _ in parse_qsl(parts.query, keep_blank_values=True))
+    query = _query_without_values(parts.query)
     changed = bool(userinfo or parts.query or parts.fragment)
     return urlunsplit((parts.scheme, userinfo + netloc, parts.path, query, "")), changed
 
