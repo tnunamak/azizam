@@ -6,6 +6,7 @@ read. A sample is taken at once when the gateway starts, then every minute, and 
 """
 import asyncio
 import subprocess
+import threading
 import unittest
 
 import pytest
@@ -93,6 +94,66 @@ def test_the_sampler_samples_once_a_minute_and_joins_at_shutdown(monkeypatch, sp
     assert task.done()
     assert status_endpoint._SAMPLE_TASK is None
     assert spawns == []
+
+
+@pytest.fixture
+def wedged_write(monkeypatch):
+    """A sample write that enters, then holds until the test releases it. Each write it finishes is recorded."""
+    entered = threading.Event()
+    release = threading.Event()
+    finished: list[list[dict]] = []
+
+    def write(rows):
+        entered.set()
+        release.wait(timeout=10)
+        finished.append(rows)
+
+    async def fake_probe(client, key, name, url, role, note, service=None):
+        return {"key": key, "name": name, "role": role, "status": "up", "live_status": "up",
+                "latency_ms": 4, "last_error": None}
+
+    monkeypatch.setattr(status_endpoint, "_probe", fake_probe)
+    monkeypatch.setattr(status_endpoint, "_record_backend_health_samples", write)
+    yield entered, release, finished
+    release.set()
+
+
+def test_shutdown_waits_for_a_sample_write_that_is_already_running(spawns, wedged_write):
+    """A write that has started cannot be cancelled. Shutdown waits for it, so no sample is written after shutdown returns."""
+    entered, release, finished = wedged_write
+
+    async def scenario():
+        status_endpoint.start_backend_samples(lambda: CONFIG)
+        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 10), timeout=15)
+        stop = asyncio.ensure_future(status_endpoint.stop_backend_samples())
+        await asyncio.sleep(0.05)
+        returned_while_writing = stop.done()
+        release.set()
+        await asyncio.wait_for(stop, timeout=10)
+        written_at_return = len(finished)
+        await asyncio.sleep(0.05)
+        return returned_while_writing, written_at_return, len(finished)
+
+    returned_while_writing, written_at_return, written_later = asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert not returned_while_writing, "shutdown returned while a sample write was still running"
+    assert written_at_return == 1, "the running write should have finished before shutdown returned"
+    assert written_later == written_at_return, "a sample was written after shutdown returned"
+
+
+def test_shutdown_stops_waiting_for_a_wedged_write_after_its_bound_and_says_so(spawns, wedged_write, monkeypatch, caplog):
+    entered, _release, _finished = wedged_write
+    monkeypatch.setattr(status_endpoint, "BACKEND_SAMPLE_JOIN_S", 0.05, raising=False)
+
+    async def scenario():
+        status_endpoint.start_backend_samples(lambda: CONFIG)
+        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 10), timeout=15)
+        await asyncio.wait_for(status_endpoint.stop_backend_samples(), timeout=10)
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert "still running" in caplog.text, "shutdown should say that the write outlived its bound"
+    assert status_endpoint._SAMPLE_WRITE is None, "shutdown should drop the handle of the write it stopped waiting for"
 
 
 class StatusBuildLeavesBackendSamplesToTheSampler(unittest.IsolatedAsyncioTestCase):
