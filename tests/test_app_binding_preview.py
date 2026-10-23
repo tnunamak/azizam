@@ -178,12 +178,38 @@ def test_an_app_whose_only_binding_is_an_address_is_blocked_while_its_use_histor
     assert app["id"] in body["summary"]["apps_blocking_apply"]
 
 
-def test_session_apps_are_excluded_and_counted(db):
+def test_session_apps_are_listed_and_their_unproven_bindings_are_classified_like_any_other(db):
+    # The apply revokes every unproven App key, so the preview must list the session App's keys too.
     owner = _person(db, "owner@example.test")
     session_app = admin_store.ensure_session_app_for_user(owner["id"], name="Azizam", path=db)
+    _unguarded(db)
+    _insert_key(db, session_app["id"], created_by=None)
+
     body = _json(db)
-    assert body["summary"]["session_apps_excluded"] == 1
-    assert all(app["app_id"] != session_app["id"] for app in body["apps"])
+
+    listed = next(app for app in body["apps"] if app["app_id"] == session_app["id"])
+    assert listed["session_app"] is True
+    assert [key["action"] for key in listed["keys"]] == ["revoke"]
+    assert body["summary"]["session_apps"] == 1
+    assert body["summary"]["keys_to_revoke"] == 1
+
+
+def test_the_digest_ignores_the_clock_and_the_last_use_time_of_a_key_that_is_not_decisive(db):
+    owner = _person(db, "owner@example.test")
+    app = _service_app(db, owner)
+    _insert_key(db, app["id"], created_by=owner["id"])  # a proven key keeps the App bound at any time
+    _unguarded(db)
+    _insert_key(db, app["id"], created_by=None, last_used_at=AS_OF - 100)
+
+    def digest_at(as_of: int, last_used_at: int | None) -> str:
+        _sql(db, "UPDATE credentials SET last_used_at = ? WHERE created_by IS NULL", (last_used_at,))
+        conn = app_binding_preview.connect_read_only(db)
+        try:
+            return app_binding_preview.digest(app_binding_preview.build(conn, as_of=as_of))
+        finally:
+            conn.close()
+
+    assert digest_at(AS_OF, AS_OF - 100) == digest_at(AS_OF + 400 * DAY, None)
 
 
 def test_the_digest_is_stable_and_matches_the_body(db):
