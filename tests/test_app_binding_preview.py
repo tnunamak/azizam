@@ -152,6 +152,23 @@ def test_an_app_used_in_the_last_thirty_days_that_would_lose_all_bindings_blocks
     assert any("used in the last 30 days" in reason for reason in _app_block(body, app["id"])["blocks_apply"])
 
 
+def test_a_disabled_app_that_would_lose_all_bindings_does_not_block_apply(db):
+    # The owner stops an App by disabling it; that is the explicit stop the design asks for, and the only
+    # way to clear a block on an App whose person cannot be reached.
+    owner = _person(db, "owner@example.test")
+    app = _service_app(db, owner, name="Ledger")
+    _unguarded(db)
+    _insert_key(db, app["id"], created_by=None, last_used_at=AS_OF - DAY)
+    admin_store.disable_app(app["id"], path=db)
+
+    body = _json(db)
+
+    listed = next(entry for entry in body["apps"] if entry["app_id"] == app["id"])
+    assert listed["would_lose_all_bindings"] is True
+    assert listed["blocks_apply"] == []
+    assert body["summary"]["apps_blocking_apply"] == []
+
+
 def test_an_app_that_is_not_used_lately_is_listed_but_not_blocked(db):
     owner = _person(db, "owner@example.test")
     app = _service_app(db, owner)
