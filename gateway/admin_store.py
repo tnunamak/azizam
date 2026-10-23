@@ -2175,6 +2175,44 @@ def delete_trusted_address(
     return _row_to_dict(row)
 
 
+def readd_trusted_address(
+    app_id: str, entry_id: str, *, created_by: str, audit: Mapping[str, Any],
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Remove one entry and add its address again, made by ``created_by``, in one transaction.
+
+    An App holds each address once, so the removal has to come before the add. The note carries over. The sign-in
+    (``session``) is checked, and the audit event (``audit``: ``action``, ``actor_kind``, ``actor_id``) is written, in
+    the same transaction, so a failed step leaves the old entry in place. Returns ``{"trusted_address": the new entry,
+    "replaced_entry_id": entry_id}``, or None when the App has no such entry.
+    """
+    ts = _now() if now is None else int(now)
+    new_id = _gen_id("tad")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        conn.execute(
+            "INSERT INTO app_trusted_addresses(id, app_id, address, note, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id, app_id, row["address"], row["note"], ts, created_by),
+        )
+        _record_audit_in_transaction(
+            conn, audit["action"], actor_kind=audit["actor_kind"], actor_id=audit["actor_id"], actor_label=None,
+            target_kind="app", target_id=app_id,
+            metadata={"address": row["address"], "entry_id": new_id, "replaced_entry_id": entry_id}, now=ts,
+        )
+        conn.commit()
+        created = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (new_id,)).fetchone()
+    return {"trusted_address": _row_to_dict(created), "replaced_entry_id": entry_id}
+
+
 class KeepNotProvable(ValueError):
     """A binding nobody else could have made is kept by the owner only. Any other binding is replaced, or added again."""
 
@@ -4213,6 +4251,7 @@ __all__ = [
     "delete_trusted_address",
     "adopt_app_credential",
     "adopt_trusted_address",
+    "readd_trusted_address",
     "KeepNotProvable",
     "KeepNeedsConfirmation",
     "KEEP",

@@ -755,6 +755,34 @@ def remove_user_trusted_address(
     return removed
 
 
+def readd_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Add an unkept trusted address again on an App the signed-in person answers for, as its creator.
+
+    The way a person keeps an address that cannot be kept: the entry is replaced by the same address, made by them, in
+    one transaction with the audit event and the sign-in check (``admin_store.readd_trusted_address``). Another person's
+    App, and a session App, get the same 404 as adding an address to them (``_app_belongs_to_user``).
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    try:
+        readded = admin_store.readd_trusted_address(
+            app_id, entry_id, created_by=str(user["id"]),
+            audit={"action": "app.trusted_address.readd", "actor_kind": "user", "actor_id": str(user["id"])},
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if readded is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    return readded
+
+
 def ensure_try_session_key(
     session: AdminSession,
     *,
