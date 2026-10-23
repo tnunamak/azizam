@@ -341,6 +341,17 @@ for (const width of [390, 1440]) {
   });
 }
 
+test("a stale single sign-on name opens the sign-in page with the notice, and the form under it", async ({
+  page,
+}) => {
+  await page.goto("/sign-in/?error=tile_unknown");
+  const main = page.getByRole("main");
+  await expect(main.getByRole("alert")).toContainText(
+    "That name can’t sign in from this list. Try another way to sign in, or ask the person who invited you for help.",
+  );
+  await expect(main.getByLabel("Email")).toBeVisible();
+});
+
 test("a new gateway offers setup before asking for a password", async ({
   page,
 }) => {
