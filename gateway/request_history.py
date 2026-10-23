@@ -859,6 +859,41 @@ def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: l
     return record
 
 
+#: Members who dismissed the notice that request history is available (admin store; see ``admin_store._SCHEMA``).
+NOTICE_TABLE = "request_history_notice_seen"
+
+
+def notice_due(person_id: str, *, admin_path: Path) -> bool:
+    """Whether to tell a member that request history is available (REQUEST_RETENTION.md section 12, item 3).
+
+    It is due for a member whose history switch is still off and whom nothing has changed: the row the schema 17
+    upgrade wrote, with no last writer (``retention_migration.migrate_group_keys``). Turning the switch on or off
+    answers it, and so does dismissing it.
+    """
+    conn = _admin_connection(admin_path)
+    try:
+        row = conn.execute(f"SELECT remember, updated_by FROM {retention.MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                           (person_id, retention.GROUP_REQUEST_HISTORY)).fetchone()
+        if row is None or row[0] or row[1]:
+            return False
+        if not _has_table(conn, NOTICE_TABLE):
+            return True
+        return conn.execute(f"SELECT 1 FROM {NOTICE_TABLE} WHERE person_id=?", (person_id,)).fetchone() is None
+    finally:
+        conn.close()
+
+
+def mark_notice_seen(person_id: str, *, admin_path: Path, now: int) -> None:
+    """Dismiss the notice. The member's choice does not change."""
+    conn = _admin_connection(admin_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(f"INSERT OR IGNORE INTO {NOTICE_TABLE}(person_id, seen_at) VALUES (?, ?)", (person_id, int(now)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def tighten(period_seconds: int, *, person_id: str, admin_path: Path | None = None, path: Path | None = None) -> int:
     """A shorter period shortens existing deadlines of the person's records. A longer one never extends them (12)."""
     conn = connect(path)

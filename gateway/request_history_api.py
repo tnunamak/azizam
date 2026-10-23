@@ -248,6 +248,7 @@ def create_request_history_router(
             "retention": member.get("retention", defaults["retention"]),
             "parts": member.get("parts", list(retention.bundled().parts(retention.REQUEST_HISTORY))),
             "choices": list(retention.bundled().data["groups"][GROUP]["choices"]),
+            "notice_due": request_history.notice_due(person_id, admin_path=admin_path()),
         }
 
     def _session_person(request: Request) -> str | JSONResponse:
@@ -293,5 +294,19 @@ def create_request_history_router(
         request_history.set_member_choice(person, keep=keep, retention_id=choice, parts=parts,
                                           admin_path=admin_path(), path=media_path(), now=int(time.time()))
         return _choice(person)
+
+    @router.post("/me/api/retention/notice-seen", include_in_schema=False)
+    @_retry_when_busy
+    def dismiss_request_history_notice(request: Request) -> Any:
+        """Dismiss the one-time notice for a member who predates request history. The choice does not change."""
+        session = session_provider(request)
+        if session is None:
+            return _error(401, "unauthorized", "Sign in required.", kind="authentication_error")
+        if mutation_validator is not None:
+            refusal = mutation_validator(request, session)
+            if refusal is not None:
+                return refusal
+        request_history.mark_notice_seen(str(session.subject), admin_path=admin_path(), now=int(time.time()))
+        return {"notice_due": False}
 
     return router

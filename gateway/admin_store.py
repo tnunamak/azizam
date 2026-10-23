@@ -308,6 +308,12 @@ CREATE TABLE IF NOT EXISTS signin_seen_values (
   seen_at INTEGER NOT NULL,
   PRIMARY KEY(kind, value)
 );
+-- A member who predates request history was told once that it is available, and dismissed that notice. A row
+-- here means the notice was dismissed (REQUEST_RETENTION.md section 12, item 3). The choice itself is elsewhere.
+CREATE TABLE IF NOT EXISTS request_history_notice_seen (
+  person_id TEXT PRIMARY KEY,
+  seen_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
