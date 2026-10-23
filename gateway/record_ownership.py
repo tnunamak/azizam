@@ -12,20 +12,20 @@ from gateway.content_access import ContentOrigin, JobRecord, Own, ReceiptRecord,
 from gateway.content_makers import Apps, row_makers
 
 
-def _creating_receipt(job: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The receipt the job was created under, by its durable creating link only.
+def _decision_receipt(job: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The receipt filed under the job's own request id, the only correlation the server sets for the job.
 
-    A parent or request id is client-supplied or reused, so it proves nothing about who owns the job.
+    A parent link can be supplied by a client, so it names no maker here.
     """
-    creating = str(job.get("creating_receipt_id") or "")
-    return receipt_store.get(creating, audience="internal") if creating else None
+    request_id = str(job.get("request_id") or "")
+    return receipt_store.get(request_id, audience="internal") if request_id else None
 
 
 def owns_record(kind: str, record: Mapping[str, Any], *, viewer: Viewer, apps: Apps) -> bool:
     """Whether ``viewer`` may read this stored receipt or media job. A job takes its creating receipt's maker."""
     if kind not in {"receipt", "media_job"}:
         return False
-    receipt = _creating_receipt(record) if kind == "media_job" else None
+    receipt = _decision_receipt(record) if kind == "media_job" else None
     source = receipt if kind == "media_job" else record
     app_id = str(record.get("app_id") or (receipt or {}).get("app_id") or "") or None
     makers = row_makers(

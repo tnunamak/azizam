@@ -162,7 +162,7 @@ def create_me_media_router(
                 receipts = receipt_store.get_many(
                     [rid for job in batch for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
                 )
-                rows.extend(job for job in batch if _job_in_library(job, _receipt_of(job, receipts), scope, apps))
+                rows.extend(job for job in batch if _job_in_library(job, _decision_receipt(job, receipts), scope, apps))
                 scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
                 if len(batch) < 101:
                     break
@@ -175,7 +175,7 @@ def create_me_media_router(
                     [rid for job in made for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
                 )
                 rows.extend(job for job in made if job["job_id"] not in listed
-                            and _job_in_library(job, _receipt_of(job, made_receipts), scope, apps))
+                            and _job_in_library(job, _decision_receipt(job, made_receipts), scope, apps))
                 rows.sort(key=lambda job: (job["updated_at"], job["job_id"]), reverse=True)
             page = rows[:100]
             next_cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
@@ -195,7 +195,7 @@ def create_me_media_router(
             if job is None:
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
             receipts = receipt_store.get_many(_job_receipt_ids(job), audience="internal", path=receipt_path)
-            if not _job_in_library(job, _receipt_of(job, receipts), scope, _Apps(admin_path)):
+            if not _job_in_library(job, _decision_receipt(job, receipts), scope, _Apps(admin_path)):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
             return _json({"job": me_make._client_view(job, asset_path_resolver=asset_path_resolver)})
         except (PublicFailure, UserPortalError) as exc:
@@ -1040,7 +1040,14 @@ def _library_viewer(scope: _MediaScope) -> Viewer:
 
 
 def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The receipt that describes the job. Parent and legacy links are only lookups for this."""
     return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
+
+
+def _decision_receipt(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The receipt that decides who made the job: the one filed under its own request id (never a client-supplied parent)."""
+    request_id = str(job.get("request_id") or "")
+    return receipts.get(request_id) if request_id else None
 
 
 def _job_in_library(
@@ -1124,9 +1131,8 @@ def _scoped_jobs(
     )
     scoped = []
     for job in jobs:
-        receipt = _receipt_of(job, receipts)
-        if _job_in_library(job, receipt, scope, apps):
-            scoped.append((job, receipt))
+        if _job_in_library(job, _decision_receipt(job, receipts), scope, apps):
+            scoped.append((job, _receipt_of(job, receipts)))
     return scoped
 
 
