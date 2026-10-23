@@ -35,7 +35,7 @@ def _client(gateway):
 
 
 def _seed_person(gateway, flow):
-    if flow == "password":
+    if flow in {"password", "setup_password"}:
         user = admin_store.claim_first_local_owner(
             issuer="local",
             subject=PASSWORD_EMAIL,
@@ -137,6 +137,10 @@ def _inject_write_failure(gateway, flow, failure):
         ("password", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
         ("password", "session_issue"): "BEFORE INSERT ON account_sessions",
         ("password", "remembered_people"): "BEFORE UPDATE ON remembered_people",
+        ("setup_password", "refusal_clear"): "BEFORE DELETE ON account_signin_refusals",
+        ("setup_password", "setup_audit"): "BEFORE INSERT ON audit_events WHEN NEW.action='setup.local_owner_login'",
+        ("setup_password", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
+        ("setup_password", "session_issue"): "BEFORE INSERT ON account_sessions",
         ("oidc", "user_update"): "BEFORE UPDATE OF last_login_at ON users",
         ("oidc", "verification"): "BEFORE INSERT ON account_oidc_verification",
         ("oidc", "refusal_clear"): "BEFORE DELETE ON account_signin_refusals",
@@ -169,6 +173,10 @@ def _inject_write_failure(gateway, flow, failure):
             "remembered_people",
         )
     ] + [
+        ("setup_password", failure) for failure in (
+            "refusal_clear", "setup_audit", "incoming_revoke", "session_issue",
+        )
+    ] + [
         ("oidc", failure) for failure in (
             "user_update", "verification", "refusal_clear", "identity_claims", "admin_grant",
             "rule_plan", "avatar", "app_provision", "app_audit", "incoming_revoke", "session_issue",
@@ -199,6 +207,10 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
             "/auth/api/login",
             json={"email": PASSWORD_EMAIL, "password": PASSWORD, "remember": True},
         )
+    elif flow == "setup_password":
+        response = client.post(
+            "/setup/local-login", data={"email": PASSWORD_EMAIL, "password": PASSWORD},
+        )
     else:
         response = gateway.sign_in(
             client,
@@ -223,9 +235,11 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
                 "message": "Sign-in could not be completed. Try again.",
             }
         }
-    else:
+    elif flow == "oidc":
         assert response.status_code == 303
         assert parse_qs(urlsplit(response.headers["location"]).query)["error"] == ["provider"]
+    else:
+        assert response.status_code == 500
     assert "injected sign-in write failure" not in response.text
     assert _state_snapshot(gateway) == before
     # Abuse throttles must commit before the sign-in transaction so failed writes still count.
