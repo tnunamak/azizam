@@ -165,6 +165,15 @@ describe("the chooser", () => {
     expect(screen.queryByRole("list")).toBeNull();
   });
 
+  it("a stale single sign-on name sends the person back with the notice above the list", async () => {
+    setAddress("/sign-in/?error=tile_unknown");
+    mount();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That name can’t sign in from this list. Try another way to sign in, or ask the person who invited you for help.",
+    );
+    expect(await rowNames()).toContain("Robin Okafor");
+  });
+
   it("offers a plain message and Try again when the list cannot be reached", async () => {
     rememberedReply = () => Promise.reject(new TypeError("Failed to fetch"));
     mount();
