@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api";
 import { networkFetch } from "@/lib/network-error";
 import { uiPages } from "@/lib/product";
+import type { RememberedList } from "@/lib/remembered-people";
 
 export interface SignInOptions {
   built_in: boolean;
@@ -18,9 +19,18 @@ export async function authFetch<T>(
   body?: object,
   headers?: Record<string, string>,
 ): Promise<T> {
+  return authRequest<T>(body ? "POST" : "GET", path, body, headers);
+}
+
+export async function authRequest<T>(
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  body?: object,
+  headers?: Record<string, string>,
+): Promise<T> {
   // Session-bound like every other request: the answer can name the person who is signed in (signed_in_oidc).
   const response = await networkFetch(path, {
-    method: body ? "POST" : "GET",
+    method,
     credentials: "same-origin",
     cache: "no-store",
     ...(body
@@ -94,4 +104,14 @@ function isDotSegment(segment: string): boolean {
 }
 export function continueTo(next: string) {
   window.location.assign(safeContinuePath(next));
+}
+
+/** The names this browser remembers. Needs no session: the list is for whoever is at the computer. */
+export function rememberedList(): Promise<RememberedList> {
+  return authFetch<RememberedList>("/auth/api/remembered");
+}
+
+/** Takes one name off this browser's list. It signs no one out and changes no account. */
+export function forgetRemembered(tile: string): Promise<{ ok: boolean }> {
+  return authRequest<{ ok: boolean }>("DELETE", `/auth/api/remembered/${encodeURIComponent(tile)}`);
 }
