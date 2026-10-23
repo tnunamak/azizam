@@ -94,7 +94,6 @@ def test_a_secrets_map_is_removed_whole_under_its_credential_name():
 # ------------------------------------------------------------------ the secret floor: URLs inside text (rule 4)
 
 
-@pytest.mark.xfail(strict=True, reason="R2-3: rule 4 scrubs http(s) only, and only a lower-case scheme")
 @pytest.mark.parametrize("text", [
     f"connect with postgres://admin:{CANARY}@db.local:5432/app",
     f"postgresql://admin:{CANARY}@db.local/app",

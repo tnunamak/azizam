@@ -43,8 +43,11 @@ _TRAILING_DIGITS = re.compile(r"\d+$")
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
-#: A URL inside a longer string runs to the next space or quote; punctuation that closes a sentence is not part of it.
-_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`]+")
+#: Any URL scheme, in any case: ``https``, ``postgres``, ``wss``, ``HTTPS``. A URL inside a longer string runs to the next
+#: space or quote; punctuation that closes a sentence is not part of it.
+_URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
+_URL_START = re.compile(_URL_SCHEME)
+_URL_IN_TEXT = re.compile(_URL_SCHEME + r"[^\s<>\"'`]+")
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}"
 
 _TABLE = """
@@ -118,7 +121,7 @@ def allowed_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 def _scrub_url(value: str) -> tuple[str, bool] | None:
     """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go."""
-    if not value.startswith(("http://", "https://")) or any(char.isspace() for char in value):
+    if _URL_START.match(value) is None or any(char.isspace() for char in value):
         return None
     try:
         parts = urlsplit(value)
@@ -154,7 +157,7 @@ def _redact_text(value: str, found: set[str]) -> Any:
         if changed:
             found.add("url_parts_removed")
         return text
-    if "http://" in value or "https://" in value:
+    if _URL_IN_TEXT.search(value):
         return _scrub_urls_in_text(value, found)
     return value
 
