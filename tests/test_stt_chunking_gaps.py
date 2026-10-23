@@ -55,7 +55,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                         extracted_payloads = []
                         started = []
 
-                        async def spawn(*command, **kwargs):
+                        async def spawn(command, **kwargs):
                             tool, args = command[0], list(command)
                             target = Path(args[-1])
                             if tool == "ffprobe":

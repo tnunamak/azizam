@@ -55,6 +55,25 @@ def _put_first_on_path(monkeypatch, directory: Path) -> None:
     monkeypatch.setenv("PATH", f"{directory}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
+def _record_kills(monkeypatch) -> list[tuple[int, int]]:
+    """The hermetic sandbox fails every os.kill, so a kill is recorded here instead of sent: (pid, signal) per call."""
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    return killed
+
+
+def _substitute_command(monkeypatch, command: str, stand_in: str) -> None:
+    """The hermetic sandbox refuses to run host-control commands such as systemctl, so a call to `command` runs stand_in."""
+    from gateway import off_loop_spawn
+
+    real_run = off_loop_spawn.run
+
+    async def run(argv, **kwargs):
+        return await real_run([stand_in if argv[0] == command else argv[0], *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(off_loop_spawn, "run", run)
+
+
 # --- the helper ----------------------------------------------------------------------------------
 
 def test_start_spawns_the_child_on_a_worker_thread_and_its_pipes_work(monkeypatch):
@@ -87,8 +106,10 @@ def test_run_returns_the_exit_code_and_output_from_a_worker_thread(monkeypatch):
 def test_a_child_that_outlives_run_timeout_is_killed_and_reported(monkeypatch):
     from gateway import off_loop_spawn
 
+    killed = _record_kills(monkeypatch)
     with pytest.raises(subprocess.TimeoutExpired):
-        asyncio.run(off_loop_spawn.run(["sleep", "30"], timeout=0.2))
+        asyncio.run(off_loop_spawn.run(["sleep", "1"], timeout=0.1))
+    assert len(killed) == 1, "the child past its timeout was not killed"
 
 
 def test_a_start_cancelled_while_it_spawns_kills_the_child_it_started(monkeypatch):
@@ -108,9 +129,10 @@ def test_a_start_cancelled_while_it_spawns_kills_the_child_it_started(monkeypatc
             release.wait(10)  # the spawn finishes only after the caller has been cancelled
 
     monkeypatch.setattr(subprocess, "Popen", SlowPopen)
+    killed = _record_kills(monkeypatch)
 
     async def scenario():
-        task = asyncio.ensure_future(off_loop_spawn.start(["sleep", "30"]))
+        task = asyncio.ensure_future(off_loop_spawn.start(["sleep", "1"]))
         await asyncio.to_thread(started.wait, 10)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -123,14 +145,16 @@ def test_a_start_cancelled_while_it_spawns_kills_the_child_it_started(monkeypatc
 
     asyncio.run(scenario())
 
-    assert spawned and spawned[0].poll() is not None, "a cancelled start left its child running"
+    assert spawned and [pid for pid, _ in killed] == [spawned[0].pid], "a cancelled start did not kill its child"
+    assert spawned[0].poll() is not None, "the killed child was not reaped"
 
 
 # --- the sites -----------------------------------------------------------------------------------
 
 def test_the_systemctl_call_on_the_swap_path_runs_off_the_loop(monkeypatch, tmp_path):
     on_loop = _record_spawns(monkeypatch)
-    _put_first_on_path(monkeypatch, _fake_bin_dir(tmp_path, {"systemctl": "exit 0"}))
+    stand_in = _executable(tmp_path / "stand-in-for-systemctl", "exit 0")
+    _substitute_command(monkeypatch, "systemctl", str(stand_in))
 
     ok = asyncio.run(lifecycle_drivers.SystemdDriver()._run_systemctl(["systemctl", "--user", "start", "x.service"]))
 

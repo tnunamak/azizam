@@ -113,10 +113,7 @@ def test_exact_model_aux_and_profile_is_noop_but_profile_change_restarts(tmp_pat
 
     assert subprocess_exec.call_count == 2
     assert subprocess_exec.call_args_list[1].args == (
-        "systemctl",
-        "--user",
-        "restart",
-        "llama-bee.service",
+        ["systemctl", "--user", "restart", "llama-bee.service"],
     )
     assert dropin.read_text() == driver._dropin_text(q8)
 

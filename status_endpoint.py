@@ -25,6 +25,7 @@ import copy
 import functools
 import importlib
 import json
+import logging
 import os
 import re
 import ssl
@@ -45,13 +46,15 @@ from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
-# Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
-_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
-_CACHE_TTL_S = 12.0
-# Past the TTL, a status that is at most this old is served at once while one
-# background rebuild refreshes it, so no request pays for the rebuild.
-_CACHE_STALE_S = 60.0
-_BUILD_TASK: asyncio.Task | None = None
+_log = logging.getLogger(__name__)
+
+# The status snapshot: one full build runs in the background on a schedule, and every reader gets the latest
+# one. No request waits for a probe. A section that does not answer in a build keeps its last answer, and its
+# age in the snapshot keeps growing until it answers again.
+SNAPSHOT_INTERVAL_S = 15.0
+_SNAPSHOT: dict[str, Any] = {}  # built_at (epoch), built (monotonic), payload, section_at {name: monotonic}
+_SNAPSHOT_TASK: asyncio.Task | None = None
+_SECTION_AT: dict[str, float] = {}  # when each section last answered, monotonic time
 
 
 def _resolve_commit_hash() -> Optional[str]:
@@ -3673,6 +3676,7 @@ async def gather_sections(
             errors[name] = _safe_err(e)
             return None
         _SECTION_LAST[name] = value
+        _SECTION_AT[name] = time.monotonic()
         return value
 
     names = list(sections)
@@ -4296,38 +4300,68 @@ def _build_models(
     }
 
 
-async def _rebuild_cached_status(config: dict) -> dict:
-    global _BUILD_TASK
-    try:
-        data = await build_status_payload(config)
-        # A long rebuild must not use up the TTL before it becomes available.
-        _CACHE["data"] = data
-        _CACHE["ts"] = time.monotonic()
-        return data
-    finally:
-        _BUILD_TASK = None
+def _store_snapshot(payload: dict) -> None:
+    global _SNAPSHOT
+    _SNAPSHOT = {
+        "built_at": time.time(),
+        "built": time.monotonic(),
+        "payload": payload,
+        "section_at": dict(_SECTION_AT),
+    }
 
 
-def _consume_build_exception(task: asyncio.Task) -> None:
-    # A disconnected sole caller leaves the shielded build running. Retrieve
-    # failures even then; awaiting callers still receive the same exception.
-    if not task.cancelled():
-        task.exception()
+async def _snapshot_loop(build: Callable[[], Awaitable[dict]]) -> None:
+    while True:
+        try:
+            _store_snapshot(await build())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - the last snapshot stays; only the type is logged, as the message can carry a path
+            _log.error("status snapshot build failed: %s", type(error).__name__)
+        await asyncio.sleep(SNAPSHOT_INTERVAL_S)
+
+
+def start_snapshot(build: Callable[[], Awaitable[dict]]) -> None:
+    """Start the background build that keeps the snapshot current. A build already running is kept."""
+    global _SNAPSHOT_TASK
+    if _SNAPSHOT_TASK is None or _SNAPSHOT_TASK.done():
+        _SNAPSHOT_TASK = asyncio.get_running_loop().create_task(_snapshot_loop(build))
+
+
+async def stop_snapshot() -> None:
+    """Cancel the background build and wait until it has ended, so none writes the snapshot after shutdown."""
+    global _SNAPSHOT_TASK
+    task, _SNAPSHOT_TASK = _SNAPSHOT_TASK, None
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+def latest_payload() -> Mapping[str, Any]:
+    """The latest snapshot's payload, or {} before the first build has finished. Never probes."""
+    return _SNAPSHOT.get("payload", {})
 
 
 async def get_cached_status(config: dict) -> dict:
-    global _BUILD_TASK
+    """The latest snapshot, for every status reader. It never probes, so no reader waits for a probe.
+
+    Before the first build has finished, the answer says it is checking, and its engines read as unknown.
+    Each section carries its age in ``snapshot.section_age_s``.
+    """
+    if not _SNAPSHOT:
+        return {
+            "checking": True,
+            "backends": checking_backend_rows(config),
+            "snapshot": {"built_at": None, "age_s": None, "section_age_s": {}},
+        }
     now = time.monotonic()
-    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
-        data = dict(_CACHE["data"])
-        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
-        return data
-    if _BUILD_TASK is None:
-        _BUILD_TASK = asyncio.create_task(_rebuild_cached_status(config))
-        _BUILD_TASK.add_done_callback(_consume_build_exception)
-    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_STALE_S:
-        data = dict(_CACHE["data"])
-        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
-        return data
-    # One cancelled HTTP request must not cancel every other waiter.
-    return await asyncio.shield(_BUILD_TASK)
+    age = round(now - _SNAPSHOT["built"], 2)
+    data = dict(_SNAPSHOT["payload"])
+    data["cache_age_s"] = age
+    data["snapshot"] = {
+        "built_at": _SNAPSHOT["built_at"],
+        "age_s": age,
+        "section_age_s": {name: round(now - at, 2) for name, at in _SNAPSHOT["section_at"].items()},
+    }
+    return data

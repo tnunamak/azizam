@@ -144,9 +144,9 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
 # engine rows stale (proxy._ENGINE_ROWS_MAX_STALE_S) makes each sample a cold read. A shorter wait would
 # be served the old rows while the refresh runs, and its counts would depend on how far the refresh got.
 # The row takes its limits from budgets.toml [api.routes].
-COLD_HOME_ROUTE = "/me/api/home (status cache expired)"
+COLD_HOME_ROUTE = "/me/api/home (after idle)"
 COLD_HOME_WAIT_S = 61
-COLD_STATUS_ROUTE = "/admin/api/status (status cache expired)"
+COLD_STATUS_ROUTE = "/admin/api/status (after idle)"
 # The status page keeps a stale answer for 60 s past its 12 s TTL and rebuilds in the background, so
 # a read is cold only after that stale window.
 COLD_STATUS_WAIT_S = 62
