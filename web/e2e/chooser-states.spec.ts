@@ -8,7 +8,7 @@
 // nobody needs the owner's "On shared computers" choice, which the fixture gateway does not let a test set; W5
 // adds that choice to Settings and its capture belongs with it.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures/isolation";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import { CHOOSER_HEADING, twoPeopleOnOneBrowser } from "./chooser-journey";
 
 // The chooser's reads of the remembered list share one budget with every other test on the same gateway: 60 reads a
@@ -131,6 +131,31 @@ for (const viewport of WIDTHS) {
       await submit.click();
       await expect(page.getByRole("heading", { level: 1, name: `${leaName} can’t sign in from this list` })).toBeVisible();
       await capture(page, name, "password-gone");
+    });
+
+    // The owner's "On shared computers" choice (S12) on Settings, saved, then the browser that remembered two people
+    // shows the plain form. Tagged global-state: the choice is owner-wide, and the fixture restores it after the test.
+    test(`the owner remembers nobody on Settings, and the chooser then shows the plain form`, {
+      tag: GLOBAL_STATE_TAG,
+    }, async ({ page: owner, isolated }) => {
+      test.setTimeout(240_000);
+      const { page: device } = await twoPeopleOnOneBrowser(isolated);
+      await device.goto("/sign-in/");
+      await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible();
+
+      await owner.setViewportSize({ width: viewport.width, height: viewport.height });
+      await owner.goto("/settings/");
+      const block = owner.getByRole("region", { name: "On shared computers" });
+      await block.getByRole("radio", { name: "Remember nobody" }).click();
+      await expect(block).toContainText("Saving forgets every name on every browser.");
+      await block.screenshot({ path: test.info().outputPath(`w5-shots/${viewport.name}-s12-remember-nobody.png`) });
+      await owner.getByRole("button", { name: "Save changes" }).click();
+      await expect(owner.getByText("Nothing to save.")).toBeVisible();
+
+      await device.goto("/sign-in/");
+      await expect(device.getByLabel("Email")).toBeVisible();
+      await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toHaveCount(0);
+      await expect(device.getByRole("checkbox", { name: "Show my name on this browser next time" })).toHaveCount(0);
     });
 
     test(`the list cannot be read, the plain form for a new browser, and the reset form are captured`, async ({ browser, baseURL }) => {

@@ -25,6 +25,9 @@ import {
   everyoneAdminWarning,
   onlyInvitedNote,
   providerRowDescription,
+  ASKS_EVERY_TIME,
+  noFreshWarning,
+  SHARED_COMPUTERS,
   hasPasswordText,
   noPasswordText,
   keysLine,
@@ -520,6 +523,34 @@ describe("saved toast", () => {
     );
     expect(savedToast({ p, turnedOn: false, forLater: false, removed: [] })).toBe(
       "Saved. Changes apply to the next sign-in.",
+    );
+  });
+});
+
+describe("On shared computers and the provider's test result (W5)", () => {
+  it("names the owner's two choices in the words DESIGN.md section 8 uses", () => {
+    expect(SHARED_COMPUTERS).toEqual({
+      heading: "On shared computers",
+      help: "What the sign-in page shows on a browser that people share.",
+      remember: {
+        label: "Remember who signed in",
+        help: "The sign-in page lists people who signed in on that browser, by name. Each person can be forgotten there.",
+      },
+      nobody: {
+        label: "Remember nobody",
+        help: "For public and school computers. The sign-in page shows no names.",
+        forgets: "Saving forgets every name on every browser.",
+      },
+    });
+  });
+
+  it("reads a fresh test result and a missing one in the words DESIGN.md section 6 uses", () => {
+    expect(ASKS_EVERY_TIME).toBe("On · asks for a password every time");
+    expect(noFreshWarning(providerLabel("Family login", ""))).toBe(
+      "Family login doesn’t ask for a password every time. People on shared computers will need to sign out of Family login between people.",
+    );
+    expect(noFreshWarning(providerLabel("", ""))).toBe(
+      "Your provider doesn’t ask for a password every time. People on shared computers will need to sign out of your provider between people.",
     );
   });
 });

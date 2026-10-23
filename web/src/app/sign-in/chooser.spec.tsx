@@ -153,15 +153,16 @@ describe("the chooser", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("keeps the existing sign-in errors above the list", async () => {
+  it("a refused sign-in shows the sign-out screen in place of the list (S8)", async () => {
     setAddress("/sign-in/?error=not_fresh&provider_sign_out=1");
     options.oidc = true;
     options.oidc_label = "Keycloak";
     mount();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Azizam couldn’t confirm that Keycloak just asked for your password.",
-    );
-    expect(await rowNames()).toContain("Robin Okafor");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Who’s signing in?" })).toBeNull();
+    expect(screen.queryByRole("list")).toBeNull();
   });
 
   it("offers a plain message and Try again when the list cannot be reached", async () => {
