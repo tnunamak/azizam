@@ -354,23 +354,23 @@ class _Capture:
             _record_entry(receipt_id, retention.WriteOutcome(False, "request_forget"), [])
             return
         parts: dict[str, Any] = {}
-        omissions: set[str] = set()
+        omissions_by_part: dict[str, list[str]] = {}
         accepted_body: Any = None
         if "accepted" in decision.parts:
             part, found = request_history.capture_request(self.request_headers, self.body)
             parts["accepted"], accepted_body = part, part["body"]
-            omissions.update(found)
+            omissions_by_part["accepted"] = sorted(found)
         if "received" in decision.parts and self.reply_status is not None and self.reply is not None:
             part, found = request_history.capture_reply(self.reply_status, self.reply_headers, self.reply)
             parts["received"] = part
-            omissions.update(found)
+            omissions_by_part["received"] = sorted(found)
         latency_ms = int((time.monotonic() - self._began) * 1000)
         summary = request_history.summarize(self.route, accepted_body, self.reply_status, latency_ms)
         record = {
             "record_id": request_history.new_record_id(), "request_id": receipt_id, "person_id": decision.person_id,
             "app_id": getattr(identity, "app_id", None), "origin_kind": getattr(identity, "auth_kind", "app_key"),
             "origin_id": _origin_id(identity), "created_at": self.started, "parts": parts,
-            "omissions": sorted(omissions), "policy_version": int(retention.bundled().data["format_version"]),
+            "omissions_by_part": omissions_by_part, "policy_version": int(retention.bundled().data["format_version"]),
             "summary": summary,
         }
         self._write(decision, record, receipt_id)
@@ -379,16 +379,21 @@ class _Capture:
         admin_path = self._owner._admin_path()
         media_path = self._owner._media_path()
         outcome = retention.WriteOutcome(False, "write_failed")
+        written: list[str] = []
 
         def remember(result: retention.WriteOutcome) -> None:
             nonlocal outcome
             outcome = result
 
-        def commit(deadline: int | None) -> None:
+        def commit(deadline: int | None, parts: tuple[str, ...]) -> None:
             # Runs inside the household lock (admin.db), as the Library writer's does, so admin.db is always taken before
-            # media_jobs.db. The media transaction is short: one insert and its commit.
+            # media_jobs.db. The media transaction is short: one insert and its commit. The parts are the ones the member
+            # keeps now, read under this lock, not the ones chosen when the request started (R2-6).
+            nonlocal written
+            kept = _kept_record(record, parts, deadline)
             with request_history.write_transaction(media_path) as conn:
-                request_history.insert_record(conn, {**record, "kept_until": deadline})
+                request_history.insert_record(conn, kept)
+            written = list(kept["parts"])
 
         try:
             retention.write(KIND, admin_path=admin_path, person_id=decision.person_id, created_at=self.started,
@@ -396,7 +401,15 @@ class _Capture:
         except Exception:
             log.warning("request history write failed request_id=%s", receipt_id or "-", exc_info=False)
             outcome = retention.WriteOutcome(False, "write_failed")
-        _record_entry(receipt_id, outcome, list(decision.parts))
+        _record_entry(receipt_id, outcome, written)
+
+
+def _kept_record(record: dict[str, Any], parts: tuple[str, ...], deadline: int | None) -> dict[str, Any]:
+    """The record as it is written: the parts the member keeps, and only the omissions those parts made."""
+    names = [name for name in parts if name in record["parts"]]
+    omissions_by_part = record.get("omissions_by_part", {})
+    return {**record, "kept_until": deadline, "parts": {name: record["parts"][name] for name in names},
+            "omissions": sorted({item for name in names for item in omissions_by_part.get(name, [])})}
 
 
 async def _drain(capture: _Capture, receive: Callable) -> None:

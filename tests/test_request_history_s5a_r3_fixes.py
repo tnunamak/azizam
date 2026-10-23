@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+import time
 from urllib.parse import urlencode
 
-from gateway import request_history_capture
-from gateway.request_history_capture import IDENTITY_STATE_KEY
+from gateway import request_history, request_history_capture
+from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
 from tests.test_review_retention_s5a_probes import SENTENCE, _drive, _identity, _kept, member_db  # noqa: F401 - fixture
 
 FORGET = {"com.azizam.prompts": {"mode": "forget"}}
@@ -128,3 +130,78 @@ def test_r2_4_c_two_tasks_that_ask_for_the_decision_make_one_and_take_one_slot(m
         assert _free_slots() == request_history_capture.MAX_PENDING_CAPTURES - 1
     finally:
         request_history_capture._PENDING.release()
+
+
+# ------------------------------------------------------------------ R2-6: the parts are the member's choice at write time
+
+
+def _answer_during(db, media, person, during, reply: dict) -> None:
+    """A request whose route reads its body, runs ``during`` on another thread, then answers with ``reply``."""
+    from starlette.responses import JSONResponse
+
+    async def route(scope, receive, send):
+        scope["state"][IDENTITY_STATE_KEY] = _identity(person)
+        while True:
+            message = await receive()
+            if not message.get("more_body", False):
+                break
+        await asyncio.to_thread(during)
+        await JSONResponse(reply)(scope, receive, send)
+
+    delivered = {"body": False}
+
+    async def receive():
+        if delivered["body"]:
+            return {"type": "http.disconnect"}
+        delivered["body"] = True
+        return {"type": "http.request", "body": b'{"model":"m","input":"x"}', "more_body": False}
+
+    async def send(message):
+        return None
+
+    middleware = RequestHistoryMiddleware(route, admin_path=lambda: db, media_path=lambda: media)
+    scope = {"type": "http", "method": "POST", "path": "/v1/responses",
+             "headers": [(b"content-type", b"application/json")], "query_string": b"", "state": {}}
+    asyncio.run(middleware(scope, receive, send))
+
+
+def _set_parts(db, media, person, parts: list[str]) -> None:
+    request_history.set_member_choice(person, keep=True, retention_id="7_days", parts=parts, admin_path=db,
+                                      path=media, now=int(time.time()))
+
+
+def _only_row(media) -> dict:
+    conn = sqlite3.connect(media)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = [dict(row) for row in conn.execute("SELECT parts_json, parts_kept, omissions_json FROM kept_requests")]
+    finally:
+        conn.close()
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_r2_6_a_a_reply_the_member_stops_keeping_mid_request_is_not_kept(member_db):
+    db, media, person = member_db
+    _set_parts(db, media, person, ["accepted", "received"])
+    _answer_during(db, media, person, lambda: _set_parts(db, media, person, ["accepted"]), {"answer": SENTENCE})
+    row = _only_row(media)
+    assert json.loads(row["parts_kept"]) == ["accepted"]
+    assert "received" not in row["parts_json"] and SENTENCE not in row["parts_json"]
+
+
+def test_r2_6_b_the_omissions_of_a_dropped_reply_are_not_recorded(member_db):
+    db, media, person = member_db
+    _set_parts(db, media, person, ["accepted", "received"])
+    _answer_during(db, media, person, lambda: _set_parts(db, media, person, ["accepted"]),
+                   {"image": "data:image/png;base64,QUJD"})
+    assert "media" not in json.loads(_only_row(media)["omissions_json"])
+
+
+def test_r2_6_control_a_reply_the_member_keeps_is_kept_with_its_omissions(member_db):
+    db, media, person = member_db
+    _set_parts(db, media, person, ["accepted", "received"])
+    _answer_during(db, media, person, lambda: None, {"image": "data:image/png;base64,QUJD"})
+    row = _only_row(media)
+    assert json.loads(row["parts_kept"]) == ["accepted", "received"]
+    assert "media" in json.loads(row["omissions_json"])

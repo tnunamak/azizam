@@ -723,9 +723,12 @@ def _write_denial_reason(
 
 
 def _request_history_outcome(
-    policy: Mapping[str, Any], decision: Decision, started: int, commit: Callable[[int | None], Any],
+    policy: Mapping[str, Any], decision: Decision, started: int, commit: Callable[[int | None, tuple[str, ...]], Any],
 ) -> WriteOutcome:
-    """The request history gate, read again under the lock: the order of section 3.3, with the state as it is now."""
+    """The request history gate, read again under the lock: the order of section 3.3, with the state as it is now.
+
+    The parts kept are the member's choice now, not the choice when the request started, so a reply the member has
+    stopped keeping is not kept (REQUEST_RETENTION.md 12)."""
     if policy["never_keep"]:
         return WriteOutcome(False, "server_disabled")
     if decision.reason == "request_forget":
@@ -745,17 +748,19 @@ def _request_history_outcome(
     deadline = min(limits) if limits else None
     if deadline is not None and deadline <= int(time.time()):
         return WriteOutcome(False, "expired")
-    commit(deadline)
+    commit(deadline, _parts_for(bundled(), REQUEST_HISTORY, {"parts": policy.get("parts")}))
     return WriteOutcome(True, "kept", deadline,
                         _library_limit_source(policy, started, decision.kept_until, REQUEST_HISTORY))
 
 
 def write(
     kind: str, *, admin_path: Path | None, person_id: str | None, created_at: int,
-    commit: Callable[[int | None], Any], decision: Decision | None = None, kept_until: int | None = None,
+    commit: Callable[..., Any], decision: Decision | None = None, kept_until: int | None = None,
     on_result: Callable[[WriteOutcome], None] | None = None,
 ) -> bool:
     """Run ``commit(deadline)`` only if the policy in force now still allows the write.
+
+    For request history, ``commit(deadline, parts)`` also gets the parts the member keeps, read under the same lock.
 
     The policy is read under the household setting's write lock, which is held through ``commit``. A
     later kill switch, member choice or erasure cutoff therefore refuses the write; a write that wins the

@@ -133,7 +133,7 @@ def _write(db: Path, person_id: str, *, now: int) -> tuple[bool, list, list]:
     calls: list = []
     outcomes: list = []
     kept = retention.write(retention.REQUEST_HISTORY, admin_path=db, person_id=person_id, created_at=now,
-                           decision=decision, commit=lambda deadline: calls.append(deadline),
+                           decision=decision, commit=lambda deadline, parts: calls.append(deadline),
                            on_result=outcomes.append)
     return kept, calls, outcomes
 
