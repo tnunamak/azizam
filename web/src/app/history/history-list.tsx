@@ -37,11 +37,21 @@ export function HistoryList() {
   const nameModel = useModelName();
   const [openId, setOpenId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"all" | { one: string } | null>(null);
-  const choice = useQuery({
+  const { data: choice } = useQuery({
     queryKey: requestHistoryKey,
     queryFn: accountApi.requestHistory,
   });
-  const list = useInfiniteQuery({
+  const {
+    data: listPages,
+    error: listError,
+    fetchNextPage,
+    hasNextPage,
+    isError: listFailed,
+    isFetchingNextPage,
+    isPending: listPending,
+    isRefetching: listRefetching,
+    refetch: retryList,
+  } = useInfiniteQuery({
     queryKey: requestHistoryListKey,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => accountApi.requestHistoryPage(pageParam),
@@ -87,30 +97,30 @@ export function HistoryList() {
     },
   });
 
-  if (list.isPending)
+  if (listPending)
     return (
       <div role="status" aria-label="Loading your history" aria-busy="true">
         <Skeleton className="h-16 w-full" />
         <Skeleton className="mt-2 h-16 w-full" />
       </div>
     );
-  if (list.isError)
+  if (listFailed)
     return (
       <ErrorState
         heading="Couldn’t load your history"
-        error={list.error}
-        onRetry={() => void list.refetch()}
-        retrying={list.isRefetching}
+        error={listError}
+        onRetry={() => void retryList()}
+        retrying={listRefetching}
       />
     );
 
   const rows: RequestHistoryItem[] =
-    list.data?.pages.flatMap((page) => page.requests) ?? [];
+    listPages?.pages.flatMap((page) => page.requests) ?? [];
   // The owner's switch comes first: when it is off for everyone, the member's own choice changes nothing.
-  const householdOff = choice.data?.household_off === true;
-  const keeps = !householdOff && (choice.data?.keep ?? true);
+  const householdOff = choice?.household_off === true;
+  const keeps = !householdOff && (choice?.keep ?? true);
   // The period is the gateway's; until the choice has loaded, the screen says nothing about it.
-  const period = choice.data ? periodWords(choice.data.retention) : null;
+  const period = choice ? periodWords(choice.retention) : null;
 
   if (rows.length === 0)
     return (
@@ -200,14 +210,14 @@ export function HistoryList() {
           );
         })}
       </ul>
-      {list.hasNextPage ? (
+      {hasNextPage ? (
         <div className="flex justify-center">
           <Button
             variant="outline"
-            disabled={list.isFetchingNextPage}
-            onClick={() => void list.fetchNextPage()}
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
           >
-            {list.isFetchingNextPage ? "Loading more…" : "Load more"}
+            {isFetchingNextPage ? "Loading more…" : "Load more"}
           </Button>
         </div>
       ) : null}

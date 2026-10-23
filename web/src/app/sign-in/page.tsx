@@ -139,44 +139,60 @@ export default function SignInPage() {
         fromTile: false,
       })
     : null;
-  const options = useQuery({
+  const {
+    data: options,
+    isError: optionsFailed,
+    isPending: optionsPending,
+    refetch: refetchOptions,
+  } = useQuery({
     queryKey: ["auth", "options", returnTo],
     enabled: returnTo !== null,
     queryFn: () =>
       authFetch<SignInOptions>(`/auth/api/options?return_to=${encodeURIComponent(returnTo!)}`),
   });
-  const setup = useQuery({
+  const {
+    data: setup,
+    isError: setupFailed,
+    isPending: setupPending,
+    refetch: refetchSetup,
+  } = useQuery({
     queryKey: ["auth", "setup"],
     queryFn: () => authFetch<{ owner_exists: boolean }>("/setup/api/state"),
   });
   // The refused-sign-in screen (S8) is inert until the gateway reports fresh sign-in (SignInOptions.fresh_sign_in). It
   // shows no names, so it does not read the list.
-  const refusedNotFresh = arrival?.providerError === "not_fresh" && options.data?.fresh_sign_in === true;
+  const refusedNotFresh = arrival?.providerError === "not_fresh" && options?.fresh_sign_in === true;
   const listNeeded = arrival !== null && !refusedNotFresh;
-  const remembered = useQuery({
+  const {
+    data: remembered,
+    error: rememberedError,
+    isError: rememberedFailed,
+    isPending: rememberedPending,
+    refetch: refetchRemembered,
+  } = useQuery({
     queryKey: ["auth", "remembered"],
     enabled: listNeeded,
     queryFn: rememberedList,
   });
 
   const retry = () => {
-    void options.refetch();
-    void setup.refetch();
-    void remembered.refetch();
+    void refetchOptions();
+    void refetchSetup();
+    void refetchRemembered();
   };
 
   const loading =
-    arrival === null || options.isPending || setup.isPending || (listNeeded && remembered.isPending);
-  const unavailable = options.isError || setup.isError;
+    arrival === null || optionsPending || setupPending || (listNeeded && rememberedPending);
+  const unavailable = optionsFailed || setupFailed;
   // A list that cannot be read is said so (S4e). Any other refusal of the list falls back to the plain form.
-  const listUnreachable = remembered.isError && isNetworkFailure(remembered.error);
+  const listUnreachable = rememberedFailed && isNetworkFailure(rememberedError);
   const reset = arrival?.reset ?? "";
-  const firstRun = setup.data?.owner_exists === false && !reset;
-  const instanceName = options.data?.instance_name?.trim();
-  const providerName = providerNameFor(options.data?.oidc_label?.trim());
+  const firstRun = setup?.owner_exists === false && !reset;
+  const instanceName = options?.instance_name?.trim();
+  const providerName = providerNameFor(options?.oidc_label?.trim());
   // Until the list says otherwise, the name box is on: the sign-in keeps the name unless the owner remembers nobody.
-  const rememberOn = remembered.data?.remember !== false;
-  const everyone: RememberedPerson[] = remembered.data?.people ?? [];
+  const rememberOn = remembered?.remember !== false;
+  const everyone: RememberedPerson[] = remembered?.people ?? [];
   const people = everyone.filter((person) => !removed.has(person.tile));
   const nameOf = (tile: string) => everyone.find((person) => person.tile === tile)?.name ?? "";
 
@@ -316,7 +332,7 @@ export default function SignInPage() {
       <NotFreshScreen
         provider={providerName}
         signOut={arrival.providerSignOut}
-        signInAgain={options.data ? withRemember(options.data.oidc_url, rememberOn) : "/sign-in/"}
+        signInAgain={options ? withRemember(options.oidc_url, rememberOn) : "/sign-in/"}
         onBack={leaveNotFresh}
       />,
     );
@@ -343,7 +359,7 @@ export default function SignInPage() {
 
   const plain = (fromList: boolean) => (
     <PlainSignIn
-      data={options.data}
+      data={options}
       reset={reset}
       returnTo={returnTo ?? "/"}
       rememberOn={rememberOn}

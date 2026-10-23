@@ -42,23 +42,29 @@ export function HistoryDetail({
   onRequestDelete: (recordId: string) => void;
 }) {
   const nameModel = useModelName();
-  const record = useQuery({
+  const {
+    data,
+    error: recordError,
+    isError: recordFailed,
+    isPending: recordPending,
+    isRefetching: recordRefetching,
+    refetch: retryRecord,
+  } = useQuery({
     queryKey: ["account", "request-history", "record", recordId],
     queryFn: () => accountApi.requestHistoryRecord(recordId ?? ""),
     enabled: recordId !== null,
     retry: false,
   });
-  const requestId = record.data?.request_id ?? null;
-  const receipt = useQuery({
+  const requestId = data?.request_id ?? null;
+  const { data: receiptData, isPending: receiptIsPending } = useQuery({
     queryKey: ["account", "request-history", "receipt", requestId],
     queryFn: () => accountApi.receiptRetention(requestId ?? ""),
     enabled: requestId !== null,
     retry: false,
   });
   const sentence = keptSentence(
-    receipt.data?.retention?.find((entry) => entry.kind === "request_history"),
+    receiptData?.retention?.find((entry) => entry.kind === "request_history"),
   );
-  const data = record.data;
 
   return (
     <Sheet open={recordId !== null} onOpenChange={onOpenChange}>
@@ -76,23 +82,23 @@ export function HistoryDetail({
             {data ? <RequestTime at={data.created_at} /> : "Kept request"}
           </SheetDescription>
         </SheetHeader>
-        {record.isPending ? (
+        {recordPending ? (
           <div role="status" aria-label="Loading this request" aria-busy="true">
             <Skeleton className="h-24 w-full" />
           </div>
-        ) : record.isError ? (
+        ) : recordFailed ? (
           <ErrorState
             heading="Couldn’t load this request"
-            error={record.error}
-            onRetry={() => void record.refetch()}
-            retrying={record.isRefetching}
+            error={recordError}
+            onRetry={() => void retryRecord()}
+            retrying={recordRefetching}
           />
         ) : data ? (
           <Details
             record={data}
             app={app}
             sentence={sentence}
-            receiptPending={requestId !== null && receipt.isPending}
+            receiptPending={requestId !== null && receiptIsPending}
             onRequestDelete={() => onRequestDelete(data.record_id)}
           />
         ) : null}

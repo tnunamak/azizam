@@ -127,7 +127,7 @@ function Media({
   facts: Fact[];
   failure: string | null;
 }) {
-  const library = useQuery({
+  const { data: libraryAsset } = useQuery({
     queryKey: ["account", "request-history", "library", requestId, prompt],
     queryFn: () => accountApi.libraryItemForRequest(requestId ?? "", prompt ?? ""),
     enabled: Boolean(requestId && prompt),
@@ -136,9 +136,9 @@ function Media({
   return (
     <div className="space-y-4">
       <KeyValueList items={[...facts, ...resultFacts(failure)]} />
-      {library.data ? (
+      {libraryAsset ? (
         <Button asChild variant="outline" size="sm">
-          <Link prefetch={false} href={`/library?asset=${encodeURIComponent(library.data)}`}>
+          <Link prefetch={false} href={`/library?asset=${encodeURIComponent(libraryAsset)}`}>
             Open in Library
           </Link>
         </Button>

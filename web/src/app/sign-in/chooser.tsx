@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { ChevronRight, CircleCheck, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -219,18 +219,16 @@ export function ForgetList({ people, providerName, notice, error, onForget, onDo
   const headingRef = useRef<HTMLHeadingElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
   const forgetRefs = useRef(new Map<string, HTMLButtonElement>());
-  const [focusNext, setFocusNext] = useState<string | null>(null);
   const base = useId();
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
-  useEffect(() => {
-    // Runs after the removal has rendered, so the next button exists to receive focus.
-    if (focusNext === null) return;
-    if (focusNext === "done") doneRef.current?.focus();
-    else forgetRefs.current.get(focusNext)?.focus();
-    setFocusNext(null);
-  }, [focusNext, people]);
+  // Focus goes to the next name's Forget, or to Done after the last name. Both are on screen before the forget starts,
+  // and neither is the row being removed, so the focus is not lost with that row.
+  const focusAfterForget = (nextTile: string | null) => {
+    if (nextTile === null) doneRef.current?.focus();
+    else forgetRefs.current.get(nextTile)?.focus();
+  };
 
   return (
     <>
@@ -275,7 +273,7 @@ export function ForgetList({ people, providerName, notice, error, onForget, onDo
                   else forgetRefs.current.delete(person.tile);
                 }}
                 onClick={() => {
-                  setFocusNext(people[index + 1]?.tile ?? "done");
+                  focusAfterForget(people[index + 1]?.tile ?? null);
                   onForget(person);
                 }}
               >
