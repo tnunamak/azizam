@@ -9,7 +9,7 @@ import pytest
 
 from gateway import admin_store, receipt_store
 from gateway.user_runtime import UserPortalError, get_user_receipt
-from gateway.runtime_auth import AdminSession
+from gateway.admin_oidc import AdminSession
 from tests.test_receipt_detail_context import CHAT_RECEIPT
 
 ENTRY = {"kind": "request_history", "decision": "kept", "reason": "kept", "kept_until_ms": 1792300000000,
