@@ -2257,8 +2257,10 @@ def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> list[str
         "WHERE role IN ('owner', 'admin', 'superadmin') AND (subject_kind = 'user' OR role <> 'owner') "
         "AND NOT (subject_kind = 'user' AND subject_id = ?) GROUP BY subject_kind, subject_id", (person_id,),
     ).fetchall():
-        table, column = ("users", "display_name") if kind == "user" else ("service_accounts", "name")
-        row = conn.execute(f"SELECT {column} FROM {table} WHERE id = ?", (subject_id,)).fetchone()
+        if kind == "user":
+            row = conn.execute("SELECT display_name FROM users WHERE id = ?", (subject_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT name FROM service_accounts WHERE id = ?", (subject_id,)).fetchone()
         name = ((row[0] or "").strip() if row else "")
         names.append(name if name and "@" not in name else UNNAMED_ADMINISTRATOR)
     return sorted(names, key=str.casefold)
