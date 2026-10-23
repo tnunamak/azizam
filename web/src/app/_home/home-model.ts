@@ -247,7 +247,11 @@ export function makingTimeLeft(item: Extract<RecentItem, { kind: "making" }>, no
 
 export interface GatewayNeed {
   key: string;
+  /** How bad it is: a fault the owner must fix, or a gap in what is set up. */
+  tone: "down" | "degraded" | "off";
   fact: string;
+  /** The cause, when the data has one. */
+  detail: string | null;
   action: { label: string; href: string };
 }
 
@@ -256,14 +260,32 @@ export function capabilityIs(label: string, phrase: string): string {
   return `${label} ${/s$/i.test(label) ? "are" : "is"} ${phrase}`;
 }
 
-/** The capability states the owner must act on. Off is the owner's own choice, but it still has a next step. */
-const STATES_THE_OWNER_FIXES = new Set(["down", "off", "degraded"]);
+/** "Chat", "Chat and Images", "Chat, Images and Voice". */
+export function joinNames(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** The capability states the owner must act on. */
+const FAULTS = new Set(["down", "degraded"]);
+/** States that keep a capability out of the chooser: nobody can use it, so nobody is offered it. */
+const NOT_OFFERED = new Set(["off", "blocked"]);
 
 /**
- * What the owner must act on, one item each with one action. Only operational facts: an engine
- * or provider that is failing, no engine yet, or a capability that is down, off or degraded.
- * Never content. Working capabilities are not listed. (A missing access plan is the notice where
- * the composer would be, not an item here.)
+ * The chooser offers only what the person can use now or soon. Off (not set up, or turned off) and
+ * Blocked (not in their access plan) never appear; the owner finds those in the gateway panel.
+ * Down and Degraded stay, so a temporary fault is explained where it is chosen.
+ */
+export function offeredRows(rows: HomeCapability[], views: CapabilityView[]): HomeCapability[] {
+  const stateOf = new Map(views.map((view) => [view.key, view.state]));
+  return rows.filter((row) => !NOT_OFFERED.has(stateOf.get(kindOf(row)) ?? "ready"));
+}
+
+/**
+ * What the owner must act on, one item each with one place to fix it. Only operational facts: an
+ * engine or provider that is failing, no engine yet, a capability that is down or degraded, and
+ * one item for every capability that is off. Never content. (A missing access plan is the notice
+ * where the composer would be, not an item here.)
  */
 export function gatewayNeeds(input: {
   engineFault: string | null;
@@ -273,26 +295,41 @@ export function gatewayNeeds(input: {
   capabilities: CapabilityView[];
 }): GatewayNeed[] {
   const needs: GatewayNeed[] = [];
-  if (input.engineFault)
-    needs.push({ key: "engine", fact: input.engineFault, action: { label: "Open Engines", href: "/engines/" } });
+  const engines = { label: "Open Engines", href: "/engines/" };
+  // A capability row that names its failing engine already tells this; one fault is one row.
+  const engineNamed = input.capabilities.some((view) => FAULTS.has(view.state) && view.failing.length > 0);
+  if (input.engineFault && !engineNamed) needs.push({ key: "engine", tone: "down", fact: input.engineFault, detail: null, action: engines });
   if (input.providerFault)
-    needs.push({ key: "provider", fact: input.providerFault, action: { label: "Open Providers", href: "/providers/" } });
-  if (input.noEngine)
     needs.push({
-      key: "engine-added",
-      fact: "Add an engine to turn something on.",
-      action: { label: "Open Engines", href: "/engines/" },
+      key: "provider",
+      tone: "down",
+      fact: input.providerFault,
+      detail: null,
+      action: { label: "Open Providers", href: "/providers/" },
     });
+  if (input.noEngine)
+    needs.push({ key: "engine-added", tone: "off", fact: "Add an engine to turn something on", detail: null, action: engines });
   for (const view of input.capabilities) {
-    if (!STATES_THE_OWNER_FIXES.has(view.state)) continue;
-    // A cause is added only when the view has one.
+    if (!FAULTS.has(view.state)) continue;
     needs.push({
       key: `capability:${view.key}`,
-      fact: [`${capabilityIs(view.label, view.word.toLowerCase())}.`, view.detail].filter(Boolean).join(" "),
-      action: { label: "Open Engines", href: "/engines/" },
+      tone: view.state === "down" ? "down" : "degraded",
+      fact: capabilityIs(view.label, view.word.toLowerCase()),
+      detail: view.detail ?? null,
+      action: engines,
     });
   }
+  const off = input.capabilities.filter((view) => view.state === "off").map((view) => view.label);
+  if (off.length && !input.noEngine)
+    needs.push({ key: "capability:off", tone: "off", fact: capabilityIs(joinNames(off), "off"), detail: null, action: engines });
   return needs;
+}
+
+/** The one line for everything that works: "Chat, Images and Voice are working". Null when nothing is ready. */
+export function workingLine(views: CapabilityView[]): string | null {
+  const ready = views.filter((view) => view.state === "ready" || view.state === "busy").map((view) => view.label);
+  if (!ready.length) return null;
+  return `${joinNames(ready)} ${ready.length === 1 && !/s$/i.test(ready[0]) ? "is" : "are"} working`;
 }
 
 /** Greeting from the time of day; a first-time member is welcomed instead. */

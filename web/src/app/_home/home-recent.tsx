@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, Loader2, MessageSquare } from "lucide-react";
+import { ChevronRight, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RelativeTime } from "@/components/product/relative-time";
 import { MAKING_COPY } from "@/components/product/making-tile";
-import { SectionHeading } from "@/components/product/readiness";
+import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { MediaTile } from "./home-media-tile";
 import { makingProgress, makingRisk, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
 import type { CapabilityView } from "@/lib/capability-state";
@@ -16,12 +16,14 @@ import type { CapabilityView } from "@/lib/capability-state";
 const WIDE_SHOWN = 6;
 const OWNER_SHOWN = 4;
 /**
- * On a wide screen the grid has one column per tile, so five or six tiles fill the row with no gap
- * at its end. Fewer than four tiles keep four columns, so one tile does not stretch across the page.
+ * From 1024 px the grid has one column per tile, so five or six tiles fill the row with no gap at its
+ * end. Fewer than four tiles keep four columns, so one tile does not stretch across the page. From
+ * 1280 px the page grid decides instead: six tracks that line up with the composer (GRID).
  */
 const WIDE_COLUMNS = ["", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-5", "lg:grid-cols-6"];
-const GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3";
-const GRID_OWNER = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-4 lg:grid-cols-4";
+/** From 1280 px the tiles sit on the page's twelve-column grid, two columns each (see home-page). */
+const GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 xl:grid-cols-6 xl:gap-x-4";
+const GRID_OWNER = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-4 lg:grid-cols-4 xl:gap-x-4";
 const PHONE_BEYOND_FOUR = "max-sm:hidden";
 
 type Making = Extract<RecentItem, { kind: "making" }>;
@@ -40,20 +42,27 @@ export function RecentLoading() {
   );
 }
 
+/** The capability key whose glyph and hue a running make wears. */
+const MAKING_CAPABILITY: Record<HomeMakingKind, string> = { image: "image", video: "video", audio: "speech" };
+
 /** A make that is still running: its tile first, with the time left, then the result. */
 function MakingTileView({ item, now, risk, className }: { item: Making; now: number; risk: string | null; className?: string }) {
   const progress = makingProgress(item, now);
   const timeLeft = makingTimeLeft(item, now);
   const overdue = timeLeft === "Taking longer than usual";
-  const copy = MAKING_COPY[item.making as HomeMakingKind];
+  const making = item.making as HomeMakingKind;
+  const copy = MAKING_COPY[making];
+  const { icon: Icon, tone, tint } = capabilityMeta(MAKING_CAPABILITY[making]);
   return (
     <li className={cn("min-w-0", className)} data-slot="recent-tile" data-making="true">
       <div
         role="status"
         aria-label={copy}
-        className="bg-muted rounded-media flex aspect-square w-full flex-col items-center justify-center gap-3 p-3"
+        className="bg-card border-border rounded-media relative flex aspect-square w-full items-center justify-center overflow-hidden border"
       >
-        <Loader2 aria-hidden="true" className="text-muted-foreground size-6 animate-spin motion-reduce:animate-none" />
+        <span className={cn("flex size-12 items-center justify-center rounded-full", tint)}>
+          <Icon aria-hidden="true" className={cn("size-6 animate-pulse motion-reduce:animate-none", tone)} />
+        </span>
         {progress != null ? (
           <div
             role="progressbar"
@@ -61,36 +70,44 @@ function MakingTileView({ item, now, risk, className }: { item: Making; now: num
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(progress * 100)}
-            className="bg-border h-1 w-3/4 overflow-hidden rounded-full"
+            className="bg-border absolute inset-x-3 bottom-3 h-1 overflow-hidden rounded-full"
           >
-            <div className="bg-foreground h-full rounded-full" style={{ width: `${Math.round(progress * 100)}%` }} />
+            <div className="bg-foreground/70 h-full rounded-full" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
         ) : null}
       </div>
       <p className="text-foreground text-meta mt-2 truncate font-medium">{copy}</p>
-      <p className="text-muted-foreground text-badge truncate">
-        {overdue ? timeLeft : `Making${timeLeft ? ` · ${timeLeft}` : ""}`}
-      </p>
+      <p className="text-muted-foreground text-badge truncate">{overdue ? timeLeft : timeLeft ? capitalise(timeLeft) : "Making"}</p>
       {risk ? <p className="text-warning text-badge">{risk}</p> : null}
     </li>
   );
 }
 
-/** A conversation whose body request history kept: its first words, and a link to its receipt. */
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * A conversation whose body request history kept. The face holds the person's own words, so the caption
+ * names the kind instead of repeating them. It opens the receipt.
+ */
 function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "chat" }>; className?: string }) {
   const { chat } = item;
   return (
     <li className={cn("min-w-0", className)} data-slot="recent-tile">
-      <Link prefetch={false} href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`} className="group block min-w-0">
-        <div className="bg-muted rounded-media flex aspect-square w-full flex-col gap-2 overflow-hidden p-3">
-          <MessageSquare aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
-          <p className="text-foreground text-meta line-clamp-4">{chat.title}</p>
+      <Link
+        prefetch={false}
+        href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`}
+        aria-label={`Open chat: ${chat.title}`}
+        className="group block min-w-0"
+      >
+        <div className="bg-card border-border group-hover:border-input rounded-media flex aspect-square w-full flex-col overflow-hidden border p-4 transition-colors duration-(--motion-fast)">
+          <MessageSquare aria-hidden="true" className="text-capability-chat size-4 shrink-0" />
+          <p className="text-foreground text-meta mt-3 line-clamp-6">{chat.title}</p>
         </div>
         <span className="mt-2 block min-w-0">
-          <span className="text-foreground text-meta block truncate font-medium group-hover:underline">{chat.title}</span>
+          <span className="text-foreground text-meta block truncate font-medium">Chat</span>
           <span className="text-muted-foreground text-badge block truncate">
-            Chat
-            <span aria-hidden="true"> · </span>
             <RelativeTime ts={chat.created_at} fallback="" />
           </span>
         </span>

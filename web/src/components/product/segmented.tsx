@@ -66,11 +66,11 @@ export function Segmented<T extends string>({
               scroll ? "max-sm:px-3" : "max-sm:flex-1 max-sm:justify-center max-sm:px-2",
             )}
           >
-            {/* No room for icons in four phone segments; the words carry it. */}
+            {/* No room for icons in four phone segments; the words carry it. A scrolling row has room. */}
             {Icon ? (
               <Icon
                 aria-hidden="true"
-                className="size-4 shrink-0 max-sm:hidden"
+                className={cn("size-4 shrink-0", !scroll && "max-sm:hidden")}
               />
             ) : null}
             {option.label}

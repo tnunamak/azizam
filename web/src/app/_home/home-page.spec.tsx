@@ -159,28 +159,28 @@ describe("H3 a capability that is down explains itself where the choice is made"
     stubFetch({
       "/me/api/home": () =>
         homePayload({
-          capabilities: [capability("video", { status: "unavailable", available: false, reason_code: "unavailable_disabled" }), capability("image")],
+          capabilities: [capability("video", { status: "unavailable", available: false, reason_code: "unavailable" }), capability("image")],
         }),
       "/me/api/media": () => ({ assets: [] }),
     });
     renderHome();
     const group = await screen.findByRole("group", { name: "What to make" });
-    fireEvent.click(within(group).getByRole("button", { name: /Video/ }));
-    expect(await screen.findByText(/Video is turned off\. Ask Sam to turn it back on\./)).toBeVisible();
+    const video = within(group).getByRole("button", { name: /Video/ });
+    expect(within(video).getByText("Down")).toBeVisible();
+    fireEvent.click(video);
+    expect(await screen.findByText(/Video is down\. Ask Sam to look at it\./)).toBeVisible();
     fireEvent.change(await screen.findByRole("textbox", { name: "Describe the clip you want" }), { target: { value: "a clip" } });
     expect(screen.getByRole("button", { name: "Make" })).toBeDisabled();
   });
 });
 
-describe("H2 an off capability keeps its name and shows its state in the chooser", () => {
-  it("writes the state word beside the name, and leaves a working option without one", async () => {
+describe("H2 the chooser offers only what the person can use", () => {
+  it("leaves out a capability that is off, and gives a working option no state word", async () => {
     stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
     renderHome();
     const group = await screen.findByRole("group", { name: "What to make" });
-    const video = within(group).getByRole("button", { name: /Video/ });
-    expect(video).toHaveTextContent("Video");
-    expect(within(video).getByText("Off")).toBeVisible();
-    expect(within(within(group).getByRole("button", { name: /Chat/ })).queryByText("Off")).toBeNull();
+    expect(within(group).queryByRole("button", { name: /Video/ })).toBeNull();
+    expect(within(group).getByRole("button", { name: /Chat/ })).toHaveTextContent(/^Chat$/);
   });
 });
 
@@ -253,7 +253,7 @@ describe("H6 Recent is the person's own work, and a make in progress comes first
     const list = await screen.findByRole("list", { name: "Recent work" });
     const tiles = within(list).getAllByRole("listitem");
     expect(tiles[0]).toHaveAttribute("data-making", "true");
-    expect(within(tiles[0]).getByText(/about \d+ s left/)).toBeVisible();
+    expect(within(tiles[0]).getByText(/about \d+ s left/i)).toBeVisible();
     const picture = await screen.findByRole("link", { name: /Garden/ });
     expect(picture.getAttribute("href")).toMatch(/^\/library\/?\?asset=asset-1$/);
   });
@@ -341,12 +341,15 @@ describe("H9 the owner panel holds operations, never content", () => {
     });
     renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
     const panel = await screen.findByRole("region", { name: "Your gateway" });
-    await waitFor(() => expect(within(panel).getAllByRole("link", { name: "Open Engines" })).toHaveLength(1));
-    expect(within(panel).getAllByText(/Engine can’t take requests right now\./)[0]).toBeVisible();
+    // One fault is one row, and the whole row is the one link to where it is fixed.
+    const engine = await within(panel).findByRole("link", { name: "Engine can’t take requests right now. Open Engines" });
+    expect(engine.getAttribute("href")).toMatch(/^\/engines\/?$/);
+    const rows = within(panel).getAllByRole("listitem");
+    for (const row of rows) expect(within(row).getAllByRole("link")).toHaveLength(1);
     expect(panel.textContent).not.toContain("Secret family photo");
   });
 
-  it("names a capability that is off, with one action, and lists nothing that works", async () => {
+  it("names what is off in one row, and never tells the owner what the owner did", async () => {
     stubFetch({
       "/me/api/home": () => homePayload({ user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" } }),
       "/me/api/media": () => ({ assets: [] }),
@@ -357,12 +360,12 @@ describe("H9 the owner panel holds operations, never content", () => {
     });
     renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
     const panel = await screen.findByRole("region", { name: "Your gateway" });
-    await waitFor(() => expect(within(panel).getAllByText("Video is off. Turned off by the owner.")[0]).toBeVisible());
-    expect(within(panel).getAllByRole("link", { name: "Open Engines" })).toHaveLength(1);
-    expect(panel.textContent).not.toMatch(/Chat|Images|Everything is working/);
+    await waitFor(() => expect(within(panel).getAllByText("Video is off")[0]).toBeVisible());
+    expect(within(panel).getAllByRole("link", { name: /Open Engines/ })).toHaveLength(1);
+    expect(panel.textContent).not.toMatch(/Turned off by the owner|Not set up yet|Everything is working/);
   });
 
-  it("says everything is working, with the Status link, when nothing needs the owner", async () => {
+  it("says what works in one line, with the Status link, when nothing needs the owner", async () => {
     stubFetch({
       "/me/api/home": () =>
         homePayload({
@@ -377,11 +380,11 @@ describe("H9 the owner panel holds operations, never content", () => {
     });
     renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
     const panel = await screen.findByRole("region", { name: "Your gateway" });
-    // The phone row and the desktop block both say it; either is the one quiet line.
-    await waitFor(() => expect(within(panel).getAllByText("Everything is working")[0]).toBeVisible());
+    // The phone row says it in two words; the wide panel names what works.
+    await waitFor(() => expect(within(panel).getByText("Everything is working")).toBeVisible());
+    expect(within(panel).getByText(/^(Images and Chat|Chat and Images) are working$/)).toBeVisible();
     expect(within(panel).getAllByRole("link", { name: /Open Status/ })[0].getAttribute("href")).toMatch(/^\/status\/?$/);
-    expect(within(panel).queryAllByRole("link", { name: "Open Engines" })).toHaveLength(0);
-    expect(panel.textContent).not.toMatch(/Chat|Images/);
+    expect(within(panel).queryAllByRole("link", { name: /Open Engines/ })).toHaveLength(0);
   });
 });
 

@@ -1,9 +1,10 @@
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, ownerApi, test } from "./fixtures/isolation";
-import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
+import { fulfilJson } from "./fixtures/intercept";
+import { seedFirstVisitMember, seedOwner, seedReturningMember } from "./fixtures/home-seed";
 
 /*
  * The signed-in Home, end to end: the composer and chooser, Make's hand-off to Try, Recent, the
@@ -117,15 +118,16 @@ test("H6 a make in progress is first in Recent, and a finished picture opens Lib
   await page.goto("/");
   const recent = page.getByRole("list", { name: "Recent work" });
   await expect(recent.getByRole("listitem").first()).toHaveAttribute("data-making", "true");
-  await expect(recent.getByText(/about \d+ s left/)).toBeVisible();
+  await expect(recent.getByText(/about \d+ s left/i)).toBeVisible();
   const finished = page.getByRole("link", { name: /Raised bed, late afternoon/ });
   await expect(finished).toHaveAttribute("href", /\/library\/?\?asset=asset-finished/);
 });
 
-test("H6 five tiles fill the row at 1440 px, with no gap at its end", async ({ isolated }) => {
+test("H6 five tiles fill the row at 1100 px, with no gap at its end", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // Below 1280 px Recent has one column per tile; from 1280 the page grid decides (the next case).
+  await page.setViewportSize({ width: 1100, height: 900 });
   const real = await (await member.context.request.get("/me/api/home")).json();
   const now = Date.now() / 1000;
   await page.route("**/me/api/home", (route) =>
@@ -153,6 +155,22 @@ test("H6 five tiles fill the row at 1440 px, with no gap at its end", async ({ i
   expect(new Set(boxes.map((box) => Math.round(box.top))).size).toBe(1);
   expect(list).not.toBeNull();
   expect(Math.abs(Math.max(...boxes.map((box) => box.right)) - (list!.x + list!.width))).toBeLessThanOrEqual(2);
+});
+
+test("at 1440 px the composer and Recent share one column grid: the composer's edges meet tile edges", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedReturningMember(page, member.context.request);
+  await page.goto("/");
+  const tiles = page.getByRole("list", { name: "Recent work" }).getByRole("listitem");
+  await expect(tiles).toHaveCount(6);
+  const boxes = await tiles.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
+  const composer = await page.locator("[data-slot='composer']").boundingBox();
+  expect(composer).not.toBeNull();
+  // The composer spans the middle eight of twelve columns: from the second tile's left edge to the fifth tile's right edge.
+  expect(Math.abs(composer!.x - boxes[1].left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(composer!.x + composer!.width - boxes[4].right)).toBeLessThanOrEqual(1);
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {
@@ -230,8 +248,8 @@ test("H9 the owner's panel holds operations only, each with one link to where it
   await page.goto("/");
   const panel = page.getByRole("region", { name: "Your gateway" });
   await expect(panel).toBeVisible();
-  // The fixture's owner has capabilities that are off, so the panel names one and gives its one action.
-  await expect(panel.getByRole("link", { name: "Open Engines" }).first()).toBeVisible();
+  // The fixture's owner has capabilities that are off, so the panel names them in one row that opens Engines.
+  await expect(panel.getByRole("link", { name: /Open Engines$/ }).first()).toBeVisible();
   const links = panel.getByRole("link");
   const hrefs = await links.evaluateAll((items) => items.map((item) => item.getAttribute("href") ?? ""));
   for (const href of hrefs) expect(href).toMatch(/^\/(engines|providers|status|people)\b/);
@@ -306,18 +324,21 @@ for (const viewport of LAYOUTS) {
   }
 }
 
-// The owner's fixture has capabilities that are off, so the chooser carries state words on every width.
+// The seeded owner has six capabilities: one down (it keeps its state word) and one off (it is not offered).
 for (const viewport of LAYOUTS) {
   for (const colorScheme of ["light", "dark"] as const) {
     test(`the chooser's options do not overlap at ${viewport.width} px in ${colorScheme}, and a phone row scrolls with an edge`, async ({ page }) => {
       await page.setViewportSize(viewport);
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await seedOwner(page, page.context().request);
       await page.goto("/");
       const group = page.getByRole("group", { name: "What to make" });
       const options = group.getByRole("button");
       await expect(options.first()).toBeVisible();
       await expect(options.nth(1)).toBeVisible();
-      await expect(group.getByRole("button", { name: /Images/ })).toContainText("Off");
+      await expect(group.getByRole("button", { name: /Video/ })).toContainText("Down");
+      await expect(group.getByRole("button", { name: /Sound effects/ })).toHaveCount(0);
+      await expect(group).not.toContainText("Off");
       const boxes = await options.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
       for (let index = 1; index < boxes.length; index += 1) {
         // Each option starts where the one before it ends, or later: no two boxes intersect.
@@ -333,66 +354,38 @@ for (const viewport of LAYOUTS) {
 }
 
 const SHOTS = process.env.HOME_SHOTS_DIR;
-const PICTURES = path.resolve(__dirname, "../../docs/design/comps/astra/assets");
 test.describe("built pages for the design side-by-side check", () => {
   test.skip(!SHOTS, "set HOME_SHOTS_DIR to save the built pages");
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 768, height: 1024 },
-    { width: 390, height: 844 },
-  ]) {
+  for (const viewport of LAYOUTS) {
     for (const colorScheme of ["light", "dark"] as const) {
       const suffix = `${viewport.width}${colorScheme === "dark" ? "-dark" : ""}`;
-      const save = (page: Page, name: string) => {
+      /** The first screen as a person sees it, then the whole page with the phone tab bar in its place at the end (ban 31). */
+      const save = async (page: Page, name: string) => {
         mkdirSync(SHOTS!, { recursive: true });
-        return page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}.png`), fullPage: true });
+        await page.evaluate(() => document.fonts.ready);
+        // The shell's own checks start a moment after the page; wait for their answer, as a person would see it.
+        await expect(page.getByText("Checking", { exact: true })).toHaveCount(0, { timeout: 10_000 }).catch(() => undefined);
+        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        await page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}-fold.png`) });
+        await page.addStyleTag({ content: "nav[aria-label='Phone navigation']{position:static!important}" });
+        await page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}.png`), fullPage: true });
       };
       test(`saves the first-visit member Home at ${suffix}`, async ({ isolated }) => {
         const member = await isolated.member();
-        await member.page.setViewportSize(viewport);
-        await member.page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-        await member.page.goto("/");
-        await expect(member.page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
-        await expect(member.page.getByRole("region", { name: "What you can make here" })).toBeVisible();
-        await save(member.page, "home-member-first");
+        const { page } = member;
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await seedFirstVisitMember(page, member.context.request);
+        await page.goto("/");
+        await expect(page.getByRole("region", { name: "What you can make here" })).toBeVisible();
+        await save(page, "home-member-first");
       });
       test(`saves the returning member Home with work in Recent at ${suffix}`, async ({ isolated }) => {
         const member = await isolated.member();
         const { page } = member;
         await page.setViewportSize(viewport);
         await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-        const real = await (await member.context.request.get("/me/api/home")).json();
-        const now = Date.now() / 1000;
-        const pictures = readdirSync(PICTURES).filter((name) => name.endsWith(".webp")).slice(0, 3);
-        await page.route("**/__shot/*", (route) =>
-          fulfilBytes(route, {
-            contentType: "image/webp",
-            body: readFileSync(path.join(PICTURES, path.basename(new URL(route.request().url()).pathname))),
-          }),
-        );
-        const chatRow = real.capabilities.find((row: { icon_key?: string }) => row.icon_key === "chat") ?? real.capabilities[0];
-        const imageRow = { ...chatRow, icon_key: "image", capability: "image", capability_title: "Images", title: "Krea 2 Turbo", use_name: "krea-2-turbo", recommended_model: "krea-2-turbo", intent: "image.generate", typical_seconds: 9 };
-        await page.route("**/me/api/home", (route) =>
-          fulfilJson(route, {
-            ...real,
-            capabilities: [...real.capabilities, imageRow],
-            receipts: [{ request_id: "shot-making", intent: "image.generate", path: "/gateway/v1/media/jobs/image-generations", status: "running", accepted_at_ms: (now - 3) * 1000 }],
-            recent_chats: [{ request_id: "shot-chat", record_id: "shot-chat-record", created_at: now - 10_800, title: "Make a watering schedule for tomatoes and herbs while we're away for a week" }],
-          }),
-        );
-        await page.route("**/me/api/media?limit=8", (route) =>
-          fulfilJson(route, {
-            assets: pictures.map((name, index) => ({
-              asset_id: `shot-${index}`,
-              kind: "image",
-              prompt: ["Raised bed, late afternoon", "Golden retriever by the window", "Reading corner, green armchair"][index],
-              download_url: `/__shot/${name}`,
-              created_at: now - 7200 * (index + 1),
-            })),
-            has_more: false,
-            next_cursor: null,
-          }),
-        );
+        await seedReturningMember(page, member.context.request);
         await page.goto("/");
         await expect(page.getByRole("list", { name: "Recent work" })).toBeVisible();
         await save(page, "home-member-returning");
@@ -400,6 +393,7 @@ test.describe("built pages for the design side-by-side check", () => {
       test(`saves the owner Home at ${suffix}`, async ({ page }) => {
         await page.setViewportSize(viewport);
         await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await seedOwner(page, page.context().request);
         await page.goto("/");
         await expect(page.getByRole("region", { name: "Your gateway" })).toBeVisible();
         await save(page, "home-owner");

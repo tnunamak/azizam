@@ -104,10 +104,13 @@
   --radius-card: 8px; /* cards, panels, dialogs and popovers */
   --radius-badge: 4px; /* status badges and chips */
   --radius-media: 6px; /* creation tiles */
+  --radius-composer: 14px; /* Home's composer only: the one object the page leads with */
 
   /* Elevation: borders build structure; shadows only lift overlays */
   --shadow-overlay: 0 16px 48px rgb(8 28 34 / 18%), 0 2px 6px rgb(8 28 34 / 8%);
   --shadow-float: 0 6px 20px rgb(8 28 34 / 14%);
+  /* Home's composer: a low, wide lift so the one place to start reads above the page (DESIGN "Composer") */
+  --shadow-composer: 0 1px 2px rgb(8 28 34 / 6%), 0 10px 30px -6px rgb(8 28 34 / 12%);
 
   /* Motion */
   --motion-duration: 200ms;
@@ -125,6 +128,7 @@
   --page-pad: 2rem;
   --page-top: 2rem;
   --content-read: 720px; /* settings, detail, Status and the Try form */
+  --content-composer: 760px; /* Home's greeting and composer */
   --space-section: 2rem; /* between sections, always */
   --space-heading: 0.75rem; /* a section heading to its content */
   --space-title: 1.5rem; /* the page header to the first section */
@@ -220,6 +224,7 @@
   --capability-embed: #b7d99a;
   --shadow-overlay: 0 16px 48px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
   --shadow-float: 0 6px 20px rgb(0 0 0 / 40%);
+  --shadow-composer: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -6px rgb(0 0 0 / 45%);
   --overlay: rgb(2 10 12 / 65%);
 }
 
@@ -366,10 +371,12 @@
   --radius-panel: var(--radius-card);
   --radius-badge: var(--radius-badge);
   --radius-media: var(--radius-media);
+  --radius-composer: var(--radius-composer);
   --shadow-lg: var(--shadow-overlay);
   --shadow-xl: var(--shadow-overlay);
   --shadow-overlay: var(--shadow-overlay);
   --shadow-float: var(--shadow-float);
+  --shadow-composer: var(--shadow-composer);
   --ease-standard: var(--motion-ease);
 
   /* Compatibility aliases for routes not yet redesigned. Deprecated: new

@@ -11,10 +11,12 @@ import {
   listFacts,
   makingRisk,
   makingTimeLeft,
+  offeredRows,
   orderChooser,
   promptPlaceholder,
   recentItems,
   runFacts,
+  workingLine,
 } from "./home-model";
 import type { CapabilityView } from "@/lib/capability-state";
 
@@ -134,12 +136,14 @@ function view(key: string, label: string, state: CapabilityView["state"], word: 
 const NO_FAULTS = { engineFault: null, providerFault: null, noEngine: false, capabilities: [] };
 
 describe("H9 the owner's panel names operational facts only", () => {
-  it("gives each need one action, and only the needs that exist", () => {
+  it("gives each need one place to fix it, and only the needs that exist", () => {
     const needs = gatewayNeeds({ ...NO_FAULTS, engineFault: "Video studio stopped answering." });
     expect(needs).toEqual([
       {
         key: "engine",
+        tone: "down",
         fact: "Video studio stopped answering.",
+        detail: null,
         action: { label: "Open Engines", href: "/engines/" },
       },
     ]);
@@ -151,7 +155,7 @@ describe("H9 the owner's panel names operational facts only", () => {
     expect(need.action.href).toBe("/engines/");
   });
 
-  it("names a capability that is down, off or degraded, with its action", () => {
+  it("names each fault with its cause, and every capability that is off in one row", () => {
     const needs = gatewayNeeds({
       ...NO_FAULTS,
       capabilities: [
@@ -159,25 +163,40 @@ describe("H9 the owner's panel names operational facts only", () => {
         view("video", "Video", "down", "Down", "Engine can’t take requests right now."),
         view("image", "Images", "off", "Off", "Not set up yet."),
         view("speech", "Voice", "degraded", "Degraded"),
+        view("sfx", "Sound effects", "off", "Off", "Turned off by the owner."),
       ],
     });
     expect(needs).toEqual([
       {
         key: "capability:video",
-        fact: "Video is down. Engine can’t take requests right now.",
-        action: { label: "Open Engines", href: "/engines/" },
-      },
-      {
-        key: "capability:image",
-        fact: "Images are off. Not set up yet.",
+        tone: "down",
+        fact: "Video is down",
+        detail: "Engine can’t take requests right now.",
         action: { label: "Open Engines", href: "/engines/" },
       },
       {
         key: "capability:speech",
-        fact: "Voice is degraded.",
+        tone: "degraded",
+        fact: "Voice is degraded",
+        detail: null,
+        action: { label: "Open Engines", href: "/engines/" },
+      },
+      {
+        key: "capability:off",
+        tone: "off",
+        fact: "Images and Sound effects are off",
+        detail: null,
         action: { label: "Open Engines", href: "/engines/" },
       },
     ]);
+    // The owner turned these off or has not set them up: the panel never tells the owner what the owner did.
+    expect(JSON.stringify(needs)).not.toMatch(/Turned off by the owner|Not set up yet/);
+  });
+
+  it("shows an engine fault once when a capability row already names the failing engine", () => {
+    const down = { ...view("video", "Video", "down", "Down", "Video studio is not accepting connections."), failing: [{}] } as CapabilityView;
+    const needs = gatewayNeeds({ ...NO_FAULTS, engineFault: "Video studio is unavailable.", capabilities: [down] });
+    expect(needs.map((need) => need.key)).toEqual(["capability:video"]);
   });
 
   it("takes a plural verb for a plural label", () => {
@@ -192,6 +211,37 @@ describe("H9 the owner's panel names operational facts only", () => {
       capabilities: [view("chat", "Chat", "ready", "Ready"), view("speech", "Voice", "unknown", "Unknown")],
     });
     expect(needs).toEqual([]);
+  });
+
+  it("sums up what works in one line", () => {
+    expect(workingLine([view("chat", "Chat", "ready", "Ready")])).toBe("Chat is working");
+    expect(workingLine([view("image", "Images", "ready", "Ready")])).toBe("Images are working");
+    expect(
+      workingLine([
+        view("chat", "Chat", "ready", "Ready"),
+        view("image", "Images", "busy", "Busy"),
+        view("speech", "Voice", "ready", "Ready"),
+        view("video", "Video", "down", "Down"),
+      ]),
+    ).toBe("Chat, Images and Voice are working");
+    expect(workingLine([view("video", "Video", "down", "Down")])).toBeNull();
+  });
+});
+
+describe("the chooser offers only what the person can use", () => {
+  it("leaves out off and blocked capabilities, and keeps one that is down so its fault can be explained", () => {
+    const rows = [row({ icon_key: "chat" }), row({ icon_key: "image" }), row({ icon_key: "video" }), row({ icon_key: "music" })];
+    const views = [
+      view("chat", "Chat", "ready", "Ready"),
+      view("image", "Images", "off", "Off"),
+      view("video", "Video", "down", "Down"),
+      view("music", "Music", "blocked", "Blocked"),
+    ];
+    expect(offeredRows(rows, views).map(kindOf)).toEqual(["chat", "video"]);
+  });
+
+  it("offers a row no view knows yet", () => {
+    expect(offeredRows([row({ icon_key: "chat" })], []).map(kindOf)).toEqual(["chat"]);
   });
 });
 

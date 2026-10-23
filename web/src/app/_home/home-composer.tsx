@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import { ArrowUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Segmented, type SegmentOption } from "@/components/product/segmented";
+import { capabilityMeta } from "@/components/product/readiness";
 import { productApi, type ModelsCatalog } from "@/lib/product-api";
 import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
 import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
@@ -121,7 +122,7 @@ export function ChooserSkeleton() {
   return (
     <div role="status" aria-label="Loading what you can make" aria-busy="true" className="flex min-w-0 gap-1 overflow-hidden">
       {[0, 1, 2, 3, 4].map((item) => (
-        <Skeleton key={item} className="rounded-control h-8 w-24 shrink-0 motion-reduce:animate-none" />
+        <Skeleton key={item} className="rounded-control h-7 w-20 shrink-0 motion-reduce:animate-none max-sm:h-11" />
       ))}
     </div>
   );
@@ -195,6 +196,7 @@ export function HomeComposer({
     return {
       value: kindOf(row),
       label: capabilityLabel(row),
+      icon: capabilityMeta(kindOf(row)).icon,
       badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} /> : null,
     };
   });
@@ -230,8 +232,8 @@ export function HomeComposer({
   const placeholder = promptPlaceholder(kind);
 
   return (
-    <div className="min-w-0 space-y-3">
-      <div className="flex min-w-0 items-center gap-2">
+    <ComposerFrame>
+      <div className="flex min-w-0 items-center gap-1 px-2 pt-2">
         {loading || !selected ? (
           <ChooserSkeleton />
         ) : (
@@ -250,14 +252,14 @@ export function HomeComposer({
                 <span
                   aria-hidden="true"
                   data-slot="chooser-fade"
-                  className="from-background pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l to-transparent"
+                  className="from-card pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l to-transparent"
                 />
               ) : null}
             </div>
             {more.length ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="shrink-0">
+                  <Button variant="ghost" size="sm" className="text-muted-foreground shrink-0">
                     More
                     <ChevronDown aria-hidden="true" />
                   </Button>
@@ -277,45 +279,48 @@ export function HomeComposer({
           </>
         )}
       </div>
-      <ComposerFrame>
-        {notice ? (
-          <p role="status" className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pt-3">
-            <span>{notice.text}</span>
-            {notice.action ? (
-              <Button asChild variant="outline" size="sm">
-                <Link prefetch={false} href={notice.action.href}>{notice.action.label}</Link>
-              </Button>
-            ) : null}
-          </p>
-        ) : null}
-        {recording ? (
-          <div className="space-y-3 px-3 pt-3">
-            <p className="text-meta">Transcription works on a recording. Open Try to choose one.</p>
-          </div>
-        ) : (
-          <>
-            <label htmlFor="home-prompt" className="sr-only">
-              {placeholder}
-            </label>
-            {/* One box for the whole page: it keeps what was typed while the list loads. */}
-            <Textarea
-              id="home-prompt"
-              rows={3}
-              placeholder={placeholder}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={onKeyDown}
-              className="min-h-24 resize-none border-0 px-3 pt-3 shadow-none focus-visible:ring-0"
-            />
-          </>
-        )}
-        <form onSubmit={startWork} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pb-3">
+      {notice ? (
+        <p role="status" className="text-meta flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3">
+          <span>{notice.text}</span>
+          {notice.action ? (
+            <Link
+              prefetch={false}
+              href={notice.action.href}
+              className="text-link inline-flex items-center font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+            >
+              {notice.action.label}
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
+      {recording ? (
+        <p className="text-meta text-muted-foreground px-4 pt-3 pb-6">Transcription works on a recording. Open Try to choose one.</p>
+      ) : (
+        <>
+          <label htmlFor="home-prompt" className="sr-only">
+            {placeholder}
+          </label>
+          {/* One box for the whole page: it keeps what was typed while the list loads. */}
+          <Textarea
+            id="home-prompt"
+            rows={2}
+            placeholder={placeholder}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={onKeyDown}
+            className="text-body placeholder:text-muted-foreground min-h-20 resize-none border-0 bg-transparent px-4 pt-3 pb-1 shadow-none focus-visible:ring-0 sm:min-h-16"
+          />
+        </>
+      )}
+      <form onSubmit={startWork} className="flex items-center gap-2 px-2 pb-2">
+        {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
+        <div className="flex min-w-0 flex-1 flex-col items-start sm:flex-row sm:items-center sm:gap-2">
           {selected ? (
             <DropdownMenu onOpenChange={setPickerOpen}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="max-w-[60%] min-w-0 justify-start">
+                <Button variant="ghost" size="sm" className="max-w-full min-w-0 justify-start font-medium sm:max-w-[60%]">
                   <span className="truncate">{model ? nameOf(model) : ""}</span>
-                  <ChevronDown aria-hidden="true" className="shrink-0" />
+                  <ChevronDown aria-hidden="true" className="text-muted-foreground shrink-0" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
@@ -332,29 +337,43 @@ export function HomeComposer({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Skeleton className="h-8 w-28 motion-reduce:animate-none" />
+            <Skeleton className="ml-1 h-8 w-28 motion-reduce:animate-none" />
           )}
           {factsLine ? (
-            <p className={cn("text-muted-foreground text-meta min-w-0", "max-sm:order-last max-sm:w-full")}>{factsLine}</p>
+            <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:-mt-2 max-sm:px-2.5 max-sm:pb-1.5">{factsLine}</p>
           ) : null}
-          {recording ? (
-            <Button type="button" className="ml-auto" disabled={!runnable || !model} onClick={() => startWork()}>
-              Open in Try
-            </Button>
-          ) : (
-            <Button type="submit" className="ml-auto" disabled={!canMake} aria-label={verb}>
-              {verb}
-            </Button>
-          )}
-        </form>
-      </ComposerFrame>
-    </div>
+        </div>
+        {recording ? (
+          <Button type="button" className="shrink-0" disabled={!runnable || !model} onClick={() => startWork()}>
+            Open in Try
+          </Button>
+        ) : (
+          <Button type="submit" className={cn("shrink-0", MAKE_RESTING)} disabled={!canMake} aria-label={verb}>
+            {verb}
+            <ArrowUp aria-hidden="true" />
+          </Button>
+        )}
+      </form>
+    </ComposerFrame>
   );
 }
 
+/**
+ * Before there is anything to send, Make rests as a pale tint of the action colour rather than a
+ * washed-out grey (that read as broken). It is still the page's one primary button, so it keeps its variant.
+ */
+const MAKE_RESTING = "disabled:bg-primary/12! disabled:text-link! disabled:opacity-100!";
+
+/**
+ * The page's one lifted object (DESIGN "Composer"): a hairline at rest, the 3:1 control edge on hover and
+ * the focus colour while someone is typing in it.
+ */
 function ComposerFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="bg-card border-input rounded-control max-w-[760px] border">
+    <div
+      data-slot="composer"
+      className="bg-card border-border dark:border-input/40 hover:border-input focus-within:border-ring! rounded-composer shadow-composer mx-auto w-full max-w-(--content-composer) min-w-0 border transition-colors duration-(--motion-fast)"
+    >
       {children}
     </div>
   );

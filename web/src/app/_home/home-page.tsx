@@ -19,7 +19,7 @@ import { CapNotice } from "@/components/product/cap-notice";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
 import { RelativeTime } from "@/components/product/relative-time";
-import { capabilityMeta } from "@/components/product/readiness";
+import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { homeApi, type HomeCapability, type HomeSnapshot } from "./home-api";
 import { HomeComposer } from "./home-composer";
 import { Recent } from "./home-recent";
@@ -32,8 +32,10 @@ import {
   greetingFor,
   kindOf,
   listFacts,
+  offeredRows,
   orderChooser,
   recentItems,
+  workingLine,
 } from "./home-model";
 
 const homeKey = ["account", "home"];
@@ -63,48 +65,81 @@ function lastUsed(app: HomeSnapshot["apps"][number]): number | null {
   return times.length ? Math.max(...times) : null;
 }
 
-/** The two apps used most recently, and "Connect an app" (the one way to add another). */
+/** The two apps used most recently, and "Connect an app" (the one way to add another), in Recent's section grammar. */
 function YourApps({ home }: { home: HomeSnapshot }) {
   const apps = home.apps
     .filter((app) => !app.disabled_at)
     .toSorted((a, b) => (lastUsed(b) ?? 0) - (lastUsed(a) ?? 0));
   return (
-    <section aria-label="In your apps" className="border-t pt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
-      <p className="text-muted-foreground text-meta">In your apps</p>
-      {apps.slice(0, 2).map((app) => {
-        const name = formatAppName(app.name, home.user.email);
-        const used = lastUsed(app);
-        return (
+    <section aria-labelledby="apps-heading">
+      <SectionHeading
+        id="apps-heading"
+        title="Your apps"
+        action={
           <Link
-            key={app.id}
             prefetch={false}
-            href={`/apps/?app=${encodeURIComponent(app.id)}`}
-            className="text-body group inline-flex min-h-11 min-w-0 items-center gap-2 font-medium"
+            href="/connect/"
+            className="text-link text-meta inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
           >
-            <AppMark app={name} className="size-5" />
-            <span className="truncate group-hover:underline">{name}</span>
-            {used ? (
-              <span className="text-muted-foreground text-meta font-normal">
-                <RelativeTime ts={used} fallback="" />
-              </span>
-            ) : null}
+            Connect an app
+            <ChevronRight aria-hidden="true" className="size-4" />
           </Link>
-        );
-      })}
-      {!apps.length ? <span className="text-muted-foreground text-meta">No apps yet.</span> : null}
-      <Link
-        prefetch={false}
-        href="/connect/"
-        className="text-link text-meta ml-auto inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline"
-      >
-        Connect an app
-        <ChevronRight aria-hidden="true" className="size-4" />
-      </Link>
+        }
+      />
+      {apps.length ? (
+        <ul className="flex flex-wrap gap-x-8 gap-y-2">
+          {apps.slice(0, 3).map((app) => {
+            const name = formatAppName(app.name, home.user.email);
+            const used = lastUsed(app);
+            return (
+              <li key={app.id} className="min-w-0">
+                <Link
+                  prefetch={false}
+                  href={`/apps/?app=${encodeURIComponent(app.id)}`}
+                  className="group flex min-w-0 items-center gap-3 max-sm:min-h-11"
+                >
+                  <AppMark app={name} className="size-9" />
+                  <span className="min-w-0">
+                    <span className="text-meta block truncate font-medium group-hover:underline">{name}</span>
+                    <span className="text-muted-foreground text-badge block">
+                      {used ? (
+                        <>
+                          Used <RelativeTime ts={used} fallback="" />
+                        </>
+                      ) : (
+                        "Not used yet"
+                      )}
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-muted-foreground text-meta">No apps yet.</p>
+      )}
     </section>
   );
 }
 
-/** Nothing to show yet: what the person can make, each row choosing that kind and focusing the box. */
+/**
+ * Columns by how many tiles there are, so no row ends with one tile beside empty cells:
+ * four sit two by two, under the composer on a wide screen.
+ */
+const STARTER_COLUMNS = [
+  "",
+  "",
+  "sm:grid-cols-2",
+  "sm:grid-cols-3",
+  "sm:grid-cols-2",
+  "sm:grid-cols-2 lg:grid-cols-3",
+];
+
+/**
+ * Nothing to show yet: what the person can make, one tile each. Choosing one chooses that kind and
+ * focuses the box.
+ */
 function FirstVisitList({
   rows,
   onChoose,
@@ -113,29 +148,28 @@ function FirstVisitList({
   onChoose: (kind: string) => void;
 }) {
   return (
-    <section aria-labelledby="make-here-heading" className="space-y-3">
-      <h2 id="make-here-heading" className="text-heading">
-        What you can make here
-      </h2>
-      <ul className="rounded-control grid border sm:grid-cols-3">
+    <section aria-labelledby="make-here-heading">
+      <SectionHeading id="make-here-heading" title="What you can make here" />
+      <ul className={cn("grid gap-2 sm:gap-3", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}>
         {rows.map((row) => {
-          const Icon = capabilityMeta(kindOf(row)).icon;
+          const { icon: Icon, tone } = capabilityMeta(kindOf(row));
+          const facts = listFacts(row);
           return (
-            <li key={kindOf(row)} className="border-b last:border-b-0 sm:border-r sm:[&:nth-child(3n)]:border-r-0">
+            <li key={kindOf(row)} className="min-w-0">
               <button
                 type="button"
                 onClick={() => {
                   onChoose(kindOf(row));
                   window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
                 }}
-                className="hover:bg-muted/50 flex min-h-11 w-full flex-col gap-1 p-4 text-left"
+                className="bg-card hover:bg-muted rounded-panel flex size-full items-start max-sm:min-h-11 gap-3 p-4 text-left transition-colors duration-(--motion-fast) sm:flex-col sm:gap-3"
               >
-                <span className="flex items-center gap-2 font-medium">
-                  <Icon aria-hidden="true" className="text-foreground size-4" />
-                  {capabilityLabel(row)}
+                <Icon aria-hidden="true" className={cn("mt-0.5 size-5 shrink-0 sm:mt-0", tone)} />
+                <span className="flex min-w-0 flex-1 flex-col gap-1 self-stretch">
+                  <span className="text-body font-medium">{capabilityLabel(row)}</span>
+                  {row.summary ? <span className="text-muted-foreground text-meta">{row.summary}</span> : null}
+                  {facts ? <span className="text-muted-foreground text-badge mt-auto pt-1">{facts}</span> : null}
                 </span>
-                {row.summary ? <span className="text-muted-foreground text-meta">{row.summary}</span> : null}
-                <span className="text-muted-foreground text-badge">{listFacts(row)}</span>
               </button>
             </li>
           );
@@ -227,7 +261,9 @@ export default function HomePage() {
   }).data;
   const providers = useOptionalProviderStatus(isOwner);
 
-  const rows = home?.authenticated ? orderChooser(chooserRows(home.capabilities), home.receipts ?? []) : [];
+  const rows = home?.authenticated
+    ? offeredRows(orderChooser(chooserRows(home.capabilities), home.receipts ?? []), model.views)
+    : [];
   const items = home?.authenticated
     ? recentItems({
         receipts: home.receipts ?? [],
@@ -253,12 +289,8 @@ export default function HomePage() {
     isOwner &&
     registry != null &&
     !Object.values(registry.services).some((service) => service.source !== "builtin" && service.enabled);
-  const needs = gatewayNeeds({
-    engineFault,
-    providerFault,
-    noEngine,
-    capabilities: model.views.filter((view) => !appPlumbingCapabilities.has(view.key)),
-  });
+  const ownerViews = model.views.filter((view) => !appPlumbingCapabilities.has(view.key));
+  const needs = gatewayNeeds({ engineFault, providerFault, noEngine, capabilities: ownerViews });
   const warning = refusal ? (refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "" : null;
 
   if (homeError) {
@@ -317,33 +349,45 @@ export default function HomePage() {
       onKindChange={setKind}
     />
   ) : (
-    <p className="text-meta text-muted-foreground">
+    <p className="text-meta text-muted-foreground text-center">
       {isOwner ? "Nothing is available yet." : `Nothing is available yet. Ask ${ownerName ?? "the gateway owner"} to turn something on.`}
     </p>
   );
 
   return (
-    <div className="min-w-0 space-y-8">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">{greeting}</h1>
-        {firstVisit && !isOwner && ownerName ? (
-          <p className="text-muted-foreground text-body">{ownerName} set up this gateway for the household.</p>
-        ) : null}
-      </header>
-      {refusal ? <CapNotice warning={warning ?? ""} at={refusal.at} owner={isOwner} /> : null}
-      {composer}
+    // From 1280 px the page is one twelve-column grid: the greeting and composer take the middle eight
+    // columns, and Recent's tiles take two columns each, so the composer's edges meet tile edges.
+    // A member's first visit keeps everything in the middle column.
+    <div className="min-w-0 space-y-10 lg:space-y-12 xl:grid xl:grid-cols-12 xl:gap-x-4 xl:gap-y-12 xl:space-y-0">
+      <section
+        aria-labelledby="home-greeting"
+        className="mx-auto w-full max-w-(--content-composer) space-y-6 sm:pt-6 lg:pt-10 xl:col-span-8 xl:col-start-3 xl:max-w-none"
+      >
+        <header className="space-y-2 text-center">
+          <h1 id="home-greeting" className="text-3xl font-semibold tracking-tight text-balance max-sm:text-2xl">
+            {greeting}
+          </h1>
+          {firstVisit && !isOwner && ownerName ? (
+            <p className="text-muted-foreground text-body">{ownerName} set up this gateway for the household.</p>
+          ) : null}
+        </header>
+        {refusal ? <CapNotice warning={warning ?? ""} at={refusal.at} owner={isOwner} /> : null}
+        {composer}
+      </section>
       <div
         className={cn(
-          "space-y-8",
-          isOwner && "lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-x-8 lg:space-y-0",
+          "min-w-0 space-y-10",
+          firstVisit && !isOwner ? "xl:col-span-8 xl:col-start-3" : "xl:col-span-12",
+          isOwner &&
+            "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-x-10 lg:space-y-0 xl:grid-cols-12 xl:gap-x-4",
         )}
       >
         {isOwner ? (
-          <div className="min-w-0 lg:col-start-2 lg:row-start-1">
-            <OwnerPanel needs={needs} />
+          <div className="min-w-0 lg:col-start-2 lg:row-start-1 xl:col-span-4 xl:col-start-9">
+            <OwnerPanel needs={needs} working={workingLine(ownerViews)} />
           </div>
         ) : null}
-        <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">
+        <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1 xl:col-span-8">
           {firstVisit ? (
             rows.length ? (
               <FirstVisitList rows={rows} onChoose={setKind} />
@@ -359,12 +403,8 @@ export default function HomePage() {
               retrying={media.isFetching}
             />
           )}
+          {home?.authenticated ? <YourApps home={home} /> : null}
         </div>
-        {home?.authenticated ? (
-          <div className="lg:col-span-2 lg:row-start-2">
-            <YourApps home={home} />
-          </div>
-        ) : null}
       </div>
     </div>
   );

@@ -629,8 +629,10 @@ function AlertSlot() {
   const viewer = useViewer();
   const pathname = usePathname();
   const onStatus = canonicalDestinationPath(pathname) === "/status";
+  // Home's gateway panel shows the same fault with its fix, so the banner would say it twice.
+  const onHome = canonicalDestinationPath(pathname) === "/";
   const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
-  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && checksReady);
+  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && !onHome && checksReady);
   // Status owns its section markup. Resolve its visible heading after route
   // loading so the banner can hand keyboard focus to the affected section.
   useEffect(() => {
@@ -668,7 +670,7 @@ function AlertSlot() {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, [pathname, viewer.admin]);
-  if (!alert || onStatus || canonicalDestinationPath(pathname) === "/try") return null;
+  if (!alert || onStatus || onHome || canonicalDestinationPath(pathname) === "/try") return null;
   return (
     <div
       className="bg-warning-tint text-foreground border-warning/30 border-b px-5 py-2.5 sm:px-8 lg:px-12"
