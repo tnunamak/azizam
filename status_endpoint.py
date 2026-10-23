@@ -55,7 +55,8 @@ _log = logging.getLogger(__name__)
 # answer, and its age in the snapshot keeps growing until it answers again.
 SNAPSHOT_INTERVAL_S = 15.0
 SNAPSHOT_IDLE_WINDOW_S = 300.0
-# Availability decisions trust a snapshot no older than this. An older row is probed, not trusted.
+# Availability decisions trust a backend row only if the backend section answered this recently. An older row is
+# probed, not trusted. The build's own time does not count: a timed-out section keeps its old rows in a fresh build.
 SNAPSHOT_FRESH_S = 60.0
 _SNAPSHOT: dict[str, Any] = {}  # built_at (epoch), built (monotonic), payload, section_at {name: monotonic}
 _SNAPSHOT_TASK: asyncio.Task | None = None
@@ -4377,13 +4378,18 @@ async def stop_snapshot() -> None:
 
 
 def latest_payload() -> Mapping[str, Any]:
-    """The latest snapshot's payload for an availability answer, or {} when none is fresh enough to trust.
+    """The latest snapshot's payload for an availability answer, or {} when its backend rows are not fresh enough.
 
-    {} means no snapshot yet, or one older than SNAPSHOT_FRESH_S. The caller then probes the services it needs.
-    The read keeps the snapshot wanted, as any read does.
+    The bound applies to the backend section's own last answer. A build can be fresh while its backend section carries
+    a row from an old answer, because gather_sections keeps the last answer of a section that times out. {} means no
+    snapshot yet, a backend section that has never answered, or one whose last answer is older than SNAPSHOT_FRESH_S.
+    The caller then probes the services it needs. The read keeps the snapshot wanted, as any read does.
     """
     _note_read()
-    if not _SNAPSHOT or _now() - _SNAPSHOT["built"] > SNAPSHOT_FRESH_S:
+    if not _SNAPSHOT:
+        return {}
+    answered = _SNAPSHOT["section_at"].get("backends")
+    if answered is None or _now() - answered > SNAPSHOT_FRESH_S:
         return {}
     return _SNAPSHOT["payload"]
 

@@ -384,6 +384,7 @@ def test_a_failed_build_keeps_the_last_snapshot_and_logs_only_the_error_type(clo
 
 
 def test_availability_does_not_trust_a_snapshot_older_than_the_freshness_bound(clock, snapshot_state):
+    status_endpoint._SECTION_AT["backends"] = clock.now
     status_endpoint._store_snapshot({"generated_at": 1, "backends": [{"key": "chat", "status": "up"}]})
 
     fresh = dict(status_endpoint.latest_payload())

@@ -733,6 +733,7 @@ def test_availability_reads_the_latest_snapshot_and_nothing_before_the_first_bui
     monkeypatch.setattr(proxy.status_endpoint, "_SNAPSHOT", {})
     assert proxy._cached_status_payload_for_availability() == {}
 
+    monkeypatch.setattr(proxy.status_endpoint, "_SECTION_AT", {"backends": proxy.status_endpoint._now()})
     proxy.status_endpoint._store_snapshot({"backends": [{"key": "svc", "status": "up"}]})
     assert proxy._cached_status_payload_for_availability()["backends"][0]["key"] == "svc"
 

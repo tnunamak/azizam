@@ -93,10 +93,11 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
    last snapshot and logs the error type only. `/admin/api/status`, `/me/api/home`, `/v1/status` and the
    owner's HTML status page all read it. `_engine_rows_payload`, the Home refresh tasks and their cache are
    removed.
-5. **Availability trusts the snapshot only while it is fresh.** `latest_payload()` returns `{}` when the
-   snapshot is older than `SNAPSHOT_FRESH_S` (60 s). The capability and model-catalog answers then probe the
-   services they need, with the same 12 s row cache as before. Without this rule, the first read after a long
-   idle would trust rows that were hours old.
+5. **Availability trusts backend rows only while the backend section is fresh.** `latest_payload()` returns `{}`
+   when the backend section's last answer is older than `SNAPSHOT_FRESH_S` (60 s), or when it has never answered.
+   The build's own time does not count: a section that times out keeps its last answer inside a fresh build. The
+   capability and model-catalog answers then probe the services they need, with the 12 s row cache. Without this
+   rule, the first read after a long idle would trust rows that were hours old.
    **Shutdown cancels and joins both background tasks.** The lifespan calls `status_endpoint.stop_snapshot()`
    where it used to call `_stop_home_refreshes()`, and `stop_backend_samples()` after it. After
    `stop_snapshot()`, no read starts a refresher.
@@ -164,7 +165,7 @@ stopped (0), and a backend with no health URL has no sample.
   refresher and returns before the build runs; the refresher builds each interval and stops after the idle
   window; a read inside the window keeps it going; a read after the stop gets the stale snapshot and its age
   at once; concurrent reads start one refresher; an idle gateway starts no status process; shutdown cancels
-  and joins; a snapshot older than the freshness bound is not trusted for availability; the lifespan opens
+  and joins; a backend answer older than the freshness bound is not trusted for availability, even inside a fresh build; the lifespan opens
   the snapshot and the sampler before serving and joins both after.
 - `tests/test_backend_health_sampler.py`: the sampler probes the HTTP health URLs and starts no process; it
   samples once at startup and then once a minute, and joins at shutdown; the status build writes no samples.
