@@ -235,8 +235,8 @@ def test_the_owner_and_an_admin_with_personal_keys_see_none_of_a_members_rows(ga
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", gateway["maker"].key).status_code == 200
 
 
-def test_the_makers_other_app_and_second_key_cannot_read_without_permission(gateway):
-    """D52 addendum: an App key reads only rows its creating credential made."""
+def test_the_makers_other_app_is_denied_and_second_key_reads_without_permission(gateway):
+    """D52: an App key reads history created on its own App."""
     from gateway.runtime_auth import hash_api_key
 
     db, maker = gateway["db"], gateway["maker"]
@@ -252,13 +252,12 @@ def test_the_makers_other_app_and_second_key_cannot_read_without_permission(gate
     same_app_credential = admin_store.create_credential_hash(
         subject_kind="app", subject_id=maker.app, app_id=maker.app,
         hash=hash_api_key(same_app_key), prefix=same_app_key[:16], created_by=maker.person, path=db)
+    assert same_app_credential["privacy_permission"] is False
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", other_key).status_code == 404
     assert _call("GET", "/gateway/v1/requests", other_key).json()["requests"] == []
-    assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", same_app_key).status_code == 404
-    assert _call("GET", "/gateway/v1/requests", same_app_key).json()["requests"] == []
-    with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE credentials SET privacy_permission=1 WHERE id=?", (same_app_credential["id"],))
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", same_app_key).status_code == 200
+    listed = _call("GET", "/gateway/v1/requests", same_app_key).json()["requests"]
+    assert [row["record_id"] for row in listed] == [record["record_id"]]
 
 
 def test_a_receipts_request_history_entry_is_masked_for_anyone_but_its_maker(tmp_path):

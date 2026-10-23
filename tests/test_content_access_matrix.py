@@ -82,8 +82,7 @@ def oracle_relations(v, row):
     own = bool((v.owner_keys - {""}) & (getattr(row, "owner_keys", frozenset()) - {""}))
     app_match = bool(v.app_id and getattr(row, "app_id", None) == v.app_id)
     origin = getattr(row, "origin", None)
-    output = bool(origin and ((v.auth_kind == "app_key" and app_match and origin.auth_kind == "app_key"
-                              and bool(v.credential_id) and origin.credential_id == v.credential_id)
+    output = bool(origin and ((v.auth_kind == "app_key" and app_match and origin.auth_kind == "app_key")
                              or (v.auth_kind == "mcp_grant" and origin.auth_kind == "mcp_grant" and v.connection_id and origin.connection_id == v.connection_id)))
     permission = v.auth_kind == "session" or v.privacy_permission
     content_read = ((self_person and (permission or output)) if getattr(row, "person_id", None) is not None else
@@ -159,18 +158,15 @@ def test_h6_personless_mutations_deny_while_continuation_uses_read():
                 assert isinstance(decide(ACTORS[name], row, action), Deny)
 
 
-def test_h7_delegated_credentials_need_their_exact_origin_or_permission():
+def test_h7_delegated_credentials_read_same_app_outputs_and_need_permission_elsewhere():
     v = ACTORS["maker-key"]
     for kind in ("prompt", "chat", "request_history"):
         for origin in (None, ORIGINS[1], ORIGINS[5]):
             row = records(origin=origin)[kind]
             assert isinstance(decide(v, row, "read"), Deny)
             assert isinstance(decide(replace(v, privacy_permission=True), row, "read"), Own)
-        own_origin, another_key_origin = ORIGINS[2:4]
-        assert isinstance(decide(v, records(origin=own_origin)[kind], "read"), Own)
-        other_key_row = records(origin=another_key_origin)[kind]
-        assert isinstance(decide(v, other_key_row, "read"), Deny)
-        assert isinstance(decide(replace(v, privacy_permission=True), other_key_row, "read"), Own)
+        for app_origin in ORIGINS[2:5]:
+            assert isinstance(decide(v, records(origin=app_origin)[kind], "read"), Own)
 
 
 def test_maker_requires_own_and_exactly_one_maker():
