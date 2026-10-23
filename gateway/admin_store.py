@@ -2235,7 +2235,7 @@ def _sole_current_owner(conn: sqlite3.Connection, person_id: str) -> bool:
 
     Before the cut-over the owner role could issue a key or an address on any App, so only the sole current holder can
     stand behind the owner's own binding. A service account with the owner role is the owner's control-plane key and does
-    not count. A revoked grant does not count either: ``keep_administrators`` names its holder instead.
+    not count. A revoked grant does not count either: ``keep_administrators`` names or counts its holder instead.
     """
     holders = {row[0] for row in conn.execute(
         "SELECT DISTINCT subject_id FROM admin_role_assignments "
@@ -2850,10 +2850,6 @@ def get_credential(
     return _credential_row_to_dict(row) if row else None
 
 
-# The apps table's columns, read back under an ``app__`` prefix by ``person_app_credential``.
-_APP_COLUMNS = ("id", "kind", "name", "owner_user_id", "access_plan", "created_at", "disabled_at")
-
-
 def person_app_credential(
     cred_id: str, person_id: str, *, path: Path = DB_PATH,
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -2864,11 +2860,12 @@ def person_app_credential(
     control-plane key, another person's key, a key on a session App and a key whose App is gone all give None, so
     the caller answers every one of them the same way.
     """
-    app_columns = ", ".join(f"apps.{column} AS app__{column}" for column in _APP_COLUMNS)
     with _conn(path) as conn:
         row = conn.execute(
-            f"SELECT credentials.*, {app_columns} FROM credentials "
-            "JOIN apps ON apps.id = COALESCE(credentials.app_id, credentials.subject_id) "
+            "SELECT credentials.*, apps.id AS app__id, apps.kind AS app__kind, apps.name AS app__name, "
+            "apps.owner_user_id AS app__owner_user_id, apps.access_plan AS app__access_plan, "
+            "apps.created_at AS app__created_at, apps.disabled_at AS app__disabled_at "
+            "FROM credentials JOIN apps ON apps.id = COALESCE(credentials.app_id, credentials.subject_id) "
             "WHERE credentials.id = ? AND credentials.subject_kind = 'app' AND credentials.revoked_at IS NULL "
             "AND apps.owner_user_id = ? "
             "AND NOT EXISTS (SELECT 1 FROM session_apps WHERE session_apps.app_id = apps.id)",
@@ -2877,7 +2874,8 @@ def person_app_credential(
     if row is None:
         return None
     credential = _credential_row_to_dict(row)
-    app = {column: credential.pop(f"app__{column}") for column in _APP_COLUMNS}
+    app_keys = [key for key in credential if key.startswith("app__")]
+    app = {key.removeprefix("app__"): credential.pop(key) for key in app_keys}
     return credential, app
 
 
