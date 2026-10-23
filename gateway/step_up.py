@@ -2,21 +2,24 @@
 
 A session now lasts weeks, so a phone left unlocked or a stolen cookie must not
 be enough to export the configuration, replace a provider key, hand out an
-invitation, change who may sign in, or make a credential that outlives the
-session. These routes answer ``401 reauth_required`` to a browser session whose
-person has not proved who they are within the owner's step-up window
-(gateway.session_policy). The web app shows a password (or provider) prompt and
-retries. Keys (``opk_``, ``oak_``) are not browser sessions and are never asked:
-a key is its own proof.
+invitation, change who may sign in, or move a stored credential. These routes
+answer ``401 reauth_required`` to a browser session whose person has not proved
+who they are within the owner's step-up window (gateway.session_policy). The web
+app shows a password (or provider) prompt and retries. Keys (``opk_``, ``oak_``)
+are not browser sessions and are never asked: a key is its own proof.
+
+What asks: changes that reach other people or stored secrets (roles, invitations,
+people, passwords), sign-in and session settings, providers and secrets, a
+credential that is not one person's own, and an MCP client's lasting permission.
+What does not ask: a person's own keys, trusted addresses and first App on the
+Apps they answer for, and their Try key. Those are routine; docs/ops/SIGN_IN_SESSIONS.md
+records the change.
 
 Every route that creates a credential, grants a role, changes where a stored
 credential is sent, exports configuration or changes how people sign in is in
-one of the two lists below (tests/test_step_up_coverage.py fails when a route
-the app serves is in neither and has not been reviewed as safe).
-
-Members minting their own App keys are asked too (decision D36): the key
-outlives the session and carries the person's access plan, so the cookie alone
-must not be enough.
+one of the two lists below, or is reviewed as safe with its reason in
+tests/test_step_up_coverage.py. That test fails when a route the app serves is
+in none of them.
 """
 from __future__ import annotations
 
@@ -38,17 +41,7 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/admin/api/operator/litellm/keys"),
     ("POST", "/admin/api/operator/litellm/keys/delete"),
     ("POST", "/admin/api/admin-keys"),
-    ("POST", "/admin/api/apps/*/keys"),
-    # The same keys made for oneself, and the first key the setup page makes.
-    ("POST", "/me/api/apps/*/keys"),
-    ("POST", "/me/api/apps/*/trusted-addresses"),
-    ("POST", "/me/api/credentials/*/adopt"),
-    ("POST", "/me/api/credentials/*/replace"),
-    ("POST", "/me/api/apps/*/trusted-addresses/*/adopt"),
-    ("POST", "/me/api/apps/*/trusted-addresses/*/readd"),
-    ("POST", "/setup/first-app"),
-    # A trusted address lets a device in with no key; an extension package can read this computer.
-    ("POST", "/admin/api/apps/*/trusted-addresses"),
+    # An extension package can read this computer.
     ("POST", "/admin/api/extensions/enable"),
     # Whether Azizam may run commands on this computer.
     ("PUT", "/admin/api/operator/host-commands"),
@@ -69,8 +62,6 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
 # Routes that ask inside the handler, because only some requests to them are risky. Each is covered by
 # a case in tests/test_step_up_coverage.py. The middleware does not ask for these.
 HANDLER_GATED: tuple[tuple[str, str, str], ...] = (
-    # Only a new Try key is risky; the page reuses the one it holds. Owners and administrators are asked.
-    ("POST", "/me/api/try-key", "a new key for an administrator"),
     # Allowing a client makes a grant that outlives the session; refusing one is harmless.
     ("POST", "/me/api/mcp/requests/*", "an allow decision"),
     # A write is risky when it adds, replaces or moves a credential of a service (service_registry.credential_binding_changes).

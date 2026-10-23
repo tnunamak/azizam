@@ -523,10 +523,10 @@ def test_an_api_key_cannot_replace_a_key(gateway):
     assert len(_live_keys_on(gateway, app_id)) == 2  # the legacy key and the automation key, and no replacement
 
 
-def test_keeping_and_replacing_are_sensitive_actions_that_ask_for_a_recent_sign_in():
-    assert step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/adopt")
-    assert step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/adopt")
-    assert step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/replace")
+def test_keeping_and_replacing_on_your_own_app_are_routine_and_do_not_ask_for_a_recent_sign_in():
+    assert not step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/adopt")
+    assert not step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/adopt")
+    assert not step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/replace")
 
 
 # --- Removing: the person narrows their own App's addresses (the refusal's second step) ---------------
@@ -1090,8 +1090,8 @@ def test_adding_an_address_again_on_a_session_app_is_not_found(gateway):
     assert _creator_of_address(gateway, entry_id) is None
 
 
-def test_adding_an_address_again_is_a_sensitive_action_that_asks_for_a_recent_sign_in():
-    assert step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/readd")
+def test_adding_an_address_again_on_your_own_app_is_routine_and_does_not_ask_for_a_recent_sign_in():
+    assert not step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/readd")
 
 
 def test_the_snapshot_and_the_owners_address_list_name_the_administrators_a_keep_must_confirm(gateway):

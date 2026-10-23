@@ -145,6 +145,32 @@ for (const width of [1440, 390]) {
   });
 }
 
+// A person's own key is routine: an old sign-in makes it without a prompt (docs/ops/SIGN_IN_SESSIONS.md).
+for (const width of [1440, 390]) {
+  test(`a stale owner makes a key for their own App with no prompt at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
+    browser,
+    baseURL,
+    request,
+  }) => {
+    const page = await staleOwnerPage(browser, baseURL!, request, width);
+    try {
+      await page.goto("/apps/");
+      const minted = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          /^\/me\/api\/apps\/[^/]+\/keys$/.test(new URL(response.url()).pathname),
+      );
+      await page.getByRole("button", { name: "Actions for Browser test app", exact: true }).click();
+      await page.getByRole("menuitem", { name: /^Create (another )?key$/ }).click();
+
+      expect((await minted).status()).toBe(201);
+      await expect(prompt(page)).toHaveCount(0);
+    } finally {
+      await page.context().close();
+    }
+  });
+}
+
 test("cancelling the prompt leaves the configuration hidden and the page usable", async ({
   browser,
   baseURL,
