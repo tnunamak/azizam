@@ -219,3 +219,15 @@ def test_a_missing_database_is_refused_and_no_file_is_created(tmp_path):
     code, _ = _preview(path)
     assert code == 1
     assert not path.exists()
+
+
+def test_a_personal_app_another_person_made_is_shown_and_kept_personal_by_default(db):
+    owner, maker = _person(db, "owner@example.test"), _person(db, "maker@example.test")
+    app = admin_store.create_app("Desk", kind="personal", owner_user_id=owner["id"], access_plan="person", path=db)
+    _sql(db, "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, action, target_kind, target_id) "
+             "VALUES ('aud_made', 1, 'user', ?, 'app.create', 'app', ?)", (maker["id"], app["id"]))
+
+    code, text = _preview(db)
+
+    assert code == 0
+    assert f"created by {maker['id']} (audit): kept personal by default" in text
