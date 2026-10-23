@@ -20,6 +20,12 @@ const REPLACE_NOTICE =
   "Made before Azizam recorded who made keys. It stops working at the next ownership update. Replace it with a new key.";
 const ADD_AGAIN_NOTICE =
   "Made by Alex. It stops working at the next ownership update. Add it again yourself to keep it.";
+const ADDRESS_KEEP_NOTICE =
+  "Made before Azizam recorded who made addresses. Keep it, or it stops working at the next ownership update.";
+// Administrators on record could also have made the binding, so keeping it asks the owner first.
+const ADMINISTRATORS = ["Alex", "unnamed administrator"];
+const CONFIRM_BODY =
+  "Azizam did not record who made it. Administrators at the time could also have made it: Alex, unnamed administrator. Keep it only if you made it or trust them.";
 const ADDRESS = "10.42.7.9";
 
 async function noSideways(page: Page, where: string) {
@@ -180,7 +186,7 @@ for (const viewport of viewports) {
     try {
       let readded = false;
       page.on("request", (request) => {
-        if (request.method() === "POST" && new URL(request.url()).pathname === `/me/api/apps/${app.id}/trusted-addresses`) {
+        if (request.method() === "POST" && new URL(request.url()).pathname === `/me/api/apps/${app.id}/trusted-addresses/${entryId}/readd`) {
           readded = true;
         }
       });
@@ -227,6 +233,163 @@ for (const viewport of viewports) {
       await dialog.getByRole("button", { name: `Add address ${ADDRESS} again` }).click();
       await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toHaveCount(0);
       await expect(dialog.getByRole("button", { name: /^Add address / })).toHaveCount(0);
+      await expect(dialog.getByRole("button", { name: `Remove ${ADDRESS}` })).toBeFocused();
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+    } finally {
+      const listed = (await owner.get(`/admin/api/apps/${app.id}/trusted-addresses`)) as {
+        trusted_addresses: { id: string; address: string }[];
+      };
+      for (const entry of listed.trusted_addresses.filter((item) => item.address === ADDRESS)) {
+        await owner.send("DELETE", `/admin/api/apps/${app.id}/trusted-addresses/${entry.id}`);
+      }
+    }
+  });
+
+  test(`keep a key the owner confirms first, from the Apps page (${viewport.label})`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+
+    // Each keep the page sends, with its body. A cancelled confirmation sends none.
+    const keeps: (string | null)[] = [];
+    let kept = false;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && /\/me\/api\/credentials\/[^/]+\/adopt$/.test(new URL(request.url()).pathname)) {
+        keeps.push(request.postData());
+        kept = true;
+      }
+    });
+    // The owner's first key: the browser's copy says the cut-over would remove it and that administrators on record
+    // could also have made it, so the keep waits for the owner to confirm them.
+    let target = { appId: "" };
+    await page.route("**/me/api/session", async (route) => {
+      if (kept) return route.continue();
+      const response = await route.fetch();
+      const actual = await response.json();
+      const app = actual.apps.find((item: { credentials: unknown[] }) => item.credentials.length > 0);
+      target = { appId: app.id };
+      const before = {
+        ...actual,
+        apps: actual.apps.map((item: { id: string; credentials: Record<string, unknown>[] }) => ({
+          ...item,
+          credentials: item.credentials.map((key, index) =>
+            item.id === app.id && index === 0
+              ? { ...key, created_by: null, cutover: "keep", administrators: ADMINISTRATORS }
+              : key,
+          ),
+        })),
+      };
+      await fulfilJson(route, before, { response });
+    });
+
+    await page.goto("/apps/");
+    const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
+    await expect(checkLine).toBeVisible();
+    await checkLine.click();
+    await page.locator(`#app-actions-${target.appId}`).click();
+    await page.getByRole("menuitem", { name: "Rename keys", exact: true }).click();
+    const keys = page.getByRole("dialog", { name: /^Keys for / });
+    await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toBeVisible();
+
+    await keys.getByRole("button", { name: /^Keep key / }).click();
+    const confirm = page.getByRole("dialog", { name: "Keep this key?" });
+    await expect(confirm.getByText(CONFIRM_BODY, { exact: true })).toBeVisible();
+    await noSideways(page, "the keep confirmation for a key");
+    await page.screenshot({
+      path: `test-results/screens/keep-binding-confirm-key-${viewport.width}.png`,
+      animations: "disabled",
+    });
+
+    await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(confirm).not.toBeVisible();
+    expect(keeps).toEqual([]);
+    await expect(keys.getByRole("button", { name: /^Keep key / })).toBeVisible();
+
+    await keys.getByRole("button", { name: /^Keep key / }).click();
+    await confirm.getByRole("button", { name: "Keep key", exact: true }).click();
+    await expect(confirm).not.toBeVisible();
+    expect(keeps.map((body) => JSON.parse(body ?? "null"))).toEqual([{ confirm_admins_could_have_made_it: true }]);
+    await expect(keys.getByText(KEEP_NOTICE, { exact: true })).toHaveCount(0);
+    await expect(keys.getByRole("button", { name: /^Rename key / })).toBeFocused();
+    await keys.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(keys).not.toBeVisible();
+    await expect(page.getByRole("link", { name: /need a quick check/ })).toHaveCount(0);
+  });
+
+  test(`keep an address the owner confirms first, from the Apps page (${viewport.label})`, async ({ page, request }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    // The owner's own App takes an address the owner made. The browser's copy says no one recorded its maker, so the
+    // keep waits for the owner to confirm the administrators. The address is removed when the test ends.
+    const owner = await ownerApi(request);
+    const { apps } = await (await page.request.get("/me/api/session")).json();
+    const app = apps.find((item: { disabled_at: unknown }) => !item.disabled_at) ?? apps[0];
+    const added = (await owner.send("POST", `/admin/api/apps/${app.id}/trusted-addresses`, {
+      address: ADDRESS,
+      note: "Hall speaker",
+    })) as { trusted_address: { id: string } };
+    const entryId = added.trusted_address.id;
+    try {
+      const keeps: (string | null)[] = [];
+      let kept = false;
+      page.on("request", (request) => {
+        if (request.method() === "POST" && new URL(request.url()).pathname === `/me/api/apps/${app.id}/trusted-addresses/${entryId}/adopt`) {
+          keeps.push(request.postData());
+          kept = true;
+        }
+      });
+      await page.route("**/me/api/session", async (route) => {
+        if (kept) return route.continue();
+        const response = await route.fetch();
+        const actual = await response.json();
+        const before = {
+          ...actual,
+          apps: actual.apps.map((item: { id: string }) =>
+            item.id === app.id ? { ...item, addresses_to_check: 1 } : item,
+          ),
+        };
+        await fulfilJson(route, before, { response });
+      });
+      await page.route(`**/admin/api/apps/${app.id}/trusted-addresses`, async (route) => {
+        if (kept || route.request().method() !== "GET") return route.continue();
+        const response = await route.fetch();
+        const actual = await response.json();
+        const before = {
+          trusted_addresses: actual.trusted_addresses.map((entry: { id: string }) =>
+            entry.id === entryId
+              ? { ...entry, created_by: null, made_by_name: undefined, cutover: "keep", administrators: ADMINISTRATORS }
+              : entry,
+          ),
+        };
+        await fulfilJson(route, before, { response });
+      });
+
+      await page.goto("/apps/");
+      const checkLine = page.getByRole("link", { name: "1 key or address needs a quick check" });
+      await expect(checkLine).toBeVisible();
+      await checkLine.click();
+      await page.locator(`#app-actions-${app.id}`).click();
+      await page.getByRole("menuitem", { name: "Trusted addresses", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      await expect(dialog.getByText(ADDRESS_KEEP_NOTICE, { exact: true })).toBeVisible();
+
+      await dialog.getByRole("button", { name: `Keep address ${ADDRESS}` }).click();
+      const confirm = page.getByRole("dialog", { name: "Keep this address?" });
+      await expect(confirm.getByText(CONFIRM_BODY, { exact: true })).toBeVisible();
+      await noSideways(page, "the keep confirmation for an address");
+      await page.screenshot({
+        path: `test-results/screens/keep-binding-confirm-address-${viewport.width}.png`,
+        animations: "disabled",
+      });
+
+      await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(confirm).not.toBeVisible();
+      expect(keeps).toEqual([]);
+
+      await dialog.getByRole("button", { name: `Keep address ${ADDRESS}` }).click();
+      await confirm.getByRole("button", { name: "Keep address", exact: true }).click();
+      await expect(confirm).not.toBeVisible();
+      expect(keeps.map((body) => JSON.parse(body ?? "null"))).toEqual([{ confirm_admins_could_have_made_it: true }]);
+      await expect(dialog.getByText(ADDRESS_KEEP_NOTICE, { exact: true })).toHaveCount(0);
       await expect(dialog.getByRole("button", { name: `Remove ${ADDRESS}` })).toBeFocused();
       await dialog.getByRole("button", { name: "Done", exact: true }).click();
       await expect(dialog).not.toBeVisible();
