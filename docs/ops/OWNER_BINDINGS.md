@@ -46,10 +46,11 @@ the apply, a person who still uses one either keeps it or replaces it.
 - `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` keeps a trusted address.
 
 Keep is refused with `409 keep_not_provable` unless nobody else could have made the
-binding. Nobody else could have made it only when both of these are true:
+binding. Nobody else could have made it only when all three of these are true:
 
 - the signed-in person holds the owner role now, and no other subject has ever held
   it. Revoked grants count, so an owner grant once given to someone else refuses keep;
+- the record names no creator other than the person. It may name no creator at all;
 - the audit log names no other creator for this binding.
 
 So only the owner can keep. The owner gets `403 not_your_app` for another person's App.
