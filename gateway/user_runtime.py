@@ -199,13 +199,17 @@ def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, 
             "App not found for this account",
             status_code=404,
         )
+    _refuse_disabled(app)
+    return app
+
+
+def _refuse_disabled(app: Mapping[str, Any]) -> None:
     if app.get("disabled_at"):
         raise UserPortalError(
             "app_disabled",
             "App is disabled",
             status_code=403,
         )
-    return app
 
 
 def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
@@ -587,19 +591,15 @@ def add_user_trusted_address(
 def _own_credential(credential_id: str, user: Mapping[str, Any], *, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """The live App key the signed-in person answers for, and its App (owner visibility §3.5).
 
-    Every other key answers as a missing one does: another person's key, a key on a session App, or a key whose App is
-    gone. The App's own refusal (disabled) comes only once the App is known to be the person's.
+    One ownership-scoped lookup. Every other key answers as a missing one does: another person's key, a key on a session
+    App, a revoked key, or a key whose App is gone. The App's own refusal (disabled) comes only once the App is known to
+    be the person's.
     """
-    credential = admin_store.get_credential(credential_id, path=path)
-    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
+    found = admin_store.person_app_credential(credential_id, str(user["id"]), path=path)
+    if found is None:
         raise _credential_not_found()
-    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    try:
-        app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
-    except UserPortalError as exc:
-        if exc.code == "app_not_found":
-            raise _credential_not_found() from None
-        raise
+    credential, app = found
+    _refuse_disabled(app)
     return credential, app
 
 

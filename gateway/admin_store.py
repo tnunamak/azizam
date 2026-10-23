@@ -2817,6 +2817,37 @@ def get_credential(
     return _credential_row_to_dict(row) if row else None
 
 
+# The apps table's columns, read back under an ``app__`` prefix by ``person_app_credential``.
+_APP_COLUMNS = ("id", "kind", "name", "owner_user_id", "access_plan", "created_at", "disabled_at")
+
+
+def person_app_credential(
+    cred_id: str, person_id: str, *, path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The live App key ``person_id`` answers for, and its App, in one ownership-scoped query (owner visibility §3.5).
+
+    The key's App is the one ``app_id`` names, or ``subject_id`` for a key that predates ``app_id``, as the session-App
+    trigger reads it. Only a key on an App the person owns counts, and a session App never does. A revoked key, a
+    control-plane key, another person's key, a key on a session App and a key whose App is gone all give None, so
+    the caller answers every one of them the same way.
+    """
+    app_columns = ", ".join(f"apps.{column} AS app__{column}" for column in _APP_COLUMNS)
+    with _conn(path) as conn:
+        row = conn.execute(
+            f"SELECT credentials.*, {app_columns} FROM credentials "
+            "JOIN apps ON apps.id = COALESCE(credentials.app_id, credentials.subject_id) "
+            "WHERE credentials.id = ? AND credentials.subject_kind = 'app' AND credentials.revoked_at IS NULL "
+            "AND apps.owner_user_id = ? "
+            "AND NOT EXISTS (SELECT 1 FROM session_apps WHERE session_apps.app_id = apps.id)",
+            (cred_id, person_id),
+        ).fetchone()
+    if row is None:
+        return None
+    credential = _credential_row_to_dict(row)
+    app = {column: credential.pop(f"app__{column}") for column in _APP_COLUMNS}
+    return credential, app
+
+
 def find_credential_by_hash(
     hash: str, *, path: Path = DB_PATH,
     connection: sqlite3.Connection | None = None,
@@ -4305,6 +4336,7 @@ __all__ = [
     "create_admin_key_with_role",
     "revoke_credential",
     "get_credential",
+    "person_app_credential",
     "find_credential_by_hash",
     "find_oidc_user",
     "effective_admin_roles",
