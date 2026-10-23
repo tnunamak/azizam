@@ -158,7 +158,6 @@ def test_an_app_id_swap_cannot_move_a_key_to_another_person(guarded):
     assert _refused(path, "UPDATE apps SET id = 'app_parked' WHERE id = ?", (alice_app,))
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 3b: an App key's hash can be rewritten (a new secret with no provenance)")
 def test_an_app_keys_secret_cannot_be_rewritten_in_place(guarded):
     path, _alice, _bob, _alice_app, _bob_app, key = guarded
     assert _refused(path, "UPDATE credentials SET hash = 'sha256:attacker' WHERE id = ?", (key,))
