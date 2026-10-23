@@ -138,10 +138,12 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
     return None if missing else path
 
 
-# Home's first read after the status cache (12 s) expires. Waiting a second past the TTL before
-# each sample makes it a cold read; the row takes its limits from budgets.toml [api.routes].
+# Home's first read after the status cache (12 s) expires. Waiting past the 60 s that Home may serve
+# engine rows stale (proxy._ENGINE_ROWS_MAX_STALE_S) makes each sample a cold read. A shorter wait would
+# be served the old rows while the refresh runs, and its counts would depend on how far the refresh got.
+# The row takes its limits from budgets.toml [api.routes].
 COLD_HOME_ROUTE = "/me/api/home (status cache expired)"
-COLD_HOME_WAIT_S = 13
+COLD_HOME_WAIT_S = 61
 COLD_HOME_REPEATS = 3
 
 

@@ -265,7 +265,10 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Home reads engine rows (tests/test_home_engine_rows.py, 3 cases) and one health verdict per probe outcome
 # (tests/test_on_demand_health_probe.py, 9 cases): collect-only 16813 -> 16825 (2026-10-23).
-pytest = 16825
+# Home engine rows, round 2: +7 cases in tests/test_home_engine_rows.py (a stale burst, a cold burst, a cancelled reader,
+# a failed refresh, and the probe deadline) and +10 in tests/test_health_connect_failures.py (refused, DNS and TLS
+# against a resident and an on-demand engine, and the cause of a failed connection). collect-only 16825 -> 16842 (2026-10-23).
+pytest = 16842
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
