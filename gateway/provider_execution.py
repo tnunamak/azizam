@@ -106,6 +106,9 @@ PAID_PRICED_REQUEST_FIELDS = frozenset(
     }
 )
 
+PAID_EMBEDDINGS_REQUEST_FIELDS = frozenset({"dimensions", "encoding_format", "input", "model", "user"})
+_EMBEDDING_ENCODING_FORMATS = frozenset({"float", "base64"})
+
 _PAID_OUTPUT_LIMIT_FIELDS = frozenset(
     {"max_tokens", "max_completion_tokens", "max_output_tokens"}
 )
@@ -134,8 +137,10 @@ def _prepare_paid_litellm_payload(
     stream: bool,
     provider: providers.ProviderRef,
     resolved_upstream_model: str | None = None,
+    embeddings: bool = False,
 ) -> tuple[dict[str, Any], bytes] | JSONResponse:
-    prepared = _paid_priced_outbound_payload(
+    outbound = _paid_embeddings_outbound_payload if embeddings else _paid_priced_outbound_payload
+    prepared = outbound(
         body,
         provider=provider,
         resolved_upstream_model=resolved_upstream_model,
@@ -196,6 +201,41 @@ def _paid_priced_outbound_payload(
         # maximum so the estimator and provider see the same bound.
         payload["max_tokens"] = max(output_limits)
 
+    return _checked_outbound_payload(payload, provider=provider, resolved_upstream_model=resolved_upstream_model)
+
+
+def _paid_embeddings_outbound_payload(
+    body: Mapping[str, Any],
+    *,
+    provider: providers.ProviderRef,
+    resolved_upstream_model: str | None = None,
+) -> dict[str, Any] | JSONResponse:
+    """Embeddings take their own fields. The chat output limits and messages do not apply to them."""
+    payload: dict[str, Any] = {}
+    for key, value in body.items():
+        if key in _PAID_CALLER_ROUTING_FIELDS:
+            continue
+        if key not in PAID_EMBEDDINGS_REQUEST_FIELDS:
+            return paid_option_unsupported_response(key)
+        payload[key] = value
+
+    if "encoding_format" in payload:
+        encoding_format = payload["encoding_format"]
+        if not (isinstance(encoding_format, str) and encoding_format in _EMBEDDING_ENCODING_FORMATS):
+            return invalid_request_response("encoding_format must be float or base64.", param="encoding_format")
+    if "dimensions" in payload and _positive_int(payload["dimensions"]) is None:
+        return invalid_request_response("dimensions must be a positive integer when provided.", param="dimensions")
+    return _checked_outbound_payload(payload, provider=provider, resolved_upstream_model=resolved_upstream_model)
+
+
+def _checked_outbound_payload(
+    payload: dict[str, Any],
+    *,
+    provider: providers.ProviderRef,
+    resolved_upstream_model: str | None = None,
+) -> dict[str, Any] | JSONResponse:
+    """The guards every paid payload passes before it is priced: its tools, its model's modifiers and billing names,
+    and nested content the provider's price does not declare."""
     unsupported_tool = _unsupported_paid_tool(payload.get("tools"))
     if unsupported_tool is not None:
         return paid_option_unsupported_response(unsupported_tool)
@@ -546,6 +586,7 @@ async def execute_paid_litellm(
                 stream=receipt.stream,
                 provider=pricing_provider,
                 resolved_upstream_model=resolved_upstream_model,
+                embeddings=request_path == "/v1/embeddings",
             )
             if isinstance(prepared, JSONResponse):
                 receipt.set_policy_decision("denied", reason="invalid_request", source="gateway:remote-provider")
