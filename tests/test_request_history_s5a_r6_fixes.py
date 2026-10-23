@@ -5,12 +5,28 @@ Each test names the round-6 finding it pins (R6-n). The round-4 fixes, whose use
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-from gateway import request_history
+from gateway import request_history, request_history_capture
+from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
+from tests.test_request_history_s5a_r4_fixes import (  # noqa: F401 - fixtures and helpers shared with round 4
+    FORGET_BODY,
+    KEEP_BODY,
+    MAX_SLOTS,
+    _free_slots,
+    _ignore,
+    _one_body,
+    _read_body,
+    _scope,
+)
+from tests.test_review_retention_s5a_probes import _identity, _kept, member_db  # noqa: F401 - fixture
 
 SECRET = "SYNTHETIC_MARKER"
 
@@ -200,3 +216,56 @@ def test_r6_2_j_a_one_mebibyte_body_of_small_json_strings_stays_within_the_node_
     assert len(kept["items"]) == 100_000
     assert kept["items"][0] == "[1,2]"
     assert kept["items"][-1] == {"omitted": "json_budget"}
+
+
+# ------------------------------------------------------------------ R6-3: a body whole before the caller is known
+
+
+@pytest.fixture(autouse=True)
+def own_admission_limit(monkeypatch):
+    """Each test has its own admission limit, so a slot that a failing test leaves taken cannot reach the next test."""
+    monkeypatch.setattr(request_history_capture, "_PENDING", threading.BoundedSemaphore(MAX_SLOTS))
+
+
+def _reads_then_authenticates(person: str, reply: list[bytes], free_slots_seen: list[int]) -> Callable:
+    """A route that reads its whole body before it knows the caller, then streams ``reply``. After each chunk it records
+    how many admission slots are free."""
+    async def route(scope, receive, send):
+        await _read_body(receive)
+        scope["state"][IDENTITY_STATE_KEY] = _identity(person)
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
+        for index, chunk in enumerate(reply):
+            await send({"type": "http.response.body", "body": chunk, "more_body": index < len(reply) - 1})
+            free_slots_seen.append(_free_slots())
+
+    return route
+
+
+def _members_keep_history(db, media, person) -> None:
+    request_history.set_member_choice(person, keep=True, retention_id="7_days", parts=["accepted", "received"],
+                                      admin_path=db, path=media, now=int(time.time()))
+
+
+def test_r6_3_a_a_body_forget_whole_before_the_caller_is_known_gives_its_slot_back_before_the_reply(member_db):
+    db, media, person = member_db
+    _members_keep_history(db, media, person)
+    free_slots_seen: list[int] = []
+    route = _reads_then_authenticates(person, [b"x" * 65536] * 16, free_slots_seen)
+    middleware = RequestHistoryMiddleware(route, admin_path=lambda: db, media_path=lambda: media)
+    asyncio.run(middleware(_scope(), _one_body(FORGET_BODY), _ignore))
+    assert free_slots_seen == [MAX_SLOTS] * 16
+    assert _kept(media) == []
+    assert _free_slots() == MAX_SLOTS
+
+
+def test_r6_3_b_a_body_whole_before_the_caller_is_known_is_kept_with_its_reply(member_db):
+    db, media, person = member_db
+    _members_keep_history(db, media, person)
+    free_slots_seen: list[int] = []
+    route = _reads_then_authenticates(person, [b"reply" * 1000] * 4, free_slots_seen)
+    middleware = RequestHistoryMiddleware(route, admin_path=lambda: db, media_path=lambda: media)
+    asyncio.run(middleware(_scope(), _one_body(KEEP_BODY), _ignore))
+    assert free_slots_seen == [MAX_SLOTS - 1] * 4
+    rows = _kept(media)
+    assert len(rows) == 1 and "a sentence to keep" in rows[0]
+    assert _free_slots() == MAX_SLOTS
