@@ -381,8 +381,9 @@ class _Capture:
         prompts = slot.take_library_prompts() if slot is not None else []
         identity = _identity(self._state)
         if identity is None:
-            self._write_media_capture(None, None, None, prompts, receipt_id,
-                                      retention.WriteOutcome(False, "no_person"))
+            if prompts:
+                self._write_media_capture(None, None, None, prompts, None,
+                                          retention.WriteOutcome(False, "no_person"))
             return
         if self._decision is None:
             # A cancellation ended the request before its decision was read, so nothing is kept (R4-3).
