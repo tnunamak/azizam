@@ -16038,7 +16038,7 @@
     },
     "/auth/api/remembered": {
       "get": {
-        "description": "The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them.",
+        "description": "The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them,\nexcept that the entry of the person this browser is signed in as carries ``you``: true.",
         "operationId": "remembered_auth_api_remembered_get",
         "responses": {
           "200": {

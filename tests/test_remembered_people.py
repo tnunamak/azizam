@@ -105,7 +105,7 @@ def test_remembered_returns_only_tile_name_avatar_method_provider_hint(tls):
     body = listed(client)
     assert set(body) == {"remember", "people"} and body["remember"] is True
     [person] = body["people"]
-    assert set(person) == {"tile", "name", "avatar", "method", "provider", "hint"}
+    assert set(person) == {"tile", "name", "avatar", "method", "provider", "hint", "you"} and person["you"] is True
     assert set(person["avatar"]) == {"variant", "initial"}
     assert person["name"] == MEMBER_NAME and person["method"] == "password"
     assert person["provider"] is None and person["hint"] is None

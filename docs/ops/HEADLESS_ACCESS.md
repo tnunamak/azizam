@@ -236,8 +236,10 @@ device. The server keeps the rows, and the page gets a tile for each name.
 
 - `GET /auth/api/remembered`: this device's names, as `{"remember", "people"}`.
   Each person has `tile`, `name`, `avatar` (`variant`, `initial`), `method`
-  (`password` or `sso`), `provider` and `hint`. No email, person id, picture,
-  role or session appears. Rate-limited to 60 reads a minute per address.
+  (`password` or `sso`), `provider` and `hint`. The entry of the person this
+  browser is signed in as also has `"you": true`; no other entry has that key.
+  No email, person id, picture, role or session appears. Rate-limited to 60 reads
+  a minute per address.
 - `DELETE /auth/api/remembered/{tile}`: takes one name off this device's list. It
   does not sign anyone out or change their account. A tile from another device
   does nothing here.
