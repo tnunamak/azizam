@@ -7,7 +7,6 @@ import {
   ChevronDown,
   CircleHelp,
   CircleUserRound,
-  KeyRound,
   LogOut,
   UserRoundCog,
 } from "lucide-react";
@@ -145,14 +144,6 @@ export function AccountMenuContent({
               >
                 <CircleUserRound />
                 Change avatar
-              </DropdownMenuItem>
-            )}
-            {!viewer.serviceAdmin && (
-              <DropdownMenuItem asChild>
-                <Link prefetch={false} href="/apps">
-                  <KeyRound />
-                  Apps & keys
-                </Link>
               </DropdownMenuItem>
             )}
             {viewer.authenticated && !viewer.serviceAdmin && (
