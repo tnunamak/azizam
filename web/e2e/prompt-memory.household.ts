@@ -143,7 +143,7 @@ test.describe("Accessibility of the prompt screens", () => {
           await expect(
             page
               .locator(
-                "[data-slot=setting-row], [data-slot=prompt-keep], [role=dialog]",
+                "[data-slot=setting-row], [data-slot=prompt-keep], [data-slot=incognito], [role=dialog]",
               )
               .first(),
           ).toBeVisible();
