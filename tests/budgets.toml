@@ -294,7 +294,10 @@ pytest = 16989
 # Walkthrough small fixes (2026-10-23): +14 cases. Library full screen +5, Apps quick-check line +3, the sign-in picture
 # as the default avatar +5 (person-avatar +4, account-avatar +1), the account-menu nav +1, reauth transport +1, account API
 # -1 (keep and replace asks became one routine case; the consent asks are new). Full run: 218 files, 3246 cases, all passed.
-vitest = 3246
+# Key reveal holds (2026-10-23): +4 unsaved-work cases (the new-key line, the secret hold and its release), +3 SecretReveal
+# cases, +11 leave-guard cases (links, Back, closing the tab, release) and +2 Apps key-reveal cases. Full run: 221 files,
+# 3266 cases, all passed.
+vitest = 3266
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -304,7 +307,9 @@ vitest = 3246
 # Walkthrough small fixes (2026-10-23): +2 in e2e/step-up.spec.ts (a stale owner's own key, at 1440 and 390 px, in the
 # global-state lane) and +4 in e2e/library-fullscreen.spec.ts (picture full screen and its fallback, at 1440 and 390 px).
 # playwright.config.ts 510, live-data 3, household 18: 531.
-playwright = 531
+# Key reveal holds (2026-10-23): +4 cases in e2e/key-reveal-leave.spec.ts (create and replace a key, at 1440 and 390 px).
+# playwright.config.ts 514, live-data 3, household 18: 535.
+playwright = 535
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

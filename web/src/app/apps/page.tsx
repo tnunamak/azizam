@@ -56,6 +56,7 @@ import {
 } from "@/components/product";
 import { cn } from "@/lib/cn";
 import { keyPromptNote } from "@/lib/prompt-memory";
+import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
 import { keyApps, suggestedModel } from "@/lib/app-guides";
@@ -221,6 +222,8 @@ function AppsContents() {
   // Set while a dialog was opened from the quick-check line: its first item that needs a check is brought into view.
   const [focusCheck, setFocusCheck] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Held while the new key is on screen and unsaved, for every way a key is shown here (create, replace, rotate, mint).
+  const releaseKey = useUnsavedSecret(reveal !== null && !saved);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
   // Only the owner and admins may give an app a different plan.
   const { data: plans } = useQuery({
@@ -632,6 +635,7 @@ function AppsContents() {
 
   async function saveKey() {
     if (!reveal) return;
+    releaseKey();
     setSaved(true);
     setReveal({ ...reveal, secret: "" });
     setBusy(true);
@@ -1313,11 +1317,17 @@ function AppsContents() {
                   }
                 />
                 <p className="text-muted-foreground text-meta">
-                  This guide stays on{" "}
-                  <Link prefetch={false} href="/connect/" className="underline underline-offset-4">
+                  The full guide opens on{" "}
+                  <Link
+                    prefetch={false}
+                    href="/connect/"
+                    target="_blank"
+                    rel="noopener"
+                    className="underline underline-offset-4"
+                  >
                     Connect
-                  </Link>
-                  .
+                  </Link>{" "}
+                  in a new tab.
                 </p>
               </section>
               {saved && !busy && reveal.oldIds.length > 0 && (
