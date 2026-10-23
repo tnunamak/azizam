@@ -40,15 +40,35 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
   expect(before.ok()).toBe(true);
   const start = await before.json();
   expect(start.person_id).toMatch(/^usr_/);
+  expect(start.choice).toBe("auto");
   try {
     const dialog = await openPicker(page);
-    const chosen = dialog.getByRole("radio", { name: /Plum/ });
-    await dialog.getByText("Plum", { exact: true }).click();
+    // Auto can already check Plum for this person; clicking a checked radio sends no change event.
+    const currentChoice = await dialog
+      .locator("input[type='radio']:checked")
+      .getAttribute("value");
+    const selection =
+      currentChoice === "v7"
+        ? {
+            label: "Fern",
+            choice: "v2",
+            background: /#294A40|rgb\(41, 74, 64\)/,
+          }
+        : {
+            label: "Plum",
+            choice: "v7",
+            background: /#5C3F61|rgb\(92, 63, 97\)/,
+          };
+    const chosen = dialog.getByRole("radio", {
+      name: new RegExp(selection.label),
+    });
+    expect(await chosen.isChecked()).toBe(false);
+    await dialog.getByText(selection.label, { exact: true }).click();
     await expect(chosen).toBeChecked();
     await expect(page.getByText("We couldn't save your avatar")).toHaveCount(0);
     await expect
       .poll(async () => (await (await page.request.get("/me/api/profile/avatar")).json()).choice)
-      .toBe("v7");
+      .toBe(selection.choice);
     await dialog.getByRole("button", { name: "Done" }).click();
     await expect(dialog).toBeHidden();
     // Focus returns to the account button.
@@ -56,12 +76,12 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
     // It is the same on a fresh load, in the sidebar and on People.
     await page.reload();
     const trigger = page.getByRole("button", { name: /^Account menu/ }).first();
-    await expect(discOf(trigger)).toHaveCSS("background-image", /#5C3F61|rgb\(92, 63, 97\)/);
+    await expect(discOf(trigger)).toHaveCSS("background-image", selection.background);
     await page.goto("/people/");
     await expect(page.getByRole("heading", { name: "People" })).toBeVisible();
     await expect(
       page.locator("[data-slot='person-mark'] > span").first(),
-    ).toHaveCSS("background-image", /#5C3F61|rgb\(92, 63, 97\)/);
+    ).toHaveCSS("background-image", selection.background);
   } finally {
     // The lane owner is shared by the other tests of this server: put the default back.
     const session = await (await page.request.get("/me/api/session")).json();
