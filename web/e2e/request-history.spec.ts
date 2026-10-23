@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import type { Locator, Page } from "@playwright/test";
 import { expect, fixtureStateDir, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
 // The journey a member takes through request history, at a desktop and a phone width: the owner is a person
@@ -25,8 +26,29 @@ function makePredatingMember(baseURL: string) {
   ]);
 }
 
+// The drawer is on screen and nothing in it is clipped: it waits for the slide-in to end, then checks the drawer's
+// edges, every element's right edge against the drawer's, and that the page itself does not scroll sideways.
+async function expectDrawerFits(page: Page, drawer: Locator, width: number) {
+  await expect.poll(() => drawer.evaluate((el) => el.getAnimations().length)).toBe(0);
+  const box = await drawer.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+  expect(await drawer.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  const clipped = await drawer.evaluate((el) => {
+    const edge = el.getBoundingClientRect().right;
+    return Array.from(el.querySelectorAll("*"))
+      .filter((node) => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().right > edge + 1)
+      .map((node) => `${node.tagName.toLowerCase()}: ${(node.textContent ?? "").trim().slice(0, 40)}`);
+  });
+  expect(clipped).toEqual([]);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+  ).toBeLessThanOrEqual(0);
+}
+
 for (const width of [1440, 390]) {
-  test(`a request is kept in History, opened and deleted, and an Incognito request is not kept, at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
+  test(`a request is kept in History, read as a conversation, opened and deleted, and an Incognito request is not kept, at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
     page,
     baseURL,
   }) => {
@@ -61,15 +83,27 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Run" }).click();
     await expect(page.getByRole("heading", { name: "Chat result" })).toBeVisible({ timeout: 60_000 });
 
-    // History: the request is the newest row. Open it: what was sent, and the receipt's sentence.
+    // History: the request is the newest row, and its second line is what was asked, not the route.
     await page.goto("/history/");
     await expect(rows).toHaveCount(before + 1, { timeout: 30_000 });
+    // The model's name settles once the catalog has loaded; until then the row may show a capability's name.
+    await expect(rows.first()).toContainText("Fast");
+    await expect(rows.first()).toContainText(kept);
+    await expect(rows.first()).not.toContainText("/chat/completions");
     await page.screenshot({ path: shot(width, "list"), fullPage: true });
+
+    // Open it: what was asked and the reply are chat bubbles, the receipt's sentence says what was kept, and the raw
+    // record is folded away at the bottom.
     await rows.first().getByRole("button").click();
     const detail = page.getByRole("dialog");
-    await expect(detail.getByRole("heading", { name: "What was sent" })).toBeVisible();
-    await expect(detail.getByText(kept)).toBeVisible();
+    await expect(detail.getByRole("heading", { name: "Fast" })).toBeVisible();
+    const conversation = detail.getByRole("list", { name: "Conversation" });
+    await expect(conversation.getByText(kept, { exact: true })).toBeVisible();
     await expect(detail.getByText(/^Kept the request until /)).toBeVisible({ timeout: 15_000 });
+    await expect(detail.getByText("What was sent")).toHaveCount(0);
+    const technical = detail.locator("details", { hasText: "Technical details" });
+    await expect(technical).not.toHaveAttribute("open");
+    await expectDrawerFits(page, detail, width);
     await page.screenshot({ path: shot(width, "detail"), fullPage: true });
 
     // Delete it: after the confirm the list is back where it was.

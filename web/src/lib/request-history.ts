@@ -15,6 +15,11 @@ export interface RequestHistoryChoice {
   choices: string[];
   /** The parts the gateway offers. */
   allowed_parts: string[];
+  /**
+   * True when the owner has turned request history off for everyone. Nothing new is kept then, whatever the member
+   * chose, so the screens offer no way to turn it on (REQUEST_RETENTION.md section 17, slice 5b1 r2).
+   */
+  household_off: boolean;
   /** True until a member who predates request history turns it on or off, or dismisses the notice. */
   notice_due: boolean;
 }
@@ -24,6 +29,8 @@ export interface RequestSummary {
   model?: string | null;
   status?: number | null;
   latency_ms?: number | null;
+  /** What the request asked, in one line, cut when it was kept. Absent on rows kept before the preview existed. */
+  preview?: string | null;
 }
 
 /** One row of the list. Only metadata: the content is read one request at a time. */
@@ -95,9 +102,61 @@ export function statusWords(status: number | null | undefined): string {
   return status >= 200 && status < 300 ? "OK" : `Failed (${status})`;
 }
 
-/** The route, without its query, as the list shows it under the model. */
+/** The route, without its query. It is for Technical details and the route's kind, not for a reader's line. */
 export function routeWords(route: string | null | undefined): string {
   return route ? route.replace(/\?.*$/, "") : "";
+}
+
+/**
+ * How a request's record reads: a conversation, a picture, sound or video, a transcription, embeddings, or a request
+ * whose shape the screens do not know. The label is what the screens call the kind when nothing else names it.
+ */
+export type RequestShape = "conversation" | "media" | "transcription" | "embeddings" | "other";
+
+export interface RequestKind {
+  shape: RequestShape;
+  label: string;
+}
+
+/** The kind of a route, from its path (the gateway's routes for chat, pictures, sound, video, transcription, embeddings). */
+export function requestKind(route: string | null | undefined): RequestKind {
+  const path = routeWords(route).toLowerCase();
+  if (/\/(chat\/completions|responses|messages|api\/chat)$/.test(path)) return { shape: "conversation", label: "Chat" };
+  if (/\/(embeddings|api\/embed)$/.test(path)) return { shape: "embeddings", label: "Embeddings" };
+  if (/\/audio\/(transcriptions|translations)$/.test(path)) return { shape: "transcription", label: "Transcription" };
+  if (/\/images\//.test(path)) return { shape: "media", label: "Picture" };
+  if (/\/videos(\/|$)/.test(path)) return { shape: "media", label: "Video" };
+  if (/\/audio\/(speech|generate)$/.test(path)) return { shape: "media", label: "Audio" };
+  return { shape: "other", label: "Request" };
+}
+
+/** The markers the gateway writes in place of a removed value (request_history.py REMOVED and URL_REMOVED). */
+const REMOVED_PART = /\[(?:url )?removed\]/;
+
+/** True when a kept value, at any depth, holds a removed part: a credential, or a part of a link. */
+export function hasRemovedPart(value: unknown): boolean {
+  if (typeof value === "string") return REMOVED_PART.test(value);
+  if (Array.isArray(value)) return value.some(hasRemovedPart);
+  if (value && typeof value === "object") return Object.values(value).some(hasRemovedPart);
+  return false;
+}
+
+/** The text with each removed marker taken out, so no reader sees "[removed]" inside a sentence. */
+export function withoutRemovedParts(text: string): string {
+  return text.replace(/[ \t]*\[(?:url )?removed\][ \t]*/g, " ").replace(/[ \t]+$/gm, "");
+}
+
+/** A byte count in words: "512 bytes", "2.1 MB". */
+export function sizeWords(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  let value = bytes / 1024;
+  let unit = 0;
+  const units = ["KB", "MB", "GB"];
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
 const NOT_KEPT_REASON: Record<string, string> = {

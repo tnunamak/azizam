@@ -44,7 +44,9 @@ export function RequestHistoryNotice() {
     onError: () => toast.error("Couldn’t save that. Try again."),
   });
 
-  if (!enabled || !data?.notice_due) return null;
+  // With the owner's switch off for everyone, there is nothing to turn on, so the notice is not offered. It stays due
+  // for the member, and comes back if the owner turns request history on later.
+  if (!enabled || !data?.notice_due || data.household_off) return null;
   const busy = turnOn.isPending || dismiss.isPending;
   return (
     <Callout

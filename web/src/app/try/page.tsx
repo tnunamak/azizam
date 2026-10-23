@@ -83,6 +83,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, EmptyState, ErrorState } from "@/components/product";
+import { TechnicalDetails } from "@/components/product/technical-details";
 
 type TryTab =
   | "chat"
@@ -1976,6 +1977,8 @@ export default function TryPage() {
           refreshedState === "member-off" ||
           refreshedState === "household-off" ||
           (personViewer && refreshedState === "unknown"));
+      // Prompt keeping off sends forget as well, so History keeps nothing of the typed request either. The names of
+      // the two settings and of "forget" are to be reworked (REQUEST_RETENTION.md section 17, slice 5b1, open point 1).
       const forgetRun = forget || promptsOff;
       const request: RequestInfo = forgetRun
         ? built.multipart
@@ -3153,23 +3156,6 @@ function ResultView({
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </details>
     </div>
-  );
-}
-
-/** Raw answers and status codes, folded away from the normal view (P15). */
-function TechnicalDetails({ text }: { text: string }) {
-  return (
-    <details className="border-t pt-3">
-      <summary className="min-h-11 cursor-pointer text-sm font-medium">
-        Technical details
-      </summary>
-      <pre
-        tabIndex={0}
-        className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-      >
-        {text}
-      </pre>
-    </details>
   );
 }
 

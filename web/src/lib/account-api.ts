@@ -339,6 +339,16 @@ export const accountApi = {
     accountRequest<{ retention?: ReceiptRetentionEntry[] }>(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
     ),
+  /**
+   * The Library item this request made, or null when it made none. The Library is searched by the start of the
+   * prompt (the search is a substring match), and the item must name this request.
+   */
+  libraryItemForRequest: (requestId: string, prompt: string) =>
+    accountRequest<{ assets?: Array<{ asset_id?: string; request_id?: string | null }> }>(
+      `/me/api/media?q=${encodeURIComponent(prompt.slice(0, 100))}`,
+    ).then(
+      (page) => page.assets?.find((asset) => asset.request_id === requestId)?.asset_id ?? null,
+    ),
   /** The signed-in person's avatar choice. */
   avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
   /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */

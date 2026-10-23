@@ -6,10 +6,12 @@ import HistoryPage from "./page";
 
 const mocks = vi.hoisted(() => ({
   viewer: { authenticated: true, serviceAdmin: false },
+  modelName: (id: string) => id,
   requestHistory: vi.fn(),
   requestHistoryPage: vi.fn(),
   requestHistoryRecord: vi.fn(),
   receiptRetention: vi.fn(),
+  libraryItemForRequest: vi.fn(),
   deleteRequestHistoryRecord: vi.fn(),
   deleteAllRequestHistory: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
@@ -19,12 +21,16 @@ vi.mock("@/components/shell/session", () => ({
   useViewer: () => mocks.viewer,
 }));
 vi.mock("@/lib/toast", () => ({ toast: mocks.toast }));
+vi.mock("@/lib/use-model-name", () => ({
+  useModelName: () => mocks.modelName,
+}));
 vi.mock("@/lib/account-api", () => ({
   accountApi: {
     requestHistory: mocks.requestHistory,
     requestHistoryPage: mocks.requestHistoryPage,
     requestHistoryRecord: mocks.requestHistoryRecord,
     receiptRetention: mocks.receiptRetention,
+    libraryItemForRequest: mocks.libraryItemForRequest,
     deleteRequestHistoryRecord: mocks.deleteRequestHistoryRecord,
     deleteAllRequestHistory: mocks.deleteAllRequestHistory,
   },
@@ -45,13 +51,34 @@ const item = (id: string, model: string, extra: Record<string, unknown> = {}) =>
   ...extra,
 });
 
-const choice = (keep: boolean) => ({
+const choice = (keep: boolean, extra: Record<string, unknown> = {}) => ({
   keep,
   retention: "7_days",
   parts: ["accepted"],
   choices: ["1_day", "7_days", "30_days"],
   allowed_parts: ["accepted", "received"],
+  household_off: false,
   notice_due: false,
+  ...extra,
+});
+
+const recordBody = (overrides: Record<string, unknown> = {}) => ({
+  record_id: "a",
+  kind: "request_history",
+  created_at: NOW - 120,
+  kept_until: NOW + 86_400,
+  origin_kind: "app_key",
+  request_id: "req_a",
+  parts: {
+    accepted: {
+      headers: { "content-type": "application/json" },
+      body: { model: "chat-a", messages: [{ role: "user", content: "Hello from history" }] },
+    },
+    received: { status: 200, headers: {}, body: { choices: [{ message: { content: "A reply" } }] } },
+  },
+  omissions: [],
+  summary: { route: "/openai/v1/chat/completions", model: "chat-a", status: 200, latency_ms: 40 },
+  ...overrides,
 });
 
 function renderPage() {
@@ -67,25 +94,14 @@ function renderPage() {
 
 beforeEach(() => {
   mocks.viewer = { authenticated: true, serviceAdmin: false };
+  mocks.modelName = (id: string) => id;
   mocks.requestHistory.mockResolvedValue(choice(true));
   mocks.requestHistoryPage.mockResolvedValue({ requests: [], next_cursor: null });
-  mocks.requestHistoryRecord.mockResolvedValue({
-    record_id: "a",
-    kind: "request_history",
-    created_at: NOW - 60,
-    kept_until: NOW + 86_400,
-    origin_kind: "app_key",
-    request_id: "req_a",
-    parts: {
-      accepted: { headers: { "content-type": "application/json" }, body: { model: "chat-a", messages: [{ content: "Hello from history" }] } },
-      received: { status: 200, headers: {}, body: { choices: [{ message: { content: "A reply" } }] } },
-    },
-    omissions: [],
-    summary: { route: "/chat/completions", model: "chat-a", status: 200, latency_ms: 40 },
-  });
+  mocks.requestHistoryRecord.mockResolvedValue(recordBody());
   mocks.receiptRetention.mockResolvedValue({
     retention: [{ kind: "request_history", decision: "kept", reason: "kept", kept_until_ms: (NOW + 86_400) * 1000, parts: ["accepted", "received"], limited_by: "member_choice" }],
   });
+  mocks.libraryItemForRequest.mockResolvedValue(null);
   mocks.deleteRequestHistoryRecord.mockResolvedValue(undefined);
   mocks.deleteAllRequestHistory.mockResolvedValue({ deleted: 2 });
   mocks.toast.success.mockClear();
@@ -124,11 +140,51 @@ describe("History list", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
+  it("shows the model's name, and under it what was asked, and no route", async () => {
+    mocks.modelName = (id: string) => (id === "chat-a" ? "Chat A" : id);
+    mocks.requestHistoryPage.mockResolvedValue({
+      requests: [item("a", "chat-a", { summary: { route: "/openai/v1/chat/completions", model: "chat-a", status: 200, preview: "What is the capital of France?" } })],
+      next_cursor: null,
+    });
+    renderPage();
+    const row = await screen.findByRole("button", { name: /Chat A/ });
+    expect(within(row).getByText("Chat A")).toBeVisible();
+    expect(within(row).getByText("What is the capital of France?")).toBeVisible();
+    expect(screen.queryByText("/openai/v1/chat/completions")).not.toBeInTheDocument();
+    expect(screen.queryByText("/chat/completions")).not.toBeInTheDocument();
+  });
+
+  it("shows the kind in place of what was asked when the row has no preview", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({
+      requests: [item("a", "whisper-1", { summary: { route: "/v1/audio/transcriptions", model: "whisper-1", status: 200 } })],
+      next_cursor: null,
+    });
+    renderPage();
+    const row = await screen.findByRole("button", { name: /whisper-1/ });
+    expect(within(row).getByText("Transcription")).toBeVisible();
+  });
+
   it("explains that history is off, and links to the setting that turns it on", async () => {
     mocks.requestHistory.mockResolvedValue(choice(false));
     renderPage();
     expect(await screen.findByText("History is off")).toBeVisible();
     expect(screen.getByRole("link", { name: "Open Your settings" })).toHaveAttribute("href", "/account#history");
+  });
+
+  it("says the owner has turned history off for everyone, and offers no setting to turn it on", async () => {
+    mocks.requestHistory.mockResolvedValue(choice(true, { household_off: true }));
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [], next_cursor: null });
+    renderPage();
+    expect(await screen.findByText("History is off on this gateway")).toBeVisible();
+    expect(screen.getByText(/The owner has turned request history off for everyone/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Open Your settings" })).not.toBeInTheDocument();
+  });
+
+  it("says, above the rows, that the owner has turned history off, whatever the member chose", async () => {
+    mocks.requestHistory.mockResolvedValue(choice(true, { household_off: true }));
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    renderPage();
+    expect(await screen.findByText("History is off on this gateway. Nothing new is kept.")).toBeVisible();
   });
 
   it("explains an empty history that is on, and links to Try", async () => {
@@ -147,39 +203,92 @@ describe("History list", () => {
 });
 
 describe("opening one request", () => {
-  it("shows what was sent and what came back, with the receipt's sentence about keeping it", async () => {
+  it("names the model in the title, gives the time in words, and shows the conversation as bubbles", async () => {
+    mocks.modelName = (id: string) => (id === "chat-a" ? "Chat A" : id);
     mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Chat A/ }));
 
-    expect(await screen.findByRole("heading", { name: "What was sent" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "What came back" })).toBeVisible();
-    expect(screen.getByText(/Hello from history/)).toBeVisible();
-    expect(screen.getByText(/A reply/)).toBeVisible();
-    expect(await screen.findByText(/^Kept the request and its reply until /)).toBeVisible();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Chat A" })).toBeVisible();
+    expect(within(dialog).getByText("2 minutes ago")).toBeVisible();
+    expect(within(dialog).getByText("Hello from history")).toBeVisible();
+    expect(within(dialog).getByText("A reply")).toBeVisible();
+    expect(await within(dialog).findByText(/^Kept the request and its reply until /)).toBeVisible();
     expect(mocks.requestHistoryRecord).toHaveBeenCalledWith("a");
     expect(mocks.receiptRetention).toHaveBeenCalledWith("req_a");
   });
 
-  it("shows only what was sent when the reply was not kept", async () => {
+  it("keeps the raw record folded away under Technical details, with the app, route and headers", async () => {
     mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
-    mocks.requestHistoryRecord.mockResolvedValue({
-      record_id: "a",
-      kind: "request_history",
-      created_at: NOW,
-      kept_until: NOW + 60,
-      origin_kind: "app_key",
-      request_id: null,
-      parts: { accepted: { headers: {}, body: { model: "chat-a" } } },
-      omissions: [],
-      summary: { route: "/chat/completions", model: "chat-a", status: 200, latency_ms: 1 },
-    });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
-    expect(await screen.findByRole("heading", { name: "What was sent" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "What came back" })).not.toBeInTheDocument();
-    expect(screen.getByText("The receipt for this request isn’t available.")).toBeVisible();
+    const dialog = await screen.findByRole("dialog");
+
+    const technical = within(dialog).getByText("Technical details").closest("details") as HTMLElement;
+    expect(technical).not.toHaveAttribute("open");
+    expect(technical).toHaveTextContent("App: Try");
+    expect(technical).toHaveTextContent("Route: /openai/v1/chat/completions");
+    expect(technical).toHaveTextContent('"content-type": "application/json"');
+    expect(within(dialog).queryByText(/What was sent/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("heading", { name: "What came back" })).not.toBeInTheDocument();
+  });
+
+  it("says the reply was not kept, and that the receipt is not there, when the request has no receipt", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    mocks.requestHistoryRecord.mockResolvedValue(
+      recordBody({
+        request_id: null,
+        parts: { accepted: { headers: {}, body: { model: "chat-a", messages: [{ role: "user", content: "Hi" }] } } },
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("The reply wasn’t kept.")).toBeVisible();
+    expect(within(dialog).getByText("The receipt for this request isn’t available.")).toBeVisible();
     expect(mocks.receiptRetention).not.toHaveBeenCalled();
+  });
+
+  it("says that details were removed, once, and shows no removed marker in the readable part", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    mocks.requestHistoryRecord.mockResolvedValue(
+      recordBody({
+        parts: {
+          accepted: {
+            headers: {},
+            body: { model: "chat-a", api_key: "[removed]", messages: [{ role: "user", content: "Use key [removed] to ask" }] },
+          },
+        },
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Some details weren’t kept (keys and links are never saved).")).toBeVisible();
+    expect(within(dialog).getByText("Use key to ask")).toBeVisible();
+    const conversation = within(dialog).getByRole("list", { name: "Conversation" });
+    expect(conversation.textContent).not.toMatch(/\[removed\]/);
+  });
+
+  it("links the picture a request made to its Library item", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({
+      requests: [item("a", "img-a", { summary: { route: "/v1/images/generations", model: "img-a", status: 200, preview: "a fox" } })],
+      next_cursor: null,
+    });
+    mocks.requestHistoryRecord.mockResolvedValue(
+      recordBody({
+        request_id: "req_a",
+        parts: { accepted: { headers: {}, body: { model: "img-a", prompt: "a fox", size: "1024x1024" } } },
+        summary: { route: "/v1/images/generations", model: "img-a", status: 200 },
+      }),
+    );
+    mocks.libraryItemForRequest.mockResolvedValue("asset-7");
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /img-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("a fox")).toBeVisible();
+    expect(await within(dialog).findByRole("link", { name: "Open in Library" })).toHaveAttribute("href", "/library?asset=asset-7");
   });
 });
 

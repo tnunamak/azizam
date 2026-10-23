@@ -114,4 +114,24 @@ describe("the one-time request history notice on Home", () => {
     expect(mocks.requestHistory).not.toHaveBeenCalled();
     expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
   });
+
+  it("is not offered while the owner has turned request history off for everyone, so there is no Turn on", async () => {
+    mocks.requestHistory.mockResolvedValue(choice({ household_off: true }));
+    renderNotice();
+    await waitFor(() => expect(mocks.requestHistory).toHaveBeenCalled());
+    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Turn on" })).not.toBeInTheDocument();
+  });
+
+  it("is still due for the member, so it comes back when the owner turns history on again", async () => {
+    mocks.requestHistory.mockResolvedValue(choice({ household_off: true }));
+    const view = renderNotice();
+    await waitFor(() => expect(mocks.requestHistory).toHaveBeenCalled());
+    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    view.unmount();
+
+    mocks.requestHistory.mockResolvedValue(choice({ household_off: false }));
+    renderNotice();
+    expect(await screen.findByText("Request history is available")).toBeVisible();
+  });
 });
