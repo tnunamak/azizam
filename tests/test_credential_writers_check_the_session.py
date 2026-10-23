@@ -61,6 +61,7 @@ GUARDED = {
     "gateway/secret_store.py::put_provider_secret": "a provider key, an engine key, the secret entries of a record, the OIDC client secret",
     "gateway/secret_store.py::delete_provider_secret": "removing a stored secret",
     "gateway/admin_store.py::add_trusted_address": "a trusted address lets a device in with no key",
+    "gateway/admin_store.py::readd_trusted_address": "an address added again on the signed-in person's App, in place of the old entry, in one transaction",
     "gateway/signin_admin.py::link_identity": "an identity-provider login bound to the owner's account",
     "gateway/admin_store.py::write_service_registry": "a registry save",
     "gateway/admin_store.py::write_service_registry_with_audit": "a registry save with its audit fact",
@@ -552,6 +553,25 @@ def world(tmp_path):
         with closing(sqlite3.connect(db)) as conn:
             return conn.execute("SELECT COUNT(*) FROM credentials WHERE hash LIKE 'rep%'").fetchone()[0]
 
+    def make_readd(session):
+        # An unproven address is seeded directly; the write is the re-add, which makes the person its creator.
+        state["n"] += 1
+        entry = f"tad_legacy{state['n']}"
+        with closing(sqlite3.connect(db)) as conn:
+            conn.execute("INSERT INTO app_trusted_addresses(id, app_id, address, created_at, created_by) "
+                         "VALUES (?, ?, ?, 1, NULL)", (entry, app["id"], f"10.9.0.{state['n']}"))
+            conn.commit()
+        return admin_store.readd_trusted_address(
+            app["id"], entry, created_by=user["id"],
+            audit={"action": "app.trusted_address.readd", "actor_kind": "user", "actor_id": user["id"]},
+            session=session, path=db)
+
+    def readded():
+        # Counts the addresses this person made. A re-add replaces an entry, so the whole table does not grow.
+        with closing(sqlite3.connect(db)) as conn:
+            return conn.execute("SELECT COUNT(*) FROM app_trusted_addresses WHERE created_by = ?",
+                                (user["id"],)).fetchone()[0]
+
     def make_identity_link(session):
         state["n"] += 1
         return signin_admin.link_identity(db, "https://idp.test", f"other-{state['n']}", user["id"], linked_by=user["id"],
@@ -562,6 +582,7 @@ def world(tmp_path):
         "create_admin_key_with_role": (make_admin_key, lambda: count("service_accounts")),
         "put_provider_secret": (make_secret, lambda: count("provider_secrets")),
         "add_trusted_address": (make_trusted_address, lambda: count("app_trusted_addresses")),
+        "readd_trusted_address": (make_readd, readded),
         "link_identity": (make_identity_link, lambda: count("oidc_identity_links")),
         "create_credential_hash": (make_key, lambda: count("credentials")),
         "replace_app_credential": (make_replacement, replacements),
@@ -576,7 +597,7 @@ def world(tmp_path):
                               "end": staticmethod(end), "writes": writes})
 
 
-TESTED = sorted(CALLED_AS | {"put_provider_secret", "add_trusted_address", "link_identity"})
+TESTED = sorted(CALLED_AS | {"put_provider_secret", "add_trusted_address", "link_identity", "readd_trusted_address"})
 
 
 def test_every_guarded_writer_has_a_behaviour_test():
