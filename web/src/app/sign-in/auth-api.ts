@@ -12,6 +12,12 @@ export interface SignInOptions {
   owner_name: string;
   /** The owner's own password works even while built-in sign-in is off. */
   owner_password?: boolean;
+  /**
+   * True once the gateway refuses a single sign-on that the provider did not make fresh (account switcher A2). Only
+   * then does the refused-sign-in screen (S8) show, with its provider sign-out link. A gateway without A2 does not send
+   * the field, so a `not_fresh` address shows the plain sign-in page, as it did before the screen existed.
+   */
+  fresh_sign_in?: boolean;
   signed_in_oidc?: { email: string; name: string; csrf_token: string } | null;
 }
 export async function authFetch<T>(

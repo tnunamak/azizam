@@ -21,7 +21,7 @@ const defaults = {
   oidc_url: "/login?return_to=%2Fusage%2F",
   instance_name: "Azizam",
 };
-let options: typeof defaults;
+let options: typeof defaults & { fresh_sign_in?: boolean };
 let ownerExists: boolean;
 let client: QueryClient;
 const json = (body: unknown, status = 200) =>
@@ -346,6 +346,7 @@ it("says a provider that reports no sign-in time cannot confirm a risky action, 
 });
 
 it("a refused sign-in says the provider did not ask for a password, and offers its sign-out (S8)", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(
     null,
     "",
@@ -376,6 +377,7 @@ it("a refused sign-in says the provider did not ask for a password, and offers i
 });
 
 it("without a provider sign-out address, says who can sign out and offers Sign in again (S8b)", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(null, "", "/sign-in/?error=not_fresh&return_to=%2Fusage%2F");
   options.oidc = true;
   options.oidc_label = "Keycloak";
@@ -397,6 +399,7 @@ it("without a provider sign-out address, says who can sign out and offers Sign i
 });
 
 it("names the provider generically when the label is the default one (S8b)", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
   options.oidc = true;
   options.oidc_label = "your identity provider";
@@ -412,6 +415,7 @@ it("names the provider generically when the label is the default one (S8b)", asy
 });
 
 it("a refused first-owner sign-in shows the same screen, and Back returns to the setup page", async () => {
+  options.fresh_sign_in = true;
   ownerExists = false;
   window.history.replaceState(
     null,
@@ -434,6 +438,7 @@ it("a refused first-owner sign-in shows the same screen, and Back returns to the
 });
 
 it("a refused invitation sign-in shows the same screen, and Back goes back to the invitation", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(
     null,
     "",
@@ -454,6 +459,7 @@ it("a refused invitation sign-in shows the same screen, and Back goes back to th
 });
 
 it("Back leaves the sign-out screen, and a reload does not bring it back", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(null, "", "/sign-in/?error=not_fresh&provider_sign_out=1");
   options.oidc = true;
   options.oidc_label = "Keycloak";
@@ -464,6 +470,23 @@ it("Back leaves the sign-out screen, and a reload does not bring it back", async
   ).toBeVisible();
   expect(window.location.search).not.toContain("error=");
   expect(window.location.search).not.toContain("provider_sign_out");
+});
+
+it("a refused sign-in on a gateway that does not report fresh sign-in keeps the plain page, with no sign-out link", async () => {
+  // Before the gateway reports fresh sign-in (A2), the refused-sign-in screen stays off and the page reads as usual.
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1",
+  );
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign in to Azizam" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Sign out of Keycloak first")).toBeNull();
+  expect(screen.queryByRole("link", { name: "Sign out of Keycloak" })).toBeNull();
 });
 
 it("renders provider text through React escaping", async () => {

@@ -149,8 +149,10 @@ export default function SignInPage() {
     queryKey: ["auth", "setup"],
     queryFn: () => authFetch<{ owner_exists: boolean }>("/setup/api/state"),
   });
-  // The sign-out screen for a refused sign-in (S8) shows no names, so it does not read the list.
-  const listNeeded = arrival !== null && arrival.providerError !== "not_fresh";
+  // The refused-sign-in screen (S8) is inert until the gateway reports fresh sign-in (SignInOptions.fresh_sign_in). It
+  // shows no names, so it does not read the list.
+  const refusedNotFresh = arrival?.providerError === "not_fresh" && options.data?.fresh_sign_in === true;
+  const listNeeded = arrival !== null && !refusedNotFresh;
   const remembered = useQuery({
     queryKey: ["auth", "remembered"],
     enabled: listNeeded,
@@ -204,7 +206,7 @@ export default function SignInPage() {
   const title =
     loading || unavailable || listUnreachable
       ? "Sign in · Azizam"
-      : arrival?.providerError === "not_fresh"
+      : refusedNotFresh
         ? `${notFreshTitle(providerName)} · Azizam`
         : titleFor(current, { reset: Boolean(reset), firstRun }, nameOf);
   useEffect(() => {
@@ -309,7 +311,7 @@ export default function SignInPage() {
     );
   }
 
-  if (arrival.providerError === "not_fresh") {
+  if (refusedNotFresh) {
     return card(
       <NotFreshScreen
         provider={providerName}

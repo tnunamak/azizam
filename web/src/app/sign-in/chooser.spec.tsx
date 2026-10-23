@@ -33,7 +33,7 @@ const defaults = {
   instance_name: "Azizam",
 };
 
-let options: typeof defaults & { oidc_label: string };
+let options: typeof defaults & { oidc_label: string; fresh_sign_in?: boolean };
 let remembered: { remember: boolean; people: Person[] };
 let rememberedReply: () => Promise<Response>;
 let loginReply: () => Promise<Response>;
@@ -154,6 +154,7 @@ describe("the chooser", () => {
   });
 
   it("a refused sign-in shows the sign-out screen in place of the list (S8)", async () => {
+    options.fresh_sign_in = true;
     setAddress("/sign-in/?error=not_fresh&provider_sign_out=1");
     options.oidc = true;
     options.oidc_label = "Keycloak";
