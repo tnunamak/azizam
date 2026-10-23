@@ -43,8 +43,8 @@ _TRAILING_DIGITS = re.compile(r"\d+$")
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
-#: Any URL scheme, in any case: ``https``, ``postgres``, ``wss``, ``HTTPS``. A URL inside a longer string runs to the next
-#: space or quote; punctuation that closes a sentence is not part of it.
+#: Any URL scheme, in any case: ``https``, ``postgres``, ``wss``, ``HTTPS``. A URL inside a longer string runs to the
+#: next space or quote; punctuation that closes a sentence is not part of it.
 _URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
 _URL_START = re.compile(_URL_SCHEME)
 _URL_IN_TEXT = re.compile(_URL_SCHEME + r"[^\s<>\"'`]+")

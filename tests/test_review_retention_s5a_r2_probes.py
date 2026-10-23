@@ -208,9 +208,9 @@ def test_a_history_write_survives_a_concurrent_library_prompt_write(member_db, m
     fix the history writer took media_jobs.db first, so the two writers waited on each other: the history write gave up
     after 0.25 s and was lost, and the prompt write was blocked for that time (R2-5).
 
-    The hook used to hold the media transaction until the prompt write reached the household lock from inside put(). Under
-    one lock order the prompt write cannot reach that point while the history writer holds the lock. So the hook holds
-    both locks for a moment after the prompt write has started, which forces the overlap."""
+    The hook used to hold the media transaction until the prompt write reached the household lock from inside
+    put(). Under one lock order the prompt write cannot reach that point while the history writer holds the lock. So
+    the hook holds both locks for a moment after the prompt write has started, which forces the overlap."""
     import threading
     from contextlib import contextmanager
     from gateway import prompt_memory

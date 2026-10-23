@@ -1,7 +1,7 @@
 """Round-3 fixes for request history slice 5a (docs/design/REQUEST_RETENTION.md, slice 5a review fixes).
 
-Each test names the round-2 finding it pins (R2-n). The round-2 probes are in ``tests/test_review_retention_s5a_r2_probes.py``;
-these tests cover what the probes do not.
+Each test names the round-2 finding it pins (R2-n). The round-2 probes are in
+``tests/test_review_retention_s5a_r2_probes.py``; these tests cover what the probes do not.
 """
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def test_r2_4_c_two_tasks_that_ask_for_the_decision_make_one_and_take_one_slot(m
         request_history_capture._PENDING.release()
 
 
-# ------------------------------------------------------------------ R2-6: the parts are the member's choice at write time
+# ------------------------------------------------------------------ R2-6: the member's parts at write time
 
 
 def _answer_during(db, media, person, during, reply: dict) -> None:
@@ -275,7 +275,8 @@ def image_gateway(fake_upstreams, monkeypatch, tmp_path):
         (proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)),
         (proxy, "_service_availability_response", lambda *_args, **_kwargs: None),
         (proxy, "configured_downstream_headers", lambda *_args: {}),
-        (proxy, "resolve_image_background_decision", AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
+        (proxy, "resolve_image_background_decision",
+         AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
     ):
         monkeypatch.setattr(target, name, value)
     return tmp_path, media
