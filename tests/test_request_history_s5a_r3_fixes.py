@@ -146,7 +146,8 @@ def test_r2_4_c_two_tasks_that_ask_for_the_decision_make_one_and_take_one_slot(m
     monkeypatch.setattr(request_history_capture.RequestHistoryMiddleware, "decide", counting)
     owner = request_history_capture.RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
     capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: _identity(person)}, headers={},
-                                               header_forget=False, limit=1 << 20, route="/v1/responses")
+                                               header_forget=False, limit=1 << 20, route="/v1/responses",
+                                               media_path=media)
 
     async def ask_twice():
         await asyncio.gather(capture.decide_once(), capture.decide_once())
@@ -275,8 +276,9 @@ IMAGE_REQUEST = {"model": "krea2-turbo", "prompt": SENTENCE, "size": "8x6", "res
 
 
 @pytest.fixture
-def image_gateway(fake_upstreams, monkeypatch, tmp_path):
+def image_gateway(fake_upstreams, monkeypatch, tmp_path, isolated_receipts):
     """The gateway with a member's key, a ComfyUI fake that returns one PNG, and every store under tmp_path."""
+    assert receipt_store.DB_PATH == isolated_receipts
     db = use_admin_db(monkeypatch, tmp_path)
     person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
     _mint_member_key(db, person_id)
