@@ -62,7 +62,7 @@ ADDED_METHODS: dict[tuple[str, str], str] = {
     ("PATCH", "/me/api/credentials/{credential_id}"): "a person renames their own key's label (outside the OpenAPI schema); "
                                                        "tests/test_rename_apps_keys.py covers it",
     ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "a person trusts an address for their own App (outside the OpenAPI "
-                                                         "schema); tests/test_me_trusted_addresses.py covers it"
+                                                         "schema); tests/test_me_trusted_addresses.py covers it",
     ("POST", "/me/api/credentials/{credential_id}/adopt"): "a person keeps an unproven key on their own App (outside the "
                                                            "OpenAPI schema); tests/test_me_binding_adoption.py covers it",
     ("POST", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt"): "a person keeps an unproven address on their own App "
