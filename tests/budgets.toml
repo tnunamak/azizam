@@ -273,6 +273,8 @@
 # Request retention slice 5b server: +20 collected cases across privacy permission, delegated retention,
 # MCP tools and the expanded request-history access matrix. Hermetic collect-only: 16813 -> 16833 (2026-10-23).
 # Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
+# Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
+# tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
 pytest = 16988
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and

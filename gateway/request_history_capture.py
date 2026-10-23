@@ -106,9 +106,7 @@ def _control_refusal(raw: bytes) -> JSONResponse | None:
     try:
         retention.requested_mode(parsed)
     except retention.PromptModeError as exc:
-        return JSONResponse({"error": {"message": str(exc), "type": "invalid_request_error",
-                                       "code": "invalid_prompt_mode",
-                                       "param": f"extensions.{retention.NAMESPACE}.mode"}}, status_code=400)
+        return JSONResponse(retention.prompt_mode_refusal(exc), status_code=400)
     return None
 
 
