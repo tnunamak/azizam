@@ -19,6 +19,20 @@ def _rows() -> list[dict]:
              "observed_at_s": 100}]
 
 
+async def _trickling_body(scope, receive, send):
+    """A health endpoint that answers 200 and then sends its body a few bytes at a time, slowly."""
+    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+    for _ in range(200):
+        await send({"type": "http.response.body", "body": b" ", "more_body": True})
+        await asyncio.sleep(0.05)
+    await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+
+async def _ready(scope, receive, send):
+    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+    await send({"type": "http.response.body", "body": b'{"status": "ready"}', "more_body": False})
+
+
 def test_the_grid_deadline_ends_a_trickling_probe_and_keeps_the_other_rows():
     slow = LoopbackServer(_trickling_body).start()
     fast = LoopbackServer(_ready).start()
