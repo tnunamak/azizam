@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   afterFrom,
+  notFreshFor,
   orderPeople,
   returnToFor,
   statusFor,
@@ -112,5 +113,27 @@ describe("returnToFor", () => {
 
   it("falls back to Home when there is no link", () => {
     expect(returnToFor({ requested: null, after: null, signedOut: false, fromTile: false })).toBe("/");
+  });
+});
+
+describe("notFreshFor (a sign-in refused as not fresh, S8)", () => {
+  it("offers the provider's sign-out when the provider publishes a sign-out address", () => {
+    expect(notFreshFor("Keycloak", true)).toEqual({
+      title: "Sign out of Keycloak first",
+      body: [
+        "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Someone may still be signed in to Keycloak in this browser.",
+        "Signing out of Keycloak also signs out of other apps that use it in this browser.",
+      ],
+    });
+  });
+
+  it("says who can sign out when the provider has no sign-out address (S8b)", () => {
+    expect(notFreshFor("Keycloak", false)).toEqual({
+      title: "Sign out of Keycloak first",
+      body: [
+        "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Ask the person who used Keycloak last to sign out of it. Or open Keycloak in a new tab, choose Sign out, and open nothing else there.",
+        "If neither works, ask the person who runs Azizam.",
+      ],
+    });
   });
 });

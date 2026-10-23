@@ -346,7 +346,7 @@ it("says a provider that reports no sign-in time cannot confirm a risky action, 
   expect(alert).not.toHaveTextContent("Single sign-on didn’t finish");
 });
 
-it("says a provider did not ask for a password just now, and links to the sign-out when the provider has one", async () => {
+it("a refused sign-in says the provider did not ask for a password, and offers its sign-out (S8)", async () => {
   window.history.replaceState(
     null,
     "",
@@ -355,37 +355,64 @@ it("says a provider did not ask for a password just now, and links to the sign-o
   options.oidc = true;
   options.oidc_label = "Keycloak";
   mount();
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
-  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
   expect(
-    within(alert).getByRole("link", { name: "Sign out of Keycloak" }),
-  ).toHaveAttribute("href", "/login/provider-sign-out");
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Someone may still be signed in to Keycloak in this browser.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Signing out of Keycloak also signs out of other apps that use it in this browser.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("link", { name: "Sign out of Keycloak" })).toHaveAttribute(
+    "href",
+    "/login/provider-sign-out",
+  );
+  expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("gives the same message without a link when the provider publishes no sign-out address", async () => {
-  window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
+it("without a provider sign-out address, says who can sign out and offers Sign in again (S8b)", async () => {
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh&return_to=%2Fusage%2F");
   options.oidc = true;
   options.oidc_label = "Keycloak";
   mount();
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
-  expect(within(alert).queryByRole("link")).toBeNull();
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Ask the person who used Keycloak last to sign out of it. Or open Keycloak in a new tab, choose Sign out, and open nothing else there.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText("If neither works, ask the person who runs Azizam.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Sign out of Keycloak" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+    "href",
+    "/login?return_to=%2Fusage%2F&remember=1",
+  );
 });
 
-it("names the provider generically when the label is the default one", async () => {
+it("names the provider generically when the label is the default one (S8b)", async () => {
   window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
   options.oidc = true;
   options.oidc_label = "your identity provider";
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that your sign-in provider just asked for your password. Sign out of your sign-in provider, then try again.",
-  );
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign out of your sign-in provider first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that your sign-in provider just asked for a password, so it stopped. Ask the person who used your sign-in provider last to sign out of it. Or open your sign-in provider in a new tab, choose Sign out, and open nothing else there.",
+    ),
+  ).toBeVisible();
 });
 
-it("shows a refused first-owner sign-in on the setup page of a new gateway, where the setup link is", async () => {
+it("a refused first-owner sign-in shows the same screen, and Back returns to the setup page", async () => {
   ownerExists = false;
   window.history.replaceState(
     null,
@@ -396,17 +423,18 @@ it("shows a refused first-owner sign-in on the setup page of a new gateway, wher
   options.oidc_label = "Keycloak";
   mount();
   expect(
-    await screen.findByRole("heading", { name: "Set up Azizam" }),
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
   ).toBeVisible();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
+  await userEvent.setup().click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Set up Azizam" }),
+  ).toBeVisible();
   expect(
     screen.getByRole("link", { name: "Set up your gateway" }),
   ).toHaveAttribute("href", "/setup/");
 });
 
-it("shows a refused invitation sign-in with the same message, and the retry goes back to the invitation", async () => {
+it("a refused invitation sign-in shows the same screen, and Back goes back to the invitation", async () => {
   window.history.replaceState(
     null,
     "",
@@ -416,12 +444,27 @@ it("shows a refused invitation sign-in with the same message, and the retry goes
   options.oidc_label = "Keycloak";
   options.oidc_url = "/login?return_to=%2Finvite%2F";
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
   expect(
-    screen.getByRole("link", { name: "Continue with Keycloak" }),
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("link", { name: "Continue with Keycloak" }),
   ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");
+  expect(screen.queryByRole("heading", { name: /Sign out of/ })).toBeNull();
+});
+
+it("Back leaves the sign-out screen, and a reload does not bring it back", async () => {
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh&provider_sign_out=1");
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign in to Azizam" }),
+  ).toBeVisible();
+  expect(window.location.search).not.toContain("error=");
+  expect(window.location.search).not.toContain("provider_sign_out");
 });
 
 it("renders provider text through React escaping", async () => {

@@ -57,11 +57,15 @@ export interface ProviderConnection {
   clock_skew_seconds: number;
 }
 
+/** The owner's "On shared computers" choice: keep the names on each browser, or keep none. */
+export type SharedComputersMode = "remember" | "nobody";
+
 export interface SignInSnapshot {
   /** Send back in If-Match on PUT. */
   revision: string;
   viewer: { role: "owner" | "admin"; can_edit: boolean };
   methods: { password: boolean; provider: boolean };
+  memory: SharedComputersMode;
   provider: Omit<ProviderConnection, "client_secret"> & {
     client_secret_saved: boolean;
     /** Host of `address`, "" when there is none. */
@@ -74,6 +78,8 @@ export interface SignInSnapshot {
     tested_at: number | null;
     /** The last passed test saw no groups claim. */
     groups_missing: boolean;
+    /** The last passed test found that the provider asked for a password just now. False when it did not, or when no test passed. */
+    fresh_login_supported: boolean;
   };
   rules: SignInRules;
   /** By rule id. Names are empty for an administrator. */
@@ -94,6 +100,8 @@ export interface SignInProposal {
   methods: { password: boolean; provider: boolean };
   provider: ProviderConnection;
   rules: SignInRules;
+  /** Omitted keeps the saved choice. */
+  memory?: SharedComputersMode;
 }
 
 export interface PreviewPerson {
@@ -182,6 +190,8 @@ export type TestStatus =
   | {
       status: "passed";
       tested_at: number;
+      /** True when the provider asked for a password just now (the test's sign-in came back fresh). */
+      fresh_login_supported: boolean;
       identity: {
         name: string;
         email: string;

@@ -260,38 +260,86 @@ test("expired reset and provider failure each explain the next step", async ({
   );
 });
 
-test("a refused sign-in says the provider did not ask for a password just now, and links to the sign-out", async ({
-  page,
-}) => {
-  await page.route("**/auth/api/options*", (route) => fulfilJson(route, options));
-  await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1");
-  const main = page.getByRole("main");
-  await expect(main.getByRole("alert")).toContainText(
-    "Azizam couldn’t confirm that Household accounts just asked for your password.",
-  );
-  await expect(
-    main.getByRole("link", { name: "Sign out of Household accounts" }),
-  ).toHaveAttribute("href", "/login/provider-sign-out");
-});
+// A refused sign-in shows the sign-out screen (S8, DESIGN.md section 6), at a phone and a desktop width. The page is
+// opened at the address the gateway redirects to; the redirect itself is the gateway's test.
+for (const width of [390, 1440]) {
+  test.describe(`a refused sign-in at ${width} px`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+      await page.route("**/auth/api/options*", (route) => fulfilJson(route, options));
+    });
 
-test("a refused first-owner sign-in explains itself beside the setup link", async ({
-  page,
-}) => {
-  await page.route("**/auth/api/options*", (route) => fulfilJson(route, options));
-  await page.route("**/setup/api/state", (route) =>
-    fulfilJson(route, { owner_exists: false }),
-  );
-  await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsetup%2F");
-  await expect(
-    page.getByRole("heading", { name: "Set up Azizam" }),
-  ).toBeVisible();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "Azizam couldn’t confirm that Household accounts just asked for your password.",
-  );
-  await expect(
-    page.getByRole("link", { name: "Set up your gateway" }),
-  ).toHaveAttribute("href", "/setup/");
-});
+    test("offers the provider's sign-out when the provider publishes one (S8)", async ({ page }) => {
+      await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1");
+      const main = page.getByRole("main");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Sign out of Household accounts first" }),
+      ).toBeFocused();
+      await expect(main).toContainText(
+        "Azizam couldn’t confirm that Household accounts just asked for a password, so it stopped. Someone may still be signed in to Household accounts in this browser.",
+      );
+      await expect(main).toContainText(
+        "Signing out of Household accounts also signs out of other apps that use it in this browser.",
+      );
+      await expect(
+        main.getByRole("link", { name: "Sign out of Household accounts" }),
+      ).toHaveAttribute("href", "/login/provider-sign-out");
+      await expect(main.getByRole("button", { name: "Back" })).toBeVisible();
+      await page.screenshot({
+        path: test.info().outputPath(`w5-shots/${width}-s8-with-sign-out.png`),
+        fullPage: true,
+      });
+    });
+
+    test("says who can sign out when the provider publishes no sign-out address (S8b)", async ({ page }) => {
+      await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsettings%2F");
+      const main = page.getByRole("main");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Sign out of Household accounts first" }),
+      ).toBeFocused();
+      await expect(main).toContainText(
+        "Azizam couldn’t confirm that Household accounts just asked for a password, so it stopped. Ask the person who used Household accounts last to sign out of it. Or open Household accounts in a new tab, choose Sign out, and open nothing else there.",
+      );
+      await expect(main).toContainText("If neither works, ask the person who runs Azizam.");
+      await expect(
+        main.getByRole("link", { name: "Sign out of Household accounts" }),
+      ).toHaveCount(0);
+      await expect(main.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+        "href",
+        "/login?return_to=%2F&remember=1",
+      );
+      await page.screenshot({
+        path: test.info().outputPath(`w5-shots/${width}-s8-no-sign-out.png`),
+        fullPage: true,
+      });
+    });
+
+    test("Back returns to the sign-in page without the message", async ({ page }) => {
+      await page.goto("/sign-in/?error=not_fresh&provider_sign_out=1");
+      await page.getByRole("button", { name: "Back" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Sign in to Azizam" }),
+      ).toBeVisible();
+      await expect(page.getByRole("main")).not.toContainText("couldn’t confirm");
+    });
+
+    test("a refused first-owner sign-in shows the same screen, and Back goes to the setup page", async ({ page }) => {
+      await page.route("**/setup/api/state", (route) =>
+        fulfilJson(route, { owner_exists: false }),
+      );
+      await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsetup%2F&provider_sign_out=1");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Sign out of Household accounts first" }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Back" }).click();
+      await expect(page.getByRole("heading", { name: "Set up Azizam" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Set up your gateway" })).toHaveAttribute(
+        "href",
+        "/setup/",
+      );
+    });
+  });
+}
 
 test("a new gateway offers setup before asking for a password", async ({
   page,

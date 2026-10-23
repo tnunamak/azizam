@@ -113,7 +113,7 @@ test("invited member creates a password account and signs in again", async ({
   }
 });
 
-test("a refused invitation sign-in explains itself, and the retry goes back to the invitation", async ({
+test("a refused invitation sign-in shows the sign-out screen, and Back goes back to the invitation", async ({
   page,
 }) => {
   await page.route("**/auth/api/options*", (route) =>
@@ -126,9 +126,10 @@ test("a refused invitation sign-in explains itself, and the retry goes back to t
     }),
   );
   await page.goto("/sign-in/?error=not_fresh&return_to=%2Finvite%2F&provider_sign_out=1");
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "Azizam couldn’t confirm that Household accounts just asked for your password.",
-  );
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Sign out of Household accounts first" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
   await expect(
     page.getByRole("link", { name: "Continue with Household accounts" }),
   ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");

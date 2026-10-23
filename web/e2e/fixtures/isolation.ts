@@ -164,6 +164,46 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
     },
   },
   {
+    // "On shared computers" (Settings > Sign-in). The admin API saves it with the sign-in proposal, so the write sends
+    // the saved connection and rules back as the server has them now and changes only the choice.
+    name: "sign-in-memory",
+    read: async (owner) => {
+      const body = await owner.get("/admin/api/signin");
+      return { value: body.memory, revision: body.revision as string };
+    },
+    write: async (owner, value) => {
+      const saved = await owner.get("/admin/api/signin");
+      const p = saved.provider as Json;
+      await owner.send(
+        "PUT",
+        "/admin/api/signin",
+        {
+          proposal: {
+            methods: saved.methods,
+            provider: {
+              name: p.name,
+              address: p.address,
+              client_id: p.client_id,
+              client_secret: "",
+              scopes: p.scopes,
+              groups_claim: p.groups_claim,
+              authorization_endpoint: p.authorization_endpoint,
+              token_endpoint: p.token_endpoint,
+              jwks_uri: p.jwks_uri,
+              clock_skew_seconds: p.clock_skew_seconds,
+            },
+            rules: saved.rules,
+            memory: value,
+          },
+          test_id: null,
+          keep_admin_keys: [],
+          save_for_later: false,
+        },
+        saved.revision as string,
+      );
+    },
+  },
+  {
     name: "media-job-admission",
     read: async (owner) => {
       const all = await overrides(owner);
