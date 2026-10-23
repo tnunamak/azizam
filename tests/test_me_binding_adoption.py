@@ -852,14 +852,14 @@ def test_the_cut_over_remedy_is_keep_where_provable_and_replace_or_readd_otherwi
     member_key = _unproven_key(gateway, member_app)
     member_entry = _unproven_address(gateway, member_app, "10.0.0.32", created_by=None)
 
-    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": ["Helper Person"]}
-    assert _remedy(gateway, "address", entry_id, app_id, owner_id) == {"remedy": "keep", "administrators": ["Helper Person"]}
-    assert _remedy(gateway, "key", member_key, member_app, member_id) == {"remedy": "replace", "administrators": []}
-    assert _remedy(gateway, "address", member_entry, member_app, member_id) == {"remedy": "readd", "administrators": []}
-    assert _remedy(gateway, "key", key_id, app_id, member_id) == {"remedy": "replace", "administrators": []}
+    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": _admins(["Helper Person"])}
+    assert _remedy(gateway, "address", entry_id, app_id, owner_id) == {"remedy": "keep", "administrators": _admins(["Helper Person"])}
+    assert _remedy(gateway, "key", member_key, member_app, member_id) == {"remedy": "replace", "administrators": _admins()}
+    assert _remedy(gateway, "address", member_entry, member_app, member_id) == {"remedy": "readd", "administrators": _admins()}
+    assert _remedy(gateway, "key", key_id, app_id, member_id) == {"remedy": "replace", "administrators": _admins()}
 
     assert owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM).status_code == 200
-    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": []}
+    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": _admins()}
 
 
 def test_the_cut_over_preview_gives_each_binding_its_remedy(gateway):
