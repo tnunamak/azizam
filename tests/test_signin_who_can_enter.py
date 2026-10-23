@@ -62,7 +62,8 @@ class Gateway:
     def client(self) -> TestClient:
         return TestClient(self.proxy.app, base_url="https://ai.example", client=("127.0.0.1", 50000))
 
-    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now", start=None):
+    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now", start=None,
+                picture=None):
         """Run the browser flow. Returns the callback response.
 
         The provider says the person signed in just now, as Keycloak does; ``auth_time=None`` is a provider
@@ -82,6 +83,8 @@ class Gateway:
                       "exp": 4_000_000_000, "iat": 1_700_000_000}
             if groups:
                 claims["groups"] = list(groups)
+            if picture is not None:
+                claims["picture"] = picture
             if auth_time is not None:
                 claims["auth_time"] = int(time.time()) if auth_time == "now" else auth_time
             return claims
