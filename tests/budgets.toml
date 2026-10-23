@@ -246,8 +246,12 @@ pytest = 16245
 # W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
 # confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
 # playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
-vitest = 3188
-playwright = 515
+# Keep UI on the Apps page: +8 cases in src/app/apps/keep.spec.tsx and +4 in src/lib/account-api.spec.ts (the keep
+# route and its headers, and the sign-in confirmation). Vitest list measured 3200 on 2026-10-23.
+vitest = 3200
+# Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
+# gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
+playwright = 517
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
