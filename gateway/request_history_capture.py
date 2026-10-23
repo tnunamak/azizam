@@ -83,6 +83,21 @@ def receipt_entry(outcome: retention.WriteOutcome, parts: list[str]) -> dict[str
     return {"kind": KIND, "decision": "not_kept", "reason": outcome.reason}
 
 
+def _library_prompt_receipt_entry(outcome: retention.WriteOutcome) -> dict[str, Any]:
+    """The durable receipt entry for a Library prompt finalized with request capture."""
+    kind = retention.LIBRARY_PROMPT
+    if outcome.kept:
+        return {
+            "kind": kind, "decision": "kept", "reason": "kept",
+            "kept_until_ms": None if outcome.kept_until is None else int(outcome.kept_until) * 1000,
+            "parts": list(retention.bundled().parts(kind)),
+            "limited_by": outcome.limited_by or "unbounded_store",
+        }
+    if outcome.reason == "write_failed":
+        return {"kind": kind, "decision": "failed", "reason": "write_failed"}
+    return {"kind": kind, "decision": "not_kept", "reason": outcome.reason}
+
+
 def _record_entry(receipt_id: str | None, outcome: retention.WriteOutcome, parts: list[str]) -> None:
     if not receipt_id:
         return
@@ -515,6 +530,11 @@ class _Capture:
                     callback(prompt_outcome)
                 except Exception:
                     log.warning("Library prompt outcome callback failed", exc_info=False)
+            if receipt_id:
+                try:
+                    receipt_store.update_retention(receipt_id, _library_prompt_receipt_entry(prompt_outcome))
+                except Exception:
+                    log.warning("Library prompt receipt update failed request_id=%s", receipt_id, exc_info=False)
         _record_entry(receipt_id, outcome, written)
 
 
