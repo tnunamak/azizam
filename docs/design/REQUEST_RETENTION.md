@@ -1879,7 +1879,8 @@ slice 5b. These are the readings the build took where the text leaves a form ope
   decides then, because the handler sets the caller's identity during authentication. The write goes through
   `retention.write`, which re-reads the kill switch, the member's choice and the cutoffs under the lock. The receipt's
   `retention` entry is set after the write. A request that never authenticates writes nothing.
-- **Forget (section 3.4).** Forget in a JSON body, in a multipart form field, or in `X-Azizam-Prompts` keeps nothing.
+- **Forget (section 3.4).** Forget in a JSON body (whatever its Content-Type), in a form field (multipart or
+  form-urlencoded), or in `X-Azizam-Prompts` keeps nothing.
   The header is removed before the route runs. A JSON body of known size up to the record limit is read first, so an
   invalid control gets the existing 400 (`invalid_prompt_mode`) before any route runs. A larger or chunked body is not
   refused early; it is still never kept. This is a limit on section 3.4's "refused before dispatch".
@@ -1925,11 +1926,14 @@ that they pin now passes with its mark removed. The tests the review did not pin
   and so is a control field sent as a file.
 - **Header forget (section 3.4).** `X-Azizam-Prompts: forget` is carried on the request's slot. `retention.decide`
   takes it as `request_forget`. Saved conversations, Library prompts and the job spool all honour it.
-- **Unreadable control (review item 5).** A JSON or multipart body that the gateway did not read in full, because it
-  was over 1 MiB, was cut short, or did not parse, leaves no row. Its receipt says `not_kept` for `incomplete`. A body in
-  another container carries no control but the header, and the header is read. Such a body keeps its
-  `unsupported_container` record, as section 3.5 rule 7 and `test_without_the_header_a_non_json_body…` require. This is
-  our reading of "unparsed body".
+- **Unreadable control (review item 5; round 2, R2-1).** A JSON or multipart body that the gateway did not read in full,
+  because it was over 1 MiB, was cut short, or did not parse, leaves no row. Its receipt says `not_kept` for
+  `incomplete`. Every other body is read for its control the way its route reads it. A route parses a JSON body whatever
+  its Content-Type says, and a route that reads a form reads a form-urlencoded body's fields too. So a `text/plain`, a
+  form-urlencoded or a Content-Type-less body that carries a JSON or form forget keeps nothing. A body in another
+  container that does not parse, and is within 1 MiB, keeps its `unsupported_container` record, as section 3.5 rule 7 and
+  `test_without_the_header_a_non_json_body…` require. A body over 1 MiB in such a container leaves no row, since its
+  control cannot be read in full. This is our reading of "unparsed body".
 - **Disconnects (section 3.6).** `http.disconnect` is not a complete body. A body cut short before the route ran is
   replayed with `more_body` still set, so the route sees the disconnect. The drain stops at a disconnect.
 - **Cost (sections 3.3, 3.6, 12).** The decision is made as soon as the caller is known. A member whose history is off,

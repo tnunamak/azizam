@@ -10,8 +10,9 @@ not have its body parsed or its reply buffered, and it writes nothing but the re
 runs on one dedicated worker thread, in a media-jobs transaction that is opened before the household's write lock is
 taken, so that lock is never held while this database is waited on (3.6).
 
-The per-request control is read here, for every data-plane route: ``extensions["com.azizam.prompts"]`` in a JSON or
-multipart body, and ``X-Azizam-Prompts: forget`` for a body the gateway does not parse. The header is removed before
+The per-request control is read here, for every data-plane route: ``extensions["com.azizam.prompts"]`` in a JSON body
+(whatever its Content-Type) or in a form's fields, and ``X-Azizam-Prompts: forget`` for a body the gateway does not
+parse. The header is removed before
 the handler runs and carried on the request's slot, which the Responses and media decisions read. A forget keeps
 nothing but the receipt's structural entry.
 """
@@ -22,7 +23,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -112,9 +113,14 @@ def _control_refusal(raw: bytes) -> JSONResponse | None:
 
 
 def _forget_requested(body: request_history.BodyCapture) -> bool:
-    """A forget in the body. An invalid or unreadable control counts as a forget: nothing is kept on a doubtful request."""
+    """A forget in the body. An invalid or unreadable control counts as a forget: nothing is kept on a doubtful request.
+
+    Every media type is read for a JSON control, because the routes parse one whatever the Content-Type says. A form
+    is also read for its fields, as the routes read a form."""
     if body.media_type == "multipart/form-data":
-        return _multipart_forget(body)
+        return _form_forget(body.control_source or {}, body.control_files)
+    if body.form_source is not None and _form_forget(body.form_source, set()):
+        return True
     source = body.control_source
     if not isinstance(source, dict):
         return False
@@ -124,13 +130,13 @@ def _forget_requested(body: request_history.BodyCapture) -> bool:
         return True
 
 
-def _multipart_forget(body: request_history.BodyCapture) -> bool:
-    """The form's control, read the way the routes read it: the JSON ``extensions`` field through
-    ``multipart_extensions``, then the bracket field, which the routes take over the JSON block."""
+def _form_forget(fields: Mapping[str, Any], files: set[str]) -> bool:
+    """A form's control, read the way the routes read it: the JSON ``extensions`` field through
+    ``multipart_extensions``, then the bracket field, which the routes take over the JSON block. A control sent as a
+    file is not readable."""
     bracket = f"extensions[{retention.NAMESPACE}][mode]"
-    if {"extensions", bracket} & body.control_files:
+    if {"extensions", bracket} & files:
         return True
-    fields = body.control_source or {}
     try:
         controls = multipart_extensions(fields.get("extensions"))
         if bracket in fields:

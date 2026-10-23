@@ -223,11 +223,22 @@ def _boundary(content_type: str | None) -> bytes | None:
     return boundary if boundary else None
 
 
-class BodyCapture:
-    """One request or reply body, read as it streams past. Only a JSON object and a multipart form are parsed.
+def _json_object(raw: bytes) -> dict[str, Any] | None:
+    """The body as a JSON object, or None when it is not one."""
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
-    Anything else is counted and recorded as an unsupported container (rule 7). A JSON body over ``limit`` bytes
-    is counted and recorded as omitted, not truncated, so a kept record is never a partial one.
+
+class BodyCapture:
+    """One request or reply body, read as it streams past.
+
+    A JSON object and a multipart form are kept as content. Anything else is counted and recorded as an unsupported
+    container (rule 7). Every body is read for its control, as the routes read it: a route parses a JSON body whatever
+    its media type says, and reads a form-urlencoded body's fields. A body over ``limit`` bytes is counted and recorded
+    as omitted, not truncated, so a kept record is never a partial one.
     """
 
     def __init__(self, content_type: str | None, *, limit: int) -> None:
@@ -244,8 +255,11 @@ class BodyCapture:
         self._parser: MultipartParser | None = None
         self._mode = "other"
         self._memo: tuple[Any, list[str]] | None = None
-        #: The body's own control values, before redaction: the parsed JSON object, or a multipart form's text fields.
+        #: The body's own control values, before redaction: the parsed JSON object (in any media type), or a multipart
+        #: form's text fields.
         self.control_source: dict[str, Any] | None = None
+        #: A form-urlencoded body's fields, read as the routes read them. None for any other media type.
+        self.form_source: dict[str, str] | None = None
         #: Multipart field names sent as files. A control field sent as a file is not a readable control.
         self.control_files: set[str] = set()
         self._readable = True
@@ -261,7 +275,8 @@ class BodyCapture:
 
     def feed(self, chunk: bytes) -> None:
         self.total += len(chunk)
-        if self._mode == "json" and not self._overflow:
+        if self._mode != "multipart" and not self._overflow:
+            # Every body that is not a form is buffered up to the limit, so its control can be read whole.
             if len(self._buffer) + len(chunk) > self.limit:
                 self._overflow = True
                 self._buffer = bytearray()
@@ -279,14 +294,21 @@ class BodyCapture:
         return self._memo
 
     def control_readable(self) -> bool:
-        """Whether the body's own control could be read in full. A JSON or multipart body that was cut short, or
-        did not parse, could hold a control the gateway never saw. A body in another container carries no control
-        but the header, and the header is read, so it is readable."""
+        """Whether the body's control could be read in full. A body over the record limit could hold a control past
+        what was read, and so could a JSON or multipart body that was cut short or did not parse. A body within the
+        limit is read for its control whatever its media type, so it is readable."""
         self.result()
         return self._readable
 
     def _read(self) -> tuple[Any, list[str]]:
-        if self._mode == "json" and not self._overflow:
+        if self._mode == "multipart":
+            return self._read_multipart()
+        if self._overflow:
+            # Over the limit, so the control is unknown. A route reads a JSON control in any media type.
+            self._readable = False
+            if self._mode == "json":
+                return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
+        elif self._mode == "json":
             try:
                 parsed = json.loads(bytes(self._buffer))
             except (ValueError, RecursionError):
@@ -295,13 +317,20 @@ class BodyCapture:
             if isinstance(parsed, dict):
                 self.control_source = parsed
                 return redact_json(parsed)
-        elif self._mode == "json":
+        else:
+            # Not kept as content (rule 7), but read for its control the way the route reads it.
+            raw = bytes(self._buffer)
+            self.control_source = _json_object(raw)
+            if self.media_type == "application/x-www-form-urlencoded":
+                self.form_source = dict(parse_qsl(raw.decode("latin-1"), keep_blank_values=True))
+        return {"omitted": "unsupported_container", "media_type": self.media_type or "unknown",
+                "bytes": self.total}, ["unsupported_container"]
+
+    def _read_multipart(self) -> tuple[Any, list[str]]:
+        if self._overflow:
             self._readable = False
             return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
-        elif self._mode == "multipart" and self._overflow:
-            self._readable = False
-            return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
-        elif self._mode == "multipart" and not self._failed and self._parser is not None:
+        if not self._failed and self._parser is not None:
             try:
                 self._parser.finalize()
                 texts = {name: value.decode("utf-8", "replace") for name, value in self._fields.items()}
@@ -310,9 +339,7 @@ class BodyCapture:
                 return {"fields": fields, "files": self._files}, found
             except Exception:
                 pass
-            self._readable = False
-        elif self._mode == "multipart":
-            self._readable = False
+        self._readable = False
         return {"omitted": "unsupported_container", "media_type": self.media_type or "unknown",
                 "bytes": self.total}, ["unsupported_container"]
 

@@ -23,8 +23,6 @@ FORGET = {"com.azizam.prompts": {"mode": "forget"}}
 # ------------------------------------------------------------------ forget in a body the capture does not parse
 
 
-@pytest.mark.xfail(strict=True, reason="R2-1: a JSON body sent without application/json is parsed by the route "
-                                       "(request.json() ignores Content-Type) but not by the capture")
 @pytest.mark.parametrize("content_type", ["text/plain", "application/x-www-form-urlencoded"])
 def test_a_forget_in_a_json_body_sent_as_another_media_type_keeps_no_row(responses_gateway, content_type):
     """``curl -d '{...}'`` sends application/x-www-form-urlencoded. The Responses route parses the body anyway and
@@ -40,7 +38,6 @@ def test_a_forget_in_a_json_body_sent_as_another_media_type_keeps_no_row(respons
     assert _kept(gw["media_db"]) == []
 
 
-@pytest.mark.xfail(strict=True, reason="R2-1: with the received part on, the incognito request's reply is kept")
 def test_a_forget_sent_as_text_plain_keeps_no_reply_when_the_member_keeps_replies(responses_gateway):
     gw = responses_gateway
     request_history.set_member_choice(gw["person_id"], keep=True, retention_id="7_days",
@@ -64,13 +61,12 @@ def test_positive_control_the_same_body_as_json_keeps_no_row_and_without_forget_
     assert len(_kept(gw["media_db"])) == 1
 
 
-def test_the_unit_capture_keeps_a_text_plain_body_that_carries_a_forget(member_db):
-    """The same gap at the middleware boundary, with no route in the way: documents where the fix belongs."""
+def test_the_unit_capture_keeps_no_text_plain_body_that_carries_a_forget(member_db):
+    """The same gap at the middleware boundary, with no route in the way. Was a control that pinned the gap (R2-1)."""
     db, media, person = member_db
     body = json.dumps({"model": "m", "input": SENTENCE, "extensions": FORGET}).encode()
     _drive(db, media, person, chunks=[body], content_type="text/plain")
-    rows = _kept(media)
-    assert len(rows) == 1 and SENTENCE not in rows[0]  # body omitted as unsupported_container, but the row exists
+    assert _kept(media) == []
 
 
 # ------------------------------------------------------------------ the secret floor: names rule 8 means to cover
