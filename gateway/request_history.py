@@ -18,11 +18,12 @@ import sqlite3
 import string
 import unicodedata
 import uuid
+from bisect import bisect_right
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from python_multipart.multipart import MultipartParser, parse_options_header
 
@@ -56,13 +57,18 @@ _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 #: What a URL scheme may hold after its first letter: letters, digits, ``+``, ``.`` and ``-`` (RFC 3986).
 _SCHEME_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+.-")
 _SCHEME_LETTER = re.compile(r"[A-Za-z]")
-_WHITESPACE = re.compile(r"\s")
+#: A run of text with no whitespace in it. A URL is read within one run (R9-1).
+_RUN = re.compile(r"\S+")
+#: What may come right before a scheme and start a new token (R9-1). The start of a run also starts one.
+_TOKEN_STARTERS = frozenset(",;()[]{}<>\"'`")
 #: A path segment is a token (R8-1) when it is 20 or more characters from this set, with a letter and a digit.
 _TOKEN_CHARACTERS = re.compile(r"[A-Za-z0-9_-]{20,}")
 _LETTER = re.compile(r"[A-Za-z]")
 _DIGIT = re.compile(r"[0-9]")
-#: What a URL reads as when it holds an ``@`` or cannot be split into its parts. The whole URL is replaced, so no part
-#: of it is kept.
+#: Prose punctuation that may follow a path segment (R9-2). It is set aside before the token check, and kept.
+_PROSE_PUNCTUATION = "\"'`)]}>.,;!?"
+#: What a URL reads as when it holds an ``@``, cannot be split into its parts, or holds a ``://`` that starts no token
+#: (R9-1). The whole URL or token is replaced, so no part of it is kept.
 URL_REMOVED = "[url removed]"
 
 _TABLE = """
@@ -151,43 +157,77 @@ def allowed_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {name.lower(): value for name, value in headers.items() if name.lower() in RESPONSE_HEADERS}
 
 
-def _url_runs(text: str) -> list[tuple[int, int]]:
-    """Each URL in ``text``, as (start, end). A URL starts at a scheme (a letter, scheme characters, then ``://``) and
-    runs to the next whitespace or the next scheme, so ``https://a.test/x,https://b.test/y`` is two URLs. Each scheme is
-    found by walking back from its ``://``, so each character is read once: a long run of letters costs time in
-    proportion to its length."""
-    schemes: list[int] = []
-    separator = text.find("://")
+def _url_runs(text: str) -> list[tuple[int, int, bool]]:
+    """Each URL in ``text``, as (start, end, ambiguous). The text is read in runs of non-whitespace. A URL starts at a
+    scheme (a letter, scheme characters, then ``://``) that begins a token: the start of a run, or a character after
+    ``_TOKEN_STARTERS`` (R9-1). It runs to the end of its token, so ``https://a.test/x,https://b.test/y`` is two URLs.
+    A ``://`` that begins no token cannot be split into a scheme and a host, so its token is ambiguous and is replaced
+    whole. Each character is read once, so a long run of letters costs time in proportion to its length."""
+    runs: list[tuple[int, int, bool]] = []
+    if "://" in text:
+        for run in _RUN.finditer(text):
+            runs.extend(_run_urls(text, run.start(), run.end()))
+    return runs
+
+
+def _run_urls(text: str, lo: int, hi: int) -> list[tuple[int, int, bool]]:
+    """The URLs and ambiguous tokens in ``text[lo:hi]``, a run of non-whitespace (see ``_url_runs``)."""
+    separator = text.find("://", lo, hi)
+    if separator == -1:
+        return []
+    starts: list[int] = []  # each scheme that begins a token, so starts a URL
+    strays: list[int] = []  # each ``://`` that begins no token
     while separator != -1:
         begin = separator
-        while begin > 0 and text[begin - 1] in _SCHEME_CHARACTERS:
+        while begin > lo and text[begin - 1] in _SCHEME_CHARACTERS:
             begin -= 1
         letter = _SCHEME_LETTER.search(text, begin, separator)
-        if letter is not None:
-            schemes.append(letter.start())
-        separator = text.find("://", separator + 3)
-    runs = []
-    for start, limit in zip(schemes, [*schemes[1:], len(text)]):
-        space = _WHITESPACE.search(text, start, limit)
-        runs.append((start, space.start() if space else limit))
+        if letter is not None and (letter.start() == lo or text[letter.start() - 1] in _TOKEN_STARTERS):
+            starts.append(letter.start())
+        else:
+            strays.append(separator)
+        separator = text.find("://", separator + 3, hi)
+    edges = sorted({lo, hi, *starts})  # the tokens are the spans between neighbouring edges
+    ambiguous = {bisect_right(edges, stray) - 1 for stray in strays}
+    begins = set(starts)
+    runs: list[tuple[int, int, bool]] = []
+    for index, (left, right) in enumerate(zip(edges, edges[1:])):
+        if index in ambiguous:
+            runs.append((left, right, True))
+        elif left in begins:
+            runs.append((left, right, False))
     return runs
 
 
 def _is_token_segment(segment: str) -> bool:
     """Rule 4 for one path segment (R8-1). A segment with a colon is a token, as an ``<id>:<secret>`` pair is. So is a
     segment of 20 or more characters from ``[A-Za-z0-9_-]`` that holds a letter and a digit, as a webhook token or a
-    UUID is. Only the shape is read, so a short slug and a numeric id are kept."""
+    UUID is. Only the shape is read, so a short slug and a numeric id are kept. ``_scrub_segment`` passes it the
+    decoded segment without its trailing prose punctuation (R9-2, R9-3)."""
     if ":" in segment:
         return True
     return (_TOKEN_CHARACTERS.fullmatch(segment) is not None
             and _LETTER.search(segment) is not None and _DIGIT.search(segment) is not None)
 
 
+def _scrub_segment(segment: str) -> str:
+    """Rule 4 for one path segment. A credential name becomes ``[removed]``, as before. Otherwise the segment is read
+    after percent-decoding (R9-3), with its trailing prose punctuation set aside (R9-2). A token core becomes
+    ``[removed]`` and the punctuation after it is kept. Any other segment is kept as it was written."""
+    if is_credential_name(segment):
+        return REMOVED
+    decoded = unquote(segment)
+    core = decoded.rstrip(_PROSE_PUNCTUATION)
+    if _is_token_segment(core):
+        return REMOVED + decoded[len(core):]
+    return segment
+
+
 def _scrub_url(url: str) -> tuple[str, bool]:
     """Rule 4 for one URL (R7-1). An ``@`` or ``%40`` anywhere replaces the whole URL, as does one that cannot be split
-    into a scheme and a non-empty ASCII host. Otherwise the scheme, host and port are kept, a path segment that is a
-    credential name or a token (R8-1) becomes ``[removed]``, and a query or fragment becomes a marker, ``?[removed]`` or
-    ``#[removed]``. The second value says whether any part was removed."""
+    into a scheme and a non-empty ASCII host. Otherwise the scheme, host and port are kept, each path segment is read by
+    ``_scrub_segment`` (R8-1, R9-2, R9-3), and a query or fragment becomes a marker, ``?[removed]`` or ``#[removed]``.
+    The second value says whether any part was removed."""
     if "@" in url or "%40" in url:
         return URL_REMOVED, True
     try:
@@ -198,7 +238,7 @@ def _scrub_url(url: str) -> tuple[str, bool]:
     if not parts.scheme or not parts.hostname or not parts.hostname.isascii():
         return URL_REMOVED, True
     segments = parts.path.split("/")
-    kept = [REMOVED if is_credential_name(segment) or _is_token_segment(segment) else segment for segment in segments]
+    kept = [_scrub_segment(segment) for segment in segments]
     text = f"{parts.scheme}://{parts.netloc}{'/'.join(kept)}"
     if parts.query:
         text += f"?{REMOVED}"
@@ -225,11 +265,11 @@ def _redact_text(value: str, found: set[str]) -> Any:
 
 def _scrub_urls(text: str, found: set[str]) -> str:
     """Rule 4 for every URL in a value or in a longer string, such as a pasted signed link. Each URL is cleaned by
-    ``_scrub_url``, and the text between URLs is kept as it is."""
+    ``_scrub_url``, an ambiguous token is replaced whole (R9-1), and the text between them is kept as it is."""
     pieces: list[str] = []
     end = 0
-    for start, stop in _url_runs(text):
-        cleaned, changed = _scrub_url(text[start:stop])
+    for start, stop, ambiguous in _url_runs(text):
+        cleaned, changed = (URL_REMOVED, True) if ambiguous else _scrub_url(text[start:stop])
         if changed:
             found.add("url_parts_removed")
         pieces.append(text[end:start] + cleaned)
