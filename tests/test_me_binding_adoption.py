@@ -444,3 +444,47 @@ def test_keeping_and_replacing_are_sensitive_actions_that_ask_for_a_recent_sign_
     assert step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/adopt")
     assert step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/adopt")
     assert step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/replace")
+
+
+# --- Removing: the person narrows their own App's addresses (the refusal's second step) ---------------
+
+def test_a_person_removes_an_address_on_their_own_app_and_the_removal_is_audited(gateway):
+    desk = _member(gateway, "desk")
+    person = gateway.user("desk@example.test")["id"]
+    app_id = _own_app(desk)
+    entry_id = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk),
+                         json={"address": "10.0.0.11"}).json()["trusted_address"]["id"]
+
+    removed = desk.delete(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}", headers=_headers(desk))
+
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["trusted_address"]["id"] == entry_id
+    assert gateway.rows("SELECT COUNT(*) AS n FROM app_trusted_addresses WHERE id = ?", (entry_id,))[0]["n"] == 0
+    events = _audit(gateway, "app.trusted_address.remove")
+    assert len(events) == 1
+    assert (events[0]["actor_kind"], events[0]["actor_id"]) == ("user", person)
+    assert (events[0]["target_kind"], events[0]["target_id"]) == ("app", app_id)
+
+
+def test_a_person_cannot_remove_an_address_on_someone_elses_app(gateway):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    entry_id = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk),
+                         json={"address": "10.0.0.12"}).json()["trusted_address"]["id"]
+    other = _member(gateway, "other")
+
+    refused = other.delete(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}", headers=_headers(other))
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "not_your_app"
+    assert gateway.rows("SELECT COUNT(*) AS n FROM app_trusted_addresses WHERE id = ?", (entry_id,))[0]["n"] == 1
+
+
+def test_removing_an_address_the_app_does_not_hold_is_not_found(gateway):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+
+    missing = desk.delete(f"/me/api/apps/{app_id}/trusted-addresses/tad_missing", headers=_headers(desk))
+
+    assert missing.status_code == 404, missing.text
+    assert missing.json()["error"]["code"] == "trusted_address_not_found"
