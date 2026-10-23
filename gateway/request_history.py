@@ -406,7 +406,12 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
     if not missing:
         return
     for name, ddl in missing:
-        conn.execute(f"ALTER TABLE kept_requests ADD COLUMN {name} {ddl}")
+        try:
+            conn.execute(f"ALTER TABLE kept_requests ADD COLUMN {name} {ddl}")
+        except sqlite3.OperationalError as exc:
+            # Another connection added it between the check and this statement: the column is there.
+            if "duplicate column name" not in str(exc):
+                raise
     for record_id, parts_json, omissions_json, summary_json in conn.execute(
             "SELECT record_id, parts_json, omissions_json, summary_json FROM kept_requests").fetchall():
         parts_kept, byte_size = _derived(parts_json, omissions_json, summary_json)
