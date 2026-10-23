@@ -154,11 +154,12 @@ def test_renaming_a_key_changes_only_its_label_and_a_label_another_active_key_of
 def test_a_revoked_expired_missing_or_misplaced_key_is_not_renamed(db):
     mine, theirs = person(db), person(db, "other")
     laptop, phone = make_app(db, mine, "Laptop"), make_app(db, mine, "Phone")
-    revoked, expired, live = make_key(db, laptop, "Old"), make_key(db, laptop, "Lapsed"), make_key(db, laptop, "Live")
+    revoked, live = make_key(db, laptop, "Old"), make_key(db, laptop, "Live")
+    # A key made already expired: an App key's expiry cannot be changed after it is made (gateway/app_binding_guard.py).
+    expired = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=laptop["id"], hash=hash_api_key("opk_Lapsed"), prefix="opk_test_0123456",
+        display_name="Lapsed", path=db, created_by=accountable_person(db, laptop["id"]), expires_at=1)
     admin_store.revoke_credential(revoked["id"], path=db)
-    with closing(sqlite3.connect(db)) as conn:
-        conn.execute("UPDATE credentials SET expires_at = 1 WHERE id = ?", (expired["id"],))
-        conn.commit()
 
     assert admin_store.rename_app_credential(revoked["id"], "New", path=db) is None
     assert admin_store.rename_app_credential(expired["id"], "New", path=db) is None
