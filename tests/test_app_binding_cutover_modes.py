@@ -138,3 +138,28 @@ def test_a_restart_after_the_cut_over_keeps_the_version_recorded_once(db):
     finally:
         conn.close()
     assert count == 1
+
+
+def test_a_fresh_database_whose_first_start_dies_before_its_guards_gets_them_on_the_next_start(tmp_path, monkeypatch, capsys):
+    """The schema is committed before the guards are installed. A start that dies in between must not leave the
+    database looking like an existing one: the next start installs the guards and says nothing is pending."""
+    path = tmp_path / "admin.db"
+
+    def die(conn):
+        raise RuntimeError("the process died before the guards were installed")
+
+    monkeypatch.setattr(app_binding_guard, "install", die)
+    with pytest.raises(RuntimeError):
+        admin_store.init_db(path)
+    monkeypatch.undo()
+    capsys.readouterr()
+
+    admin_store.init_db(path)
+
+    assert PENDING not in capsys.readouterr().out
+    conn = sqlite3.connect(path)
+    try:
+        assert app_binding_guard.verify(conn) == []
+        assert app_binding_guard.recorded(conn)
+    finally:
+        conn.close()
