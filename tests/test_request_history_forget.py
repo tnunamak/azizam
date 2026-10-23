@@ -16,8 +16,13 @@ import pytest
 import proxy
 from gateway import receipt_store, request_history
 from gateway.receipts import validate_retention
-from tests.support import gateway as gateway_support
 from tests.support.gateway import gateway_client
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
+from tests.support.fake_upstream.scenario import SCENARIO_DIR, scenario_from_data
+from tests.registry_test_helpers import write_service_registry_for_test
+from tests.support.gateway import register_litellm, use_admin_db
+from tests.test_engine_dispatch_wiring import _registry
+from gateway import admin_store, media_jobs
 from tests.test_request_history_capture import SENTENCE, _kept_rows, _mint_member_key, chat_gateway  # noqa: F401
 
 FORGET = {"extensions": {"com.azizam.prompts": {"mode": "forget"}}}
@@ -49,6 +54,43 @@ def _kept_count(media) -> int:
 
 
 @pytest.fixture
+def answering_gateway(fake_upstreams, monkeypatch, tmp_path):
+    """A gateway whose scripted engine answers 200 whenever it is called, and is not required to be called.
+
+    A forget never reaches the engine, and that is what these tests check, so the scripted exchange is optional.
+    """
+    fake = fake_upstreams.asgi(_optional_chat(model="garage-chat", content="ok"), host="litellm.fk.test")
+    db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
+    _mint_member_key(db, person_id)
+    media = tmp_path / "media_jobs.db"
+    media_jobs.init_db(media)
+    monkeypatch.setattr(media_jobs, "DB_PATH", media)
+    receipt_store.init_db(receipt_store.DB_PATH)
+    register_litellm(monkeypatch, db, fake.base_url)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"].update(_registry("http://garage.fk.test/v1")["services"])
+    write_service_registry_for_test(registry, path=db)
+    return tmp_path, media, db
+
+
+ENGINE_PATHS = ("/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/rerank",
+                "/v1/images/generations", "/v1/audio/speech")
+
+
+def _optional_chat(**values):
+    """The chat-text scenario, with one optional exchange that answers any POST. A forget still dispatches the request,
+    so the engine is called on every route, and the test does not care which engine path it was."""
+    data = json.loads((SCENARIO_DIR / "openai-compatible" / "chat-text.json").read_text(encoding="utf-8"))
+    answer = data["exchanges"][0]["response"]
+    # One optional exchange per direct engine path. The frontends (Anthropic, Responses, Ollama) reach the chat route
+    # through a stub forwarder in these tests, so they need none.
+    data["exchanges"] = [{"id": f"any-{index}", "match": {"method": "POST", "path": path}, "response": answer,
+                          "required": False, "repeat": True}
+                         for index, path in enumerate(ENGINE_PATHS)]
+    return scenario_from_data(data, source="chat-text-optional", **values)
+
+@pytest.fixture
 def frontends(monkeypatch):
     """The Anthropic, Responses and Ollama frontends reach the chat route through an in-process forwarder: stub it."""
     async def fake_forward(request, auth_context, cc_body, *, stream):
@@ -60,22 +102,22 @@ def frontends(monkeypatch):
 
 
 @pytest.mark.parametrize("path, body", JSON_ROUTES, ids=[path for path, _ in JSON_ROUTES])
-def test_forget_in_the_body_keeps_nothing_on_every_json_route(path, body, chat_gateway, frontends):
-    tmp_path, media, _ = chat_gateway
+def test_forget_in_the_body_keeps_nothing_on_every_json_route(path, body, answering_gateway, frontends):
+    tmp_path, media, _ = answering_gateway
     _send(path, {**body, **FORGET})
     assert _kept_count(media) == 0
 
 
 @pytest.mark.parametrize("path, body", JSON_ROUTES, ids=[path for path, _ in JSON_ROUTES])
-def test_without_forget_the_same_route_keeps_its_request(path, body, chat_gateway, frontends):
+def test_without_forget_the_same_route_keeps_its_request(path, body, answering_gateway, frontends):
     """Positive control: the route is captured, so the forget case above proves something."""
-    tmp_path, media, _ = chat_gateway
+    tmp_path, media, _ = answering_gateway
     _send(path, body)
     assert _kept_count(media) == 1
 
 
-def test_forget_in_a_multipart_form_field_keeps_nothing(chat_gateway, frontends):
-    tmp_path, media, _ = chat_gateway
+def test_forget_in_a_multipart_form_field_keeps_nothing(answering_gateway, frontends):
+    tmp_path, media, _ = answering_gateway
     files = {"file": ("clip.wav", b"RIFF" + b"\x00" * 64, "audio/wav")}
     data = {"model": "garage-chat", "extensions[com.azizam.prompts][mode]": "forget"}
     async def call():
@@ -85,25 +127,44 @@ def test_forget_in_a_multipart_form_field_keeps_nothing(chat_gateway, frontends)
     assert _kept_count(media) == 0
 
 
-def test_the_header_forgets_a_body_the_gateway_does_not_parse_and_is_stripped_before_dispatch(chat_gateway, monkeypatch):
-    tmp_path, media, _ = chat_gateway
-    seen = []
-    real = proxy.send_llm_execution_request
+def test_the_header_forgets_a_body_the_gateway_does_not_parse_and_is_stripped_before_dispatch(answering_gateway):
+    """The middleware removes X-Azizam-Prompts before the route runs, and the forget keeps nothing (3.4)."""
+    from gateway.request_history_capture import RequestHistoryMiddleware
 
-    async def spy(request, *args, **kwargs):
-        seen.append(request)
-        return await real(request, *args, **kwargs)
+    tmp_path, media, db = answering_gateway
+    received: list[dict] = []
 
-    monkeypatch.setattr(proxy, "send_llm_execution_request", spy)
+    async def route(scope, receive, send):
+        received.append(scope)
+        while True:
+            message = await receive()
+            if not message.get("more_body", False):
+                break
+        from starlette.responses import PlainTextResponse
+        await PlainTextResponse("ok")(scope, receive, send)
+
+    middleware = RequestHistoryMiddleware(route, admin_path=lambda: db, media_path=lambda: media)
     raw = b"model=garage-chat&message=" + SENTENCE.encode()
-    response = _send_raw("/v1/chat/completions", raw, {"content-type": "text/plain", "x-azizam-prompts": "forget"})
-    assert response.status_code != 500
+    headers = [(b"content-type", b"text/plain"), (b"x-azizam-prompts", b"forget"), (b"content-length", str(len(raw)).encode())]
+    scope = {"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": headers,
+             "query_string": b"", "state": {}}
+    bodies = iter([{"type": "http.request", "body": raw, "more_body": False}])
+    sent: list[dict] = []
+
+    async def receive():
+        return next(bodies, {"type": "http.disconnect"})
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(middleware(scope, receive, send))
+    assert received, "the route did not run"
+    assert all(key.lower() != b"x-azizam-prompts" for key, _ in received[0]["headers"])
     assert _kept_count(media) == 0
-    assert all("x-azizam-prompts" not in {k.lower() for k in getattr(r, "headers", {})} for r in seen)
 
 
-def test_without_the_header_a_non_json_body_is_recorded_as_unsupported_not_copied(chat_gateway):
-    tmp_path, media, _ = chat_gateway
+def test_without_the_header_a_non_json_body_is_recorded_as_unsupported_not_copied(answering_gateway):
+    tmp_path, media, _ = answering_gateway
     raw = b"model=garage-chat&message=" + SENTENCE.encode()
     _send_raw("/v1/chat/completions", raw, {"content-type": "text/plain"})
     rows = _kept_rows(media)
@@ -121,8 +182,8 @@ def _send_raw(path: str, raw: bytes, headers: dict):
 
 
 @pytest.mark.parametrize("value", ["keep", "FORGET", "forget "])
-def test_an_invalid_header_value_is_refused_with_400_and_keeps_nothing(chat_gateway, value):
-    tmp_path, media, _ = chat_gateway
+def test_an_invalid_header_value_is_refused_with_400_and_keeps_nothing(answering_gateway, value):
+    tmp_path, media, _ = answering_gateway
     response = _send_raw("/v1/chat/completions", b"{}", {"content-type": "application/json", "x-azizam-prompts": value})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_prompt_mode"
@@ -132,8 +193,8 @@ def test_an_invalid_header_value_is_refused_with_400_and_keeps_nothing(chat_gate
 @pytest.mark.parametrize("extension", [
     {"mode": "keep"}, {"mode": "forget", "extra": 1}, "forget",
 ])
-def test_an_invalid_body_extension_is_refused_and_keeps_nothing(chat_gateway, extension):
-    tmp_path, media, _ = chat_gateway
+def test_an_invalid_body_extension_is_refused_and_keeps_nothing(answering_gateway, extension):
+    tmp_path, media, _ = answering_gateway
     body = {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}],
             "extensions": {"com.azizam.prompts": extension}}
     response = _send("/v1/chat/completions", body)
@@ -155,10 +216,8 @@ def test_the_extension_and_the_header_never_reach_the_engine(chat_gateway, monke
                                    **FORGET})
     assert sent, "the chat route did not reach the engine hop"
     for request in sent:
-        text = json.dumps(getattr(request, "body", None), default=str) + json.dumps(
-            dict(getattr(request, "headers", {})), default=str)
-        assert "com.azizam.prompts" not in text
-        assert "x-azizam-prompts" not in text.lower()
+        assert b"com.azizam.prompts" not in request.body
+        assert "x-azizam-prompts" not in {key.lower() for key in request.headers}
 
 
 def _receipt_retention(request_id: str) -> list:
@@ -180,14 +239,14 @@ def _latest_receipt_id() -> str:
     return row[0]
 
 
-def test_a_forget_writes_the_receipt_entry_not_kept_because_of_the_request(chat_gateway):
+def test_a_forget_writes_the_receipt_entry_not_kept_because_of_the_request(answering_gateway):
     _send("/v1/chat/completions", {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}],
                                    **FORGET})
     entries = _receipt_retention(_latest_receipt_id())
     assert {"kind": "request_history", "decision": "not_kept", "reason": "request_forget"} in entries
 
 
-def test_a_kept_request_writes_the_receipt_entry_with_its_deadline_and_parts(chat_gateway):
+def test_a_kept_request_writes_the_receipt_entry_with_its_deadline_and_parts(answering_gateway):
     _send("/v1/chat/completions", {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]})
     entry = next(item for item in _receipt_retention(_latest_receipt_id()) if item["kind"] == "request_history")
     assert entry["decision"] == "kept" and entry["reason"] == "kept"
@@ -196,7 +255,7 @@ def test_a_kept_request_writes_the_receipt_entry_with_its_deadline_and_parts(cha
     assert entry["limited_by"] == "member_choice"
 
 
-def test_a_forced_writer_failure_is_recorded_as_failed_never_kept(chat_gateway, monkeypatch):
+def test_a_forced_writer_failure_is_recorded_as_failed_never_kept(answering_gateway, monkeypatch):
     def broken(record, *, path=None):
         raise sqlite3.OperationalError("disk I/O error")
 

@@ -12,6 +12,7 @@ the handler runs. A forget keeps nothing but the receipt's structural entry.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -37,6 +38,9 @@ PROMPTS_HEADER = "x-azizam-prompts"
 INTERNAL_HEADER = "x-azizam-internal-identity"
 #: The request state key the handler's authentication writes its AuthContext to.
 IDENTITY_STATE_KEY = "request_history_identity"
+#: How long the capture waits for the rest of a request body that the route did not read. A client that has sent its
+#: body finishes at once; a client that stalls leaves the record not kept.
+BODY_DRAIN_SECONDS = 30.0
 
 
 def is_captured(method: str, path: str) -> bool:
@@ -56,6 +60,23 @@ def receipt_entry(outcome: retention.WriteOutcome, parts: list[str]) -> dict[str
     if outcome.reason == "write_failed":
         return {"kind": KIND, "decision": "failed", "reason": "write_failed"}
     return {"kind": KIND, "decision": "not_kept", "reason": outcome.reason}
+
+
+def _control_refusal(raw: bytes) -> JSONResponse | None:
+    """Refuse an invalid per-request control before the route runs, as the media and Responses routes do (3.4)."""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or "extensions" not in parsed:
+        return None
+    try:
+        retention.requested_mode(parsed)
+    except retention.PromptModeError as exc:
+        return JSONResponse({"error": {"message": str(exc), "type": "invalid_request_error",
+                                       "code": "invalid_prompt_mode",
+                                       "param": f"extensions.{retention.NAMESPACE}.mode"}}, status_code=400)
+    return None
 
 
 def _forget_requested(body: request_history.BodyCapture) -> bool:
@@ -105,11 +126,27 @@ class RequestHistoryMiddleware:
         started = int(time.time())
         began = time.monotonic()
         slot_token = request_history_slot.open_slot(scope["path"])
+        read = {"complete": False}
+
+        if _is_small_json(headers, limit):
+            # Read a known-size JSON body first, so an invalid control is refused before any route runs.
+            chunks = await _read_all(receive)
+            raw = b"".join(chunks)
+            refusal = _control_refusal(raw)
+            if refusal is not None:
+                request_history_slot.close_slot(slot_token)
+                await refusal(scope, receive, send)
+                return
+            receive = _replay(chunks, receive)  # the wrapper below feeds each replayed chunk, once
 
         async def receive_wrapper() -> dict:
             message = await receive()
-            if message["type"] == "http.request" and not header_forget:
-                _quietly(body.feed, message.get("body", b""))
+            if message["type"] == "http.request":
+                if not header_forget:
+                    _quietly(body.feed, message.get("body", b""))
+                read["complete"] = not message.get("more_body", False)
+            elif message["type"] == "http.disconnect":
+                read["complete"] = True
             return message
 
         async def send_wrapper(message: dict) -> None:
@@ -125,16 +162,20 @@ class RequestHistoryMiddleware:
         try:
             await self.app(scope, receive_wrapper, send_wrapper)
         finally:
+            authenticated = getattr(state.get(IDENTITY_STATE_KEY), "identity", None) is not None
+            if not read["complete"] and not header_forget and authenticated:
+                # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
+                await _drain(receive_wrapper, read)
             slot = request_history_slot.current()
             receipt_id = slot.receipt_id if slot is not None else None
             request_history_slot.close_slot(slot_token)
             await _settle(self._finish, state=state, headers=headers, header_forget=header_forget, body=body,
-                          reply=reply_state["body"], reply_state=reply_state, started=started,
-                          latency_ms=int((time.monotonic() - began) * 1000), route=scope["path"],
+                          body_complete=read["complete"], reply=reply_state["body"], reply_state=reply_state,
+                          started=started, latency_ms=int((time.monotonic() - began) * 1000), route=scope["path"],
                           receipt_id=receipt_id)
 
     def _finish(self, *, state: dict, headers: dict[str, str], header_forget: bool,
-                body: request_history.BodyCapture, reply: request_history.BodyCapture,
+                body: request_history.BodyCapture, body_complete: bool, reply: request_history.BodyCapture,
                 reply_state: dict[str, Any], started: int, latency_ms: int, route: str,
                 receipt_id: str | None) -> None:
         """Decide, write and record the outcome on the receipt. Runs in a worker thread; never raises."""
@@ -144,7 +185,13 @@ class RequestHistoryMiddleware:
             return
         person_id = getattr(identity, "person_id", None)
         admin_path = self._admin_path()
+        body.result()  # reads the body's control values; the parts are built from the same memo below
         forget = header_forget or _forget_requested(body)
+        if not body_complete and not header_forget:
+            # The control could sit in the part that never arrived, so an unread body is not kept.
+            if receipt_id:
+                _record_entry(receipt_id, retention.WriteOutcome(False, "incomplete"), [])
+            return
         member = retention.member_choice(admin_path, person_id, retention.GROUP_REQUEST_HISTORY) if person_id else None
         control = {"extensions": {retention.NAMESPACE: {"mode": "forget"}}} if forget else None
         decision = retention.decide(KIND, person_id=person_id, member=member, household_policy=None,
@@ -186,10 +233,59 @@ class RequestHistoryMiddleware:
             log.warning("request history write failed request_id=%s", receipt_id or "-", exc_info=False)
             outcome = retention.WriteOutcome(False, "write_failed")
         if receipt_id:
-            try:
-                receipt_store.update_retention(receipt_id, receipt_entry(outcome, list(decision.parts)))
-            except Exception:
-                log.warning("request history receipt update failed request_id=%s", receipt_id, exc_info=False)
+            _record_entry(receipt_id, outcome, list(decision.parts))
+
+
+async def _drain(receive_wrapper: Callable, read: dict) -> None:
+    """Read the rest of a body the route did not read, so the capture sees all of it. Bounded by BODY_DRAIN_SECONDS."""
+    async def rest() -> None:
+        while not read["complete"]:
+            await receive_wrapper()
+    try:
+        await asyncio.wait_for(rest(), BODY_DRAIN_SECONDS)
+    except (asyncio.TimeoutError, Exception):
+        log.warning("request history body was not read to its end", exc_info=False)
+
+
+def _record_entry(receipt_id: str, outcome: retention.WriteOutcome, parts: list[str]) -> None:
+    try:
+        receipt_store.update_retention(receipt_id, receipt_entry(outcome, parts))
+    except Exception:
+        log.warning("request history receipt update failed request_id=%s", receipt_id, exc_info=False)
+
+
+def _is_small_json(headers: dict[str, str], limit: int) -> bool:
+    """A JSON body whose length is declared and within the record limit, so reading it first is bounded."""
+    if headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        return False
+    try:
+        return 0 <= int(headers.get("content-length", "")) <= limit
+    except ValueError:
+        return False
+
+
+async def _read_all(receive: Callable) -> list[bytes]:
+    chunks: list[bytes] = []
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            return chunks
+        chunks.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            return chunks
+
+
+def _replay(chunks: list[bytes], receive: Callable) -> Callable:
+    """A receive that yields the chunks already read, then passes everything else through."""
+    pending = [{"type": "http.request", "body": chunk, "more_body": index < len(chunks) - 1}
+               for index, chunk in enumerate(chunks)] or [{"type": "http.request", "body": b"", "more_body": False}]
+
+    async def replay() -> dict:
+        if pending:
+            return pending.pop(0)
+        return await receive()
+
+    return replay
 
 
 def _origin_id(identity: Any) -> str | None:

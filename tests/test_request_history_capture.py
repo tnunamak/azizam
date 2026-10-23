@@ -63,9 +63,12 @@ def _post(body: dict):
 
 
 def _kept_rows(media: Path) -> list[sqlite3.Row]:
+    """The kept records. A database with no kept request has no kept_requests table yet, which is no rows."""
     conn = sqlite3.connect(media)
     conn.row_factory = sqlite3.Row
     try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='kept_requests'").fetchone() is None:
+            return []
         return conn.execute("SELECT * FROM kept_requests ORDER BY created_at").fetchall()
     finally:
         conn.close()
