@@ -148,6 +148,14 @@ def _deliberate(key: str) -> str | None:
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if path.startswith("/me/api/apps/") and path.endswith("/trusted-addresses"):
+        return "trusted-addresses"  # a person's own App's address, added after the baseline (tests/test_me_trusted_addresses.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/adopt", path) or re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+/(adopt|readd)", path):
+        return "adopt"  # a person keeps, or adds again, an unproven binding on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/replace", path):
+        return "adopt"  # a person replaces a key they cannot keep, on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+", path):
+        return "trusted-addresses"  # a person removes an address from their own App (tests/test_me_binding_adoption.py)
     if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
             _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
         return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)
@@ -248,6 +256,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # the access plan API replaced /admin/api/profiles
         if kind == "trusted-addresses":
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
+        if kind == "adopt":
+            continue  # a person keeps an unproven binding on their own App; tests/test_me_binding_adoption.py covers it
         if kind == "rename":
             continue  # new rename routes; tests/test_rename_apps_keys.py covers them
         if kind == "signin":
@@ -314,7 +324,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue

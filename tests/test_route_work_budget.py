@@ -13,6 +13,7 @@ empty and may only shrink.
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import time
 
 import httpx
@@ -81,7 +82,7 @@ class Household:
             for key in range(2):
                 admin_store.create_credential_hash(
                     subject_kind="app", subject_id=app["id"], app_id=app["id"],
-                    hash=hash_api_key(f"key-{n}-{key}"), prefix="masked", path=self.db)
+                    hash=hash_api_key(f"key-{n}-{key}"), prefix="masked", path=self.db, created_by=accountable_person(self.db, app["id"]))
             self.apps += 1
         target_jobs = (apps * 5 // 2)
         while self.jobs < target_jobs:

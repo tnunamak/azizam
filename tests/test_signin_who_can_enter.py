@@ -15,7 +15,8 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 import pytest
 
-from gateway import accounts, admin_runtime, admin_store
+from gateway import accounts, admin_runtime, admin_store, gateway_lifetime
+from tests.support.app_keys import issue_app_credential
 from gateway.admin_oidc import CookieConfig, OIDCConfig
 from tests.support.access import store_plan
 
@@ -123,11 +124,15 @@ def gateway(tmp_path, monkeypatch):
     gw.set_rules([TRUSTED])
     original = gw.client
     gw.client = lambda: clients.append(original()) or clients[-1]
+    # A running gateway holds the lifetime lock for its whole life. This harness serves without running the lifespan,
+    # so it takes the same hold, and the cut-over sees it as it would see a running gateway.
+    gateway_lifetime.hold(path)
     try:
         yield gw
     finally:
         for client in clients:
             client.close()
+        gateway_lifetime.release(path)
 
 
 def signed_in(gateway, *, sub, email, groups=()):
@@ -446,7 +451,7 @@ def test_an_administrator_cannot_mint_a_key_on_an_app_the_owner_answers_for(gate
     refused = admin.post(f"/admin/api/apps/{app.json()['app']['id']}/keys", headers=csrf_for(admin),
                          json={"display_name": "k"})
     assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "owner_required"
+    assert refused.json()["error"]["code"] == "not_your_app"
 
 
 def test_an_administrator_cannot_change_the_plan_or_owner_of_an_app_the_owner_answers_for(gateway):
@@ -1118,8 +1123,8 @@ def test_an_administrator_can_still_revoke_a_members_app_key(gateway):
     member_id = admin_store.upsert_oidc_user("https://id.example", "m", email="m@example.test", path=gateway.path)["id"]
     app_id = owner.post("/admin/api/apps", headers=csrf_for(owner), json={
         "name": "members", "kind": "service", "access_plan": plan_id, "owner_user_id": member_id}).json()["app"]["id"]
-    key = owner.post(f"/admin/api/apps/{app_id}/keys", headers=csrf_for(owner), json={"display_name": "k"})
-    revoked = admin.post(f"/admin/api/credentials/{key.json()['credential']['id']}/revoke", headers=csrf_for(admin))
+    key = issue_app_credential(gateway.path, app_id, label="k")
+    revoked = admin.post(f"/admin/api/credentials/{key['id']}/revoke", headers=csrf_for(admin))
     assert revoked.status_code == 200, revoked.text
     assert admin.delete(f"/admin/api/apps/{app_id}", headers=csrf_for(admin)).status_code == 200
 

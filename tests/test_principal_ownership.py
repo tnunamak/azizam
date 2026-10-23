@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from tests.support.app_keys import accountable_person
 import shutil
 import sqlite3
 import time
@@ -34,8 +35,7 @@ def owners(tmp_path, monkeypatch):
     credentials = []
     for app, suffix in ((first, "old"), (first, "new"), (second, "other")):
         credentials.append(admin_store.create_credential_hash(
-            subject_kind="app", subject_id=app["id"], hash=f"sha256:fixture-{suffix}", prefix="fixture", path=db,
-        ))
+            subject_kind="app", subject_id=app["id"], hash=f"sha256:fixture-{suffix}", prefix="fixture", path=db, created_by=accountable_person(db, app["id"])))
     personal = admin_store.create_credential_hash(
         subject_kind="user", subject_id=user["id"], hash="sha256:fixture-personal", prefix="fixture", path=db,
     )

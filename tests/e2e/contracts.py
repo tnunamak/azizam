@@ -140,7 +140,8 @@ def run():
                 "enabled": True}, {"if-match": registry.headers["etag"]})
         post("/admin/api/config/reload", {})
         profile = post("/admin/api/profiles", {"name": "Contracts full local", "profile": {"id": "contracts-local"}})["profile"]
-        user = expect(client.get("/admin/api/users")).json()["users"][0]
+        # The App answers for the seeded owner, and its key is minted through that owner's sign-in (the accountable person).
+        user = next(row for row in expect(client.get("/admin/api/users")).json()["users"] if row.get("email") == "owner@example.test")
         app = post("/admin/api/apps", {"name": "Try verification", "kind": "personal", "owner_user_id": user["id"], "profile_id": profile["id"]})["app"]
         credential = post(f"/admin/api/apps/{app['id']}/keys", {"label": "Fixture Try key"})["credential"]
         key = credential["api_key"]

@@ -9,6 +9,7 @@ real plan check runs at submit time and again in the worker.
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import ipaddress
 import json
 import secrets
@@ -219,7 +220,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
                                            created_by=owner, path=self.admin)
         lan = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner,
                                      access_plan=self.images["id"], path=self.admin)
-        admin_store.add_trusted_address(lan["id"], "192.0.2.7", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(lan["id"], "192.0.2.7", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, lan["id"]))
         callers = {
             "mcp": self.mcp_context(),
             "key": proxy.AuthContext(identity=proxy.runtime_identity_for_app_credential_hash(
@@ -288,8 +289,8 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         owner = self.person["id"]
         lan = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner,
                                      access_plan=self.images["id"], path=self.admin)
-        admin_store.add_trusted_address(lan["id"], "192.0.2.7", max_entries=10, path=self.admin)
-        admin_store.add_trusted_address(lan["id"], "192.0.2.8", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(lan["id"], "192.0.2.7", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, lan["id"]))
+        admin_store.add_trusted_address(lan["id"], "192.0.2.8", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, lan["id"]))
         context = proxy.AuthContext(identity=proxy.runtime_identity_for_trusted_address(
             ipaddress.ip_address("192.0.2.7"), path=self.admin))
         payload = self.payload_for(context)
@@ -302,7 +303,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         # Now the address is trusted again, but for a different App: still refused.
         other = admin_store.create_app("Hall tablet", kind="service", owner_user_id=owner,
                                        access_plan=self.images["id"], path=self.admin)
-        admin_store.add_trusted_address(other["id"], "192.0.2.7", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(other["id"], "192.0.2.7", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, other["id"]))
         self.assertIsNone(proxy._auth_context_from_image_job_payload(payload))
 
     async def test_image_retry_runs_under_the_callers_current_plan(self) -> None:

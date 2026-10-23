@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store  # noqa: E402
+from tests.support.app_keys import accountable_person, issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from tests.support.signin import seed_rules  # noqa: E402
@@ -192,13 +193,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
         self.assertTrue(app_key.startswith("opk_"))
 
         forbidden = self.client.get(
@@ -245,13 +240,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("brother-chat", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
 
         capabilities = self.client.get(
             "/gateway/v1/capabilities",
@@ -612,13 +601,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("status-not-admin")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "App key"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="App key")
 
         response = self.client.get(
             "/v1/status",
@@ -1280,23 +1263,20 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             hash=hash_api_key("user-a-test-secret"),
             prefix="opk_user_a",
             display_name="User A key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         credential_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_b["id"],
             hash=hash_api_key("user-b-test-secret"),
             prefix="opk_user_b",
             display_name="User B key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_b["id"]))
         inactive_credential = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_a["id"],
             hash=hash_api_key("user-a-inactive-secret"),
             prefix="opk_user_a_inactive",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         admin_store.revoke_credential(inactive_credential["id"], path=self.db)
         wrong_kind_credential = admin_store.create_credential_hash(
             subject_kind="user",
@@ -1893,22 +1873,18 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
-        # The App answers to the gateway owner (a person) and follows their plan.
-        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="o@example.com", path=self.db)
-        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=self.db)
-        accounts.initialize(self.db)
-        accounts.change_person(owner["id"], "test", path=self.db,
-                               plan_id=store_plan("Everything", path=self.db)["id"])
-        admin_key, _, _ = create_admin_service_account_key(
-            "real-owner",
-            path=self.db,
-        )
-        response = self.client.post(
-            "/setup/claim",
-            data={"admin_key": admin_key},
+        # The owner signs in as a person, so the first App is theirs and follows their plan (owner visibility step 2).
+        signed_in = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(signed_in.status_code, 303, signed_in.text)
+        owner = admin_store.list_users(path=self.db)[0]
 
         async def fake_status(_config):
             return {"backends": [{"name": "loopback", "status": "up"}]}
@@ -1942,7 +1918,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer", created.text)
             self.assertIn("setup-copy-btn", created.text)
 
-            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "service"]
+            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "personal"]
             self.assertEqual(len(apps), 1)
             self.assertEqual(apps[0]["owner_user_id"], owner["id"])
             self.assertEqual(apps[0]["access_plan"], "person")
@@ -1962,6 +1938,29 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
             self.assertNotIn(api_key, refreshed.text)
             self.assertIn("Active runtime keys: 1", refreshed.text)
+
+    def test_setup_first_app_refuses_a_control_plane_key_and_writes_nothing(self) -> None:
+        # Owner visibility step 2: an App key is issued through the signed-in person it answers for.
+        # A control-plane admin key holds no person, so the first-App form refuses it before any write.
+        admin_key, _, _ = create_admin_service_account_key("real-owner", path=self.db)
+        claimed = self.client.post("/setup/claim", data={"admin_key": admin_key}, follow_redirects=False)
+        self.assertEqual(claimed.status_code, 303, claimed.text)
+        setup = self.client.get("/setup/console")
+        self.assertEqual(setup.status_code, 200, setup.text)
+        match = re.search(r'name="csrf_token" value="([^"]+)"', setup.text)
+        self.assertIsNotNone(match, setup.text)
+        apps_before = admin_store.list_apps(path=self.db)
+        credentials_before = admin_store.list_credentials(path=self.db)
+
+        refused = self.client.post(
+            "/setup/first-app",
+            data={"csrf_token": match.group(1), "app_name": "first-app", "key_label": "Laptop"},
+        )
+
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertNotRegex(refused.text, r"opk_[A-Za-z0-9_-]+")
+        self.assertEqual(admin_store.list_apps(path=self.db), apps_before)
+        self.assertEqual(admin_store.list_credentials(path=self.db), credentials_before)
 
     def test_setup_first_app_rejects_stale_csrf(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -2388,11 +2387,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_delete_credential_revokes_it(self) -> None:
         app = self._create_app("App").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key1"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key1")
 
         resp = self.client.delete(
             f"/admin/api/credentials/{cred['id']}",
@@ -2411,11 +2406,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_post_revoke_still_works(self) -> None:
         app = self._create_app("App2").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key2"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key2")
 
         resp = self.client.post(
             f"/admin/api/credentials/{cred['id']}/revoke",

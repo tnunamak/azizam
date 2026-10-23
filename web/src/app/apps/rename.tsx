@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { accountApi, type AccountApp } from "@/lib/account-api";
+import {
+  accountApi,
+  administratorsToConfirm,
+  hasAdministrators,
+  type AccountApp,
+  type KeepOptions,
+  type ReplacedKey,
+} from "@/lib/account-api";
 import type { Credential } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RelativeTime } from "@/components/product";
+import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
 /** The most characters a name may have; the gateway enforces the same limit. */
 const NAME_LIMIT = 80;
@@ -240,7 +248,12 @@ function KeyRow({
   keyRecord,
   editing,
   disabled,
+  working,
+  remedyDisabled,
+  remedyFailure,
   onEdit,
+  onKeep,
+  onReplace,
   onSaved,
   onCancel,
 }: {
@@ -248,66 +261,129 @@ function KeyRow({
   editing: boolean;
   /** Another row is being saved or edited. */
   disabled: boolean;
+  /** The remedy running on this key, if one is. */
+  working: "keep" | "replace" | null;
+  /** The remedy is unavailable: another row is being edited, or a remedy is running. */
+  remedyDisabled: boolean;
+  /** Why the last remedy on this key failed. */
+  remedyFailure: string | null;
   onEdit: () => void;
+  onKeep: () => void;
+  onReplace: () => void;
   onSaved: (key: Credential) => void;
   onCancel: () => void;
 }) {
   const label = keyRecord.display_name;
+  // The one remedy the cut-over leaves this key: keep it, or replace it. The gateway decides which.
+  const remedy = keyRecord.cutover;
   return (
     <li className="space-y-2 py-3">
       {editing ? (
         <KeyNameForm keyRecord={keyRecord} onSaved={onSaved} onCancel={onCancel} />
       ) : (
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p
-              className="text-body font-medium break-words [overflow-wrap:anywhere]"
-              title={label}
-            >
-              {label}
-            </p>
-            <p className="text-muted-foreground text-meta">
-              <span className="font-mono">{keyStart(keyRecord.prefix)}</span>
-              {" · "}
-              {keyRecord.last_used_at != null ? (
-                <>
-                  Last used <RelativeTime ts={keyRecord.last_used_at} />
-                </>
-              ) : (
-                "Never used"
-              )}
-            </p>
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p
+                className="text-body font-medium break-words [overflow-wrap:anywhere]"
+                title={label}
+              >
+                {label}
+              </p>
+              <p className="text-muted-foreground text-meta">
+                <span className="font-mono">{keyStart(keyRecord.prefix)}</span>
+                {" · "}
+                {keyRecord.last_used_at != null ? (
+                  <>
+                    Last used <RelativeTime ts={keyRecord.last_used_at} />
+                  </>
+                ) : (
+                  "Never used"
+                )}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {remedy === "keep" ? (
+                <Button
+                  variant="outline"
+                  disabled={remedyDisabled}
+                  aria-label={`Keep key ${label}`}
+                  onClick={onKeep}
+                >
+                  {working === "keep" ? "Keeping…" : "Keep"}
+                </Button>
+              ) : null}
+              {remedy === "replace" ? (
+                <Button
+                  variant="outline"
+                  disabled={remedyDisabled}
+                  aria-label={`Replace key ${label}`}
+                  onClick={onReplace}
+                >
+                  {working === "replace" ? "Replacing…" : "Replace key"}
+                </Button>
+              ) : null}
+              <Button
+                id={`rename-key-${keyRecord.id}`}
+                variant="outline"
+                disabled={disabled}
+                aria-label={`Rename key ${label}`}
+                onClick={onEdit}
+              >
+                Rename
+              </Button>
+            </div>
           </div>
-          <Button
-            id={`rename-key-${keyRecord.id}`}
-            variant="outline"
-            disabled={disabled}
-            aria-label={`Rename key ${label}`}
-            onClick={onEdit}
-          >
-            Rename
-          </Button>
-        </div>
+          {remedy === "keep" ? (
+            <p className="text-muted-foreground text-meta">
+              Made before Azizam recorded who made keys. Keep it, or it stops
+              working at the next ownership update.
+            </p>
+          ) : null}
+          {remedy === "replace" ? (
+            <p className="text-muted-foreground text-meta">
+              {keyRecord.made_by_name
+                ? `Made by ${keyRecord.made_by_name}.`
+                : "Made before Azizam recorded who made keys."}{" "}
+              It stops working at the next ownership update. Replace it with a
+              new key.
+            </p>
+          ) : null}
+        </>
       )}
+      {remedyFailure ? (
+        <p role="alert" className="text-destructive text-meta">
+          {remedyFailure}
+        </p>
+      ) : null}
     </li>
   );
 }
 
-/** One app's keys, each with a Rename button. One key is edited at a time. */
+/** One app's keys, each with a Rename button and the one remedy the cut-over leaves it (Keep, or Replace key).
+ * One key is edited at a time, and one remedy runs at a time. */
 export function RenameKeysDialog({
   app,
   appName,
   onSaved,
+  onKept,
+  onReplaced,
   onClose,
   onCloseAutoFocus,
 }: {
   app: AccountApp | null;
   appName: string;
   onSaved: (key: Credential) => void;
+  onKept: (key: Credential) => void;
+  /** A key was replaced: the page shows the new key once and takes the old key's row away. */
+  onReplaced: (replaced: ReplacedKey) => void;
   onClose: () => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [working, setWorking] = useState<{ id: string; remedy: "keep" | "replace" } | null>(null);
+  const [remedyFailure, setRemedyFailure] = useState<{ id: string; message: string } | null>(null);
+  const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   // The row that had the edit, so its Rename button gets focus back.
   const returnTo = useRef<string | null>(null);
 
@@ -321,6 +397,68 @@ export function RenameKeysDialog({
   function stopEditing(id: string) {
     returnTo.current = id;
     setEditing(null);
+  }
+
+  // A key that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
+  // for it too, when the snapshot this page holds is stale.
+  async function keep(keyRecord: Credential) {
+    if (keyRecord.administrators && hasAdministrators(keyRecord.administrators)) {
+      setKeepConfirmation({ id: keyRecord.id, what: "key", administrators: keyRecord.administrators });
+      return;
+    }
+    await keepNow(keyRecord.id, {});
+  }
+
+  async function keepNow(id: string, options: KeepOptions) {
+    setWorking({ id, remedy: "keep" });
+    setRemedyFailure(null);
+    try {
+      onKept(await accountApi.keepKey(id, options));
+      // The Keep button goes once the key is kept; its Rename button stays, so focus moves there.
+      document.getElementById(`rename-key-${id}`)?.focus();
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      if (administrators !== null) {
+        setKeepConfirmation({ id, what: "key", administrators });
+        return;
+      }
+      setRemedyFailure({ id, message: failure(caught, "The key could not be kept. Try again.") });
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  // The owner confirmed the administrators. A failure rejects, so the dialog stays open with the reason in it.
+  async function confirmKeep(confirmation: KeepConfirmation) {
+    try {
+      onKept(await accountApi.keepKey(confirmation.id, { confirmed: true }));
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      setKeepConfirmation({
+        ...confirmation,
+        administrators: administrators ?? confirmation.administrators,
+        error:
+          administrators !== null
+            ? "The administrators changed. Read them again, then keep it."
+            : failure(caught, "The key could not be kept. Try again."),
+      });
+      throw caught;
+    }
+  }
+
+  async function replace(keyRecord: Credential) {
+    setWorking({ id: keyRecord.id, remedy: "replace" });
+    setRemedyFailure(null);
+    try {
+      onReplaced(await accountApi.replaceKey(keyRecord.id));
+    } catch (caught) {
+      setRemedyFailure({
+        id: keyRecord.id,
+        message: failure(caught, "The key could not be replaced. Try again."),
+      });
+    } finally {
+      setWorking(null);
+    }
   }
 
   function close() {
@@ -360,7 +498,12 @@ export function RenameKeysDialog({
                 keyRecord={keyRecord}
                 editing={editing === keyRecord.id}
                 disabled={editing !== null && editing !== keyRecord.id}
+                working={working?.id === keyRecord.id ? working.remedy : null}
+                remedyDisabled={editing !== null || working !== null}
+                remedyFailure={remedyFailure?.id === keyRecord.id ? remedyFailure.message : null}
                 onEdit={() => setEditing(keyRecord.id)}
+                onKeep={() => void keep(keyRecord)}
+                onReplace={() => void replace(keyRecord)}
                 onSaved={(saved) => {
                   onSaved(saved);
                   stopEditing(keyRecord.id);
@@ -375,6 +518,14 @@ export function RenameKeysDialog({
             Done
           </Button>
         </DialogFooter>
+        <KeepConfirmDialog
+          confirmation={keepConfirmation}
+          onClose={() => setKeepConfirmation(null)}
+          onConfirm={async () => {
+            if (keepConfirmation) await confirmKeep(keepConfirmation);
+          }}
+          fallbackFocus={() => [document.getElementById(`rename-key-${keepConfirmation?.id ?? ""}`)]}
+        />
       </DialogContent>
     </Dialog>
   );

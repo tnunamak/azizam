@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway import admin_store, avatars, session_guard, session_policy
+from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -100,11 +100,12 @@ def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
 class UserPortalError(ValueError):
     """Raised when a user-plane account action is not allowed."""
 
-    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+    def __init__(self, code: str, message: str, *, status_code: int = 400, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.details = dict(details or {})  # extra fields for the error body, such as the administrators to confirm
 
 
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -174,13 +175,16 @@ def _plan_summary(
 
 def _credentials_for_app(
     app_id: str, *, path: Path, active: Mapping[str, list[dict[str, Any]]] | None = None,
+    cutover: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """``active`` holds every listed app's credentials, read in one query."""
+    """``active`` holds every listed app's credentials, read in one query. ``cutover`` holds the remedy of each key the
+    cut-over would remove (``admin_store.cutover_for_bindings``); a key the cut-over keeps carries none."""
     credentials = []
     for record in (admin_store.list_active_credentials(subject_kind="app", app_id=app_id, path=path)
                    if active is None else active.get(app_id, ())):
         item = _sanitize_credential(record)
         item["active"] = True
+        item.update(cutover.get(record["id"], {}) if cutover else {})
         credentials.append(item)
     return credentials
 
@@ -195,13 +199,17 @@ def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, 
             "App not found for this account",
             status_code=404,
         )
+    _refuse_disabled(app)
+    return app
+
+
+def _refuse_disabled(app: Mapping[str, Any]) -> None:
     if app.get("disabled_at"):
         raise UserPortalError(
             "app_disabled",
             "App is disabled",
             status_code=403,
         )
-    return app
 
 
 def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
@@ -223,16 +231,39 @@ def _live_role_for_user(user_id: str, *, path: Path) -> str:
     return "none"
 
 
+def _cutover_view(
+    person_id: str, apps: list[dict[str, Any]], credentials_by_app: Mapping[str, list[dict[str, Any]]], *,
+    owner: bool, path: Path,
+) -> tuple[dict[str, dict[str, str]], dict[str, int] | None]:
+    """The cut-over's remedy for each binding on these Apps, and for the owner, how many trusted addresses on each App
+    have one (owner visibility step 2). Keys are read for every person; addresses only for the owner, who lists them."""
+    keys = [key for app in apps for key in credentials_by_app.get(str(app["id"]), [])]
+    addresses: list[dict[str, Any]] = []
+    if owner and apps:
+        listed = {str(app["id"]) for app in apps}
+        addresses = [entry for entry in admin_store.list_trusted_addresses(path=path) if entry["app_id"] in listed]
+    view = admin_store.cutover_for_bindings(person_id, keys=keys, addresses=addresses, path=path)
+    if not owner:
+        return view, None
+    counts: dict[str, int] = {}
+    for entry in addresses:
+        if entry["id"] in view:
+            counts[entry["app_id"]] = counts.get(entry["app_id"], 0) + 1
+    return view, counts
+
+
 def _app_payload(
     app: Mapping[str, Any],
     *,
     path: Path,
     credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
     plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
+    cutover: Mapping[str, Mapping[str, str]] | None = None,
+    addresses_to_check: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
+    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app, cutover=cutover)
     plan = _plan_summary(app, path=path, listing=plan_listing)
-    return {
+    payload: dict[str, Any] = {
         "id": app.get("id"),
         "kind": app.get("kind"),
         "name": app.get("name"),
@@ -244,6 +275,11 @@ def _app_payload(
         "active_credentials": len(credentials),
         "created_at": app.get("created_at"),
     }
+    # Sent to the owner only: the owner is the one who lists and keeps an App's trusted addresses. Keys carry
+    # their remedy in `credentials`, so the Apps page counts those itself.
+    if addresses_to_check is not None:
+        payload["addresses_to_check"] = addresses_to_check.get(str(app["id"]), 0)
+    return payload
 
 
 def build_user_portal_snapshot(
@@ -288,8 +324,15 @@ def build_user_portal_snapshot(
         admin_store.person_plan_id(str(user["id"]), path=path),
         {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
     ) if listed else None
+    role = _live_role_for_user(str(user["id"]), path=path)
+    cutover, addresses_to_check = _cutover_view(
+        str(user["id"]), listed, credentials_by_app, owner=role == "owner", path=path,
+    )
     apps: list[dict[str, Any]] = [
-        _app_payload(app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing)
+        _app_payload(
+            app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing,
+            cutover=cutover, addresses_to_check=addresses_to_check,
+        )
         for app in listed
     ]
 
@@ -306,7 +349,7 @@ def build_user_portal_snapshot(
             "avatar": avatars.public_view(person_id, avatars.get(person_id, path=path), viewer_id=person_id),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
-            "role": _live_role_for_user(str(user["id"]), path=path),
+            "role": role,
             # A new App starts on this plan ("Same as you"), so the New app
             # dialog can say what it will be allowed to use before it exists.
             "access_plan": _plan_summary(
@@ -504,6 +547,239 @@ def mint_user_app_key(
     out["api_key"] = api_key
     out["prompt_memory"] = app_key_prompt_memory(app, record)
     return out
+
+
+def add_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    data: Mapping[str, Any],
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Trust a client address for an App the signed-in person answers for (owner visibility step 2).
+
+    The same rule as the admin route: only the accountable person adds an address, and the address
+    records them as its creator. The insert runs in the sign-in's own transaction, so a sign-out that
+    lands first adds nothing. The App is looked up the way key minting looks it up: another person's
+    App is not found (404), a disabled App is refused (403), and a session App takes no address.
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    try:
+        address = trusted_addresses.normalize_entry(data.get("address"))
+        record = admin_store.add_trusted_address(
+            app_id, address, note=str(data.get("note") or "")[:200], created_by=str(user["id"]),
+            max_entries=trusted_addresses.MAX_ENTRIES_PER_APP,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except ValueError as exc:
+        raise UserPortalError("invalid_trusted_address", str(exc), status_code=400) from None
+    admin_store.record_audit(
+        "app.trusted_address.add",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=app_id,
+        metadata={"address": address, "entry_id": record["id"]},
+        path=path,
+    )
+    return record
+
+
+def _own_credential(credential_id: str, user: Mapping[str, Any], *, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The live App key the signed-in person answers for, and its App (owner visibility §3.5).
+
+    One ownership-scoped lookup. Every other key answers as a missing one does: another person's key, a key on a session
+    App, a revoked key, or a key whose App is gone. The App's own refusal (disabled) comes only once the App is known to
+    be the person's.
+    """
+    found = admin_store.person_app_credential(credential_id, str(user["id"]), path=path)
+    if found is None:
+        raise _credential_not_found()
+    credential, app = found
+    _refuse_disabled(app)
+    return credential, app
+
+
+KEEP_KEY_REFUSED = (
+    "Nobody can prove who made this key, so it cannot be kept. Replace it instead: "
+    "POST /me/api/credentials/{credential_id}/replace issues a new key on this App (shown once) and revokes this one."
+)
+# One step: an App holds each address once, so a separate add could not come before the removal of the old entry.
+KEEP_ADDRESS_REFUSED = (
+    "Nobody can prove who added this address, so it cannot be kept. Add it again with "
+    "POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd, which replaces it in one step."
+)
+KEEP_NEEDS_CONFIRMATION = (
+    "Administrators at the time could also have made this {what}: {names}. Confirm that and keep it again with "
+    "the body {{\"confirm_admins_could_have_made_it\": true}}."
+)
+
+
+def _keep_needs_confirmation(exc: admin_store.KeepNeedsConfirmation, what: str) -> UserPortalError:
+    return UserPortalError(
+        "keep_needs_confirmation",
+        KEEP_NEEDS_CONFIRMATION.format(what=what, names=admin_store.administrators_sentence(exc.administrators)),
+        status_code=409,
+        details={"administrators": dict(exc.administrators)},
+    )
+
+
+def adopt_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    *,
+    confirmed_administrators: bool = False,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Keep an App key on an App the signed-in person answers for: they become its recorded creator.
+
+    Only the owner keeps, and only a key nobody else could have made (owner visibility §3.5). Any other key is refused
+    with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``). When an administrator on
+    record could also have made it, the keep needs ``confirmed_administrators``, otherwise ``keep_needs_confirmation``
+    names them.
+    """
+    user = _user_from_session(session, path=path)
+    _, app = _own_credential(credential_id, user, path=path)
+    try:
+        record = admin_store.adopt_app_credential(
+            credential_id, app_id=str(app["id"]), person_id=str(user["id"]),
+            confirmed_administrators=confirmed_administrators,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except admin_store.KeepNotProvable:
+        raise UserPortalError("keep_not_provable", KEEP_KEY_REFUSED.format(credential_id=credential_id),
+                              status_code=409) from None
+    except admin_store.KeepNeedsConfirmation as exc:
+        raise _keep_needs_confirmation(exc, "key") from None
+    if record is None:  # revoked since the check above
+        raise _credential_not_found()
+    out = _sanitize_credential(record)
+    out["active"] = True
+    return out
+
+
+def replace_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Replace an App key the signed-in person answers for: a new key on the same App, and this one revoked.
+
+    The way a person keeps using a key that cannot be kept. The new key has the old key's name and is made the
+    way a key from the Apps page is made (no expiry). The secret is returned once, with the replaced id.
+    """
+    user = _user_from_session(session, path=path)
+    credential, app = _own_credential(credential_id, user, path=path)
+    app_id = str(app["id"])
+    api_key = generate_app_api_key()
+    try:
+        record = admin_store.replace_app_credential(
+            credential_id, app_id=app_id, person_id=str(user["id"]), hash=hash_api_key(api_key),
+            prefix=_key_prefix(api_key), display_name=credential.get("display_name") or "Self-service key",
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if record is None:  # revoked since the check above
+        raise _credential_not_found()
+    out = _sanitize_credential(record)
+    out["active"] = True
+    out["api_key"] = api_key
+    out["prompt_memory"] = app_key_prompt_memory(app, record)
+    return {"credential": out, "replaced_credential_id": credential_id}
+
+
+def adopt_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    confirmed_administrators: bool = False,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator.
+
+    Only the owner keeps, and only an address nobody else could have added. Any other address is refused with
+    ``keep_not_provable``: the person adds the address again (``readd_user_trusted_address``). Another person's App is
+    not found (404), as it is for adding an address to it.
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    try:
+        record = admin_store.adopt_trusted_address(
+            app_id, entry_id, person_id=str(user["id"]), confirmed_administrators=confirmed_administrators,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except admin_store.KeepNotProvable:
+        raise UserPortalError("keep_not_provable", KEEP_ADDRESS_REFUSED.format(app_id=app_id, entry_id=entry_id),
+                              status_code=409) from None
+    except admin_store.KeepNeedsConfirmation as exc:
+        raise _keep_needs_confirmation(exc, "address") from None
+    if record is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    return record
+
+
+def remove_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Remove one trusted address from an App the signed-in person answers for.
+
+    A removal only narrows access. Its audit event is written in the same transaction as the removal, and the sign-in
+    is checked there too. Another person's App gets the same 404 as adding an address to it (``_app_belongs_to_user``).
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    try:
+        removed = admin_store.delete_trusted_address(
+            app_id, entry_id, path=path, session=session_guard.BrowserSession.of(session, str(user["id"])),
+            audit={"action": "app.trusted_address.remove", "actor_kind": "user", "actor_id": str(user["id"])},
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if removed is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    return removed
+
+
+def readd_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Add an unkept trusted address again on an App the signed-in person answers for, as its creator.
+
+    The way a person keeps an address that cannot be kept: the entry is replaced by the same address, made by them, in
+    one transaction with the audit event and the sign-in check (``admin_store.readd_trusted_address``). Another person's
+    App, and a session App, get the same 404 as adding an address to them (``_app_belongs_to_user``).
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    try:
+        readded = admin_store.readd_trusted_address(
+            app_id, entry_id, created_by=str(user["id"]),
+            audit={"action": "app.trusted_address.readd", "actor_kind": "user", "actor_id": str(user["id"])},
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if readded is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    return readded
 
 
 def ensure_try_session_key(

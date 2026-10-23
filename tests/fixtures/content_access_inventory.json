@@ -3025,6 +3025,42 @@
       "access": "own-account"
     },
     {
+      "handler": "proxy.user_portal_add_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_adopt_key",
+      "method": "POST",
+      "path": "/me/api/credentials/{credential_id}/adopt",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_adopt_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_readd_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_replace_key",
+      "method": "POST",
+      "path": "/me/api/credentials/{credential_id}/replace",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_remove_trusted_address",
+      "method": "DELETE",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}",
+      "access": "own-account"
+    },
+    {
       "handler": "proxy.user_portal_receipt_detail",
       "method": "GET",
       "path": "/me/api/receipts/{request_id}",

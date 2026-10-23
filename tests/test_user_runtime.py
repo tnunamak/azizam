@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from tests.support.app_keys import accountable_person
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,8 +66,7 @@ class UserRuntimeTests(unittest.TestCase):
             hash=hash_api_key("opk_secret"),
             prefix="opk_live_abcd",
             display_name="Laptop",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
 
         snapshot = build_user_portal_snapshot(self.session, path=self.db)
 
@@ -205,16 +205,14 @@ class UserRuntimeTests(unittest.TestCase):
             subject_id=other_app["id"],
             hash=hash_api_key("opk_other_secret"),
             prefix="opk_other_prefix",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, other_app["id"]))
 
         inactive = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app["id"],
             hash=hash_api_key("opk_inactive_secret"),
             prefix="opk_inactive_prefix",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         admin_store.revoke_credential(inactive["id"], path=self.db)
         wrong_kind = admin_store.create_credential_hash(
             subject_kind="user",

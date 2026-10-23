@@ -1,5 +1,5 @@
 import { networkFetch } from "./network-error";
-import { ApiError, type Credential, type MintedCredential } from "./api";
+import { ApiError, type AdministratorsOnRecord, type Credential, type MintedCredential } from "./api";
 import { parseReauth, requestReauth } from "./reauth";
 import {
   learnContract,
@@ -24,6 +24,13 @@ export interface AccountApp {
   } | null;
   can_mint_keys: boolean;
   credentials: Credential[];
+  /** Trusted addresses on this app that the cut-over would remove, each with a remedy. Sent to the owner only. */
+  addresses_to_check?: number;
+}
+/** A replacement: the new key (its secret, shown once, in `credential.api_key`) and the id of the key it replaced. */
+export interface ReplacedKey {
+  credential: MintedCredential;
+  replaced_credential_id: string;
 }
 /** The Try page's key for this sign-in. A reused key comes without its
  * secret: the browser kept it from the mint. */
@@ -106,6 +113,7 @@ async function accountRequest<T>(
       payload?.error?.message ??
         "The gateway could not complete this request. Try again.",
       response.status,
+      payload,
     );
   }
   return payload as T;
@@ -146,6 +154,52 @@ export type McpConsentRequest = {
   access: string[];
   lasts: string;
 };
+/** Keeping a binding that administrators on record could also have made needs the owner's confirmation. */
+export interface KeepOptions {
+  /** The owner has read the administrators and confirms them. */
+  confirmed?: boolean;
+}
+
+const keepBody = ({ confirmed = false }: KeepOptions) =>
+  confirmed ? { confirm_admins_could_have_made_it: true } : undefined;
+
+export type { AdministratorsOnRecord } from "./api";
+
+/** True when the gateway names anyone the owner must confirm before a keep. */
+export function hasAdministrators(administrators?: AdministratorsOnRecord | null): boolean {
+  return !!administrators && (administrators.people.length > 0 || administrators.unnamed_people > 0 || administrators.admin_keys > 0);
+}
+
+/** The administrators on record in one line, as the owner reads them: each person by name, then the people with no name
+ * and the administrator keys as counts, with empty parts left out. The gateway renders the same sentence. */
+export function administratorsSentence(administrators: AdministratorsOnRecord): string {
+  const items = [
+    ...administrators.people,
+    ...(administrators.unnamed_people > 0
+      ? [`${administrators.unnamed_people} ${administrators.unnamed_people === 1 ? "person" : "people"} with no name`]
+      : []),
+    ...(administrators.admin_keys > 0
+      ? [`${administrators.admin_keys} administrator ${administrators.admin_keys === 1 ? "key" : "keys"}`]
+      : []),
+  ];
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+function isAdministratorsOnRecord(value: unknown): value is AdministratorsOnRecord {
+  const record = value as Partial<AdministratorsOnRecord> | null;
+  return typeof record === "object" && record !== null && Array.isArray(record.people)
+    && typeof record.unnamed_people === "number" && typeof record.admin_keys === "number";
+}
+
+/** The administrators the gateway asks the owner to confirm before a keep (409 `keep_needs_confirmation`), or null
+ * for any other failure. A stale snapshot can send a keep that the gateway still wants confirmed. */
+export function administratorsToConfirm(caught: unknown): AdministratorsOnRecord | null {
+  if (!(caught instanceof ApiError) || caught.code !== "keep_needs_confirmation") return null;
+  const administrators = (caught.payload as { error?: { administrators?: unknown } } | undefined)?.error?.administrators;
+  return isAdministratorsOnRecord(administrators) ? administrators : { people: [], unnamed_people: 0, admin_keys: 0 };
+}
+
 export const accountApi = {
   discovery: () => accountRequest<GatewayDiscovery>("/.well-known/azizam"),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
@@ -181,6 +235,49 @@ export const accountApi = {
     accountRequest(`/me/api/credentials/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  /** Keep a key made before its creator was recorded: this person becomes its creator. The answer is the saved record. */
+  keepKey: (credentialId: string, options: KeepOptions = {}) =>
+    accountRequest<{ credential: Credential }>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}/adopt`,
+      { method: "POST", body: keepBody(options) },
+    ).then((r) => r.credential),
+  /** Keep a trusted address made before its creator was recorded: this person becomes its creator. */
+  keepTrustedAddress: (appId: string, entryId: string, options: KeepOptions = {}) =>
+    accountRequest(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/adopt`,
+      { method: "POST", body: keepBody(options) },
+    ),
+  /** Add an address that cannot be kept again, in one step: the same address replaces the old entry, made by this
+   * person. An app holds each address once, so removing and adding would be two calls that can leave it removed. */
+  readdTrustedAddress: (appId: string, entryId: string) =>
+    accountRequest<{ trusted_address: { id: string }; replaced_entry_id: string }>(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}/readd`,
+      { method: "POST" },
+    ),
+  /** Replace a key that cannot be kept: a new key on the same app, and this one revoked. The secret comes back once. */
+  replaceKey: (credentialId: string) =>
+    accountRequest<ReplacedKey>(
+      `/me/api/credentials/${encodeURIComponent(credentialId)}/replace`,
+      { method: "POST" },
+    ),
+  /** Trust an address on an app the person answers for. An app holds each address once. */
+  addTrustedAddress: (
+    appId: string,
+    entry: { address: string; note: string },
+  ) =>
+    accountRequest<{ trusted_address: { id: string } }>(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses`,
+      {
+        method: "POST",
+        body: entry,
+      },
+    ),
+  /** Stop trusting one address on an app the person answers for. */
+  removeTrustedAddress: (appId: string, entryId: string) =>
+    accountRequest(
+      `/me/api/apps/${encodeURIComponent(appId)}/trusted-addresses/${encodeURIComponent(entryId)}`,
+      { method: "DELETE" },
+    ),
   deleteApp: (appId: string) =>
     accountRequest(`/me/api/apps/${encodeURIComponent(appId)}`, {
       method: "DELETE",

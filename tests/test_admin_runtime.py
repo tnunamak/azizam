@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import accounts, admin_store, service_registry  # noqa: E402
+from tests.support.app_keys import issue_app_key
 from gateway.admin_api import AdminContext, create_admin_router  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
@@ -154,7 +155,7 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         return client
 
-    def test_admin_key_can_create_app_and_app_key(self) -> None:
+    def test_admin_key_creates_an_app_and_its_person_issues_the_app_key(self) -> None:
         admin_key, credential, assignment = create_admin_service_account_key(
             "owner-cli", path=self.db
         )
@@ -167,11 +168,10 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(app_resp.status_code, 201, app_resp.text)
         app_id = app_resp.json()["app"]["id"]
 
-        key_resp = client.post(
-            f"/admin/api/apps/{app_id}/keys", json={"label": "Brother"}
-        )
-        self.assertEqual(key_resp.status_code, 201, key_resp.text)
-        app_key = key_resp.json()["credential"]["api_key"]
+        # A control-plane key answers for no person, so the App's own person issues its key (owner visibility step 2).
+        refused = client.post(f"/admin/api/apps/{app_id}/keys", json={"label": "Brother"})
+        self.assertEqual(refused.status_code, 403, refused.text)
+        app_key = issue_app_key(self.db, app_id, label="Brother")
         self.assertTrue(app_key.startswith("opk_"))
 
         stored = admin_store.find_credential_by_hash(
@@ -292,9 +292,7 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
         app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
-        app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
-            "credential"
-        ]["api_key"]
+        app_key = issue_app_key(self.db, app_id)
         key_hash = hash_api_key(app_key)
 
         self.assertIsNotNone(
@@ -313,9 +311,7 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
         app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
-        app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
-            "credential"
-        ]["api_key"]
+        app_key = issue_app_key(self.db, app_id)
 
         forbidden = self._client(app_key).get("/admin/api/overview")
         self.assertEqual(forbidden.status_code, 403)
@@ -443,9 +439,7 @@ class AdminRuntimeTests(unittest.TestCase):
             json=plan_document("Chat only", caps=("chat",)),
         ).json()["access_plan"]
         app_id = self._create_app(client, "brother-personal", access_plan=plan["id"]).json()["app"]["id"]
-        app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
-            "credential"
-        ]["api_key"]
+        app_key = issue_app_key(self.db, app_id)
         stored = admin_store.find_credential_by_hash(
             hash_api_key(app_key),
             path=self.db,
@@ -495,7 +489,7 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
         app_id = self._create_app(client, "runtime-app").json()["app"]["id"]
-        client.post(f"/admin/api/apps/{app_id}/keys", json={})
+        issue_app_key(self.db, app_id)
         snapshot = self.store.dashboard_snapshot(
             AdminContext(
                 subject="svc_test",

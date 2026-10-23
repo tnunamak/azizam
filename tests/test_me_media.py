@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from tests.support.app_keys import accountable_person
 import json
 import shutil
 import sqlite3
@@ -66,16 +67,14 @@ class MeMediaRouterTests(unittest.TestCase):
             app_id=self.app_a["id"],
             hash="sha256:alice",
             prefix="test_alice",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         self.cred_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app_b["id"],
             app_id=self.app_b["id"],
             hash="sha256:bob",
             prefix="test_bob",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_b["id"]))
         self.current_user = self.alice
         app = FastAPI()
         app.include_router(
@@ -735,13 +734,11 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIsNotNone(user_principal)
         retired = admin_store.create_credential_hash(
             subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
-            hash="sha256:alice-retired", prefix="test_retired", path=self.admin_db,
-        )
+            hash="sha256:alice-retired", prefix="test_retired", path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         admin_store.revoke_credential(retired["id"], path=self.admin_db)
         admin_store.create_credential_hash(
             subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
-            hash="sha256:alice-current", prefix="test_current", path=self.admin_db,
-        )
+            hash="sha256:alice-current", prefix="test_current", path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         admin_store.create_credential_hash(
             subject_kind="user", subject_id=self.alice["id"],
             hash="sha256:alice-personal", prefix="test_personal", path=self.admin_db,

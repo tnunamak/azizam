@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch } from "@/lib/api";
+import {
+  accountApi,
+  administratorsToConfirm,
+  hasAdministrators,
+  type AdministratorsOnRecord,
+  type KeepOptions,
+} from "@/lib/account-api";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
 export interface TrustedAddress {
   id: string;
@@ -21,10 +30,23 @@ export interface TrustedAddress {
   address: string;
   note: string | null;
   created_at: number;
+  /** Null when the address was made before its creator was recorded. */
+  created_by: string | null;
+  /** Present only when the cut-over would remove the address: keep it, or add it again. */
+  cutover?: "keep" | "readd";
+  /** The administrators on record who could also have added it. Keeping it asks the owner to confirm them first. */
+  administrators?: AdministratorsOnRecord;
+  /** The person recorded as its maker, when that is another person. */
+  made_by_name?: string;
 }
 
 const listPath = (appId: string) =>
   `/admin/api/apps/${encodeURIComponent(appId)}/trusted-addresses`;
+
+/** What to show for a failed change: the gateway's words, or the fallback. */
+function messageOf(caught: unknown, fallback: string): string {
+  return caught instanceof Error && caught.message ? caught.message : fallback;
+}
 
 /** An owner trusts a device, or a range of them, to use one app with no
  * key. The app's access plan still limits what it can do. */
@@ -32,16 +54,21 @@ export function TrustedAddressesDialog({
   app,
   appName,
   onClose,
+  onChanged,
 }: {
   app: { id: string } | null;
   appName: string;
   onClose: () => void;
+  /** An address was kept or added again: the account's Apps list shows the new count. */
+  onChanged: () => void;
 }) {
   const queryClient = useQueryClient();
   const [address, setAddress] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keptId, setKeptId] = useState<string | null>(null);
+  const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   const appId = app?.id ?? "";
   const key = ["admin", "app-trusted-addresses", appId];
   const { data, isPending, isError } = useQuery({
@@ -70,6 +97,14 @@ export function TrustedAddressesDialog({
     }
   }
 
+  // After a keep the entry's Keep button is gone, so focus its Remove button once the change has settled.
+  useEffect(() => {
+    if (keptId !== null && !busy) {
+      document.getElementById(`remove-address-${keptId}`)?.focus();
+      setKeptId(null);
+    }
+  }, [keptId, busy]);
+
   async function add(event: FormEvent) {
     event.preventDefault();
     const saved = await change(() =>
@@ -81,6 +116,77 @@ export function TrustedAddressesDialog({
     if (saved) {
       setAddress("");
       setNote("");
+    }
+  }
+
+  // A keep that administrators on record could also have made waits for the owner's confirmation. The gateway may ask
+  // for it too, when the list this dialog holds is stale.
+  async function keep(entry: TrustedAddress) {
+    if (entry.administrators && hasAdministrators(entry.administrators)) {
+      setKeepConfirmation({ id: entry.id, what: "address", administrators: entry.administrators });
+      return;
+    }
+    await keepNow(entry.id, {});
+  }
+
+  async function keepNow(entryId: string, options: KeepOptions) {
+    setBusy(true);
+    setError(null);
+    try {
+      await accountApi.keepTrustedAddress(appId, entryId, options);
+      await queryClient.invalidateQueries({ queryKey: key });
+      setKeptId(entryId);
+      onChanged();
+      toast.success("Address kept");
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      if (administrators !== null) {
+        setKeepConfirmation({ id: entryId, what: "address", administrators });
+      } else {
+        setError(messageOf(caught, "The address could not be kept. Try again."));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The owner confirmed the administrators. A failure rejects, so the dialog stays open with the reason in it.
+  async function confirmKeep(confirmation: KeepConfirmation) {
+    try {
+      await accountApi.keepTrustedAddress(appId, confirmation.id, { confirmed: true });
+    } catch (caught) {
+      const administrators = administratorsToConfirm(caught);
+      setKeepConfirmation({
+        ...confirmation,
+        administrators: administrators ?? confirmation.administrators,
+        error:
+          administrators !== null
+            ? "The administrators changed. Read them again, then keep it."
+            : messageOf(caught, "The address could not be kept. Try again."),
+      });
+      throw caught;
+    }
+    await queryClient.invalidateQueries({ queryKey: key });
+    setKeptId(confirmation.id);
+    onChanged();
+    toast.success("Address kept");
+  }
+
+  // One call: the gateway replaces the old entry with the same address, made by this person, in one transaction. A
+  // failure leaves the old entry in place, so the list still shows it. Focus moves to the new entry's Remove button.
+  async function addAgain(entry: TrustedAddress) {
+    setBusy(true);
+    setError(null);
+    try {
+      const readded = await accountApi.readdTrustedAddress(appId, entry.id);
+      await queryClient.invalidateQueries({ queryKey: key });
+      setKeptId(readded.trusted_address.id);
+      onChanged();
+      toast.success("Address added again");
+    } catch (caught) {
+      setError(messageOf(caught, "The address could not be added again. Try again."));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -129,21 +235,59 @@ export function TrustedAddressesDialog({
                       {entry.note}
                     </span>
                   ) : null}
+                  {entry.cutover === "keep" ? (
+                    <span className="text-muted-foreground text-meta block">
+                      Made before Azizam recorded who made addresses. Keep it, or
+                      it stops working at the next ownership update.
+                    </span>
+                  ) : null}
+                  {entry.cutover === "readd" ? (
+                    <span className="text-muted-foreground text-meta block">
+                      {entry.made_by_name
+                        ? `Made by ${entry.made_by_name}.`
+                        : "Made before Azizam recorded who made addresses."}{" "}
+                      It stops working at the next ownership update. Add it again
+                      yourself to keep it.
+                    </span>
+                  ) : null}
                 </span>
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  aria-label={`Remove ${entry.address}`}
-                  onClick={() =>
-                    void change(() =>
-                      adminFetch(`${listPath(appId)}/${entry.id}`, {
-                        method: "DELETE",
-                      }),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
+                <div className="flex shrink-0 gap-2">
+                  {entry.cutover === "keep" ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      aria-label={`Keep address ${entry.address}`}
+                      onClick={() => void keep(entry)}
+                    >
+                      Keep
+                    </Button>
+                  ) : null}
+                  {entry.cutover === "readd" ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      aria-label={`Add address ${entry.address} again`}
+                      onClick={() => void addAgain(entry)}
+                    >
+                      Add again
+                    </Button>
+                  ) : null}
+                  <Button
+                    id={`remove-address-${entry.id}`}
+                    variant="outline"
+                    disabled={busy}
+                    aria-label={`Remove ${entry.address}`}
+                    onClick={() =>
+                      void change(() =>
+                        adminFetch(`${listPath(appId)}/${entry.id}`, {
+                          method: "DELETE",
+                        }),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -195,6 +339,14 @@ export function TrustedAddressesDialog({
             </Button>
           </DialogFooter>
         </form>
+        <KeepConfirmDialog
+          confirmation={keepConfirmation}
+          onClose={() => setKeepConfirmation(null)}
+          onConfirm={async () => {
+            if (keepConfirmation) await confirmKeep(keepConfirmation);
+          }}
+          fallbackFocus={() => [document.getElementById(`remove-address-${keepConfirmation?.id ?? ""}`)]}
+        />
       </DialogContent>
     </Dialog>
   );

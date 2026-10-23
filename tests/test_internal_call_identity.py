@@ -11,6 +11,7 @@ whose request they served.
 from __future__ import annotations
 
 import ipaddress
+from tests.support.app_keys import accountable_person
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,8 +50,8 @@ class InternalCallIdentityTests(unittest.IsolatedAsyncioTestCase):
                                             access_plan=plan["id"], path=self.admin)
         self.kitchen = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner["id"],
                                               access_plan=plan["id"], path=self.admin)
-        admin_store.add_trusted_address(self.local["id"], "127.0.0.1", max_entries=10, path=self.admin)
-        admin_store.add_trusted_address(self.kitchen["id"], "192.0.2.7", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(self.local["id"], "127.0.0.1", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, self.local["id"]))
+        admin_store.add_trusted_address(self.kitchen["id"], "192.0.2.7", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, self.kitchen["id"]))
         patcher = patch.object(proxy.ADMIN_STORE, "path", self.admin)
         patcher.start()
         self.addCleanup(patcher.stop)

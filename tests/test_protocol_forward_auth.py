@@ -10,6 +10,7 @@ member key. Keys are minted and revoked in a real admin store.
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 
 import httpx
 import pytest
@@ -129,8 +130,7 @@ def test_frontend_chat_reaches_chat_through_the_loopback_once(gateway):
     key = "frontend-only-key"
     admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"],
-        hash=hash_api_key(key), prefix="frontend", path=db,
-    )
+        hash=hash_api_key(key), prefix="frontend", path=db, created_by=accountable_person(db, app["id"]))
     path, body, scenario = FRONTENDS["chat"]
     litellm = serve(scenario, model=body["model"], key_prefix=hash_api_key(key)[:18])
 

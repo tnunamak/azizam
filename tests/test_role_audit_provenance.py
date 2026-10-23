@@ -1,5 +1,6 @@
 """Role changes commit their audit evidence and preserve the real actor."""
 import sqlite3
+from tests.support.app_keys import accountable_person
 
 import pytest
 
@@ -57,7 +58,7 @@ def test_new_app_credential_for_suspended_owner_cannot_authenticate(db):
     store = AdminSQLiteStore(db)
     user = admin_store.upsert_oidc_user('fixture', 'suspended', path=store.path)
     app = admin_store.create_app(kind='personal', name='fixture', owner_user_id=user['id'], access_plan="person", path=store.path)
-    admin_store.create_credential_hash(subject_kind='app', subject_id=app['id'], app_id=app['id'], hash='fixture-key-hash', prefix='fixture', path=store.path)
+    admin_store.create_credential_hash(subject_kind='app', subject_id=app['id'], app_id=app['id'], hash='fixture-key-hash', prefix='fixture', path=store.path, created_by=accountable_person(store.path, app['id']))
     assert runtime_identity_for_app_credential_hash('fixture-key-hash', path=store.path) is not None
     with admin_store._conn(store.path) as conn:
         conn.execute('UPDATE account_access SET disabled_at = ? WHERE user_id = ?', (123, user['id']))

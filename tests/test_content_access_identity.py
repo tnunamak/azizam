@@ -4,6 +4,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import proxy
+from tests.support.app_keys import accountable_person
 from gateway import accounts, admin_runtime, admin_store, me_media
 from gateway.content_access import ChatRecord, ContentOrigin, CreationRecord, Deny, Own, Viewer, decide
 from gateway.runtime_auth import hash_api_key
@@ -47,7 +48,7 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
     for app in (personal, service, session_app):
         assert f"app:{app['id']}" in browser.owner_keys
     for app, address in ((service, "192.0.2.7"), (personal, "192.0.2.8")):
-        admin_store.add_trusted_address(app["id"], address, max_entries=32, path=db)
+        admin_store.add_trusted_address(app["id"], address, max_entries=32, path=db, created_by=accountable_person(db, app["id"]))
         trusted_identity = admin_runtime.runtime_identity_for_trusted_address(ip_address(address), path=db)
         trusted = viewer_from_auth(trusted_identity, path=db)
         assert trusted.auth_kind == "trusted_address"

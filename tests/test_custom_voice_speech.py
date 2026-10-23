@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import copy
 import json
 import tempfile
@@ -371,7 +372,7 @@ class RevocationOwnershipTests(CustomVoiceRouteCase):
         store = AdminSQLiteStore(db)
         account = admin_store.ensure_service_account("svc", path=db)
         app = service_app("svc-app", path=db)
-        credential = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="hash-1", prefix="opk", path=db)
+        credential = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="hash-1", prefix="opk", path=db, created_by=accountable_person(db, app["id"]))
         seen = []
         store.on_credential_revoked = lambda record: seen.append(record.get("hash"))
         store.revoke_credential(credential_id=credential["id"], actor=AdminContext(subject="t", roles=frozenset({"owner"})))

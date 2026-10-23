@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -239,11 +239,17 @@ from gateway.user_runtime import (
     ensure_try_session_key,
     get_user_app_credential,
     get_user_receipt,
+    add_user_trusted_address,
+    adopt_user_app_key,
+    adopt_user_trusted_address,
     mint_user_app_key,
+    readd_user_trusted_address,
+    remove_user_trusted_address,
     rename_person_app,
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
 )
@@ -12898,9 +12904,39 @@ def _retry_prompt_deadline_repair() -> None:
         _PROMPT_DEADLINE_REPAIR_PENDING = False
 
 
+def _release_late_hold(acquisition: asyncio.Future, path: Path) -> None:
+    """Release a hold that landed after its start-up was cancelled: no lifespan is left to release it."""
+    if not acquisition.cancelled() and acquisition.exception() is None:
+        gateway_lifetime.release(path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """App lifespan manager."""
+    """The gateway's run, with the lifetime lock on its database held around the start-up and the shutdown.
+
+    Every launcher passes through here: ``python proxy.py``, ``uvicorn proxy:app`` and a test gateway that enters it.
+    The lock is re-entrant per process, and it is released when the last lifespan on this database exits (owner
+    visibility step 2, design §8.1).
+    """
+    path = ADMIN_STORE.path
+    # Waits while the cut-over holds the file exclusively. The worker thread keeps waiting after a cancelled await, so the
+    # wait is a task that the shield keeps running: a hold that lands after the cancel is released by the callback.
+    acquisition = asyncio.create_task(asyncio.to_thread(gateway_lifetime.hold, path))
+    try:
+        await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        acquisition.add_done_callback(lambda done: _release_late_hold(done, path))
+        raise
+    try:
+        async with _serve(app):
+            yield
+    finally:
+        gateway_lifetime.release(path)
+
+
+@asynccontextmanager
+async def _serve(app: FastAPI):
+    """The start-up and shutdown of the stores, workers and background tasks."""
     # The retention defaults are data (registry/retention.yml); without a valid file the gateway has none.
     await asyncio.to_thread(retention.require_bundled)
     # Ownership and history stores must be ready before any worker can write.
@@ -15614,8 +15650,13 @@ def _require_user_session(request: Request):
 def _user_action_response_error(exc: UserPortalError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
+        content={"error": {"code": exc.code, "message": exc.message, **exc.details}},
     )
+
+
+def _confirms_administrators(body: Any) -> bool:
+    """The owner's confirmation that the administrators on record could have made the binding: a JSON ``true``, nothing else."""
+    return isinstance(body, Mapping) and body.get("confirm_admins_could_have_made_it") is True
 
 
 def _require_user_action_header(request: Request, session) -> JSONResponse | None:
@@ -16703,6 +16744,150 @@ async def user_portal_mint_key(app_id: str, request: Request):
     )
 
 
+@app.post("/me/api/apps/{app_id}/trusted-addresses", include_in_schema=False)
+async def user_portal_add_trusted_address(app_id: str, request: Request):
+    """Trust a client address for an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = add_user_trusted_address(
+            session, app_id, body if isinstance(body, Mapping) else {}, path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_key(credential_id: str, request: Request):
+    """Keep an unproven key on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        credential = adopt_user_app_key(
+            session, credential_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Keep an unproven trusted address on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = adopt_user_trusted_address(
+            session, app_id, entry_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd", include_in_schema=False)
+async def user_portal_readd_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Add an unkept trusted address again on an App the signed-in person answers for, in one step (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        readded = readd_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=readded,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.delete("/me/api/apps/{app_id}/trusted-addresses/{entry_id}", include_in_schema=False)
+async def user_portal_remove_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Remove a trusted address from an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        record = remove_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/replace", include_in_schema=False)
+async def user_portal_replace_key(credential_id: str, request: Request):
+    """Replace an App key the signed-in person answers for with a new key on the same App (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        payload = replace_user_app_key(session, credential_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
 @app.post("/me/api/try-key", include_in_schema=False)
 async def user_portal_try_key(request: Request):
     """Reuse or mint the Try page's key for this sign-in session."""
@@ -17763,28 +17948,12 @@ async def setup_create_first_app(request: Request):
                 path=ADMIN_STORE.path,
             )
         else:
-            app_record = ADMIN_STORE.create_app(
-                data={"name": app_name, "kind": "service", "access_plan": "person"},
-                actor=actor,
-            )
-            credential = ADMIN_STORE.create_credential(
-                app_id=str(app_record["id"]),
-                data={"label": key_label},
-                actor=actor,
-            )
-            admin_store.record_audit(
-                "setup.first_app_key",
-                actor_kind=actor.actor_kind,
-                actor_id=actor.audit_actor_id,
-                actor_label=actor.actor_label,
-                target_kind="credential",
-                target_id=str(credential.get("id") or ""),
-                metadata={
-                    "via": "setup_page",
-                    "app_id": app_record.get("id"),
-                    "prefix": credential.get("prefix"),
-                },
-                path=ADMIN_STORE.path,
+            # A control-plane key answers for no person, so it cannot issue an App's first key (owner
+            # visibility step 2). The owner signs in and makes the App from their own session.
+            return await _setup_page_response(
+                request,
+                app_error="Sign in as the person this App will answer for. A control-plane key cannot add a key to an App.",
+                status_code=403,
             )
     except UserPortalError as e:
         return await _setup_page_response(

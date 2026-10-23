@@ -410,12 +410,10 @@ test.describe("Keys", () => {
     await ctx.close();
   });
 
-  test("a key the owner makes for someone else's App is not remembered", async ({
+  test("the owner cannot make a key for someone else's App", async ({
     browser,
     baseURL,
   }) => {
-    // The web UI has no owner form for this; the gateway's answer is what
-    // any such form shows (keyPromptNote, unit-tested).
     const { ctx, page } = await as(browser, seed.owner_email, baseURL!);
     const session = await (await page.request.get("/admin/api/session")).json();
     const apps = await (await page.request.get("/admin/api/apps")).json();
@@ -430,9 +428,9 @@ test.describe("Keys", () => {
         headers: { "x-azizam-csrf": session.actor.csrf_token },
       },
     );
-    expect(minted.ok()).toBe(true);
-    const { credential } = await minted.json();
-    expect(credential.prompt_memory.person_id).toBeNull();
+    // Only the App's accountable person may add its keys (owner visibility step 2).
+    expect(minted.status()).toBe(403);
+    expect((await minted.json()).error.code).toBe("not_your_app");
     await ctx.close();
   });
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from tests.support.app_keys import accountable_person
 import sys
 import tempfile
 import threading
@@ -132,8 +133,7 @@ class RequestHotpathTests(unittest.TestCase):
             hash=f"hash-{app['id']}",
             prefix="opk_test",
             expires_at=expires_at,
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app["id"]))
         return app, credential
 
     def test_auth_observes_plan_app_and_credential_changes_on_next_lookup(self) -> None:
@@ -269,8 +269,11 @@ class RequestHotpathTests(unittest.TestCase):
 
         user = admin_store.upsert_oidc_user("issuer", "guarded", email="g@example.test", path=self.db)
         app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=self.db)
+        from tests.support.app_keys import unguarded
+
+        unguarded(self.db)  # A key written before the guards existed.
         conn = sqlite3.connect(self.db)
-        try:  # A key written before the guard existed.
+        try:
             conn.execute("DROP TRIGGER IF EXISTS credentials_never_on_session_apps")
             conn.execute(
                 "INSERT INTO credentials(id, subject_kind, subject_id, app_id, hash, prefix, created_at) "

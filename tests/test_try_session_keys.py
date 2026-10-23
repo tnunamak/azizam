@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from tests.support.app_keys import accountable_person
 from contextlib import closing
 from types import SimpleNamespace
 
@@ -114,7 +115,7 @@ def test_upgrade_revokes_unbound_try_keys_once(member):
     other_app = admin_store.create_app("Laptop", kind="personal", owner_user_id=member.user["id"], access_plan="person", path=member.db)
     def key(app, name, secret):
         return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(secret),
-                                                  prefix="opk_test", display_name=name, path=member.db)["id"]
+                                                  prefix="opk_test", display_name=name, path=member.db, created_by=accountable_person(member.db, app["id"]))["id"]
     stale = key(try_app, "Try session", "opk_stale")
     kept_on_try = key(try_app, "Script", "opk_script")
     kept_elsewhere = key(other_app, "Try session", "opk_laptop")

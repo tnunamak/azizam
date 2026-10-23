@@ -480,8 +480,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             prefix=f"fixture_{slug}",
             display_name="Desktop" if slug == "codex" else "Household app key",
             now=now - (45 - index) * 86400,
-            path=paths["admin"],
-        )
+            path=paths["admin"], created_by=app["owner_user_id"])
         if slug != "telegram":
             admin_store.touch_credential_last_used(
                 cred["id"], now=now - index * 3600, path=paths["admin"]
@@ -500,7 +499,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             (now - 4 * 86400, people["casey"]["id"]),
         )
         conn.execute(
-            "UPDATE credentials SET last_used_at=?,revoked_at=? WHERE app_id=?",
+            # Keys already revoked by disabling their person keep that revocation; a key is revoked once.
+            "UPDATE credentials SET last_used_at=?,revoked_at=COALESCE(revoked_at,?) WHERE app_id=?",
             (now - 4 * 86400, now - 3 * 86400, apps["casey"]["id"]),
         )
         conn.execute(

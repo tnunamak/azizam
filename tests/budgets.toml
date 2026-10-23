@@ -226,7 +226,20 @@
 # A3 follow-ups in tests/test_remembered_people.py: +4 cases for the "you" mark on the signed-in person's entry, +1 for a
 # forgotten single sign-on tile (the unknown-tile case changed in place), +5 for the remembered-list read cap (default,
 # gateway setting, invalid settings). collect-only 16067 -> 16077.
-pytest = 16077
+# Owner visibility step 2 (App-binding authority, guards, preview, /me trusted addresses): collect-only 16077 -> 16119.
+# Step 2 finished (pre-cut-over mode and its back-fill tests, accept and apply, /me keep routes, the e2e owner seed): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16174.
+# Step 2 security review fixes (keep only by the owner and only when provable, replace, the /me address removal, the
+# lifetime lock, orphaned bindings, the guard on App-key secret and expiry, the fresh-install marker, the probes as plain
+# assertions): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16219.
+# Owner visibility step 2, round 4 (the keep rule with administrator confirmation, /me misses, the address removal's
+# audit, the lifespan lock): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16245.
+# Keep UI round 3 (the one-step re-add route and its freeze entries, the keep confirmation, one keep rule for the
+# Keep UI round 3 (the one-step re-add route and its freeze entries, the keep confirmation, one keep rule for the
+# cut-over snapshot): collect-only 16245 -> 16265, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Owner visibility step 2, round 5 (the lifetime hold released when start-up is cancelled, one ownership-scoped key
+# lookup, and the counted administrators with their sentence): +1 lifetime, +2 lookup-shape, +1 key-count message,
+# +8 sentence cases. collect-only 16265 -> 16277, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+pytest = 16277
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -239,8 +252,24 @@ pytest = 16077
 # W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
 # confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
 # playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
-vitest = 3188
-playwright = 515
+# Keep UI on the Apps page: +8 cases in src/app/apps/keep.spec.tsx and +4 in src/lib/account-api.spec.ts (the keep
+# route and its headers, and the sign-in confirmation). Vitest list measured 3200 on 2026-10-23.
+# Keep UI round 2: keep.spec.tsx 8 -> 19 (replace, its failures and sign-in wait, add-again order and its failures),
+# account-api.spec.ts 7 -> 13 (replace and the two address calls, with the sign-in retry), page.spec.tsx 2 -> 4 (the
+# personal row's one replacement, and a keepable key gets no row button). Full run: 217 files, 3219 cases, all passed.
+# Keep UI round 3: keep.spec.tsx 19 -> 26 (the confirmation path for a key and an address, the stale 409, a failed
+# confirmed keep, and the one-step re-add), account-api.spec.ts 13 -> 17 (the confirmation body, the readd call, and
+# administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
+# Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
+# administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
+vitest = 3232
+# Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
+# gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
+# Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
+# playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
+# Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
+# playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
+playwright = 525
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

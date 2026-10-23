@@ -41,6 +41,11 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/admin/api/apps/*/keys"),
     # The same keys made for oneself, and the first key the setup page makes.
     ("POST", "/me/api/apps/*/keys"),
+    ("POST", "/me/api/apps/*/trusted-addresses"),
+    ("POST", "/me/api/credentials/*/adopt"),
+    ("POST", "/me/api/credentials/*/replace"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/adopt"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/readd"),
     ("POST", "/setup/first-app"),
     # A trusted address lets a device in with no key; an extension package can read this computer.
     ("POST", "/admin/api/apps/*/trusted-addresses"),

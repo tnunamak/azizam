@@ -31,9 +31,10 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
-from gateway import request_connections, secret_store, session_guard
+from gateway import app_binding_guard, request_connections, secret_store, session_guard
 from gateway import retention as retention_contract
 from gateway.compat import get_env
+from gateway.receipt_context import person_label
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
 import json
@@ -431,6 +432,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(ACCOUNT_SCHEMA)
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    # A new database has no bindings to prove, so it takes the App-binding guards after every migration.
+    # An existing database waits for the ownership cut-over (gateway/app_binding_guard.py).
+    fresh = row is None
     role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
     # Claims stored before v4 folded case and path separators, so they could
     # match a mapping the person is not in. Sign-in stores exact claims again.
@@ -535,6 +539,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     # Both branches allocated schema 11 independently. A named receipt makes each
     # migration run once even on a database already stamped 11 by either branch.
     conn.execute("CREATE TABLE IF NOT EXISTS schema_migration_steps (name TEXT PRIMARY KEY)")
+    if fresh:
+        # Committed with the schema below, so a start that dies before the guards are installed installs them next time.
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (app_binding_guard.PENDING_INSTALL,))
     for name in ("secret-references-v11", "hop-timeout-v11"):
         if row is not None and int(row[0]) >= _SECRET_REFS_VERSION and conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
             continue
@@ -562,7 +569,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
-    _backfill_credential_creators(conn)
+    # Until the ownership cut-over is applied, live App keys keep the person the audit log proves for them.
+    # Afterwards the guards hold creators fixed, so the back-fill never runs again (gateway/app_binding_guard.py).
+    if not fresh and not app_binding_guard.recorded(conn) and not app_binding_guard.install_pending(conn):
+        _backfill_credential_creators(conn)
     current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if int(current[0]) == _PRE_ACCESS_PLANS_VERSION:
         _migrate_to_access_plans(conn)
@@ -570,6 +580,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA)
         conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
     conn.executescript(_ACCESS_PLAN_DDL)
+    # A fresh or cut-over database keeps the release's guards in place on every start. Any other database
+    # runs in pre-cut-over mode: it starts, and the notice says what the cut-over would do.
+    if fresh or app_binding_guard.recorded(conn) or app_binding_guard.install_pending(conn):
+        app_binding_guard.install(conn)
+    else:
+        print(app_binding_guard.PENDING_NOTICE, flush=True)
 
 
 def access_plans_backup_path(path: Path) -> Path:
@@ -630,6 +646,7 @@ def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
 
     Audit lookup runs outside the write transaction. Unknown makers stay NULL;
     a recorded actor other than the App owner explicitly loses person scope.
+    Runs only before the ownership cut-over (gateway/app_binding_guard.py).
     """
     cursor = ""
     resolved = 0
@@ -2131,17 +2148,403 @@ def add_trusted_address(
 
 def delete_trusted_address(
     app_id: str, entry_id: str, *, path: Path = DB_PATH,
+    session: session_guard.BrowserSession | None = None, audit: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Remove one entry; the address stops being trusted at once. None if absent."""
+    """Remove one entry; the address stops being trusted at once. None if absent.
+
+    With ``audit`` (``action``, ``actor_kind``, ``actor_id``), the audit event is written in the same transaction as the
+    removal, so a removal never happens without its event. ``session`` is checked in that transaction, as for adds.
+    """
+    ts = _now()
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
         row = conn.execute(
             "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
         ).fetchone()
         if row is None:
+            conn.rollback()
             return None
         conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        if audit is not None:
+            _record_audit_in_transaction(
+                conn, audit["action"], actor_kind=audit["actor_kind"], actor_id=audit["actor_id"], actor_label=None,
+                target_kind="app", target_id=app_id, metadata={"address": row["address"], "entry_id": entry_id}, now=ts,
+            )
         conn.commit()
     return _row_to_dict(row)
+
+
+def readd_trusted_address(
+    app_id: str, entry_id: str, *, created_by: str, audit: Mapping[str, Any],
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Remove one entry and add its address again, made by ``created_by``, in one transaction.
+
+    An App holds each address once, so the removal has to come before the add. The note carries over. The sign-in
+    (``session``) is checked, and the audit event (``audit``: ``action``, ``actor_kind``, ``actor_id``) is written, in
+    the same transaction, so a failed step leaves the old entry in place. Returns ``{"trusted_address": the new entry,
+    "replaced_entry_id": entry_id}``, or None when the App has no such entry.
+    """
+    ts = _now() if now is None else int(now)
+    new_id = _gen_id("tad")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        conn.execute(
+            "INSERT INTO app_trusted_addresses(id, app_id, address, note, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id, app_id, row["address"], row["note"], ts, created_by),
+        )
+        _record_audit_in_transaction(
+            conn, audit["action"], actor_kind=audit["actor_kind"], actor_id=audit["actor_id"], actor_label=None,
+            target_kind="app", target_id=app_id,
+            metadata={"address": row["address"], "entry_id": new_id, "replaced_entry_id": entry_id}, now=ts,
+        )
+        conn.commit()
+        created = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (new_id,)).fetchone()
+    return {"trusted_address": _row_to_dict(created), "replaced_entry_id": entry_id}
+
+
+class KeepNotProvable(ValueError):
+    """A binding nobody else could have made is kept by the owner only. Any other binding is replaced, or added again."""
+
+
+class KeepNeedsConfirmation(ValueError):
+    """The owner keeps an unproven binding only after confirming that the administrators on record could have made it."""
+
+    def __init__(self, administrators: Mapping[str, Any]) -> None:
+        super().__init__("administrators on record could also have made this binding")
+        self.administrators = dict(administrators)
+
+
+# What the owner does with one App key or trusted address through the ownership cut-over (D55). ``keep``: the binding is
+# the person's, or can be kept now. ``replace`` (a key) and ``readd`` (an address): nobody can prove it, so it is issued or added again.
+KEEP, REPLACE, READD = "keep", "replace", "readd"
+
+
+def _sole_current_owner(conn: sqlite3.Connection, person_id: str) -> bool:
+    """True when ``person_id`` holds the owner role now and no other person does.
+
+    Before the cut-over the owner role could issue a key or an address on any App, so only the sole current holder can
+    stand behind the owner's own binding. A service account with the owner role is the owner's control-plane key and does
+    not count. A revoked grant does not count either: ``keep_administrators`` names or counts its holder instead.
+    """
+    holders = {row[0] for row in conn.execute(
+        "SELECT DISTINCT subject_id FROM admin_role_assignments "
+        "WHERE role = 'owner' AND subject_kind = 'user' AND revoked_at IS NULL")}
+    return holders == {person_id} and conn.execute(
+        "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' AND subject_kind = 'user' AND subject_id = ? "
+        "AND scope_app_id IS NULL AND revoked_at IS NULL", (person_id,),
+    ).fetchone() is not None
+
+
+def _accountable_person_changed(conn: sqlite3.Connection, app_id: str, person_id: str) -> bool:
+    """True when an audit event shows this App's accountable person changing away from ``person_id``.
+
+    An event on the App counts when its metadata names another ``owner_user_id``. The schema-7 migration writes one
+    report that names each App whose accountable person it rewrote.
+    """
+    for (metadata,) in conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE target_kind = 'app' AND target_id = ?", (app_id,),
+    ).fetchall():
+        owner = json.loads(metadata or "{}").get("owner_user_id")
+        if owner is not None and owner != person_id:
+            return True
+    for (metadata,) in conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE target_kind = 'admin_db' AND target_id = 'schema-7' "
+        "AND action = 'access_plans.migrate'",
+    ).fetchall():
+        apps = json.loads(metadata or "{}").get("apps", [])
+        if any(entry.get("id") == app_id and entry.get("accountable") for entry in apps):
+            return True
+    return False
+
+
+def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> dict[str, Any]:
+    """Who held the admin, superadmin or owner role at any time, other than ``person_id``, for the owner to confirm.
+
+    Each could have issued a key or an address on any App before the cut-over, so the owner confirms them before keeping
+    an unproven binding. ``people`` holds each person's display name, sorted. A person with no display name, or one whose
+    name is an email address (as ``owner_display_name`` does), counts in ``unnamed_people``. ``admin_keys`` counts the
+    control-plane keys (service accounts) that held the admin or superadmin role, one each, and names none of them. A
+    service account that held only the owner role is the owner's control-plane key and is not counted.
+    """
+    people: list[str] = []
+    unnamed_people = 0
+    admin_keys = 0
+    for kind, subject_id in conn.execute(
+        "SELECT subject_kind, subject_id FROM admin_role_assignments "
+        "WHERE role IN ('owner', 'admin', 'superadmin') AND (subject_kind = 'user' OR role <> 'owner') "
+        "AND NOT (subject_kind = 'user' AND subject_id = ?) GROUP BY subject_kind, subject_id", (person_id,),
+    ).fetchall():
+        if kind != "user":
+            admin_keys += 1
+            continue
+        row = conn.execute("SELECT display_name FROM users WHERE id = ?", (subject_id,)).fetchone()
+        name = ((row[0] or "").strip() if row else "")
+        if name and "@" not in name:
+            people.append(name)
+        else:
+            unnamed_people += 1
+    return {"people": sorted(people, key=str.casefold), "unnamed_people": unnamed_people, "admin_keys": admin_keys}
+
+
+def _no_administrators() -> dict[str, Any]:
+    return {"people": [], "unnamed_people": 0, "admin_keys": 0}
+
+
+def administrators_to_confirm(administrators: Mapping[str, Any]) -> bool:
+    """True when the owner has someone to confirm before keeping an unproven binding."""
+    return bool(administrators["people"] or administrators["unnamed_people"] or administrators["admin_keys"])
+
+
+def administrators_sentence(administrators: Mapping[str, Any]) -> str:
+    """The administrators on record, in one line the owner reads.
+
+    Each person is named. The people with no name and the administrator keys follow as counts, and an empty part is left
+    out: "Simon Agent, 1 person with no name, and 23 administrator keys". The gateway and the web render it the same way.
+    """
+    items = list(administrators["people"])
+    unnamed = administrators["unnamed_people"]
+    if unnamed:
+        items.append(f"{unnamed} {'person' if unnamed == 1 else 'people'} with no name")
+    keys = administrators["admin_keys"]
+    if keys:
+        items.append(f"{keys} administrator {'key' if keys == 1 else 'keys'}")
+    if len(items) <= 2:
+        return " and ".join(items)
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
+
+
+def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapping[str, Any],
+                           app_id: str, person_id: str) -> dict[str, Any]:
+    """The remedy for one App key (``kind="key"``) or trusted address (``kind="address"``) through the ownership cut-over.
+
+    Returns ``{"remedy": "keep" | "replace" | "readd", "administrators": {...}}``. The remedy is ``keep`` when the binding
+    already names ``person_id`` as its creator, or can be kept now. Otherwise a key is ``replace`` and an address is
+    ``readd``. ``administrators`` (see ``keep_administrators``) is empty unless keeping an unproven binding needs the
+    owner's confirmation.
+    The keep route, the cut-over preview, and the snapshot and address lists (through ``cutover_for_bindings``) all ask
+    this one function.
+    ``binding`` needs ``id`` and ``created_by``.
+    """
+    owner = conn.execute("SELECT owner_user_id FROM apps WHERE id = ?", (app_id,)).fetchone()
+    answers = (owner is not None and owner[0] == person_id
+               and conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone() is None)
+    if answers and binding["created_by"] == person_id:
+        return {"remedy": KEEP, "administrators": _no_administrators()}
+    creations = _key_creations(conn, binding["id"]) if kind == "key" else _address_creations(conn, app_id, binding["id"])
+    # The amended keep rule (D55): the recorded creator is unknown or the person, every audit event that made the
+    # binding names the person, the person is the sole current owner, and the App never answered to anyone else.
+    proven = (
+        answers and binding["created_by"] in (None, "", person_id)
+        and all(actor_kind == "user" and actor == person_id for actor_kind, actor in creations)
+        and _sole_current_owner(conn, person_id) and not _accountable_person_changed(conn, app_id, person_id)
+    )
+    if not proven:
+        return {"remedy": REPLACE if kind == "key" else READD, "administrators": _no_administrators()}
+    return {"remedy": KEEP, "administrators": keep_administrators(conn, person_id=person_id)}
+
+
+def _keep_decision(remedy: Mapping[str, Any], *, confirmed: bool) -> None:
+    """Refuse a keep that the remedy does not allow, or that needs the owner's confirmation first."""
+    if remedy["remedy"] != KEEP:
+        raise KeepNotProvable("this binding cannot be kept")
+    if administrators_to_confirm(remedy["administrators"]) and not confirmed:
+        raise KeepNeedsConfirmation(remedy["administrators"])
+
+
+def _key_creations(conn: sqlite3.Connection, cred_id: str) -> list[tuple[str, str | None]]:
+    """The (actor kind, actor id) of every audit event that created this key."""
+    return [(row[0], row[1]) for row in conn.execute(
+        "SELECT actor_kind, actor_id FROM audit_events WHERE target_id = ? "
+        "AND target_kind IN ('credential', 'account_link') AND action IN ('credential.create', 'credential.self_create')",
+        (cred_id,),
+    ).fetchall()]
+
+
+def _address_creations(conn: sqlite3.Connection, app_id: str, entry_id: str) -> list[tuple[str, str | None]]:
+    """The (actor kind, actor id) of every audit event that added this trusted address."""
+    creations = []
+    for kind, actor, metadata in conn.execute(
+        "SELECT actor_kind, actor_id, metadata_json FROM audit_events "
+        "WHERE action = 'app.trusted_address.add' AND target_kind = 'app' AND target_id = ?", (app_id,),
+    ).fetchall():
+        if json.loads(metadata or "{}").get("entry_id") == entry_id:
+            creations.append((kind, actor))
+    return creations
+
+
+def cutover_for_bindings(
+    person_id: str | None, *, keys: Iterable[Mapping[str, Any]] = (),
+    addresses: Iterable[Mapping[str, Any]] = (), path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """The remedy each binding the App-binding cut-over would remove has, for the person it is shown to.
+
+    The cut-over keeps a key or address only when its recorded creator is the App's person (the preview in
+    gateway/app_binding_preview.py). Every other binding is removed, so each one gets the remedy that
+    ``binding_cutover_remedy`` names: ``keep`` (with the ``administrators`` to confirm, if any), ``replace`` for a key,
+    or ``readd`` for an address. A binding whose stored creator is another person also gets ``made_by_name``.
+    Bindings the person already holds are not in the result. None means no one can keep anything, so the result is
+    empty.
+
+    ``keys`` and ``addresses`` are rows with ``id``, ``app_id`` and ``created_by``.
+    """
+    if not person_id:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    creators: dict[str, str | None] = {}
+    with _conn(path) as conn:
+        for kind, rows in (("key", keys), ("address", addresses)):
+            for binding in rows:
+                if binding["created_by"] == person_id:
+                    continue
+                remedy = binding_cutover_remedy(
+                    conn, kind=kind, binding=binding, app_id=binding["app_id"], person_id=person_id,
+                )
+                out[binding["id"]] = {"cutover": remedy["remedy"], "administrators": remedy["administrators"]}
+                creators[binding["id"]] = binding["created_by"]
+    # Names are read after the connection above is closed, one lookup per creator.
+    labels: dict[str, str] = {}
+    for binding_id, creator in creators.items():
+        if creator:
+            if creator not in labels:
+                labels[creator] = person_label(get_user(creator, path=path) or {})
+            out[binding_id]["made_by_name"] = labels[creator]
+    return out
+
+
+def adopt_app_credential(
+    cred_id: str, *, app_id: str, person_id: str, confirmed_administrators: bool = False,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Make ``person_id`` the creator of a live key on ``app_id`` (owner visibility §3.5: keeping an unproven key).
+
+    Only a key nobody else could have made is kept (``KeepNotProvable`` otherwise). When administrators on record could
+    also have made it, the keep needs ``confirmed_administrators`` (``KeepNeedsConfirmation`` otherwise), and the audit
+    event names them. The sign-in is checked and the audit row is written in the same transaction as the change, so a
+    sign-out that lands first changes nothing. A key that already names the person is returned as it is and writes
+    nothing. None when no live App key with that id is on the App.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ?", (cred_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        if row["created_by"] == person_id:
+            conn.rollback()
+            return _credential_row_to_dict(row)
+        remedy = binding_cutover_remedy(conn, kind="key", binding=row, app_id=app_id, person_id=person_id)
+        try:
+            _keep_decision(remedy, confirmed=confirmed_administrators)
+        except (KeepNotProvable, KeepNeedsConfirmation):
+            conn.rollback()
+            raise
+        conn.execute("UPDATE credentials SET created_by = ? WHERE id = ?", (person_id, cred_id))
+        _record_audit_in_transaction(
+            conn, "credential.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="credential", target_id=cred_id,
+            metadata={"app_id": app_id, "prefix": row["prefix"], "previous_created_by": row["created_by"],
+                      "confirmed_administrators": remedy["administrators"]},
+            now=ts,
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
+    return _credential_row_to_dict(row)
+
+
+def adopt_trusted_address(
+    app_id: str, entry_id: str, *, person_id: str, confirmed_administrators: bool = False,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Make ``person_id`` the creator of one trusted address on ``app_id`` (owner visibility §3.5).
+
+    Same rules as ``adopt_app_credential``: only an address nobody else could have added is kept (``KeepNotProvable``),
+    an address that administrators on record could have added needs their confirmation (``KeepNeedsConfirmation``),
+    one transaction with the audit row, nothing written when the address already names the person, None when the App
+    has no such address.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        if row["created_by"] == person_id:
+            conn.rollback()
+            return _row_to_dict(row)
+        remedy = binding_cutover_remedy(conn, kind="address", binding=row, app_id=app_id, person_id=person_id)
+        try:
+            _keep_decision(remedy, confirmed=confirmed_administrators)
+        except (KeepNotProvable, KeepNeedsConfirmation):
+            conn.rollback()
+            raise
+        conn.execute("UPDATE app_trusted_addresses SET created_by = ? WHERE id = ?", (person_id, entry_id))
+        _record_audit_in_transaction(
+            conn, "app.trusted_address.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="app", target_id=app_id,
+            metadata={"address": row["address"], "entry_id": entry_id, "previous_created_by": row["created_by"],
+                      "confirmed_administrators": remedy["administrators"]},
+            now=ts,
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (entry_id,)).fetchone()
+    return _row_to_dict(row)
+
+
+def replace_app_credential(
+    cred_id: str, *, app_id: str, person_id: str, hash: str, prefix: str, display_name: str | None,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Issue a new App key for ``person_id`` on ``app_id`` and revoke ``cred_id``, in one transaction.
+
+    The new key is made the way a key from the Apps page is made: the person is its creator, the App's plan
+    applies unchanged, and it has no expiry. The sign-in is checked first, and the insert, the revoke and the
+    audit row share one transaction, so a failure leaves the old key live and no new key behind. None when no
+    live App key with that id is on the App (owner visibility §3.5).
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        old = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ?", (cred_id, app_id),
+        ).fetchone()
+        if old is None:
+            conn.rollback()
+            return None
+        record = _insert_credential_in(
+            conn, subject_kind="app", subject_id=app_id, app_id=app_id, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=None, created_by=person_id, expires_at=None, session_id=None, ts=ts,
+        )
+        revoke_credential_in(conn, cred_id, now=ts)
+        _record_audit_in_transaction(
+            conn, "credential.replace", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="credential", target_id=cred_id,
+            metadata={"app_id": app_id, "prefix": old["prefix"], "replaced_by": record["id"], "new_prefix": prefix},
+            now=ts,
+        )
+        conn.commit()
+    return record
 
 
 def enable_app(
@@ -2445,6 +2848,35 @@ def get_credential(
             "SELECT * FROM credentials WHERE id = ?", (cred_id,)
         ).fetchone()
     return _credential_row_to_dict(row) if row else None
+
+
+def person_app_credential(
+    cred_id: str, person_id: str, *, path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The live App key ``person_id`` answers for, and its App, in one ownership-scoped query (owner visibility §3.5).
+
+    The key's App is the one ``app_id`` names, or ``subject_id`` for a key that predates ``app_id``, as the session-App
+    trigger reads it. Only a key on an App the person owns counts, and a session App never does. A revoked key, a
+    control-plane key, another person's key, a key on a session App and a key whose App is gone all give None, so
+    the caller answers every one of them the same way.
+    """
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT credentials.*, apps.id AS app__id, apps.kind AS app__kind, apps.name AS app__name, "
+            "apps.owner_user_id AS app__owner_user_id, apps.access_plan AS app__access_plan, "
+            "apps.created_at AS app__created_at, apps.disabled_at AS app__disabled_at "
+            "FROM credentials JOIN apps ON apps.id = COALESCE(credentials.app_id, credentials.subject_id) "
+            "WHERE credentials.id = ? AND credentials.subject_kind = 'app' AND credentials.revoked_at IS NULL "
+            "AND apps.owner_user_id = ? "
+            "AND NOT EXISTS (SELECT 1 FROM session_apps WHERE session_apps.app_id = apps.id)",
+            (cred_id, person_id),
+        ).fetchone()
+    if row is None:
+        return None
+    credential = _credential_row_to_dict(row)
+    app_keys = [key for key in credential if key.startswith("app__")]
+    app = {key.removeprefix("app__"): credential.pop(key) for key in app_keys}
+    return credential, app
 
 
 def find_credential_by_hash(
@@ -3880,6 +4312,20 @@ __all__ = [
     "list_trusted_addresses",
     "add_trusted_address",
     "delete_trusted_address",
+    "adopt_app_credential",
+    "adopt_trusted_address",
+    "readd_trusted_address",
+    "KeepNotProvable",
+    "KeepNeedsConfirmation",
+    "KEEP",
+    "REPLACE",
+    "READD",
+    "binding_cutover_remedy",
+    "keep_administrators",
+    "administrators_to_confirm",
+    "administrators_sentence",
+    "replace_app_credential",
+    "cutover_for_bindings",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",
@@ -3923,6 +4369,7 @@ __all__ = [
     "create_admin_key_with_role",
     "revoke_credential",
     "get_credential",
+    "person_app_credential",
     "find_credential_by_hash",
     "find_oidc_user",
     "effective_admin_roles",

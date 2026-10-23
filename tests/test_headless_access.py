@@ -1,6 +1,7 @@
 """Registered-route coverage, schema stability, and real credential boundaries."""
 from __future__ import annotations
 
+import os
 import copy
 import hashlib
 import json
@@ -17,6 +18,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
 from gateway import accounts, admin_store, metrics_writer, providers, receipt_store
+from tests.support.app_keys import issue_app_key
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
@@ -246,10 +248,7 @@ def principals():
         app = case.client.post("/admin/api/apps", headers=case._auth(), json={
             "name": "auth-fixture", "access_plan": "person", "owner_user_id": accountable["id"]})
         assert app.status_code == 201, app.text
-        minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
-                                 headers=case._auth(), json={"label": "auth-fixture"})
-        assert minted.status_code == 201
-        case.app_key = minted.json()["credential"]["api_key"]
+        case.app_key = issue_app_key(case.db, app.json()["app"]["id"], label="auth-fixture")
         cookie = CookieConfig(secure=False)
         proxy.ADMIN_AUTH.signing_key = b"s" * 32
         proxy.ADMIN_AUTH.cookie = cookie
@@ -315,10 +314,21 @@ def _settle_metrics_writer():
         writer.flush()
 
 
+def _gateway_databases(root):
+    """The gateway's databases under root. Pytest's own temporary tree (tmp/) holds every earlier test's
+    databases; this probe reads the gateway's state, so it does not walk or dump that tree."""
+    found = []
+    for directory, dirnames, filenames in os.walk(root):
+        if Path(directory) == root:
+            dirnames[:] = [name for name in dirnames if name != "tmp"]
+        found.extend(Path(directory) / name for name in filenames if name.endswith(".db"))
+    return sorted(found)
+
+
 def _database_contents(root):
     _settle_metrics_writer()
     result = {}
-    for path in sorted(root.rglob("*.db")):
+    for path in _gateway_databases(root):
         try:
             with sqlite3.connect(path) as connection:
                 result[str(path)] = _digest(list(connection.iterdump()))
