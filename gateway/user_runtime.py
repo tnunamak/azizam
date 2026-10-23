@@ -24,6 +24,7 @@ from typing import Any, Callable, Mapping
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
 from gateway.content_access import Own, ReceiptRecord, Viewer, decide
+from gateway import content_makers
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
@@ -392,7 +393,11 @@ def build_user_activity_snapshot(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return recent receipts for the signed-in person's owned Apps."""
+    """Return the recent receipts the signed-in person made (D51).
+
+    Owning an App does not make its requests the owner's. The candidates are the Apps the person owns and the
+    receipts the person made, through any App. Each row is then read by its maker.
+    """
     if session is None:
         return {"authenticated": False, "receipts": []}
     try:
@@ -407,40 +412,31 @@ def build_user_activity_snapshot(
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
     user_id = str(user["id"])
     owned = _owned_app_ids(user_id, path=path)
-    viewer = Viewer(
-        person_id=user_id,
-        owner_keys=frozenset(f"app:{app_id}" for app_id in owned),
-        auth_kind="session",
-    )
-    candidates = receipt_store.recent(
-        limit=safe_limit,
-        audience="client",
-        viewer_person_id=user_id,
-        app_ids=owned,
-        path=receipts_path,
-    )
-    receipts = []
-    for receipt in candidates:
-        source = receipt.get("source")
-        app_id = source.get("app_id") if isinstance(source, Mapping) else None
-        if not isinstance(app_id, str) or not app_id:
-            continue
-        decision = decide(
-            viewer,
-            ReceiptRecord(
-                owner_keys=frozenset({f"app:{app_id}"}),
-                app_id=app_id,
-                request_id=str(receipt.get("request_id") or "") or None,
-            ),
-            "read",
+    viewer = Viewer(person_id=user_id, auth_kind="session")
+    candidates: dict[str, dict[str, Any]] = {}
+    if owned:
+        for row in receipt_store.recent(limit=safe_limit, audience="internal", app_ids=owned, path=receipts_path):
+            candidates[str(row["request_id"])] = row
+    for row in receipt_store.recent(limit=safe_limit, audience="internal", maker_person_id=user_id, path=receipts_path):
+        candidates[str(row["request_id"])] = row
+    newest = sorted(candidates.values(), key=lambda row: (row.get("_stored_at") or 0, str(row["request_id"])), reverse=True)
+    apps = content_makers.Apps(path)
+    allowed: list[str] = []
+    for row in newest[:safe_limit]:
+        app_id = str(row.get("app_id") or "") or None
+        makers = content_makers.row_makers(
+            explicit=[str(row.get("maker_person_id") or "")], app_id=app_id,
+            owner_keys=[str(row.get("owner_key_hash") or "")], apps=apps,
         )
-        if isinstance(decision, Own):
-            receipts.append(receipt)
+        record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
+        if isinstance(decide(viewer, record, "read"), Own):
+            allowed.append(str(row["request_id"]))
+    visible = receipt_store.get_many(allowed, audience="client", viewer_person_id=user_id, path=receipts_path)
     return {
         "authenticated": True,
         # No fabricated rows: an empty list means the user has made no
         # attributable calls yet (or none in the retention window).
-        "receipts": receipts,
+        "receipts": [visible[request_id] for request_id in allowed if request_id in visible],
         "scoped_app_count": len(owned),
         "scope": "me",
     }
@@ -453,64 +449,48 @@ def get_user_receipt(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return one client-safe receipt visible to the signed-in user.
+    """Return one client-safe receipt the signed-in person made.
 
-    It carries the person, App and time the Activity list shows
-    (``receipt_context``).
-
-    Owners can open the same instance-scoped receipts shown on Home and each
-    access is audited. Members stay limited to their own Apps; receipts for
-    other Apps or no App are reported as not found so existence is not disclosed.
+    It carries the person, App and time the Activity list shows (``receipt_context``). Owning an App does
+    not let its owner open a member's receipt (D51). An absent receipt and one the person may not read get
+    the same 404, so existence is not disclosed.
     """
     if session is None:
         raise UserPortalError(
             "not_authenticated", "Sign in to view this receipt", status_code=401
         )
     user = _user_from_session(session, path=path)
-
-    owner_check = receipt_store.get(
-        request_id, audience="internal", path=receipts_path
-    )
+    user_id = str(user["id"])
     not_found = UserPortalError(
         "receipt_not_found", "Receipt not found for this account", status_code=404
     )
-    if owner_check is None:
+    stored = receipt_store.get(request_id, audience="internal", path=receipts_path)
+    if stored is None:
         raise not_found
-    receipt_app_id = owner_check.get("app_id")
-    owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
-    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
-    owner = bool(owner_roles & {"owner", "superadmin"})
-    # OWNER_VISIBILITY_STEP3: delete the owner receipt-detail bypass.
-    if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
+    app_id = str(stored.get("app_id") or "") or None
+    makers = content_makers.row_makers(
+        explicit=[str(stored.get("maker_person_id") or "")], app_id=app_id,
+        owner_keys=[str(stored.get("owner_key_hash") or "")], apps=content_makers.Apps(path),
+    )
+    record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
+    if not isinstance(decide(Viewer(person_id=user_id, auth_kind="session"), record, "read"), Own):
         raise not_found
-
     found = receipt_store.get_with_created_at(
-        request_id, audience="client", viewer_person_id=str(user["id"]),
-        path=receipts_path,
+        request_id, audience="client", viewer_person_id=user_id, path=receipts_path,
     )
     if found is None:
         raise not_found
     detail, created_at = found
-    app = admin_store.get_app(receipt_app_id, path=path) if receipt_app_id else None
+    app = admin_store.get_app(app_id, path=path) if app_id else None
     app = app or {}
-    person = admin_store.get_user(str(app["owner_user_id"]), path=path) if app.get("owner_user_id") else None
+    maker = makers[0] if len(makers) == 1 else None
+    person = admin_store.get_user(maker, path=path) if maker else None
     context = receipt_context(
         detail, created_at, app=app,
         person_labels={person["id"]: person_label(person)} if person else {},
+        person_id=maker,
     )
-    detail = {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
-    if owner:
-        admin_store.record_audit(
-            "receipt.detail.instance",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("email") or user.get("display_name") or user["id"]),
-            target_kind="receipt",
-            target_id=request_id,
-            metadata={"scope": "instance", "app_id": receipt_app_id},
-            path=path,
-        )
-    return detail
+    return {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
 
 
 def mint_user_app_key(

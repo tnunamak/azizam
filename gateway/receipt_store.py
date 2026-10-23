@@ -95,6 +95,7 @@ CREATE INDEX IF NOT EXISTS receipts_app_profile ON receipts(app_profile);
 CREATE INDEX IF NOT EXISTS receipts_app_id ON receipts(app_id);
 CREATE INDEX IF NOT EXISTS receipts_job_id ON receipts(job_id);
 CREATE INDEX IF NOT EXISTS receipts_parent ON receipts(parent_request_id);
+CREATE INDEX IF NOT EXISTS receipts_maker_person ON receipts(json_extract(receipt_json, '$.maker_person_id'));
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
@@ -643,6 +644,7 @@ def recent(
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     owner_key_hashes: list[str] | None = None,
+    maker_person_id: str | None = None,
     include_null_app_id: bool = False,
     since_s: int | None = None,
     outer_only: bool = True,
@@ -685,6 +687,9 @@ def recent(
         if include_null_app_id:
             ownership.append("app_id IS NULL")
         clauses.append("(" + " OR ".join(ownership) + ")")
+    if maker_person_id is not None:
+        clauses.append("json_extract(receipt_json, '$.maker_person_id') = ?")
+        params.append(maker_person_id)
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
@@ -697,7 +702,8 @@ def recent(
     # Newest first with no owner filter: walk the created_at index and stop after `limit` rows.
     # Left to itself the planner flips between that and a full scan with a full sort on the
     # value of LIMIT (3 and 5 plan differently), so the index is named.
-    ordered = " INDEXED BY receipts_created_at" if app_ids is None and owner_key_hashes is None else ""
+    ordered = (" INDEXED BY receipts_created_at"
+               if app_ids is None and owner_key_hashes is None and maker_person_id is None else "")
 
     with _conn(path) as conn:
         query = (f"SELECT receipt_json, created_at FROM receipts{ordered}{where} "

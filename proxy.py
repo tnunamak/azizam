@@ -14206,13 +14206,16 @@ def _gateway_record_scope(request: Request) -> dict[str, Any]:
 
 
 def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
+    from gateway import content_makers
+    from gateway.content_access import viewer_from_auth
     from gateway.record_ownership import owns_record
     auth_context = _auth_context_from_scope(request)
-    identity = auth_context.identity
-    return owns_record(
-        kind, record, app_id=identity.app_id if identity else None,
-        owner_keys=_asset_read_owner_keys(auth_context),
-    )
+    # One App reader per request: the authorizer runs once per row of a page.
+    apps = getattr(request.state, "record_apps", None)
+    if apps is None:
+        apps = content_makers.Apps(ADMIN_STORE.path)
+        request.state.record_apps = apps
+    return owns_record(kind, record, viewer=viewer_from_auth(auth_context, owner_keys=()), apps=apps)
 
 
 async def _gateway_media_job_submitter(

@@ -1,40 +1,40 @@
-"""Authorize receipts and media jobs by immutable, trusted ownership.
+"""Authorize receipts and media jobs by their maker (D51, D52).
 
-Visibility is not authorization. Shared plans, names, client-supplied parent
-receipt IDs, and asset references cannot prove who submitted a job. Historical
-records without trusted App/key attribution fail closed for scoped callers.
+Visibility is not authorization. Owning an App does not make its receipts or jobs the owner's. A row is
+read by the person who made it, or by its App's own credential when it has no person. Historical records
+without trusted attribution fail closed for delegated callers.
 """
 from collections.abc import Mapping
 from typing import Any
-from functools import lru_cache
 
-from gateway.content_access import Viewer, decide_own, viewer_from_auth
-from gateway.runtime_auth import RuntimeIdentity
-
-
-@lru_cache(maxsize=256)
-def _scope_viewers(app_id: str | None, key_hash: str | None, owner_keys: tuple[str, ...]) -> tuple[Viewer, Viewer]:
-    """Cache only trusted scope inputs, never content rows or policy decisions."""
-    # These inputs carry only a trusted principal scope, not person authority.
-    identity = RuntimeIdentity(name="", key_hash=key_hash or "", app_id=app_id)
-    return (viewer_from_auth(identity, owner_keys=(f"app:{app_id}",) if app_id else ()),
-            viewer_from_auth(identity, owner_keys=(*owner_keys, *([key_hash] if key_hash else []))))
+from gateway import receipt_store
+from gateway.content_access import ContentOrigin, JobRecord, Own, ReceiptRecord, Viewer, decide
+from gateway.content_makers import Apps, job_receipt_ids, row_makers
 
 
-def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
-                key_hash: str | None = None, owner_keys: tuple[str, ...] = ()) -> bool:
+def _creating_receipt(job: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    ids = job_receipt_ids(job)
+    if not ids:
+        return None
+    receipts = receipt_store.get_many(ids, audience="internal")
+    return next((receipts[key] for key in ids if key in receipts), None)
+
+
+def owns_record(kind: str, record: Mapping[str, Any], *, viewer: Viewer, apps: Apps) -> bool:
+    """Whether ``viewer`` may read this stored receipt or media job. A job takes its creating receipt's maker."""
     if kind not in {"receipt", "media_job"}:
         return False
-    # An explicit App is authoritative; reject a mismatch before resolving
-    # either cached Viewer. Most foreign rows need no key-scope work.
-    if record.get("app_id") and record["app_id"] != app_id:
-        return False
-    app_viewer, key_viewer = _scope_viewers(app_id, key_hash, tuple(owner_keys))
-    if record.get("app_id"):
-        principals = (f"app:{record['app_id']}",)
-        viewer = app_viewer
-    else:
-        owner = record.get("owner_key_hash")
-        principals = (owner,) if isinstance(owner, str) and owner else ()
-        viewer = key_viewer
-    return decide_own(viewer, principals)
+    receipt = _creating_receipt(record) if kind == "media_job" else None
+    source = receipt if kind == "media_job" else record
+    app_id = str(record.get("app_id") or (receipt or {}).get("app_id") or "") or None
+    makers = row_makers(
+        explicit=[str((source or {}).get("maker_person_id") or "")],
+        app_id=app_id,
+        owner_keys=[str(record.get("owner_key_hash") or ""), str((receipt or {}).get("owner_key_hash") or "")],
+        apps=apps,
+    )
+    connection = (receipt or record).get("connection_id")
+    origin = ContentOrigin("mcp_grant", connection_id=connection) if isinstance(connection, str) and connection else None
+    person_id = makers[0] if len(makers) == 1 else None
+    row = (ReceiptRecord if kind == "receipt" else JobRecord)(person_id=person_id, app_id=app_id, origin=origin)
+    return isinstance(decide(viewer, row, "read"), Own)

@@ -25,10 +25,11 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from gateway.content_access import Viewer, decide_own, viewer_from_auth
+from gateway.content_access import CreationRecord, JobRecord, Own, Viewer, decide, decide_own, viewer_from_auth
+from gateway.content_makers import job_receipt_ids as _job_receipt_ids
 from gateway.runtime_auth import RuntimeIdentity
 
-from gateway import directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import content_makers, directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -132,9 +133,12 @@ def create_me_media_router(
     def list_jobs(request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
+            jobs_path = _resolve_path(media_jobs_path)
+            receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
-            # Even owners receive only their own jobs. Scope before pagination.
+            # Even owners receive only the jobs they made (D51). Scope before pagination.
             scope = _member_media_scope(actor.user_id, admin_path)
+            apps = _Apps(admin_path)
             polled_at = int(time.time())
             watch = request.query_params.get("watch") == "1"
             since = request.query_params.get("since")
@@ -142,25 +146,41 @@ def create_me_media_router(
                 raise PublicFailure("invalid_since", 400, param="since", expected="Unix timestamp")
             # Inclusive seconds replay ties; capture the watermark before reading.
             updated_since = (int(since) if since is not None else polled_at) if watch else None
+            include_active = watch and since is None
+            cursor = _decode_cursor(request.query_params.get("cursor"))
             rows = []
-            scan_cursor = _decode_cursor(request.query_params.get("cursor"))
+            scan_cursor = cursor
             while len(rows) <= 100:
                 batch = media_jobs.recent(
                     101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
                     before=scan_cursor,
-                    updated_since=updated_since, include_active=watch and since is None,
-                    path=_resolve_path(media_jobs_path),
+                    updated_since=updated_since, include_active=include_active,
+                    path=jobs_path,
                 )
                 if not batch:
                     break
-                rows.extend(job for job in batch if _job_in_scope(job, scope))
+                receipts = receipt_store.get_many(
+                    [rid for job in batch for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
+                )
+                rows.extend(job for job in batch if _job_in_library(job, _receipt_of(job, receipts), scope, apps))
                 scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
                 if len(batch) < 101:
                     break
+            # The viewer's own jobs made through an App they do not own are found by their receipts (D51).
+            listed = {job["job_id"] for job in rows}
+            made = _maker_jobs(scope, jobs_path=jobs_path, receipts_path=receipt_path, before=cursor,
+                               updated_since=updated_since, include_active=include_active)
+            if made:
+                made_receipts = receipt_store.get_many(
+                    [rid for job in made for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
+                )
+                rows.extend(job for job in made if job["job_id"] not in listed
+                            and _job_in_library(job, _receipt_of(job, made_receipts), scope, apps))
+                rows.sort(key=lambda job: (job["updated_at"], job["job_id"]), reverse=True)
             page = rows[:100]
-            cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
+            next_cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
             return _json({"jobs": [me_make._client_view(job, asset_path_resolver=asset_path_resolver) for job in page],
-                          "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
+                          "next_cursor": next_cursor, **({"polled_at": polled_at} if watch else {})})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
@@ -168,10 +188,14 @@ def create_me_media_router(
     def job_detail(job_id: str, request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
+            receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _member_media_scope(actor.user_id, admin_path)
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
-            if job is None or not _job_in_scope(job, scope):
+            if job is None:
+                raise PublicFailure("job_not_found", 404, job_id=job_id)
+            receipts = receipt_store.get_many(_job_receipt_ids(job), audience="internal", path=receipt_path)
+            if not _job_in_library(job, _receipt_of(job, receipts), scope, _Apps(admin_path)):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
             return _json({"job": me_make._client_view(job, asset_path_resolver=asset_path_resolver)})
         except (PublicFailure, UserPortalError) as exc:
@@ -535,7 +559,7 @@ def _folder_counts(
     reports it apart, and a Library with only such ids is unverifiable rather than present.
     """
     named: dict[str, None] = {}
-    for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path):
+    for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path, apps=_Apps(admin_path)):
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
             if asset_id:
@@ -593,7 +617,7 @@ def _viewer_removal(
     """The same current selection for the read-only plan and the destructive action."""
     scope = _member_media_scope(user_id, admin_path)
     return _plan_removal(
-        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path),
+        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path, apps=_Apps(admin_path)),
         is_stored=lambda asset_id: _is_stored(asset_id, storage),
         already_hidden=(
             _deleted_asset_ids(scope, admin_path),
@@ -971,18 +995,12 @@ def _embedded_provenance_cached(path: Path | None, *, probe: bool) -> dict[str, 
     return value
 
 
-class _Apps:
+class _Apps(content_makers.Apps):
     """Apps and credential-to-app links, read once for a whole listing."""
 
     def __init__(self, admin_db_path: Path) -> None:
-        self._path = admin_db_path
-        self._by_id: dict[str, dict[str, Any]] | None = None
+        super().__init__(admin_db_path)
         self._by_hash: dict[str, dict[str, Any]] | None = None
-
-    def get(self, app_id: str) -> dict[str, Any] | None:
-        if self._by_id is None:
-            self._by_id = {str(app["id"]): app for app in admin_store.list_apps(path=self._path) if app.get("id")}
-        return self._by_id.get(app_id)
 
     def by_hash(self) -> dict[str, dict[str, Any]]:
         if self._by_hash is None:
@@ -1016,10 +1034,79 @@ def _media_items(**kwargs: Any) -> list[dict[str, Any]]:
     return [entry.build(True) for entry in _media_entries(**kwargs)]
 
 
+def _library_viewer(scope: _MediaScope) -> Viewer:
+    """The Library reads as the signed-in person. Owning an App gives this person nothing (D51)."""
+    return Viewer(person_id=scope.viewer_person_id, auth_kind="session")
+
+
+def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
+
+
+def _job_in_library(
+    job: Mapping[str, Any], receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps,
+) -> bool:
+    """Whether the viewer may read this job and its items. Unscoped totals skip the decision."""
+    if scope.app_ids is None:
+        return True
+    app_id = str(job.get("app_id") or (receipt or {}).get("app_id") or "") or None
+    makers = content_makers.row_makers(
+        explicit=[str((receipt or {}).get("maker_person_id") or "")], app_id=app_id,
+        owner_keys=[str(job.get("owner_key_hash") or ""), str((receipt or {}).get("owner_key_hash") or "")],
+        apps=apps,
+    )
+    record = JobRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
+    return isinstance(decide(_library_viewer(scope), record, "read"), Own)
+
+
+def _cache_in_library(
+    asset_id: str, metadata: Mapping[str, Any], receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps,
+) -> bool:
+    """Whether the viewer may read a cached item. Its recorded makers come first, then its receipt's maker."""
+    owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
+    recorded = [str(value) for value in metadata.get("maker_person_ids") or [] if isinstance(value, str)]
+    app_id = str((receipt or {}).get("app_id") or "") or None
+    makers = content_makers.row_makers(
+        explicit=recorded or [str((receipt or {}).get("maker_person_id") or "")], app_id=app_id,
+        owner_keys=sorted(owners), apps=apps,
+    )
+    record = CreationRecord(asset_id, owner_keys=frozenset(owners), maker_person_ids=makers, app_id=app_id)
+    return isinstance(decide(_library_viewer(scope), record, "read"), Own)
+
+
+_JOB_ID_CHUNK = 500
+
+
+def _maker_jobs(
+    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path, before: tuple[int, str] | None,
+    updated_since: int | None, include_active: bool,
+) -> list[dict[str, Any]]:
+    """The jobs whose receipts name the viewer as maker, filtered as the job list filters.
+
+    These can sit in an App the viewer does not own, which the App-scoped query never reads.
+    """
+    person_id = scope.viewer_person_id
+    if not person_id:
+        return []
+    receipt_rows = receipt_store.recent(
+        limit=receipt_store.count(path=receipts_path, outer_only=False) or 1, audience="internal",
+        maker_person_id=person_id, outer_only=False, path=receipts_path,
+    )
+    job_ids = sorted({str(row["job_id"]) for row in receipt_rows if row.get("job_id")})
+    out: list[dict[str, Any]] = []
+    for start in range(0, len(job_ids), _JOB_ID_CHUNK):
+        chunk = job_ids[start:start + _JOB_ID_CHUNK]
+        out.extend(media_jobs.recent(
+            len(chunk), job_ids=chunk, before=before, updated_since=updated_since,
+            include_active=include_active, path=jobs_path,
+        ))
+    return out
+
+
 def _scoped_jobs(
-    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path,
+    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path, apps: _Apps,
 ) -> list[tuple[dict[str, Any], Mapping[str, Any] | None]]:
-    """Every finished job in scope, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
+    """Every finished job the viewer may read, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
     jobs = media_jobs.recent(
         limit=media_jobs.count(path=jobs_path),
         audience="internal",
@@ -1032,12 +1119,9 @@ def _scoped_jobs(
     )
     scoped = []
     for job in jobs:
-        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
-        if receipt is not None and not _receipt_in_scope(receipt, scope):
-            continue
-        if receipt is None and not _job_in_scope(job, scope):
-            continue
-        scoped.append((job, receipt))
+        receipt = _receipt_of(job, receipts)
+        if _job_in_library(job, receipt, scope, apps):
+            scoped.append((job, receipt))
     return scoped
 
 
@@ -1066,7 +1150,7 @@ def _media_entries(
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
     hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
-    for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
+    for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path, apps=apps):
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
@@ -1101,14 +1185,16 @@ def _media_entries(
                 continue
             metadata = dict(asset_metadata_reader(asset_id) or {})
             owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
-            if not decide_own(scope._key_viewer, owners):
+            recorded = {str(value) for value in metadata.get("maker_person_ids") or [] if isinstance(value, str)}
+            # A cheap candidate test before any file is read. The grant is the maker decision below.
+            if scope.viewer_person_id not in recorded and not decide_own(scope._key_viewer, owners):
                 continue
             path = asset_path_resolver(asset_id)
             if path is None or not path.exists():
                 continue
             embedded = _embedded_provenance_cached(path, probe=False)
             receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
-            if not _receipt_in_scope(receipt, scope) and receipt is not None:
+            if not _cache_in_library(asset_id, metadata, receipt, scope, apps):
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
@@ -1263,18 +1349,6 @@ def _build_cache_item(
         },
         "source": source,
     }
-
-
-def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
-    """Try immutable creating provenance first, then legacy lookup candidates.
-
-    Request IDs can be derived or reused; none is a receipt until lookup finds
-    it. The durable creating link survives replay release and prompt erasure.
-    """
-    ids = [str(job.get(name) or "") for name in
-           ("creating_receipt_id", "parent_request_id", "request_id")]
-    return [value for index, value in enumerate(ids)
-            if value and not value.startswith("imgjob_seeded_") and value not in ids[:index]]
 
 
 def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[str, Mapping[str, Any]]:

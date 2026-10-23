@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from gateway import admin_store, content_makers, record_ownership
 from gateway.content_access import (
     ContentOrigin, CreationRecord, Deny, JobRecord, Own, ReceiptRecord, Shared, Share, VoiceRecord,
     Viewer, decide, makers_of,
@@ -101,3 +102,36 @@ def test_makers_of_prefers_the_recorded_maker_and_never_takes_a_service_app_owne
     assert makers_of([], app_person=None, key_persons=()) == ()
     assert makers_of(["", ""], app_person=None, key_persons=["bob", "bob"]) == ("bob",)
     assert makers_of([], key_persons=["alice", "bob"]) == ("alice", "bob")
+
+
+def test_owns_record_reads_receipts_by_maker_for_app_keys_grants_and_people(tmp_path):
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    owner = admin_store.upsert_oidc_user("https://example.test", "owner", email="owner@example.test", path=db)
+    alice = admin_store.upsert_oidc_user("https://example.test", "alice", email="alice@example.test", path=db)
+    service = admin_store.create_app("Household", kind="service", owner_user_id=owner["id"], access_plan="person", path=db)
+    alice_app = admin_store.create_app("Alice", kind="personal", owner_user_id=alice["id"], access_plan="person", path=db)
+    apps = content_makers.Apps(db)
+    member_row = {"app_id": service["id"], "maker_person_id": alice["id"]}
+    personless_row = {"app_id": service["id"]}
+    grant_row = {"app_id": alice_app["id"], "connection_id": "conn:1"}
+    browser_row = {"app_id": alice_app["id"]}
+    service_key = Viewer(None, service["id"], owner_keys=frozenset({f"app:{service['id']}"}), auth_kind="app_key", credential_id="key:svc")
+    owner_session = Viewer(owner["id"], auth_kind="session", is_owner=True)
+    alice_session = Viewer(alice["id"], auth_kind="session")
+    grant = Viewer(alice["id"], alice_app["id"], owner_keys=frozenset({f"app:{alice_app['id']}"}),
+                   auth_kind="mcp_grant", connection_id="conn:1")
+    other_grant = Viewer(alice["id"], alice_app["id"], auth_kind="mcp_grant", connection_id="conn:2")
+
+    def owns(viewer, row):
+        return record_ownership.owns_record("receipt", row, viewer=viewer, apps=apps)
+
+    assert owns(service_key, member_row) is False
+    assert owns(service_key, personless_row) is True
+    assert owns(owner_session, member_row) is False
+    assert owns(owner_session, personless_row) is False
+    assert owns(alice_session, member_row) is True
+    assert owns(grant, grant_row) is True
+    assert owns(other_grant, grant_row) is False
+    assert owns(grant, browser_row) is False
+    assert record_ownership.owns_record("media_job", {}, viewer=service_key, apps=apps) is False

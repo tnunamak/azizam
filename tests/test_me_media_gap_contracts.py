@@ -231,12 +231,10 @@ class MeMediaGapContractTests(unittest.TestCase):
         asset_id = "img_" + "c" * 64
         self._write_asset(asset_id, ["sha256:alice"], "PRIVATE-PROMPT")
         self.current_user = self.owner
-        paths = [
-            "/me/api/media?scope=everyone",
-            f"/me/api/media/{asset_id}?scope=everyone",
-            f"/me/api/media/{asset_id}/download?scope=everyone",
-            "/me/api/usage/summary?person=all",
-        ]
+        # The Library has no owner-everyone selector for any role (D51), so only the operational usage view is gated.
+        for path in ("/me/api/media?scope=everyone", f"/me/api/media/{asset_id}?scope=everyone"):
+            self.assertEqual(self.client.get(path).status_code, 400, path)
+        paths = ["/me/api/usage/summary?person=all"]
         for path in paths:
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200, (path, response.text))
