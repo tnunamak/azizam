@@ -5,8 +5,8 @@ The guards make the App rules hold for every writer, not only for the routes:
 * an App keeps its kind, and a personal App keeps its person (O2);
 * a service App changes person only with no key, expired keys included, and no trusted address (O3);
 * a key or trusted address is added with its App's accountable person as creator (O4);
-* an App key keeps its App and creator, a revoked key stays revoked, and a trusted address is
-  replaced rather than edited;
+* an App key keeps its App, creator, secret and expiry (a new secret has no provenance, and a later expiry
+  revives a key that ran out), a revoked key stays revoked, and a trusted address is replaced rather than edited;
 * an App is disabled, never deleted; a control-plane key never becomes an App key.
 
 ``install`` runs after every migration on a fresh database, and on every start of a database whose cut-over is
@@ -56,11 +56,12 @@ BEFORE INSERT ON app_trusted_addresses
 WHEN NEW.created_by IS NULL OR NEW.created_by IS NOT (SELECT owner_user_id FROM apps WHERE id = NEW.app_id)
 BEGIN SELECT RAISE(ABORT, 'a trusted address is added by the person the App answers for'); END"""),
     ("credentials_app_key_identity_fixed", """CREATE TRIGGER credentials_app_key_identity_fixed
-BEFORE UPDATE OF subject_kind, subject_id, app_id, created_by ON credentials
+BEFORE UPDATE OF subject_kind, subject_id, app_id, created_by, hash, expires_at ON credentials
 WHEN OLD.subject_kind = 'app' AND (
   NEW.subject_kind IS NOT OLD.subject_kind OR NEW.subject_id IS NOT OLD.subject_id
-  OR NEW.app_id IS NOT OLD.app_id OR NEW.created_by IS NOT OLD.created_by)
-BEGIN SELECT RAISE(ABORT, 'an App key keeps its App and creator'); END"""),
+  OR NEW.app_id IS NOT OLD.app_id OR NEW.created_by IS NOT OLD.created_by
+  OR NEW.hash IS NOT OLD.hash OR NEW.expires_at IS NOT OLD.expires_at)
+BEGIN SELECT RAISE(ABORT, 'an App key keeps its App, creator, secret and expiry'); END"""),
     ("credentials_no_control_plane_key_becomes_app_key", """CREATE TRIGGER credentials_no_control_plane_key_becomes_app_key
 BEFORE UPDATE OF subject_kind ON credentials
 WHEN OLD.subject_kind IS NOT 'app' AND NEW.subject_kind = 'app'
@@ -161,6 +162,8 @@ def self_test(conn: sqlite3.Connection) -> None:
             ("address without creator", "INSERT INTO app_trusted_addresses(id, app_id, address, created_at, created_by) "
                                         "VALUES ('tad_x1', ?, '10.0.0.2', 0, '')", (svc,)),
             ("key re-pointed", "UPDATE credentials SET created_by=? WHERE id=?", (other, live)),
+            ("key secret rewritten", "UPDATE credentials SET hash='sha256:rewritten' WHERE id=?", (live,)),
+            ("key expiry moved", "UPDATE credentials SET expires_at=9999999999 WHERE id=?", (live,)),
             ("revoked key unrevoked", "UPDATE credentials SET revoked_at=NULL WHERE id=?", (revoked,)),
             ("address edited", "UPDATE app_trusted_addresses SET address='10.9.9.9' WHERE id=?", (tad,)),
             ("control-plane key made an App key", "UPDATE credentials SET subject_kind='app', subject_id=?, app_id=? WHERE id=?",
@@ -175,6 +178,8 @@ def self_test(conn: sqlite3.Connection) -> None:
             ("control-plane adoption", "UPDATE credentials SET created_by=? WHERE id=?", (f"user:{owner}", control)),
             ("transfer with zero bindings", "UPDATE apps SET owner_user_id=? WHERE id=?", (other, zero)),
             ("revocation of a live key", "UPDATE credentials SET revoked_at=5 WHERE id=?", (live,)),
+            ("use recorded on a live key", "UPDATE credentials SET last_used_at=5 WHERE id=?", (live,)),
+            ("control-plane key's expiry", "UPDATE credentials SET expires_at=9999999999 WHERE id=?", (control,)),
         )
         for label, statement, params in permitted:
             try:
