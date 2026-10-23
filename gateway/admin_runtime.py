@@ -2456,6 +2456,7 @@ def runtime_identity_for_app_credential_hash(
         browser_session = AdminSession(subject=row.get("cred_created_by") or "", email="", role="none",
                                        session_id=row["cred_session_id"], **timing)
     return replace(identity, credential_id=str(row["cred_id"]), browser_session=browser_session,
+                   privacy_permission=bool(row.get("cred_privacy_permission")),
                    auth_kind="service_key" if row["app_kind"] == "service" else "app_key")
 
 

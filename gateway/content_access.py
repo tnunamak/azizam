@@ -54,7 +54,8 @@ def viewer_from_auth(
 
     Resolved scope keys may be supplied by a caller that already read aliases.
     Legacy hash-only contexts supply no person or credential-origin authority.
-    Privacy permission is not issued in step 1. Missing identity adds no authority.
+    Privacy permission comes only from the authenticated key or connection record.
+    Missing identity adds no authority.
     """
     from gateway import ownership
     from gateway.runtime_auth import RuntimeIdentity
@@ -68,6 +69,7 @@ def viewer_from_auth(
         app_id=getattr(identity, "app_id", None),
         key_hash=getattr(identity, "key_hash", None) if not getattr(identity, "app_id", None) else None,
         owner_keys=frozenset(owner_keys), auth_kind=getattr(identity, "auth_kind", "app_key"),
+        privacy_permission=bool(getattr(identity, "privacy_permission", False)),
         credential_id=getattr(identity, "credential_id", None),
         trusted_address=getattr(identity, "trusted_address", None),
         connection_id=getattr(identity, "connection_id", None),
@@ -225,7 +227,8 @@ def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHis
     if origin is None:
         return False
     if viewer.auth_kind == "app_key":
-        return (origin.auth_kind == "app_key" and bool(origin.credential_id)
+        return (origin.auth_kind == "app_key" and bool(viewer.credential_id)
+                and origin.credential_id == viewer.credential_id
                 and bool(viewer.app_id) and record.app_id == viewer.app_id)
     if viewer.auth_kind == "mcp_grant":
         return (origin.auth_kind == "mcp_grant" and bool(viewer.connection_id)

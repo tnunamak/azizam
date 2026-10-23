@@ -253,6 +253,7 @@ from gateway.user_runtime import (
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
+    set_user_app_key_privacy_permission,
 )
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
@@ -2472,7 +2473,8 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
-                                        connection_id=connection.grant_id, auth_kind="mcp_grant"))
+                                        connection_id=connection.grant_id, auth_kind="mcp_grant",
+                                        privacy_permission=connection.privacy_permission))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -17061,6 +17063,32 @@ async def user_portal_rename_key(credential_id: str, request: Request):
         credential = await asyncio.to_thread(
             rename_user_app_key, session, credential_id, label if isinstance(label, str) else "",
             path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
+
+
+@app.put("/me/api/credentials/{credential_id}/privacy-permission", include_in_schema=False)
+async def user_portal_key_privacy_permission(credential_id: str, request: Request):
+    """Let the signed-in accountable person widen request-history access for one App key."""
+    try:
+        session = await asyncio.to_thread(_require_user_session, request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    enabled = body.get("enabled") if isinstance(body, Mapping) else None
+    if not isinstance(enabled, bool):
+        return _user_action_response_error(UserPortalError(
+            "invalid_privacy_permission", "enabled must be true or false", status_code=400))
+    try:
+        credential = await asyncio.to_thread(
+            set_user_app_key_privacy_permission, session, credential_id, enabled, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})

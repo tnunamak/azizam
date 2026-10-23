@@ -73,7 +73,7 @@ def test_upgrade_moves_member_rows_and_cutoffs_to_the_prompts_group_and_adds_req
     admin_store.init_db(admin_db)  # the upgrade runs here
 
     conn = _connect(admin_db)
-    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 17
+    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
     prompts = conn.execute(
         "SELECT user_id, remember, retention FROM prompt_memory_preferences WHERE grp='prompts' ORDER BY user_id"
     ).fetchall()

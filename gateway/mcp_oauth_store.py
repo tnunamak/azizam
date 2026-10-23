@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS mcp_oauth_grants (
   resource TEXT NOT NULL,
   scope TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  privacy_permission INTEGER NOT NULL DEFAULT 0 CHECK(privacy_permission IN (0, 1)),
   last_used_at INTEGER,
   revoked_at INTEGER,
   revoked_reason TEXT
@@ -126,6 +127,7 @@ class GrantRecord:
     resource: str
     scope: str
     created_at: int
+    privacy_permission: bool
     last_used_at: int | None
     revoked_at: int | None
 
@@ -168,7 +170,9 @@ def _client(row: sqlite3.Row) -> ClientRecord:
 
 
 def _grant(row: sqlite3.Row) -> GrantRecord:
-    return GrantRecord(**{key: row[key] for key in GrantRecord.__dataclass_fields__})
+    values = {key: row[key] for key in GrantRecord.__dataclass_fields__}
+    values["privacy_permission"] = bool(values["privacy_permission"])
+    return GrantRecord(**values)
 
 
 def grants_in(conn: sqlite3.Connection, person_ids: "Iterable[str] | None" = None) -> list[GrantRecord]:
@@ -220,6 +224,10 @@ class Store:
             if path not in self._ready:
                 with self._lock:
                     conn.executescript(_SCHEMA)
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(mcp_oauth_grants)")}
+                    if "privacy_permission" not in columns:
+                        conn.execute("ALTER TABLE mcp_oauth_grants ADD COLUMN privacy_permission "
+                                     "INTEGER NOT NULL DEFAULT 0 CHECK(privacy_permission IN (0, 1))")
                     self._ready.add(path)
             yield conn
         finally:
@@ -326,6 +334,21 @@ class Store:
                 (person_id,),
             ).fetchall()
         return [_grant(row) for row in rows]
+
+    def set_privacy_permission(self, grant_id: str, *, person_id: str, enabled: bool,
+                               session: BrowserSession) -> bool:
+        """Set one of the signed-in person's grants; old grants default to off."""
+        if session is None:
+            raise ValueError("a signed-in browser session is required")
+        with self._conn() as conn:
+            begin_write(conn, session)
+            changed = conn.execute(
+                "UPDATE mcp_oauth_grants SET privacy_permission = ? "
+                "WHERE id = ? AND person_id = ? AND revoked_at IS NULL",
+                (int(enabled), grant_id, person_id),
+            ).rowcount
+            conn.commit()
+        return changed == 1
 
     def revoke_grant(self, grant_id: str, reason: str, *, person_id: str | None = None) -> bool:
         """End a connection. With ``person_id``, only that person's own."""

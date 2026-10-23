@@ -235,9 +235,8 @@ def test_the_owner_and_an_admin_with_personal_keys_see_none_of_a_members_rows(ga
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", gateway["maker"].key).status_code == 200
 
 
-def test_the_makers_other_app_cannot_read_and_the_same_apps_second_key_can(gateway):
-    """D52: a delegated key reads what its own App made. A second App of the same person is 'elsewhere'. The
-    check compares the App, not the credential: a second key of the same App reads the row."""
+def test_the_makers_other_app_and_second_key_cannot_read_without_permission(gateway):
+    """D52 addendum: an App key reads only rows its creating credential made."""
     from gateway.runtime_auth import hash_api_key
 
     db, maker = gateway["db"], gateway["maker"]
@@ -250,11 +249,15 @@ def test_the_makers_other_app_cannot_read_and_the_same_apps_second_key_can(gatew
                                        hash=hash_api_key(other_key), prefix=other_key[:16],
                                        created_by=maker.person, path=db)
     same_app_key = f"opk_again_{maker.app}"
-    admin_store.create_credential_hash(subject_kind="app", subject_id=maker.app, app_id=maker.app,
-                                       hash=hash_api_key(same_app_key), prefix=same_app_key[:16],
-                                       created_by=maker.person, path=db)
+    same_app_credential = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=maker.app, app_id=maker.app,
+        hash=hash_api_key(same_app_key), prefix=same_app_key[:16], created_by=maker.person, path=db)
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", other_key).status_code == 404
     assert _call("GET", "/gateway/v1/requests", other_key).json()["requests"] == []
+    assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", same_app_key).status_code == 404
+    assert _call("GET", "/gateway/v1/requests", same_app_key).json()["requests"] == []
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE credentials SET privacy_permission=1 WHERE id=?", (same_app_credential["id"],))
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", same_app_key).status_code == 200
 
 
