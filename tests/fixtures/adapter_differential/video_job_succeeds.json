@@ -217,6 +217,13 @@
     }
   ],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "job_id": "<job:1>",
+        "origin_id": "<job:2>"
+      }
+    ],
     "media_job_events": [
       {
         "attempt_number": 1,
@@ -354,7 +361,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [
