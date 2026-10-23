@@ -63,6 +63,12 @@ def hh(tmp_path, monkeypatch):
                            robin_app=robin_app, store=store, owner_ctx=owner_ctx)
 
 
+def _person_for(path, app_id):
+    """The App's accountable person, who is the only actor that may issue its key (owner visibility step 2)."""
+    owner_id = admin_store.get_app(app_id, path=path)["owner_user_id"]
+    return AdminContext(subject=owner_id, actor_id=owner_id, actor_kind="user", roles=frozenset({"owner"}))
+
+
 def _ctx_for(api_key: str, admin: Path) -> proxy.AuthContext:
     identity = runtime_identity_for_app_credential_hash(hash_api_key(api_key), path=admin)
     assert identity is not None
@@ -77,7 +83,7 @@ def _robin_key(hh) -> str:
 def test_service_app_key_has_no_person_or_prompt_memory(hh):
     sa = admin_store.ensure_service_account("ha", path=hh.admin)
     svc = service_app("Home Assistant", path=hh.admin)
-    result = hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)
+    result = hh.store.create_credential(app_id=svc["id"], data={}, actor=_person_for(hh.admin, svc["id"]))
     assert result["prompt_memory"]["person_id"] is None
     assert "not remembered" in result["prompt_memory"]["description"]
     assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
@@ -148,7 +154,7 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     sa = admin_store.ensure_service_account("webui", path=hh.admin)
     svc = service_app("Open WebUI", path=hh.admin)
-    auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)["api_key"], hh.admin)
+    auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=_person_for(hh.admin, svc["id"]))["api_key"], hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
         proxy._note_media_metadata_body({"prompt": "robin typed this in the shared web UI"})
@@ -170,28 +176,6 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
     assert item["source"]["app_id"] == svc["id"]
     assert "robin typed this" not in item["title"]
 
-
-
-def test_owner_key_on_members_app_is_no_person_but_media_is_visible(hh):
-    result = hh.store.create_credential(app_id=hh.robin_app["id"], data={}, actor=hh.owner_ctx)
-    auth = _ctx_for(result["api_key"], hh.admin)
-    assert auth.identity.person_id is None
-    assert result["prompt_memory"]["person_id"] is None
-    assert "not remembered" in result["prompt_memory"]["description"]
-    assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
-    ctx = proxy._begin_media_delivery(auth)
-    try:
-        proxy._note_media_metadata_body({"prompt": SENTINEL})
-        asset_id = proxy.store_asset_bytes(_png(SENTINEL), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
-    finally:
-        proxy.media_delivery._CONTEXT.set(None)
-    assert ctx.prompt_decision.reason == "no_person"
-    assert prompt_memory.get_person_prompts(hh.owner["id"]) == {}
-    assert prompt_memory.get_person_prompts(hh.robin["id"]) == {}
-    items = _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin))
-    item = next(i for i in items if i["asset_id"] == asset_id)
-    assert item["source"]["app_id"] == hh.robin_app["id"]
-    assert item["prompt"] is None and item["workflow_download_url"] is None
 
 
 def _library(hh, scope):
@@ -225,7 +209,7 @@ def test_legacy_service_key_stays_no_person(hh):
 def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
     sa = admin_store.ensure_service_account("full-export", path=hh.admin)
     app = service_app("Shared", path=hh.admin)
-    key = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)["api_key"]
+    key = hh.store.create_credential(app_id=app["id"], data={}, actor=_person_for(hh.admin, app["id"]))["api_key"]
     auth = _ctx_for(key, hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
@@ -271,7 +255,7 @@ def test_own_personal_key_warns_about_prompt_access(hh, self_service):
     else:
         app = admin_store.create_app("Owner Try", kind="personal",
                                      owner_user_id=hh.owner["id"], access_plan="person", path=hh.admin)
-        result = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)
+        result = hh.store.create_credential(app_id=app["id"], data={}, actor=_person_for(hh.admin, app["id"]))
         person = hh.owner["id"]
     assert result["prompt_memory"]["person_id"] == person
     assert "follow your prompt-memory settings" in result["prompt_memory"]["description"]

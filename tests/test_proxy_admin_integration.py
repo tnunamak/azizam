@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store  # noqa: E402
+from tests.support.app_keys import issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from tests.support.signin import seed_rules  # noqa: E402
@@ -192,13 +193,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
         self.assertTrue(app_key.startswith("opk_"))
 
         forbidden = self.client.get(
@@ -245,13 +240,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("brother-chat", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
 
         capabilities = self.client.get(
             "/gateway/v1/capabilities",
@@ -612,13 +601,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("status-not-admin")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "App key"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="App key")
 
         response = self.client.get(
             "/v1/status",
@@ -2411,11 +2394,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_delete_credential_revokes_it(self) -> None:
         app = self._create_app("App").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key1"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key1")
 
         resp = self.client.delete(
             f"/admin/api/credentials/{cred['id']}",
@@ -2434,11 +2413,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_post_revoke_still_works(self) -> None:
         app = self._create_app("App2").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key2"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key2")
 
         resp = self.client.post(
             f"/admin/api/credentials/{cred['id']}/revoke",

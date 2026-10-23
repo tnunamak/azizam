@@ -425,19 +425,17 @@ def test_forget_during_active_response_cannot_restore_conversation(responses_gat
 
 @pytest.mark.parametrize("app_kind", ["service", "another_person"])
 def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses_gateway, app_kind):
-    from gateway.admin_api import AdminContext
-    from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
+    from gateway.admin_runtime import runtime_identity_for_app_credential_hash
     gateway = responses_gateway
     path = gateway["admin_db"]
-    owner = admin_store.upsert_oidc_user("local", "minting-owner", path=path)
     if app_kind == "service":
         sa = admin_store.ensure_service_account("shared-responses", path=path)
         app = service_app("Shared", path=path)
     else:
         app = admin_store.get_app(gateway["app_id"], path=path)
-    key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(
-        subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
-    ))["api_key"]
+    from tests.support.app_keys import issue_app_key
+
+    key = issue_app_key(path, app["id"], label="shared")
     identity = runtime_identity_for_app_credential_hash(hash_api_key(key), path=path)
     gateway["identities"][hash_api_key(key)] = identity
     response = gateway["client"].post("/v1/responses", headers={"Authorization": f"Bearer {key}"},

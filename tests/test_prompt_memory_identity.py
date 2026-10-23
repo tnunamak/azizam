@@ -13,8 +13,9 @@ from types import SimpleNamespace
 import proxy
 from tests.support.access import auth_identity  # noqa: E402
 import httpx
+import pytest
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
-from gateway.admin_api import AdminContext
+from gateway.admin_api import AdminContext, NotYourApp
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
 from gateway.runtime_auth import hash_api_key
@@ -77,7 +78,7 @@ def test_responses_legacy_name_only_rows_are_hidden():
     assert not proxy._responses_row_visible({"api_key_name": "Try"}, auth)
 
 
-def test_personal_key_must_be_minted_by_its_own_app_owner(tmp_path):
+def test_only_the_person_an_app_answers_for_can_mint_its_personal_key(tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
@@ -86,42 +87,19 @@ def test_personal_key_must_be_minted_by_its_own_app_owner(tmp_path):
     session = AdminSession(subject=member["id"], role="none", email=None, issued_at=1, expires_at=4_000_000_000)
     member_key = mint_user_app_key(session, app["id"], path=path)
     store = AdminSQLiteStore(path)
-    owner_key = store.create_credential(app_id=app["id"], data={}, actor=AdminContext(
-        subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
-    ))
-    service_key = store.create_credential(app_id=app["id"], data={}, actor=AdminContext(
-        subject="service", actor_kind="service_account", roles=frozenset({"owner"}),
-    ))
-    for key, expected, creator in ((member_key, member["id"], member["id"]), (owner_key, None, owner["id"]), (service_key, None, "")):
-        identity = runtime_identity_for_app_credential_hash(hash_api_key(key["api_key"]), path=path)
-        assert identity.app_id == app["id"]
-        assert identity.person_id == expected
-        credential = admin_store.get_credential(key["id"], path=path)
-        assert credential["created_by"] == creator
-    legacy = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
-        hash=hash_api_key("legacy-key"), prefix="legacy", path=path)
-    assert runtime_identity_for_app_credential_hash(legacy["hash"], path=path).person_id is None
-
-
-def test_new_output_from_owner_key_is_not_saved_as_the_app_owner(tmp_path, monkeypatch):
-    path = tmp_path / "admin.db"
-    admin_store.init_db(path)
-    member = admin_store.upsert_oidc_user("test", "member", path=path)
-    owner = admin_store.upsert_oidc_user("test", "owner", path=path)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
-    monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
-    key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(
-        subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
-    ))
-    identity = runtime_identity_for_app_credential_hash(hash_api_key(key["api_key"]), path=path)
-    context = proxy._begin_media_delivery(proxy.AuthContext(identity=identity))
-    try:
-        assert proxy._note_media_metadata_body({"prompt": "owner-input"}) is None
-        assert not context.prompt_decision.keep
-        assert context.prompt_decision.person_id is None
-        assert context.person_id is None
-    finally:
-        proxy.media_delivery._CONTEXT.set(None)
+    # Owner visibility step 2: an owner's key and a control-plane key answer for no person, so neither adds a key here.
+    with pytest.raises(NotYourApp):
+        store.create_credential(app_id=app["id"], data={}, actor=AdminContext(
+            subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
+        ))
+    with pytest.raises(NotYourApp):
+        store.create_credential(app_id=app["id"], data={}, actor=AdminContext(
+            subject="service", actor_kind="service_account", roles=frozenset({"owner"}),
+        ))
+    identity = runtime_identity_for_app_credential_hash(hash_api_key(member_key["api_key"]), path=path)
+    assert identity.app_id == app["id"]
+    assert identity.person_id == member["id"]
+    assert admin_store.get_credential(member_key["id"], path=path)["created_by"] == member["id"]
 
 
 def _png(prompt):

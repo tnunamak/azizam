@@ -9,6 +9,7 @@ import pytest
 
 from gateway import accounts, admin_store
 from tests.support.access import store_plan
+from tests.support.app_keys import issue_app_key
 from tests.test_signin_settings_api import csrf_for, get_snapshot, owner_client, sg  # noqa: F401  (sg is a fixture)
 from tests.test_signin_who_can_enter import gateway  # noqa: F401  (a fixture sg builds on)
 
@@ -32,9 +33,7 @@ def _app_key(sg, owner):
     app = owner.post("/admin/api/apps", headers=headers, json={
         "name": "legacy-routes", "owner_user_id": person["id"], "access_plan": plan["id"]})
     assert app.status_code == 201, app.text
-    minted = owner.post("/admin/api/apps/" + app.json()["app"]["id"] + "/keys", headers=headers, json={"label": "k"})
-    assert minted.status_code == 201, minted.text
-    return minted.json()["credential"]["api_key"]
+    return issue_app_key(sg.path, app.json()["app"]["id"], label="k")
 
 
 @pytest.mark.parametrize("path", LEGACY_PATHS)

@@ -170,7 +170,6 @@ def mint_app_key(case) -> str:
         "name": "route-matrix", "owner_user_id": person["id"], "access_plan": plan["id"],
     })
     assert app.status_code == 201, app.text
-    minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
-                              headers=case._auth(), json={"label": "route-matrix"})
-    assert minted.status_code == 201, minted.text
-    return minted.json()["credential"]["api_key"]
+    from tests.support.app_keys import issue_app_key
+
+    return issue_app_key(case.db, app.json()["app"]["id"], label="route-matrix")

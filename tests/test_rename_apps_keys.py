@@ -353,9 +353,11 @@ def admin_app(client, name, **extra):
 
 
 def admin_key(client, app_id, label="first"):
-    minted = client.post(f"/admin/api/apps/{app_id}/keys", headers=csrf(client), json={"label": label})
-    assert minted.status_code == 201, minted.text
-    return minted.json()["credential"]
+    """A key on the App, issued by the App's accountable person: an administrator may not mint on someone else's App."""
+    import proxy
+    from tests.support.app_keys import issue_app_credential
+
+    return issue_app_credential(proxy.ADMIN_STORE.path, app_id, label=label)
 
 
 def rename_key(client, app_id, credential_id, label, headers=None):
