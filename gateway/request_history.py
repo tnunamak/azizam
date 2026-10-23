@@ -36,6 +36,9 @@ MEDIA_STRING_LIMIT = 64 * 1024
 #: tool call's ``arguments``). No request the routes accept nests this deep, and the limit keeps the cleaner's recursion
 #: far from Python's own limit.
 JSON_DEPTH_LIMIT = 64
+#: How many values one record's nested JSON may visit, in all (R6-2). The decoded text is bounded by the record's byte
+#: limit, so the two together bound the work a body of many small JSON strings can cause.
+JSON_NODE_LIMIT = 200_000
 #: Request headers kept by name. Nothing that carries a credential is on this list (rule 2).
 REQUEST_HEADERS = frozenset({"content-type", "accept", "x-azizam-prompts"})
 #: Reply headers kept by name.
@@ -228,12 +231,44 @@ class _TooDeep(Exception):
     """JSON nests past JSON_DEPTH_LIMIT. Raised deep in the cleaner, and caught where the JSON holding it is omitted."""
 
 
-def _redact_string(text: str, found: set[str], depth: int, *, tool_arguments: bool = False) -> Any:
-    """A string that looks like JSON (its first mark, after whitespace, is ``{`` or ``[``) is cleaned as JSON and stored
-    compact. One that does not parse is cleaned as text, since prose may start with a bracket. A tool call's
-    ``arguments`` is always JSON, so one that does not parse is omitted. A string nested past JSON_DEPTH_LIMIT is
-    omitted."""
-    if not text.lstrip().startswith(("{", "[")):
+class _OverBudget(Exception):
+    """A record's JSON budget is spent. Raised where the next unit of work would start, and caught where the string that
+    held the JSON is omitted."""
+
+
+class WorkBudget:
+    """The work one record may spend on JSON held inside strings (R6-2): the text it decodes, in bytes, and the values
+    it visits. One budget is shared by every body of a record, so the total stays bounded however many wrappers the
+    record holds. Only a string that parses as JSON spends it, so a string that is plain text costs nothing here."""
+
+    def __init__(self, *, max_bytes: int, max_nodes: int = JSON_NODE_LIMIT) -> None:
+        self.max_bytes = max_bytes
+        self.max_nodes = max_nodes
+        self.decoded_bytes = 0
+        self.nodes = 0
+
+    def decode(self, text: str) -> None:
+        size = len(text.encode("utf-8", "surrogatepass"))
+        if self.decoded_bytes + size > self.max_bytes:
+            raise _OverBudget
+        self.decoded_bytes += size
+
+    def visit(self) -> None:
+        if self.nodes >= self.max_nodes:
+            raise _OverBudget
+        self.nodes += 1
+
+
+def _redact_string(text: str, found: set[str], depth: int, budget: WorkBudget, *, tool_arguments: bool = False) -> Any:
+    """A string whose first mark, after whitespace, is ``{``, ``[`` or ``"`` is read as JSON, and the value it holds is
+    cleaned and stored compact. A JSON string literal whose content is JSON, or another literal, is cleaned as that
+    content and stored as a literal again, so a value wrapped in several levels of encoding is cleaned at every level
+    (R6-2). A literal around plain text is cleaned as text, as before. A string that does not parse is cleaned as text,
+    since prose may start with a bracket or a quote. A tool call's ``arguments`` is always JSON, so one that does not
+    parse is omitted. A string nested past JSON_DEPTH_LIMIT is omitted, and so is one whose JSON would spend more than
+    the record's budget."""
+    stripped = text.lstrip()
+    if not stripped.startswith(("{", "[", '"')):
         return _redact_text(text, found)
     try:
         parsed = json.loads(text)
@@ -241,13 +276,25 @@ def _redact_string(text: str, found: set[str], depth: int, *, tool_arguments: bo
         found.add("json_depth")
         return {"omitted": "json_depth"}
     except ValueError:
-        if not tool_arguments:
+        if tool_arguments and not stripped.startswith('"'):
+            found.add("unreadable_json")
+            return {"omitted": "unreadable_json"}
+        return _redact_text(text, found)
+    if isinstance(parsed, str):
+        if not parsed.lstrip().startswith(("{", "[", '"')):
             return _redact_text(text, found)
-        found.add("unreadable_json")
-        return {"omitted": "unreadable_json"}
+        if depth > JSON_DEPTH_LIMIT:
+            found.add("json_depth")
+            return {"omitted": "json_depth"}
+        inner = _redact_string(parsed, found, depth + 1, budget, tool_arguments=tool_arguments)
+        return json.dumps(inner, ensure_ascii=False) if isinstance(inner, str) else inner
     omissions: set[str] = set()
     try:
-        cleaned = _redact(parsed, omissions, depth)
+        budget.decode(text)
+        cleaned = _redact(parsed, omissions, depth, budget, nested=True)
+    except _OverBudget:
+        found.add("json_budget")
+        return {"omitted": "json_budget"}
     except (_TooDeep, RecursionError):
         found.add("json_depth")
         return {"omitted": "json_depth"}
@@ -255,9 +302,12 @@ def _redact_string(text: str, found: set[str], depth: int, *, tool_arguments: bo
     return json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
 
 
-def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
+def _redact(value: Any, found: set[str], depth: int, budget: WorkBudget, *, nested: bool = False) -> Any:
     """The secret floor, applied to a parsed value. ``depth`` is the nesting level of ``value``: a container past
-    JSON_DEPTH_LIMIT raises ``_TooDeep``, which omits the JSON that holds it."""
+    JSON_DEPTH_LIMIT raises ``_TooDeep``, which omits the JSON that holds it. ``nested`` is set for JSON read out of a
+    string, whose values count against the record's budget (R6-2). The body's own values do not."""
+    if nested:
+        budget.visit()
     if isinstance(value, Mapping):
         if depth > JSON_DEPTH_LIMIT:
             raise _TooDeep
@@ -267,25 +317,28 @@ def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
                 result[key] = REMOVED
                 found.add("credential_field")
             elif key == "arguments" and isinstance(item, str):
-                result[key] = _redact_string(item, found, depth + 1, tool_arguments=True)
+                result[key] = _redact_string(item, found, depth + 1, budget, tool_arguments=True)
             else:
-                result[key] = _redact(item, found, depth + 1)
+                result[key] = _redact(item, found, depth + 1, budget, nested=nested)
         return result
     if isinstance(value, list):
         if depth > JSON_DEPTH_LIMIT:
             raise _TooDeep
-        return [_redact(item, found, depth + 1) for item in value]
+        return [_redact(item, found, depth + 1, budget, nested=nested) for item in value]
     if isinstance(value, str):
-        return _redact_string(value, found, depth)
+        return _redact_string(value, found, depth, budget)
     return value
 
 
-def redact_json(value: Any) -> tuple[Any, list[str]]:
+def redact_json(value: Any, *, budget: WorkBudget | None = None) -> tuple[Any, list[str]]:
     """Apply the secret floor to a parsed body. Returns the kept value and the omissions it made. A body nested past
-    JSON_DEPTH_LIMIT is omitted whole, so the record keeps a marker in its place."""
+    JSON_DEPTH_LIMIT is omitted whole, so the record keeps a marker in its place. A caller that cleans several bodies
+    of one record passes one ``budget`` to all of them. Without one, the body gets a budget of a record's size."""
     found: set[str] = set()
+    if budget is None:
+        budget = WorkBudget(max_bytes=int(retention.bundled().data["kinds"][KIND]["max_record_bytes"]))
     try:
-        return _redact(value, found), sorted(found)
+        return _redact(value, found, 1, budget), sorted(found)
     except (_TooDeep, RecursionError):
         return {"omitted": "json_depth"}, ["json_depth"]
 
@@ -317,9 +370,11 @@ class BodyCapture:
     as omitted, not truncated, so a kept record is never a partial one.
     """
 
-    def __init__(self, content_type: str | None, *, limit: int) -> None:
+    def __init__(self, content_type: str | None, *, limit: int, budget: WorkBudget | None = None) -> None:
         self.media_type = (content_type or "").split(";", 1)[0].strip().lower()
         self.limit = limit
+        #: The record's JSON budget, shared with the record's other bodies. A body on its own gets one of its own.
+        self._budget = budget if budget is not None else WorkBudget(max_bytes=limit)
         self.total = 0
         self._buffer = bytearray()
         self._overflow = False
@@ -392,7 +447,7 @@ class BodyCapture:
                 self._readable = self.total == 0
             if isinstance(parsed, dict):
                 self.control_source = parsed
-                return redact_json(parsed)
+                return redact_json(parsed, budget=self._budget)
         else:
             # Not kept as content (rule 7), but read for its control the way the route reads it.
             raw = bytes(self._buffer)
@@ -411,7 +466,7 @@ class BodyCapture:
                 self._parser.finalize()
                 texts = {name: value.decode("utf-8", "replace") for name, value in self._fields.items()}
                 self.control_source = texts
-                fields, found = redact_json(texts)
+                fields, found = redact_json(texts, budget=self._budget)
                 return {"fields": fields, "files": self._files}, found
             except Exception:
                 pass

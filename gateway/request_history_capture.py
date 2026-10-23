@@ -251,7 +251,9 @@ class _Capture:
         self.request_headers = headers
         self.started = int(time.time())
         self._began = time.monotonic()
-        self.body = request_history.BodyCapture(headers.get("content-type"), limit=limit)
+        #: The JSON budget of this request's record, shared by its body and its reply (R6-2).
+        self.budget = request_history.WorkBudget(max_bytes=limit)
+        self.body = request_history.BodyCapture(headers.get("content-type"), limit=limit, budget=self.budget)
         self.reply: request_history.BodyCapture | None = None
         self.reply_status: int | None = None
         self.reply_headers: dict[str, str] = {}
@@ -346,7 +348,8 @@ class _Capture:
                 self.reply = None
                 decision = await self.decide_once()
                 if decision is not None and decision.keep and self.admitted and "received" in decision.parts:
-                    self.reply = request_history.BodyCapture(self.reply_headers.get("content-type"), limit=self._limit)
+                    self.reply = request_history.BodyCapture(self.reply_headers.get("content-type"), limit=self._limit,
+                                                             budget=self.budget)
             elif message["type"] == "http.response.body" and self.reply is not None:
                 _quietly(self.reply.feed, message.get("body", b""))
             await send(message)
