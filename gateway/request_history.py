@@ -67,6 +67,8 @@ _LETTER = re.compile(r"[A-Za-z]")
 _DIGIT = re.compile(r"[0-9]")
 #: Prose punctuation that may follow a path segment (R9-2). It is set aside before the token check, and kept.
 _PROSE_PUNCTUATION = "\"'`)]}>.,;!?"
+_NON_TOKEN = re.compile(r"[^A-Za-z0-9_-]+")
+_LONGEST_SCHEME = 20  # schemes in use are far shorter; a 20-character one is a value read as a scheme (R10-1)
 #: What a URL reads as when it holds an ``@``, cannot be split into its parts, or holds a ``://`` that starts no token
 #: (R9-1). The whole URL or token is replaced, so no part of it is kept.
 URL_REMOVED = "[url removed]"
@@ -218,7 +220,9 @@ def _scrub_segment(segment: str) -> str:
         return REMOVED
     decoded = unquote(segment)
     core = decoded.rstrip(_PROSE_PUNCTUATION)
-    if _is_token_segment(core):
+    # Any run of token characters in the segment is read on its own, so a decoded ``/`` or a ``*`` beside a token does
+    # not hide it (R10-2).
+    if ":" in core or any(_is_token_segment(piece) for piece in _NON_TOKEN.split(core)):
         return REMOVED + decoded[len(core):]
     return segment
 
@@ -236,6 +240,8 @@ def _scrub_url(url: str) -> tuple[str, bool]:
     except ValueError:
         return URL_REMOVED, True
     if not parts.scheme or not parts.hostname or not parts.hostname.isascii():
+        return URL_REMOVED, True
+    if len(parts.scheme) >= _LONGEST_SCHEME:  # a value written before ``://`` reads as a scheme; no real one is this long
         return URL_REMOVED, True
     segments = parts.path.split("/")
     kept = [_scrub_segment(segment) for segment in segments]
