@@ -69,19 +69,29 @@ with `409 keep_needs_confirmation` until the owner confirms:
 
 ```json
 {"error": {"code": "keep_needs_confirmation", "message": "...",
-           "administrators": ["Alex Example", "CI bot"]}}
+           "administrators": {"people": ["Alex Example"], "unnamed_people": 1, "admin_keys": 23}}}
 ```
 
-`administrators` names them, sorted. A person with no display name is listed as
-`unnamed administrator`; an email address is never shown. A service account that held
-admin or superadmin is named by its name. The owner confirms by keeping again with this
-body, where `true` is a JSON boolean (the string `"true"` does not count):
+`administrators` counts them in three parts:
+
+- `people` names each person by display name, sorted.
+- `unnamed_people` counts the people with no display name. An email address is never shown
+  as a name, so a person whose only name is an address is counted here.
+- `admin_keys` counts the control-plane keys (service accounts) that held the admin or
+  superadmin role, one each, and names none of them. A service account that held only the
+  owner role is the owner's own control-plane key and is not counted.
+
+The `message` says the same thing in one sentence, and leaves out an empty part: "Administrators at
+the time could also have made this key: Alex Example, 1 person with no name, and 23 administrator
+keys." The counts take the singular when they are one: "1 person with no name", "1 administrator key".
+The owner confirms by keeping again with this body, where `true` is a JSON boolean (the string
+`"true"` does not count):
 
 ```json
 {"confirm_admins_could_have_made_it": true}
 ```
 
-The audit event names the administrators confirmed, in `confirmed_administrators`.
+The audit event records the administrators confirmed, in `confirmed_administrators`, in the same three parts.
 
 **Replace a key** issues a new key and revokes the old one:
 
@@ -139,9 +149,10 @@ keys and addresses alike:
 A key or address that names another person is removed by the apply too. The Apps page
 flags it with its remedy, so it no longer waits for a check in the preview.
 
-When administrators on record could also have made a binding, Keep opens a dialog that names them first, with
-the title "Keep this key?" or "Keep this address?". Confirming sends the confirmation body below. Cancelling sends
-nothing. A keep that the gateway asks to confirm, on a page that was not up to date, opens the same dialog.
+When administrators on record could also have made a binding, Keep opens a dialog that names the people and counts the
+rest first, with the title "Keep this key?" or "Keep this address?". Confirming sends the confirmation body below.
+Cancelling sends nothing. A keep that the gateway asks to confirm, on a page that was not up to date, opens the same
+dialog.
 
 A keep can also be sent by hand. From the browser console on the signed-in Azizam page, the
 owner keeps a key like this. If the answer is `409 keep_needs_confirmation`, read its
