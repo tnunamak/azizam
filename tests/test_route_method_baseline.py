@@ -179,8 +179,8 @@ def _deliberate(key: str) -> str | None:
         return "deleted"
     if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
         return "native"
-    if path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/") or path == "/me/api/retention":
-        return "request_history"  # the maker's kept requests and the member's own choice; tests/test_request_history_*.py
+    if path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/") or path in {"/me/api/retention", "/me/api/retention/notice-seen"}:
+        return "request_history"  # the maker's kept requests, the member's own choice and its notice; tests/test_request_history_*.py
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
