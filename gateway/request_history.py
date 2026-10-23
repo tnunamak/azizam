@@ -422,10 +422,42 @@ def _boundary(content_type: str | None) -> bytes | None:
     return boundary if boundary else None
 
 
+class _JSONPairsObject(dict):
+    """A JSON object with the names that appeared more than once in its source."""
+
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        self.duplicate_keys: set[str] = set()
+        for name, value in pairs:
+            if name in self:
+                self.duplicate_keys.add(name)
+            self[name] = value
+
+
+def _parse_json(raw: bytes | str) -> Any:
+    """Parse JSON without losing duplicate-key evidence needed for the history control."""
+    return json.loads(raw, object_pairs_hook=_JSONPairsObject)
+
+
+def _has_duplicate_control_key(value: Any) -> bool:
+    """Whether a duplicate appears on the request-history control path."""
+    if not isinstance(value, _JSONPairsObject):
+        return False
+    if "extensions" in value.duplicate_keys:
+        return True
+    extensions = value.get("extensions")
+    if not isinstance(extensions, _JSONPairsObject):
+        return False
+    if retention.NAMESPACE in extensions.duplicate_keys:
+        return True
+    prompts = extensions.get(retention.NAMESPACE)
+    return isinstance(prompts, _JSONPairsObject) and "mode" in prompts.duplicate_keys
+
+
 def _json_object(raw: bytes) -> dict[str, Any] | None:
     """The body as a JSON object, or None when it is not one."""
     try:
-        parsed = json.loads(raw)
+        parsed = _parse_json(raw)
     except (ValueError, RecursionError):
         return None
     return parsed if isinstance(parsed, dict) else None
@@ -459,6 +491,7 @@ class BodyCapture:
         #: The body's own control values, before redaction: the parsed JSON object (in any media type), or a multipart
         #: form's text fields.
         self.control_source: dict[str, Any] | None = None
+        self.duplicate_control = False
         #: A form-urlencoded body's fields, read as the routes read them. None for any other media type.
         self.form_source: dict[str, str] | None = None
         #: Multipart field names sent as files. A control field sent as a file is not a readable control.
@@ -511,17 +544,19 @@ class BodyCapture:
                 return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
         elif self._mode == "json":
             try:
-                parsed = json.loads(bytes(self._buffer))
+                parsed = _parse_json(bytes(self._buffer))
             except (ValueError, RecursionError):
                 parsed = None
                 self._readable = self.total == 0
             if isinstance(parsed, dict):
                 self.control_source = parsed
+                self.duplicate_control = _has_duplicate_control_key(parsed)
                 return redact_json(parsed, budget=self._budget)
         else:
             # Not kept as content (rule 7), but read for its control the way the route reads it.
             raw = bytes(self._buffer)
             self.control_source = _json_object(raw)
+            self.duplicate_control = _has_duplicate_control_key(self.control_source)
             if self.media_type == "application/x-www-form-urlencoded":
                 self.form_source = dict(parse_qsl(raw.decode("latin-1"), keep_blank_values=True))
         return {"omitted": "unsupported_container", "media_type": self.media_type or "unknown",

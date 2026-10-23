@@ -613,8 +613,6 @@ def test_cookie_fields_inside_json_are_removed_from_saved_content(world, shape):
 
 
 @pytest.mark.parametrize("chunked", [False, True], ids=["declared_length", "chunked"])
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception,
-                   reason="R2: last-key-wins JSON discards an earlier forget (gateway/request_history.py:514)")
 def test_a_duplicate_extensions_key_cannot_override_an_earlier_forget(world, chunked):
     body = _body(Shape("duplicate_control"), _payload(world.canaries))
     # Last-key-wins must not turn a request containing forget into a kept request.
