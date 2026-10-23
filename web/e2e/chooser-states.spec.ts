@@ -8,8 +8,13 @@
 // nobody needs the owner's "On shared computers" choice, which the fixture gateway does not let a test set; W5
 // adds that choice to Settings and its capture belongs with it.
 import type { Page } from "@playwright/test";
-import { expect, GLOBAL_STATE_TAG, ownerApi, test } from "./fixtures/isolation";
+import { expect, test } from "./fixtures/isolation";
 import { CHOOSER_HEADING, twoPeopleOnOneBrowser } from "./chooser-journey";
+
+// The chooser's reads of the remembered list share one budget with every other test on the same gateway: 60 reads a
+// minute per address (gateway/accounts.py, throttle_remembered), and every worker in the gate comes from 127.0.0.1.
+// The tests in this file run one at a time, so their reads never add up with each other.
+test.describe.configure({ mode: "serial" });
 
 const WIDTHS = [
   { name: "390", width: 390, height: 844 },

@@ -11,6 +11,11 @@ import {
   twoPeopleOnOneBrowser,
 } from "./chooser-journey";
 
+// The chooser's reads of the remembered list share one budget with every other test on the same gateway: 60 reads a
+// minute per address (gateway/accounts.py, throttle_remembered), and every worker in the gate comes from 127.0.0.1.
+// The tests in this file run one at a time, so their reads never add up with each other.
+test.describe.configure({ mode: "serial" });
+
 test("chooser: the people who signed in on this browser are listed, most recent first, with Someone else last", async ({
   isolated,
 }) => {
