@@ -670,9 +670,7 @@ def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, sha
 @pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
 @pytest.mark.parametrize("part_count", [
     pytest.param(8, id="within_metadata_budget"),
-    pytest.param(320, id="over_metadata_budget", marks=pytest.mark.xfail(
-        strict=True, raises=pytest.fail.Exception,
-        reason="R4: multipart file-list metadata has no aggregate cap (gateway/request_history.py:588)")),
+    pytest.param(320, id="over_metadata_budget"),
 ])
 def test_upload_part_list_has_an_aggregate_capture_budget(world, shape, part_count, monkeypatch):
     """Every header fits python-multipart's limit; their combined metadata must fit too."""
@@ -696,6 +694,8 @@ def test_upload_part_list_has_an_aggregate_capture_budget(world, shape, part_cou
         pytest.fail(f"aggregate capture metadata bytes={metadata_bytes}, limit={LIMIT}", pytrace=False)
     for row in _kept_rows(world.media):
         assert row["byte_size"] <= 2 * LIMIT + 16384
+    if part_count > 8:
+        assert all(capture.body.result()[0] == {"omitted": "multipart_budget"} for capture in captures)
 
 
 @pytest.mark.parametrize("stress", ["nested_nodes", "deep_json_string", "long_digit_name", "long_url_scheme"])

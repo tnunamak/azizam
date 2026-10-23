@@ -296,32 +296,46 @@ class _OverBudget(Exception):
 
 
 class WorkBudget:
-    """The work one record may spend on JSON held inside strings (R6-2): the text it decodes, in bytes, and the values
-    it visits. One budget is shared by every body of a record, so the total stays bounded however many wrappers the
-    record holds. A string spends it when it parses as a JSON object, array or literal that is cleaned further. A
-    literal around plain text is cleaned as text and costs nothing here. Before a string is parsed it must fit in what
-    is left (R7-3), so one too long to fit is omitted unparsed, even when it would have been plain text."""
+    """The work one record may spend on nested JSON and multipart metadata. One budget is shared by every body, so the
+    total stays bounded across the request and reply. JSON strings spend bytes when decoded and nodes when visited;
+    multipart names and file metadata spend the same bytes and each part spends one node. Before a JSON string is parsed
+    it must fit in what is left (R7-3), so one too long to fit is omitted unparsed."""
 
     def __init__(self, *, max_bytes: int, max_nodes: int = JSON_NODE_LIMIT) -> None:
         self.max_bytes = max_bytes
         self.max_nodes = max_nodes
         self.decoded_bytes = 0
+        self.metadata_bytes = 0
         self.nodes = 0
 
     def fits(self, text: str) -> bool:
         """Whether ``text`` can be decoded within the byte limit. Nothing is spent."""
-        return self.decoded_bytes + len(text.encode("utf-8", "surrogatepass")) <= self.max_bytes
+        size = len(text.encode("utf-8", "surrogatepass"))
+        return self.decoded_bytes + self.metadata_bytes + size <= self.max_bytes
 
     def decode(self, text: str) -> None:
         size = len(text.encode("utf-8", "surrogatepass"))
-        if self.decoded_bytes + size > self.max_bytes:
+        if self.decoded_bytes + self.metadata_bytes + size > self.max_bytes:
             raise _OverBudget
         self.decoded_bytes += size
 
-    def visit(self) -> None:
+    def charge_metadata(self, size: int) -> bool:
+        """Spend bytes on multipart names or file metadata, if the record has room."""
+        if self.decoded_bytes + self.metadata_bytes + size > self.max_bytes:
+            return False
+        self.metadata_bytes += size
+        return True
+
+    def try_visit(self) -> bool:
+        """Spend one node on a multipart part, returning false when the shared count is full."""
         if self.nodes >= self.max_nodes:
-            raise _OverBudget
+            return False
         self.nodes += 1
+        return True
+
+    def visit(self) -> None:
+        if not self.try_visit():
+            raise _OverBudget
 
 
 def _redact_string(text: str, found: set[str], depth: int, budget: WorkBudget, *, tool_arguments: bool = False) -> Any:
@@ -484,6 +498,9 @@ class BodyCapture:
         self._fields: dict[str, bytes] = {}
         self._field_bytes = 0
         self._files: list[dict[str, Any]] = []
+        self._files_metadata_bytes = 0
+        self._multipart_omitted = False
+        self._control_fields: dict[str, str] = {}
         self._part: dict[str, Any] = {}
         self._parser: MultipartParser | None = None
         self._mode = "other"
@@ -569,8 +586,10 @@ class BodyCapture:
         if not self._failed and self._parser is not None:
             try:
                 self._parser.finalize()
+                self.control_source = self._control_fields
+                if self._multipart_omitted:
+                    return {"omitted": "multipart_budget"}, ["multipart_budget"]
                 texts = {name: value.decode("utf-8", "replace") for name, value in self._fields.items()}
-                self.control_source = texts
                 fields, found = redact_json(texts, budget=self._budget)
                 return {"fields": fields, "files": self._files}, found
             except Exception:
@@ -582,17 +601,48 @@ class BodyCapture:
     # -- multipart: one part at a time, so a file's bytes are counted, never kept
 
     def _callbacks(self) -> dict[str, Any]:
+        control_names = {"extensions", f"extensions[{retention.NAMESPACE}][mode]"}
+
+        def part_memory_bytes() -> int:
+            return sum(len(value) for value in self._part.values()
+                       if isinstance(value, (str, bytes, bytearray)))
+
+        def omit_parts() -> None:
+            self._multipart_omitted = True
+            self._fields.clear()
+            self._files.clear()
+            self._files_metadata_bytes = 0
+
+        def append_part_bytes(key: str, piece: bytes, *, control_value: bool = False) -> None:
+            current = part_memory_bytes() + self._files_metadata_bytes
+            available = max(0, self.limit - current)
+            if len(piece) > available:
+                omit_parts()
+                current = part_memory_bytes() + self._files_metadata_bytes
+                available = max(0, self.limit - current)
+            kept = piece[:available]
+            self._part[key].extend(kept)
+            if len(kept) != len(piece):
+                self._part["metadata_truncated"] = True
+                if control_value:
+                    self._readable = False
+
         def begin() -> None:
             self._part = {"header_name": bytearray(), "header_value": bytearray(), "name": None,
-                          "filename": None, "media_type": None, "bytes": 0, "value": bytearray()}
+                          "filename": None, "media_type": None, "bytes": 0, "value": bytearray(),
+                          "metadata_truncated": False}
+            if not self._budget.try_visit():
+                omit_parts()
 
         def header_field(data: bytes, start: int, end: int) -> None:
-            self._part["header_name"].extend(data[start:end])
+            append_part_bytes("header_name", data[start:end], control_value=True)
 
         def header_value(data: bytes, start: int, end: int) -> None:
-            self._part["header_value"].extend(data[start:end])
+            append_part_bytes("header_value", data[start:end], control_value=True)
 
         def header_end() -> None:
+            if self._part["metadata_truncated"]:
+                return
             name = bytes(self._part["header_name"]).decode("latin-1").strip().lower()
             value = bytes(self._part["header_value"]).decode("latin-1")
             self._part["header_name"] = bytearray()
@@ -604,28 +654,60 @@ class BodyCapture:
                 self._part["filename"] = filename.decode("utf-8", "replace") if filename is not None else None
             elif name == "content-type":
                 self._part["media_type"] = value.split(";", 1)[0].strip().lower()
+            if part_memory_bytes() + self._files_metadata_bytes > self.limit:
+                omit_parts()
+                if part_memory_bytes() > self.limit:
+                    self._part["name"] = None
+                    self._part["filename"] = None
+                    self._part["media_type"] = None
+                    self._part["metadata_truncated"] = True
+                    self._readable = False
 
         def part_data(data: bytes, start: int, end: int) -> None:
             piece = data[start:end]
             self._part["bytes"] += len(piece)
-            if self._part["filename"] is None:
-                self._field_bytes += len(piece)
-                if self._field_bytes > self.limit:
-                    self._overflow = True
-                elif not self._overflow:
-                    self._part["value"].extend(piece)
+            if self._part["filename"] is not None or self._part["metadata_truncated"]:
+                return
+            self._field_bytes += len(piece)
+            if self._field_bytes > self.limit:
+                self._overflow = True
+                return
+            is_control = self._part["name"] in control_names
+            if self._multipart_omitted and not is_control:
+                return
+            append_part_bytes("value", piece, control_value=is_control)
 
         def part_end() -> None:
             part = self._part
-            if part["name"] is None:
+            if part["name"] is None or part["metadata_truncated"]:
                 return
+            field = part["name"]
+            name_size = len(json.dumps(field).encode("utf-8"))
+            if not self._budget.charge_metadata(name_size):
+                omit_parts()
             if part["filename"] is not None:
-                self._files.append({"field": part["name"],
-                                    "media_type": part["media_type"] or "application/octet-stream",
-                                    "bytes": part["bytes"]})
-                self.control_files.add(part["name"])
+                if field in control_names:
+                    self.control_files.add(field)
+                metadata = {"field": field,
+                            "media_type": part["media_type"] or "application/octet-stream",
+                            "bytes": part["bytes"]}
+                metadata_size = len(json.dumps(metadata).encode("utf-8"))
+                if not self._budget.charge_metadata(metadata_size):
+                    omit_parts()
+                if not self._multipart_omitted:
+                    if self._files_metadata_bytes + metadata_size > self.limit:
+                        omit_parts()
+                    else:
+                        self._files.append(metadata)
+                        self._files_metadata_bytes += metadata_size
+                        if part_memory_bytes() + self._files_metadata_bytes > self.limit:
+                            omit_parts()
             else:
-                self._fields[part["name"]] = bytes(part["value"])
+                value = bytes(part["value"])
+                if field in control_names:
+                    self._control_fields[field] = value.decode("utf-8", "replace")
+                if not self._multipart_omitted:
+                    self._fields[field] = value
 
         return {"on_part_begin": begin, "on_header_field": header_field, "on_header_value": header_value,
                 "on_header_end": header_end, "on_part_data": part_data, "on_part_end": part_end}
