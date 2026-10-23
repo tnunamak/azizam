@@ -340,7 +340,10 @@ I10):
    `runtime_secrets` attaches stored credentials (D26, D38, D42: a request is
    built once and credentials are attached at the moment of use).
 4. **URLs inside a body keep scheme, host and path.** User info and query
-   values are replaced by `[removed]`, and query names are kept. A signed
+   values are replaced by `[removed]`, and query names are kept. The
+   authority ends at the first `/`, `?` or `#`, and only an `@` in it starts
+   user info. A URL that cannot be split that way is replaced whole by
+   `[url removed]` (round 6, R6-1). A signed
    URL is a bearer credential ([research] R6; `PROMPT_MEMORY.md` "OpenAI
    image URLs are bearer capabilities"). The record marks this, so Run
    again knows the record is incomplete.
@@ -358,7 +361,9 @@ I10):
    detector", because a detector that misses would be a control that does
    less than it says.
 7. **Only containers the gateway parses are captured.** These are JSON
-   objects, and multipart forms (their fields and part listing). A body the
+   objects, and multipart forms (their fields and part listing). JSON held in
+   a string, including a JSON string literal, is cleaned as JSON within one
+   work budget per record (round 6, R6-2). A body the
    gateway does not parse is recorded as
    `{"omitted": "unsupported_container", "media_type": ..., "bytes": N}`:
    a non-JSON native-lane body, raw audio, or any other media type. The
@@ -367,7 +372,9 @@ I10):
    through" ([research] R2).
 8. **A field named as a credential is removed, at any depth.** A field
    whose name has a credential segment gets the value `[removed]`. The
-   segments are compared in snake, kebab or camel case: `secret`,
+   segments are compared in snake, kebab or camel case, after characters
+   that show as nothing (format characters and the other default-ignorable
+   code points) are dropped (round 6, R6-4): `secret`,
    `password`, `passwd`, `credential(s)`, `authorization`, `apikey`, or
    the pairs `api_key`, `access_token`, `refresh_token`, `id_token`,
    `auth_token`. A plain `token` segment is not one of them, so
@@ -1981,7 +1988,7 @@ that they pin now passes with its mark removed. The tests the review did not pin
 - **Rollback (review item 11).** Schema 17 is not rollback-safe. Take a backup of `admin.db` and `media_jobs.db` before
   deploy.
 - **Round 4 fixes, as built (R4-1 to R4-4).** The probes are in `tests/test_request_history_s5a_r4_fixes.py`.
-  - **User info and query values (R4-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
+  - **User info and query values (R4-1, superseded by R6-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
     user info does not end it. The user info of a URL ends at its last `@`: everything from the scheme to that `@` is
     removed. So a `/`, `?` or `#` in a password is not read as the start of the path. A URL whose path or query holds an
     `@` loses its host too, because a parser cannot tell that case from a password. A closing quote or `>` after a URL
@@ -1999,6 +2006,11 @@ that they pin now passes with its mark removed. The tests the review did not pin
     nothing was kept.
   - **JSON in any string (R5-1).** A string that starts with `{` or `[` after whitespace, and parses as JSON, is cleaned by the `arguments` path (`_redact_string`) and stored compact, so tool `arguments` are compact too. One that does not parse is cleaned as text, except tool `arguments`, which is still omitted as `unreadable_json`. Past the depth limit it is omitted as `json_depth`.
   - **Format characters in names (R5-2).** `is_credential_name` drops Unicode format characters (category Cf: a zero-width space, a joiner, a word joiner, a byte order mark, a soft hyphen) before the NFKC match, so `pass`, a zero-width space and `word` match. Names without them match as before.
+- **Round 6 fixes, as built (R6-1 to R6-4).** The probes are in `tests/test_request_history_s5a_r6_fixes.py`. Two round-4 expectations changed: `test_r4_1_c` now expects `[url removed]` for the five URLs it lists, because the round-4 rule they pinned is replaced.
+  - **Where the authority ends (R6-1).** The authority ends at the first `/`, `?` or `#`. Only an `@` inside it starts user info, and only one may be there. A query or fragment value that holds an `@` is cleaned by its own rule and never becomes the host: `https://h.test/#token=prefix@SECRET` keeps `https://h.test/`, and `https://h.test/?token=prefix@SECRET` keeps `https://h.test/?token=[removed]`. A URL that cannot be split that way is replaced whole by `[url removed]`, and no suffix of it is kept. That covers an authority with a second `@`; a character outside the RFC 3986 authority set (a backslash, a brace, a space, a non-ASCII letter), with the quote a pasted user info may carry allowed; a port that is not a number up to 65535; and an `@` in the path when the authority has none, because an unencoded delimiter in a password would put one there and the path is kept as written. This replaces the round-4 rule (R4-1), which cut user info at the last `@` anywhere in the URL. Known residual: a password with an unencoded `?` or `#` after digits, such as `https://user:12?SECRET@host`, keeps `user:12`, because up to the delimiter the authority is a valid host and port. The value after the delimiter is still removed. Any URL with an `@` in its path and none in its authority is also replaced whole, as `https://host/@name` is. Both are a decision for the owner: tighten to remove every such authority, or accept the residual.
+  - **JSON held in a string literal (R6-2).** A string whose content is a JSON string literal that holds JSON, or another literal, is decoded and cleaned at every wrapper level, and stored as a literal again. A literal around plain text is cleaned as text, as before, and so is a literal around bracketed prose that does not parse. The nested JSON of a record shares one `WorkBudget` between its request body and its reply: decoded text up to `max_record_bytes` (1 MiB), and up to `JSON_NODE_LIMIT` (200,000) values visited. Only text that parses to a JSON object or array spends it, so plain text costs nothing. A string past the budget is omitted as `{"omitted": "json_budget"}`, and a string past `JSON_DEPTH_LIMIT` is omitted as before. The node limit bounds the work of a body of many small JSON strings, and the micro-benchmark `test_r6_2_j` asserts that counter for a one-mebibyte body, not a time.
+  - **Body whole before the caller is known (R6-3).** A body that completes before the route authenticates has its controls read at the first decision, before a slot is taken and before any reply is buffered. A forget takes no slot, and its reply is not held until the write. Before, the controls were read only when the body completed after the decision, so a forget held its slot until the write.
+  - **Default-ignorable characters in names (R6-4).** `is_credential_name` drops every Default_Ignorable_Code_Point before the NFKC match: the format characters (category Cf) and the ranges U+034F, U+115F to U+1160, U+17B4 to U+17B5, U+180B to U+180F, U+2065, U+3164, U+FE00 to U+FE0F, U+FFA0, U+FFF0 to U+FFF8 and U+E0000 to U+E0FFF. U+2065 and U+FFF0 to U+FFF8 are unassigned, and the property covers them, so they are dropped too. So `pass` followed by U+034F and `word` matches as `password`.
 
 ## 18. Tim's three decisions
 
