@@ -25,10 +25,19 @@ export interface TrustedAddress {
   created_at: number;
   /** Null when the address was made before its creator was recorded. */
   created_by: string | null;
+  /** Present only when the cut-over would remove the address: keep it, or add it again. */
+  cutover?: "keep" | "readd";
+  /** The person recorded as its maker, when that is another person. */
+  made_by_name?: string;
 }
 
 const listPath = (appId: string) =>
   `/admin/api/apps/${encodeURIComponent(appId)}/trusted-addresses`;
+
+/** What to show for a failed change: the gateway's words, or the fallback. */
+function messageOf(caught: unknown, fallback: string): string {
+  return caught instanceof Error && caught.message ? caught.message : fallback;
+}
 
 /** An owner trusts a device, or a range of them, to use one app with no
  * key. The app's access plan still limits what it can do. */
@@ -36,13 +45,13 @@ export function TrustedAddressesDialog({
   app,
   appName,
   onClose,
-  onKept,
+  onChanged,
 }: {
   app: { id: string } | null;
   appName: string;
   onClose: () => void;
-  /** An address was kept: the account's Apps list shows the new count. */
-  onKept: () => void;
+  /** An address was kept or added again: the account's Apps list shows the new count. */
+  onChanged: () => void;
 }) {
   const queryClient = useQueryClient();
   const [address, setAddress] = useState("");
@@ -104,8 +113,39 @@ export function TrustedAddressesDialog({
     const kept = await change(() => accountApi.keepTrustedAddress(appId, entry.id));
     if (kept) {
       setKeptId(entry.id);
-      onKept();
+      onChanged();
       toast.success("Address kept");
+    }
+  }
+
+  // An App holds each address once, so the old entry is removed before the same address is added again. The add
+  // then records this person as the address's maker. Focus moves to the new entry's Remove button.
+  async function addAgain(entry: TrustedAddress) {
+    setBusy(true);
+    setError(null);
+    let addedId: string | null = null;
+    try {
+      await accountApi.removeTrustedAddress(appId, entry.id);
+      try {
+        const added = await accountApi.addTrustedAddress(appId, {
+          address: entry.address,
+          note: entry.note ?? "",
+        });
+        addedId = added.trusted_address.id;
+      } catch (caught) {
+        setError(
+          `${entry.address} is no longer trusted. ${messageOf(caught, "It could not be added again.")} Add it below to trust it again.`,
+        );
+      }
+    } catch (caught) {
+      setError(messageOf(caught, "The address could not be changed. Try again."));
+    }
+    await queryClient.invalidateQueries({ queryKey: key });
+    onChanged();
+    setBusy(false);
+    if (addedId !== null) {
+      setKeptId(addedId);
+      toast.success("Address added again");
     }
   }
 
@@ -154,15 +194,24 @@ export function TrustedAddressesDialog({
                       {entry.note}
                     </span>
                   ) : null}
-                  {entry.created_by === null ? (
+                  {entry.cutover === "keep" ? (
                     <span className="text-muted-foreground text-meta block">
                       Made before Azizam recorded who made addresses. Keep it, or
                       it stops working at the next ownership update.
                     </span>
                   ) : null}
+                  {entry.cutover === "readd" ? (
+                    <span className="text-muted-foreground text-meta block">
+                      {entry.made_by_name
+                        ? `Made by ${entry.made_by_name}.`
+                        : "Made before Azizam recorded who made addresses."}{" "}
+                      It stops working at the next ownership update. Add it again
+                      yourself to keep it.
+                    </span>
+                  ) : null}
                 </span>
                 <div className="flex shrink-0 gap-2">
-                  {entry.created_by === null ? (
+                  {entry.cutover === "keep" ? (
                     <Button
                       variant="outline"
                       disabled={busy}
@@ -170,6 +219,16 @@ export function TrustedAddressesDialog({
                       onClick={() => void keep(entry)}
                     >
                       Keep
+                    </Button>
+                  ) : null}
+                  {entry.cutover === "readd" ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      aria-label={`Add address ${entry.address} again`}
+                      onClick={() => void addAgain(entry)}
+                    >
+                      Add again
                     </Button>
                   ) : null}
                   <Button

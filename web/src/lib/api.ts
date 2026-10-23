@@ -78,6 +78,10 @@ export interface Credential {
   expires_at: number | null;
   revoked_at: number | null;
   last_used_at: number | null;
+  /** Present only on a key the cut-over would remove, with the one remedy the person has: keep it, or replace it. */
+  cutover?: "keep" | "replace";
+  /** The person recorded as its maker, when that is another person. */
+  made_by_name?: string;
 }
 
 /** Mint responses carry the full key exactly once. Reveal-once: show in the

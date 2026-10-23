@@ -135,3 +135,79 @@ it("keepKey keeps nothing when the person does not confirm, and returns the gate
   });
   expect(sent).toHaveLength(1);
 });
+
+it("replaceKey posts to the key's replace route with the same headers, and returns the new key and the one it replaced", async () => {
+  reply.body = {
+    credential: { id: "key-new", api_key: "opk_new_secret" },
+    replaced_credential_id: "key-1",
+  };
+  const replaced = await accountApi.replaceKey("key-1");
+  expect(replaced).toEqual(reply.body);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("POST");
+  expect(sent[0].path).toBe("/me/api/credentials/key-1/replace");
+  expect(sent[0].body).toBeUndefined();
+  expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
+  expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
+});
+
+it("replaceKey asks for a recent sign-in, then replaces the key once the person confirms", async () => {
+  const replaced = {
+    credential: { id: "key-new", api_key: "opk_new_secret" },
+    replaced_credential_id: "key-1",
+  };
+  reply = reauthRequired;
+  vi.mocked(requestReauth).mockImplementation(async () => {
+    reply = { status: 201, body: replaced };
+    return true;
+  });
+  const answer = await accountApi.replaceKey("key-1");
+  expect(answer).toEqual(replaced);
+  expect(requestReauth).toHaveBeenCalledTimes(1);
+  expect(sent.map((request) => request.path)).toEqual([
+    "/me/api/credentials/key-1/replace",
+    "/me/api/credentials/key-1/replace",
+  ]);
+});
+
+it("replaceKey replaces nothing when the person does not confirm, and returns the gateway's words", async () => {
+  reply = reauthRequired;
+  vi.mocked(requestReauth).mockResolvedValue(false);
+  const failure = await accountApi.replaceKey("key-1").catch((e: unknown) => e);
+  expect(failure).toBeInstanceOf(ApiError);
+  expect(failure).toMatchObject({
+    code: "reauth_required",
+    message: "Confirm it is you to continue.",
+    status: 401,
+  });
+  expect(sent).toHaveLength(1);
+});
+
+it("replaceKey turns a refusal for a turned-off App into an ApiError with the gateway's code", async () => {
+  reply = {
+    status: 403,
+    body: { error: { code: "app_disabled", message: "App is disabled" } },
+  };
+  const failure = await accountApi.replaceKey("key-1").catch((e: unknown) => e);
+  expect(failure).toMatchObject({ code: "app_disabled", message: "App is disabled", status: 403 });
+});
+
+it("addTrustedAddress posts the address and note to the App's list, and returns the new entry", async () => {
+  reply = { status: 201, body: { trusted_address: { id: "tad-9" } } };
+  const added = await accountApi.addTrustedAddress("app-1", { address: "10.0.0.8", note: "Hall speaker" });
+  expect(added).toEqual({ trusted_address: { id: "tad-9" } });
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("POST");
+  expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses");
+  expect(sent[0].body).toEqual({ address: "10.0.0.8", note: "Hall speaker" });
+  expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
+});
+
+it("removeTrustedAddress deletes one entry on the App with the same headers", async () => {
+  reply = { status: 200, body: { trusted_address: { id: "tad-1" } } };
+  await accountApi.removeTrustedAddress("app-1", "tad-1");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].method).toBe("DELETE");
+  expect(sent[0].path).toBe("/me/api/apps/app-1/trusted-addresses/tad-1");
+  expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
+});

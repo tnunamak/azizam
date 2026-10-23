@@ -37,6 +37,7 @@ vi.mock("@/lib/account-api", () => ({
     createApp: vi.fn(),
     mintKey: vi.fn(),
     revokeKey: vi.fn(),
+    replaceKey: vi.fn(),
     mcpConnections: vi.fn(),
     revokeMcpConnection: vi.fn(),
   },
@@ -143,28 +144,29 @@ function openMenu(appName: string) {
   fireEvent.keyDown(trigger, { key: "Enter" });
 }
 
-it("marks only the personal app whose key has no recorded creator, with a Replace action", async () => {
+it("marks only the personal app whose key the cut-over removes, and its Replace key button replaces that key", async () => {
   const oldKey = {
     id: "old-key",
     created_by: null,
     last_used_at: null,
+    cutover: "replace",
   } as Credential;
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
     apps: [
-      {
-        ...app,
-        kind: "personal",
-        credentials: [oldKey, { ...oldKey, id: "second-key" }],
-      },
+      { ...app, kind: "personal", credentials: [oldKey] },
       {
         ...app,
         id: "fresh-app",
         name: "Phone",
         kind: "personal",
-        credentials: [{ ...oldKey, id: "fresh-key", created_by: "member" }],
+        credentials: [{ ...oldKey, id: "fresh-key", created_by: "member", cutover: undefined }],
       },
     ],
+  });
+  vi.mocked(accountApi.replaceKey).mockResolvedValue({
+    credential: { ...mintedKey, id: "new-key" },
+    replaced_credential_id: "old-key",
   });
   renderApps();
   const row = within(
@@ -177,19 +179,71 @@ it("marks only the personal app whose key has no recorded creator, with a Replac
   expect(fresh.queryByText(/Needs a new key/)).toBeNull();
   expect(fresh.queryByRole("button", { name: "Replace key" })).toBeNull();
   expect(screen.queryByText(/Older keys with no recorded creator/)).toBeNull();
+
   fireEvent.click(row.getByRole("button", { name: "Replace key" }));
+
   expect(
-    screen.getByRole("heading", { name: "Rotate keys for My laptop?" }),
+    await screen.findByRole("heading", { name: "Connect My laptop" }),
   ).toBeVisible();
+  expect(accountApi.replaceKey).toHaveBeenCalledWith("old-key");
+  expect(accountApi.mintKey).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("heading", { name: "Rotate keys for My laptop?" }),
+  ).toBeNull();
 });
 
-it("does not mark household app keys that lack a creator", async () => {
+it("leaves a personal app's row without a Replace key button when more than one key needs replacing", async () => {
+  const oldKey = {
+    id: "old-key",
+    created_by: null,
+    last_used_at: null,
+    cutover: "replace",
+  } as Credential;
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
     apps: [
       {
         ...app,
-        credentials: [{ id: "old-key", created_by: null } as Credential],
+        kind: "personal",
+        credentials: [oldKey, { ...oldKey, id: "second-key" }],
+      },
+    ],
+  });
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.getByText(/Needs a new key/)).toBeVisible();
+  expect(row.queryByRole("button", { name: "Replace key" })).toBeNull();
+  expect(accountApi.replaceKey).not.toHaveBeenCalled();
+});
+
+it("gives a personal app's key that can be kept no row button, so keeping it is its one remedy", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        kind: "personal",
+        credentials: [{ id: "old-key", created_by: null, cutover: "keep" } as Credential],
+      },
+    ],
+  });
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.queryByText(/Needs a new key/)).toBeNull();
+  expect(row.queryByRole("button", { name: "Replace key" })).toBeNull();
+});
+
+it("does not mark household app keys, even ones the cut-over removes", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        credentials: [{ id: "old-key", created_by: null, cutover: "replace" } as Credential],
       },
     ],
   });

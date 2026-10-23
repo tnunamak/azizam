@@ -455,6 +455,24 @@ export const REGISTRY: Endpoint[] = [
   }),
   executed("GET", "/gateway/v1/media/jobs/{id}/content", { path: /^\/gateway\/v1\/media\/jobs\/[^/]+\/content$/ }),
   executed("GET", "/v1/videos/{id}", { path: /^\/v1\/videos\/[^/]+$/ }),
+  {
+    // The owner's address list for an App. The probe reads the first App that holds an address, so the entries a stub
+    // carries are checked against a real one (the add-again flow adds one before it answers the list).
+    id: "GET /admin/api/apps/{id}/trusted-addresses",
+    methods: ["GET"],
+    path: /^\/admin\/api\/apps\/[^/]+\/trusted-addresses$/,
+    probe: async (api) => {
+      const { apps } = (await read(api, "/admin/api/apps")) as { apps: { id: string }[] };
+      for (const app of apps) {
+        const listed = (await read(api, `/admin/api/apps/${app.id}/trusted-addresses`)) as {
+          trusted_addresses: unknown[];
+        };
+        if (listed.trusted_addresses.length > 0) return listed;
+      }
+      return { trusted_addresses: [] };
+    },
+    required: ["/trusted_addresses"],
+  },
   executed("DELETE", "/admin/api/invites/{id}", { path: /^\/admin\/api\/invites\/[^/]+$/ }),
   executed("DELETE", "/admin/api/people/{id}", { path: /^\/admin\/api\/people\/[^/]+$/ }),
   executed("PATCH", "/admin/api/operator/services/{id}", {

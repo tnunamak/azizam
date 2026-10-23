@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { accountApi, type AccountApp } from "@/lib/account-api";
+import { accountApi, type AccountApp, type ReplacedKey } from "@/lib/account-api";
 import type { Credential } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -240,11 +240,12 @@ function KeyRow({
   keyRecord,
   editing,
   disabled,
-  keeping,
-  keepDisabled,
-  keepFailure,
+  working,
+  remedyDisabled,
+  remedyFailure,
   onEdit,
   onKeep,
+  onReplace,
   onSaved,
   onCancel,
 }: {
@@ -252,20 +253,21 @@ function KeyRow({
   editing: boolean;
   /** Another row is being saved or edited. */
   disabled: boolean;
-  /** This key is being kept. */
-  keeping: boolean;
-  /** Keep is unavailable: another row is being edited, or a key is being kept. */
-  keepDisabled: boolean;
-  /** Why the last Keep of this key failed. */
-  keepFailure: string | null;
+  /** The remedy running on this key, if one is. */
+  working: "keep" | "replace" | null;
+  /** The remedy is unavailable: another row is being edited, or a remedy is running. */
+  remedyDisabled: boolean;
+  /** Why the last remedy on this key failed. */
+  remedyFailure: string | null;
   onEdit: () => void;
   onKeep: () => void;
+  onReplace: () => void;
   onSaved: (key: Credential) => void;
   onCancel: () => void;
 }) {
   const label = keyRecord.display_name;
-  // A key made before its creator was recorded: the cut-over revokes it unless the person keeps it.
-  const unkept = keyRecord.created_by === null;
+  // The one remedy the cut-over leaves this key: keep it, or replace it. The gateway decides which.
+  const remedy = keyRecord.cutover;
   return (
     <li className="space-y-2 py-3">
       {editing ? (
@@ -293,14 +295,24 @@ function KeyRow({
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
-              {unkept ? (
+              {remedy === "keep" ? (
                 <Button
                   variant="outline"
-                  disabled={keepDisabled}
+                  disabled={remedyDisabled}
                   aria-label={`Keep key ${label}`}
                   onClick={onKeep}
                 >
-                  {keeping ? "Keeping…" : "Keep"}
+                  {working === "keep" ? "Keeping…" : "Keep"}
+                </Button>
+              ) : null}
+              {remedy === "replace" ? (
+                <Button
+                  variant="outline"
+                  disabled={remedyDisabled}
+                  aria-label={`Replace key ${label}`}
+                  onClick={onReplace}
+                >
+                  {working === "replace" ? "Replacing…" : "Replace key"}
                 </Button>
               ) : null}
               <Button
@@ -314,30 +326,40 @@ function KeyRow({
               </Button>
             </div>
           </div>
-          {unkept ? (
+          {remedy === "keep" ? (
             <p className="text-muted-foreground text-meta">
               Made before Azizam recorded who made keys. Keep it, or it stops
               working at the next ownership update.
             </p>
           ) : null}
+          {remedy === "replace" ? (
+            <p className="text-muted-foreground text-meta">
+              {keyRecord.made_by_name
+                ? `Made by ${keyRecord.made_by_name}.`
+                : "Made before Azizam recorded who made keys."}{" "}
+              It stops working at the next ownership update. Replace it with a
+              new key.
+            </p>
+          ) : null}
         </>
       )}
-      {keepFailure ? (
+      {remedyFailure ? (
         <p role="alert" className="text-destructive text-meta">
-          {keepFailure}
+          {remedyFailure}
         </p>
       ) : null}
     </li>
   );
 }
 
-/** One app's keys, each with a Rename button and, for a key with no recorded creator, a Keep button.
- * One key is edited at a time. */
+/** One app's keys, each with a Rename button and the one remedy the cut-over leaves it (Keep, or Replace key).
+ * One key is edited at a time, and one remedy runs at a time. */
 export function RenameKeysDialog({
   app,
   appName,
   onSaved,
   onKept,
+  onReplaced,
   onClose,
   onCloseAutoFocus,
 }: {
@@ -345,12 +367,14 @@ export function RenameKeysDialog({
   appName: string;
   onSaved: (key: Credential) => void;
   onKept: (key: Credential) => void;
+  /** A key was replaced: the page shows the new key once and takes the old key's row away. */
+  onReplaced: (replaced: ReplacedKey) => void;
   onClose: () => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
-  const [keeping, setKeeping] = useState<string | null>(null);
-  const [keepFailure, setKeepFailure] = useState<{ id: string; message: string } | null>(null);
+  const [working, setWorking] = useState<{ id: string; remedy: "keep" | "replace" } | null>(null);
+  const [remedyFailure, setRemedyFailure] = useState<{ id: string; message: string } | null>(null);
   // The row that had the edit, so its Rename button gets focus back.
   const returnTo = useRef<string | null>(null);
 
@@ -367,19 +391,34 @@ export function RenameKeysDialog({
   }
 
   async function keep(keyRecord: Credential) {
-    setKeeping(keyRecord.id);
-    setKeepFailure(null);
+    setWorking({ id: keyRecord.id, remedy: "keep" });
+    setRemedyFailure(null);
     try {
       onKept(await accountApi.keepKey(keyRecord.id));
       // The Keep button goes once the key is kept; its Rename button stays, so focus moves there.
       document.getElementById(`rename-key-${keyRecord.id}`)?.focus();
     } catch (caught) {
-      setKeepFailure({
+      setRemedyFailure({
         id: keyRecord.id,
         message: failure(caught, "The key could not be kept. Try again."),
       });
     } finally {
-      setKeeping(null);
+      setWorking(null);
+    }
+  }
+
+  async function replace(keyRecord: Credential) {
+    setWorking({ id: keyRecord.id, remedy: "replace" });
+    setRemedyFailure(null);
+    try {
+      onReplaced(await accountApi.replaceKey(keyRecord.id));
+    } catch (caught) {
+      setRemedyFailure({
+        id: keyRecord.id,
+        message: failure(caught, "The key could not be replaced. Try again."),
+      });
+    } finally {
+      setWorking(null);
     }
   }
 
@@ -420,11 +459,12 @@ export function RenameKeysDialog({
                 keyRecord={keyRecord}
                 editing={editing === keyRecord.id}
                 disabled={editing !== null && editing !== keyRecord.id}
-                keeping={keeping === keyRecord.id}
-                keepDisabled={editing !== null || keeping !== null}
-                keepFailure={keepFailure?.id === keyRecord.id ? keepFailure.message : null}
+                working={working?.id === keyRecord.id ? working.remedy : null}
+                remedyDisabled={editing !== null || working !== null}
+                remedyFailure={remedyFailure?.id === keyRecord.id ? remedyFailure.message : null}
                 onEdit={() => setEditing(keyRecord.id)}
                 onKeep={() => void keep(keyRecord)}
+                onReplace={() => void replace(keyRecord)}
                 onSaved={(saved) => {
                   onSaved(saved);
                   stopEditing(keyRecord.id);
