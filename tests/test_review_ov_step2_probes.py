@@ -1,8 +1,8 @@
-"""Review probes for owner visibility step 2 (feat/owner-visibility-step2 at 960f9db8c).
+"""Review probes for owner visibility step 2 (review of feat/owner-visibility-step2 at 960f9db8c).
 
-Each xfail(strict=True) test states the secure behaviour a review finding expects; it is xfail because the
-branch does not do it yet, and strict so the test fails loudly once the branch is fixed. The plain tests
-prove a claim of the branch on a path its own tests do not cover.
+Each test states the behaviour one review finding requires. It was a strict xfail on the reviewed branch, and it
+is a plain assertion now that the fix is in. The plain tests prove claims of the reviewed branch on paths its own
+tests do not cover.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def test_a_member_cannot_keep_a_key_the_audit_log_shows_someone_else_minted(gate
 
     credential = admin_store.get_credential(key_id, path=gateway.path)
     # Secure: the keep is refused (or replaced by a re-issue), so the owner's copy of the secret never
-    # becomes the member's identity. On the branch: 200, and the key now reads the member's saved prompts.
+    # becomes the member's identity. On the reviewed branch the keep returned 200, and the key then read the member's prompts.
     assert kept.status_code != 200, kept.text
     assert admin_runtime.person_for_app_credential(app, credential) is None
 

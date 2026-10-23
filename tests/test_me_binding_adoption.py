@@ -488,3 +488,31 @@ def test_removing_an_address_the_app_does_not_hold_is_not_found(gateway):
 
     assert missing.status_code == 404, missing.text
     assert missing.json()["error"]["code"] == "trusted_address_not_found"
+
+
+def test_the_owner_cannot_keep_a_key_the_record_names_as_made_by_another_person_even_without_an_audit_row(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _member(gateway, "desk")
+    member_id = gateway.user("desk@example.test")["id"]
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id, created_by=member_id)
+
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "keep_not_provable"
+    assert _creator_of_key(gateway, key_id) == member_id
+
+
+def test_the_owner_cannot_keep_an_address_the_record_names_as_added_by_another_person_even_without_an_audit_row(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _member(gateway, "desk")
+    member_id = gateway.user("desk@example.test")["id"]
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, app_id, "10.0.0.13", created_by=member_id)
+
+    refused = owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "keep_not_provable"
+    assert _creator_of_address(gateway, entry_id) == member_id
