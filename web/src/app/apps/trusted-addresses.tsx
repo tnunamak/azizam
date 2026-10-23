@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetch } from "@/lib/api";
+import { accountApi } from "@/lib/account-api";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +23,8 @@ export interface TrustedAddress {
   address: string;
   note: string | null;
   created_at: number;
+  /** Null when the address was made before its creator was recorded. */
+  created_by: string | null;
 }
 
 const listPath = (appId: string) =>
@@ -32,16 +36,20 @@ export function TrustedAddressesDialog({
   app,
   appName,
   onClose,
+  onKept,
 }: {
   app: { id: string } | null;
   appName: string;
   onClose: () => void;
+  /** An address was kept: the account's Apps list shows the new count. */
+  onKept: () => void;
 }) {
   const queryClient = useQueryClient();
   const [address, setAddress] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keptId, setKeptId] = useState<string | null>(null);
   const appId = app?.id ?? "";
   const key = ["admin", "app-trusted-addresses", appId];
   const { data, isPending, isError } = useQuery({
@@ -70,6 +78,14 @@ export function TrustedAddressesDialog({
     }
   }
 
+  // After a keep the entry's Keep button is gone, so focus its Remove button once the change has settled.
+  useEffect(() => {
+    if (keptId !== null && !busy) {
+      document.getElementById(`remove-address-${keptId}`)?.focus();
+      setKeptId(null);
+    }
+  }, [keptId, busy]);
+
   async function add(event: FormEvent) {
     event.preventDefault();
     const saved = await change(() =>
@@ -81,6 +97,15 @@ export function TrustedAddressesDialog({
     if (saved) {
       setAddress("");
       setNote("");
+    }
+  }
+
+  async function keep(entry: TrustedAddress) {
+    const kept = await change(() => accountApi.keepTrustedAddress(appId, entry.id));
+    if (kept) {
+      setKeptId(entry.id);
+      onKept();
+      toast.success("Address kept");
     }
   }
 
@@ -129,21 +154,40 @@ export function TrustedAddressesDialog({
                       {entry.note}
                     </span>
                   ) : null}
+                  {entry.created_by === null ? (
+                    <span className="text-muted-foreground text-meta block">
+                      Made before Azizam recorded who made addresses. Keep it, or
+                      it stops working at the next ownership update.
+                    </span>
+                  ) : null}
                 </span>
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  aria-label={`Remove ${entry.address}`}
-                  onClick={() =>
-                    void change(() =>
-                      adminFetch(`${listPath(appId)}/${entry.id}`, {
-                        method: "DELETE",
-                      }),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
+                <div className="flex shrink-0 gap-2">
+                  {entry.created_by === null ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      aria-label={`Keep address ${entry.address}`}
+                      onClick={() => void keep(entry)}
+                    >
+                      Keep
+                    </Button>
+                  ) : null}
+                  <Button
+                    id={`remove-address-${entry.id}`}
+                    variant="outline"
+                    disabled={busy}
+                    aria-label={`Remove ${entry.address}`}
+                    onClick={() =>
+                      void change(() =>
+                        adminFetch(`${listPath(appId)}/${entry.id}`, {
+                          method: "DELETE",
+                        }),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
