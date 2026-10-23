@@ -130,9 +130,10 @@ def test_recent_app_with_only_expired_proven_survivor_blocks_apply(legacy):
 
 # The subprocess enters the production module CLI through runpy. The only
 # instrumentation is a SQLite connection that announces a completed statement
-# and waits for stdin. The parent kills the actual apply process with SIGKILL.
+# and waits for stdin. Only this child sends SIGKILL, to its own PID; the
+# hermetic parent's prohibition on arbitrary process signalling stays intact.
 PAUSED_APPLY = r'''
-import os, runpy, sqlite3, sys
+import os, runpy, signal, sqlite3, sys
 from pathlib import Path
 point = sys.argv.pop(1)
 real_connect = sqlite3.connect
@@ -143,6 +144,7 @@ def pause(label):
         paused = True
         print("REDTEAM_PAUSED", flush=True)
         sys.stdin.readline()
+        os.kill(os.getpid(), signal.SIGKILL)
 class Connection(sqlite3.Connection):
     def execute(self, sql, *args, **kwargs):
         result = super().execute(sql, *args, **kwargs)
@@ -177,13 +179,12 @@ def _kill_apply_at(path, point):
             selector.register(proc.stdout, selectors.EVENT_READ)
             assert selector.select(timeout=20), "apply never reached the crash point"
             assert proc.stdout.readline().strip() == "REDTEAM_PAUSED", "apply exited before the crash point"
-        proc.kill()
-        proc.communicate(timeout=10)
+        proc.communicate(input="kill self\n", timeout=10)
         assert proc.returncode == -signal.SIGKILL
     finally:
         if proc.poll() is None:
-            proc.kill()
-        proc.communicate(timeout=10)
+            # Closing stdin also releases a paused child on an assertion error.
+            proc.communicate(input="kill self\n", timeout=10)
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError,
