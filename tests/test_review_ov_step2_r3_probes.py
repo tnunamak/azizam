@@ -1,11 +1,13 @@
 """Review probes for owner visibility step 2, round 3 (review of feat/owner-visibility-step2 at a21a12609).
 
-Each strict xfail states the behaviour one review finding asks for; it fails on the reviewed branch.
-The plain tests prove claims of the reviewed branch on paths its own tests do not cover.
+Each finding's probe states the behaviour the review asks for. It failed on the reviewed branch as a strict
+xfail; it is a plain assertion now. The plain tests prove claims of the reviewed branch on paths its own tests
+do not cover.
 """
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import uuid
 
@@ -36,6 +38,15 @@ def _own_app(client, name="Desk"):
     return created.json()["app"]["id"]
 
 
+def _display_name(g, email, name):
+    conn = sqlite3.connect(g.path)
+    try:
+        conn.execute("UPDATE users SET display_name = ? WHERE LOWER(email) = ?", (name, email))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _legacy_key(g, app_id, created_by=None):
     return admin_store.create_credential_hash(
         subject_kind="app", subject_id=app_id, app_id=app_id, hash=f"sha256:{uuid.uuid4().hex}",
@@ -50,29 +61,32 @@ def _live_keys_on(g, app_id):
 
 # --- Finding: "only ever the owner" ignores administrators, who could key any App before 2026-10-13 ---------
 
-@pytest.mark.xfail(strict=True, reason="r3 finding 1: _owner_only_ever counts only role='owner'; before b84eeb50e an "
-                                       "admin or superadmin could mint a key on any App, so a key with no audit row "
-                                       "is not provably the owner's while an administrator has ever existed")
-def test_the_owner_cannot_keep_an_unaudited_key_while_an_administrator_has_ever_existed(gateway):
-    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+def test_the_owner_keeps_an_unaudited_key_only_after_confirming_the_administrators_on_record(gateway):
+    owner, owner_id, _plan, _admin = owner_and_admin(gateway)
     admin_id = gateway.user("helper@example.test")["id"]
     assert gateway.rows("SELECT 1 FROM admin_role_assignments WHERE role IN ('admin', 'superadmin') AND subject_id = ?",
                         (admin_id,)), "the fixture's helper holds an administrator role"
+    _display_name(gateway, "helper@example.test", "Helper Person")
     app_id = _own_app(owner)
     before_the_cut_over(gateway.path)
     key_id = _legacy_key(gateway, app_id)  # made by the administrator in an older release; its audit row is gone
 
-    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
 
-    assert kept.status_code == 409, kept.text
-    assert kept.json()["error"]["code"] == "keep_not_provable"
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert admin_store.get_credential(key_id, path=gateway.path)["created_by"] is None
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner),
+                      json={"confirm_admins_could_have_made_it": True})
+
+    assert kept.status_code == 200, kept.text
+    assert admin_store.get_credential(key_id, path=gateway.path)["created_by"] == owner_id
 
 
 # --- Finding: the lifetime lock is taken only by `python proxy.py`, not by an ASGI launch ------------------
 
-@pytest.mark.xfail(strict=True, reason="r3 finding 2: gateway_lifetime.hold runs only in proxy.py's __main__ block; "
-                                       "a gateway served as proxy:app (uvicorn, scripts/ui/serve.py, test gateways) "
-                                       "holds no lifetime lock, so apply's exclusive lock succeeds while it serves")
 def test_a_gateway_serving_requests_through_its_asgi_app_holds_the_lifetime_lock(gateway):
     owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
     assert _own_app(owner) in {row["id"] for row in gateway.rows("SELECT id FROM apps")}  # serving against this database
@@ -83,8 +97,6 @@ def test_a_gateway_serving_requests_through_its_asgi_app_holds_the_lifetime_lock
 
 # --- Finding: replace and keep tell another person's key apart from a missing one --------------------------
 
-@pytest.mark.xfail(strict=True, reason="r3 finding 3: replace answers 403 not_your_app for another person's key and "
-                                       "404 for a missing one, against _credential_not_found's single public result")
 def test_replacing_another_persons_key_looks_the_same_as_replacing_a_missing_key(gateway):
     desk = _member(gateway, "desk")
     key_id = _legacy_key(gateway, _own_app(desk), created_by=gateway.user("desk@example.test")["id"])

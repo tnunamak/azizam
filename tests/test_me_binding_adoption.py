@@ -10,6 +10,7 @@ A control-plane key or an API key cannot do either. Keeping and replacing ask fo
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 
@@ -18,7 +19,7 @@ import pytest
 from gateway import admin_store, app_binding_preview, step_up
 from gateway.runtime_auth import hash_api_key
 from tests.support.app_keys import before_the_cut_over, issue_app_key
-from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin, signed_in  # noqa: F401  (gateway is a fixture)
+from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway, owner_and_admin, signed_in  # noqa: F401  (gateway is a fixture)
 
 ACT = {"x-azizam-user-action": "1"}
 
@@ -86,6 +87,19 @@ def _owner_and_app(g):
     return owner, owner_id, _own_app(owner)
 
 
+# The owner fixture's helper is an administrator, so keeping a binding asks the owner to confirm (D55 amendment).
+CONFIRM = {"confirm_admins_could_have_made_it": True}
+
+
+def _display_name(g, email, name):
+    conn = sqlite3.connect(g.path)
+    try:
+        conn.execute("UPDATE users SET display_name = ? WHERE LOWER(email) = ?", (name, email))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # --- Keeping: only the owner, and only a binding nobody else could have made ----------------------------
 
 def test_the_owner_keeps_an_unproven_key_on_their_own_app_as_their_own(gateway):
@@ -93,7 +107,7 @@ def test_the_owner_keeps_an_unproven_key_on_their_own_app_as_their_own(gateway):
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
 
-    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     assert kept.status_code == 200, kept.text
     assert kept.json()["credential"]["id"] == key_id
@@ -105,7 +119,7 @@ def test_keeping_a_key_writes_an_audit_event_that_names_the_person(gateway):
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
 
-    owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     events = _audit(gateway, "credential.adopt")
     assert len(events) == 1
@@ -118,7 +132,7 @@ def test_the_owner_keeps_an_unproven_address_on_their_own_app_as_their_own(gatew
     before_the_cut_over(gateway.path)
     entry_id = _unproven_address(gateway, app_id, "10.0.0.7", created_by=None)
 
-    kept = owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
+    kept = owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     assert kept.status_code == 200, kept.text
     assert kept.json()["trusted_address"]["id"] == entry_id
@@ -132,8 +146,8 @@ def test_a_kept_binding_counts_as_proven_in_the_cut_over_preview(gateway):
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
     entry_id = _unproven_address(gateway, app_id, "10.0.0.8", created_by=None)
-    owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
-    owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
+    owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+    owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     conn = app_binding_preview.connect_read_only(gateway.path)
     try:
@@ -194,17 +208,40 @@ def test_the_owner_cannot_keep_a_key_the_audit_log_names_another_person_as_its_m
     assert _creator_of_key(gateway, key_id) is None
 
 
-def test_the_owner_cannot_keep_a_key_once_another_person_has_held_the_owner_role(gateway):
+def test_a_person_who_held_the_owner_role_before_does_not_block_keeping_but_is_named_for_confirmation(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    _member(gateway, "desk")
+    _display_name(gateway, "desk@example.test", "Desk Person")
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    member_id = gateway.user("desk@example.test")["id"]
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=member_id, path=gateway.path)
+    grant = gateway.rows("SELECT id FROM admin_role_assignments WHERE role = 'owner' AND subject_id = ?", (member_id,))[0]
+    admin_store.revoke_admin_role(grant["id"], path=gateway.path)  # no longer an owner: named, not blocking
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Desk Person", "Helper Person"]
+    assert _creator_of_key(gateway, key_id) is None
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+
+    assert kept.status_code == 200, kept.text
+    assert _creator_of_key(gateway, key_id) == owner_id
+
+
+def test_a_second_person_holding_the_owner_role_now_blocks_keeping(gateway):
     owner, _owner_id, app_id = _owner_and_app(gateway)
     _member(gateway, "desk")
     member_id = gateway.user("desk@example.test")["id"]
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=member_id, path=gateway.path)
-    grant = gateway.rows("SELECT id FROM admin_role_assignments WHERE role = 'owner' AND subject_id = ?", (member_id,))[0]
-    admin_store.revoke_admin_role(grant["id"], path=gateway.path)  # a revoked grant still counts
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
 
-    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"]["code"] == "keep_not_provable"
@@ -220,8 +257,9 @@ def test_a_person_cannot_keep_a_key_on_someone_elses_app(gateway):
 
     refused = other.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(other))
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    # The same answer as a key that does not exist, so the refusal does not show that this key does (owner visibility §3.5).
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error"]["code"] == "credential_not_found"
     assert _creator_of_key(gateway, key_id) is None
     assert _audit(gateway, "credential.adopt") == []
 
@@ -233,10 +271,10 @@ def test_the_owner_cannot_keep_a_key_on_a_member_app(gateway):
     before_the_cut_over(gateway.path)
     key_id = _unproven_key(gateway, app_id)
 
-    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error"]["code"] == "credential_not_found"
     assert _creator_of_key(gateway, key_id) is None
 
 
@@ -249,8 +287,8 @@ def test_a_person_cannot_keep_an_address_on_someone_elses_app(gateway):
 
     refused = other.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", headers=_headers(other))
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error"]["code"] == "app_not_found"
     assert _creator_of_address(gateway, entry_id) is None
 
 
@@ -384,7 +422,7 @@ def test_replacing_a_key_is_one_transaction_so_a_failed_revoke_leaves_the_old_ke
     assert _audit(gateway, "credential.replace") == []
 
 
-def test_replacing_someone_elses_key_is_refused_with_not_your_app(gateway):
+def test_replacing_someone_elses_key_is_refused_as_if_the_key_were_missing(gateway):
     desk = _member(gateway, "desk")
     app_id = _own_app(desk)
     before_the_cut_over(gateway.path)
@@ -392,9 +430,11 @@ def test_replacing_someone_elses_key_is_refused_with_not_your_app(gateway):
     other = _member(gateway, "other")
 
     refused = other.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(other))
+    missing = other.post("/me/api/credentials/cred_does_not_exist/replace", headers=_headers(other))
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error"]["code"] == "credential_not_found"
+    assert (refused.status_code, refused.json()) == (missing.status_code, missing.json())
     assert _live_keys_on(gateway, app_id) == [key_id]
 
 
@@ -466,6 +506,23 @@ def test_a_person_removes_an_address_on_their_own_app_and_the_removal_is_audited
     assert (events[0]["target_kind"], events[0]["target_id"]) == ("app", app_id)
 
 
+def test_removing_an_address_and_its_audit_event_are_one_transaction(gateway, monkeypatch):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    added = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk), json={"address": "10.0.0.41"})
+    assert added.status_code == 201, added.text
+    entry_id = added.json()["trusted_address"]["id"]
+
+    def refuse_the_audit_event(*args, **kwargs):
+        raise sqlite3.OperationalError("audit write refused")
+
+    monkeypatch.setattr(admin_store, "_record_audit_in_transaction", refuse_the_audit_event)
+    with pytest.raises(sqlite3.OperationalError):
+        desk.delete(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}", headers=_headers(desk))
+
+    assert gateway.rows("SELECT id FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+
+
 def test_a_person_cannot_remove_an_address_on_someone_elses_app(gateway):
     desk = _member(gateway, "desk")
     app_id = _own_app(desk)
@@ -516,3 +573,222 @@ def test_the_owner_cannot_keep_an_address_the_record_names_as_added_by_another_p
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"]["code"] == "keep_not_provable"
     assert _creator_of_address(gateway, entry_id) == member_id
+
+
+# --- Amended D55: administrators on record may be confirmed; a member, a second owner, or a changed App never keeps ---
+
+def test_keeping_a_key_asks_the_owner_to_confirm_the_administrators_on_record(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert _creator_of_key(gateway, key_id) is None
+    assert _audit(gateway, "credential.adopt") == []
+
+
+def test_confirming_the_administrators_keeps_the_key_and_the_audit_event_names_them(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+
+    assert kept.status_code == 200, kept.text
+    assert _creator_of_key(gateway, key_id) == owner_id
+    (event,) = _audit(gateway, "credential.adopt")
+    assert json.loads(event["metadata_json"])["confirmed_administrators"] == ["Helper Person"]
+
+
+@pytest.mark.parametrize("body", [{}, {"confirm_admins_could_have_made_it": "true"}, {"confirm_admins_could_have_made_it": False}])
+def test_only_a_json_true_confirmation_keeps_a_key_an_administrator_could_have_made(gateway, body):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=body)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "keep_needs_confirmation"
+    assert _creator_of_key(gateway, key_id) is None
+
+
+def test_keeping_needs_no_confirmation_when_no_administrator_is_on_record(gateway):
+    owner, _ = signed_in(gateway, sub="owner", email=OWNER)
+    owner_id = gateway.user(OWNER)["id"]
+    app_id = _own_app(owner)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert kept.status_code == 200, kept.text
+    assert _creator_of_key(gateway, key_id) == owner_id
+
+
+def test_a_past_administrator_is_named_even_after_the_role_is_revoked(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    helper_id = gateway.user("helper@example.test")["id"]
+    for grant in gateway.rows("SELECT id FROM admin_role_assignments WHERE subject_kind = 'user' AND subject_id = ? "
+                              "AND role IN ('admin', 'superadmin')", (helper_id,)):
+        admin_store.revoke_admin_role(grant["id"], path=gateway.path)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+
+
+def test_an_administrator_service_account_is_named_by_its_name(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    bot = admin_store.create_service_account("CI bot", path=gateway.path)
+    admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=bot["id"], path=gateway.path)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["administrators"] == ["CI bot", "Helper Person"]
+    assert _creator_of_key(gateway, key_id) is None
+
+
+def test_a_control_plane_key_that_held_the_owner_role_neither_blocks_nor_is_named(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    for grant in gateway.rows("SELECT id FROM admin_role_assignments WHERE subject_kind = 'user' "
+                              "AND role IN ('admin', 'superadmin')"):
+        admin_store.revoke_admin_role(grant["id"], path=gateway.path)  # no administrator on record
+    tools = admin_store.create_service_account("Owner tools", path=gateway.path)
+    admin_store.assign_admin_role(role="owner", subject_kind="service_account", subject_id=tools["id"], path=gateway.path)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert kept.status_code == 200, kept.text
+    assert _creator_of_key(gateway, key_id) == owner_id
+
+
+def test_an_app_whose_accountable_person_changed_on_record_cannot_be_kept(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+    admin_store.record_audit("app.update", actor_kind="user", actor_id=owner_id, target_kind="app", target_id=app_id,
+                             metadata={"owner_user_id": "usr_someone_else"}, path=gateway.path)
+
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "keep_not_provable"
+    assert _creator_of_key(gateway, key_id) is None
+
+
+def test_the_schema_seven_migration_that_changed_an_apps_accountable_person_blocks_keeping(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+    admin_store.record_audit("access_plans.migrate", actor_kind="system", actor_id="migration", target_kind="admin_db",
+                             target_id="schema-7", metadata={"apps": [{"id": app_id, "name": "Desk", "accountable": "Helper Person"}]},
+                             path=gateway.path)
+
+    refused = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "keep_not_provable"
+    assert _creator_of_key(gateway, key_id) is None
+
+
+def test_keeping_an_address_asks_the_owner_to_confirm_the_administrators_on_record(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, app_id, "10.0.0.21", created_by=None)
+    address_keep = f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt"
+
+    asked = owner.post(address_keep, headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["code"] == "keep_needs_confirmation"
+    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert _creator_of_address(gateway, entry_id) is None
+
+    kept = owner.post(address_keep, headers=_headers(owner), json=CONFIRM)
+
+    assert kept.status_code == 200, kept.text
+    assert _creator_of_address(gateway, entry_id) == owner_id
+
+
+def test_a_session_app_key_is_not_found_for_keep_or_replace_instead_of_a_server_error(gateway):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+    owner_id = gateway.user(OWNER)["id"]
+    session_app_id = gateway.rows("SELECT app_id FROM session_apps WHERE user_id = ?", (owner_id,))[0]["app_id"]
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, session_app_id)
+
+    kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
+    replaced = owner.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(owner))
+
+    assert (kept.status_code, kept.json()["error"]["code"]) == (404, "credential_not_found")
+    assert (replaced.status_code, replaced.json()["error"]["code"]) == (404, "credential_not_found")
+    assert _live_keys_on(gateway, session_app_id) == [key_id]
+
+
+def _remedy(g, kind, binding_id, app_id, person_id):
+    conn = sqlite3.connect(g.path)
+    conn.row_factory = sqlite3.Row
+    try:
+        table = "credentials" if kind == "key" else "app_trusted_addresses"
+        binding = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (binding_id,)).fetchone()
+        return admin_store.binding_cutover_remedy(conn, kind=kind, binding=binding, app_id=app_id, person_id=person_id)
+    finally:
+        conn.close()
+
+
+def test_the_cut_over_remedy_is_keep_where_provable_and_replace_or_readd_otherwise(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    desk = _member(gateway, "desk")
+    member_id = gateway.user("desk@example.test")["id"]
+    member_app = _own_app(desk)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+    entry_id = _unproven_address(gateway, app_id, "10.0.0.31", created_by=None)
+    member_key = _unproven_key(gateway, member_app)
+    member_entry = _unproven_address(gateway, member_app, "10.0.0.32", created_by=None)
+
+    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": ["Helper Person"]}
+    assert _remedy(gateway, "address", entry_id, app_id, owner_id) == {"remedy": "keep", "administrators": ["Helper Person"]}
+    assert _remedy(gateway, "key", member_key, member_app, member_id) == {"remedy": "replace", "administrators": []}
+    assert _remedy(gateway, "address", member_entry, member_app, member_id) == {"remedy": "readd", "administrators": []}
+    assert _remedy(gateway, "key", key_id, app_id, member_id) == {"remedy": "replace", "administrators": []}
+
+    assert owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM).status_code == 200
+    assert _remedy(gateway, "key", key_id, app_id, owner_id) == {"remedy": "keep", "administrators": []}
+
+
+def test_the_cut_over_preview_gives_each_binding_its_remedy(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    before_the_cut_over(gateway.path)
+    _unproven_key(gateway, app_id)
+
+    conn = app_binding_preview.connect_read_only(gateway.path)
+    try:
+        body = app_binding_preview.build(conn, as_of=1_800_000_000)
+    finally:
+        conn.close()
+    (desk,) = [app for app in body["apps"] if app["app_id"] == app_id]
+    (key,) = desk["keys"]
+
+    assert (key["action"], key["remedy"], key["administrators"]) == ("revoke", "keep", ["Helper Person"])
