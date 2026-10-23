@@ -5,9 +5,13 @@ Owner visibility, step 2 (`docs/design/OWNER_VISIBILITY.md` §3.5, §8.1, §8.3)
 A database made before this release has not had its cut-over applied. The gateway
 starts it anyway, in **pre-cut-over** mode: the route checks below already hold, the
 startup back-fill still records the creator that the audit log proves for each key,
-and the start logs one line that the cut-over is pending. The cut-over (preview,
-accept, apply) makes the guards hold for good. A fresh database starts after the
-cut-over.
+and the start logs one line that the cut-over is pending. The back-fill runs only
+until the cut-over is applied, so a deploy never waits on the owner. The cut-over
+(preview, accept, apply) makes the guards hold for good.
+
+A fresh database installs its guards on its first start. If that start dies before
+the guards are in place, the next start installs them. It never runs in pre-cut-over
+mode.
 
 ## Who adds a key or a trusted address
 
@@ -21,29 +25,62 @@ on and off.
   with `POST /me/api/apps/{app_id}/trusted-addresses`.
 - The admin routes `POST /admin/api/apps/{app_id}/keys` and
   `POST /admin/api/apps/{app_id}/trusted-addresses` accept the same person.
-- Any other caller gets `403 not_your_app`. A control-plane key adds no
+- Any other caller gets `403 not_your_app` on an admin route. On a `/me` route, an
+  App that is not the person's gets `404 app_not_found`, the same answer as for
+  minting a key. A disabled App gets `403 app_disabled`. A control-plane key adds no
   binding for any App, including the owner's own.
 
-A database installed fresh by this release also refuses, in the database
-itself, a key or address whose creator is not the App's person. The guards
-are listed in `gateway/app_binding_guard.py`.
+A database installed fresh by this release also refuses, in the database itself, a
+key or address whose creator is not the App's person. It also refuses a change to an
+App key's secret or expiry. The guards are listed in `gateway/app_binding_guard.py`.
 
-## Keep a binding made before the cut-over
+## Keep or replace a binding made before the cut-over
 
-A key or trusted address made before provenance was recorded may have no creator,
-or name someone else. The apply revokes such a key and removes such an address. To
-keep one that you still use, the person the App answers for makes it theirs:
+A key or trusted address made before provenance was recorded may have no creator, or
+may name someone else. The apply revokes such a key and removes such an address. Before
+the apply, a person who still uses one either keeps it or replaces it.
+
+**Keep a key or an address** keeps the binding and makes the person its recorded creator:
 
 - `POST /me/api/credentials/{credential_id}/adopt` keeps an App key.
 - `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` keeps a trusted address.
 
-Both need a browser sign-in and a recent sign-in (the same step-up as adding a key).
-Only the App's person can keep one of its bindings: the owner gets `403 not_your_app`
-for another person's App. A key that already names the person is left as it is.
-Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`).
+Keep is refused with `409 keep_not_provable` unless nobody else could have made the
+binding. Nobody else could have made it only when both of these are true:
+
+- the signed-in person holds the owner role now, and no other subject has ever held
+  it. Revoked grants count, so an owner grant once given to someone else refuses keep;
+- the audit log names no other creator for this binding.
+
+So only the owner can keep. The owner gets `403 not_your_app` for another person's App.
+A key that already names the person is left as it is.
+
+**Replace a key** issues a new key and revokes the old one:
+
+- `POST /me/api/credentials/{credential_id}/replace`, from the browser session, with the
+  same recent sign-in as adding a key.
+- The new key is on the same App, has the old key's name, and has no expiry, as a key
+  made from the Apps page has. The App's access plan applies to it unchanged.
+- The insert, the revocation and the audit event share one transaction. A failure
+  leaves the old key live and no new key behind.
+- The response is `201`: `credential` holds the new key, with its secret in `api_key`
+  (shown once), and `replaced_credential_id` holds the old key's id.
+- It refuses another person's App with `403 not_your_app`, a disabled App with
+  `403 app_disabled`, and a key that is missing, revoked, or not an App key with
+  `404 credential_not_found`.
+
+**Add an address again.** An address that cannot be kept is refused with
+`409 keep_not_provable`. The person adds it again with
+`POST /me/api/apps/{app_id}/trusted-addresses`, then removes the old entry with
+`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`. The removal returns `200`,
+and it is audited. Another person's App gets `404 app_not_found`.
+
+Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`). Each
+replacement writes `credential.replace`, naming both keys. Each removal writes
+`app.trusted_address.remove`.
 
 Keys and addresses are kept one at a time. From the browser console on the signed-in
-Azizam page:
+Azizam page, the owner keeps a key like this:
 
 ```js
 const csrf = (await (await fetch("/auth/api/options")).json()).signed_in_oidc.csrf_token;
@@ -74,11 +111,12 @@ Use one of these:
 Do this once per database, in this order.
 
 1. **Start the gateway once** with this release, so its migrations run.
-2. **Keep** each binding you still use (above).
+2. **Keep or replace** each binding you still use (above).
 3. **Stop the gateway.** Check first with `scripts/safe-restart --dry-run`, then stop the
-   service. Apply refuses while the gateway runs: a running gateway holds its
-   private directory lock (`private-tmp/.owner.lock` beside `admin.db`, or
-   `AZIZAM_PRIVATE_TMPDIR`), and apply checks that lock.
+   service. Apply refuses while a gateway runs. Every running gateway holds
+   `admin.db.running`, beside `admin.db`, for its whole life, whatever its environment,
+   and apply takes that file exclusively. Apply also checks the gateway's private
+   directory lock (`private-tmp/.owner.lock`, or `AZIZAM_PRIVATE_TMPDIR`) where it can see it.
 4. **Preview a copy** of `admin.db`. Read the `BLOCKS APPLY` lines; each means an App
    would stop while in use. Keep a binding on it, or disable the App, then preview again.
 
@@ -106,8 +144,9 @@ Do this once per database, in this order.
    database's `.lock` file while it runs, so a gateway that starts meanwhile waits).
    Apply does this, in order:
    - copies the database to `admin.db.pre-ownership-cutover-<epoch>` (mode 0600);
-   - revokes every App key without a proven creator;
-   - removes every trusted address without a proven creator;
+   - revokes every App key without a proven creator, including a key whose App row is gone;
+   - removes every trusted address without a proven creator, including an address whose App row is gone;
+   - checks that no unproven key or address is still live, and refuses if one is;
    - installs the guards and records the ownership version;
    - prints each key and address it changed, the backup path and the guard count.
 
@@ -149,7 +188,8 @@ After you restore, and before you start the gateway:
 4. Start the gateway with `scripts/safe-restart`.
 
 Members do not regain access to a key or address that stays revoked. Reissue a key
-instead of un-revoking it. A revoked App key never becomes live again (the guard
+instead of un-revoking it: the person makes a new key with
+`POST /me/api/apps/{app_id}/keys`. A revoked App key never becomes live again (the guard
 refuses it).
 
 ## Preview the cut-over
@@ -168,9 +208,13 @@ The preview lists, for each App:
 - each live key and trusted address, with its recorded creator and whether that
   creator is proven;
 - each revocation and removal the cut-over would make;
-- each App that the apply would refuse to stop: an App used in the last 30 days
-  that would keep no binding, or an App whose only binding is an address whose use
+- each App that the apply would refuse to stop: an App used in the last 30 days that
+  would keep no binding, or an App whose only binding is an address whose use
   history is not available on `admin.db`.
+
+A key or address whose App row is gone is listed as an App with no App row. The
+cut-over revokes or removes it, and it blocks nothing: such a binding cannot
+authenticate, because the runtime joins the App.
 
 It also says what it does not evaluate. The classification of creations that have
 no recorded person is not done here: those records are in media sidecars.
