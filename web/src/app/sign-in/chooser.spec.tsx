@@ -106,8 +106,13 @@ async function rowNames(): Promise<string[]> {
     .map((id) => document.getElementById(id ?? "")?.textContent ?? "");
 }
 
-function heading() {
-  return screen.getByRole("heading", { level: 1 });
+/**
+ * The status line once it shows this text. The loading line is a status too, so a bare role lookup can
+ * resolve before the page has decided what to say.
+ */
+async function statusShowing(text: string): Promise<HTMLElement> {
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(text));
+  return screen.getByRole("status");
 }
 
 describe("the chooser", () => {
@@ -181,7 +186,7 @@ describe("after a switch or a sign-out", () => {
     remembered.people = [robin, lea];
     mount();
 
-    const status = await screen.findByRole("status");
+    const status = await statusShowing("Robin Okafor is signed out. To come back, sign in again.");
     expect(status).toHaveTextContent("Robin Okafor is signed out. To come back, sign in again.");
     expect(await rowNames()).toEqual(["Léa Okafor", "Robin Okafor", "Someone else"]);
   });
@@ -190,7 +195,7 @@ describe("after a switch or a sign-out", () => {
     setAddress("/sign-in/?after=switch");
     sessionStorage.setItem("azizam.handoff.last", JSON.stringify({ tile: "t_sam" }));
     mount();
-    expect(await screen.findByRole("status")).toHaveTextContent("You’re signed out. To come back, sign in again.");
+    await statusShowing("You’re signed out. To come back, sign in again.");
   });
 
   it("takes the ending out of the address, so a reload shows no status line", async () => {
@@ -205,14 +210,13 @@ describe("after a switch or a sign-out", () => {
     sessionStorage.setItem("azizam.handoff.last", JSON.stringify({ tile: "t_lea" }));
     mount();
 
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("You’re signed out.");
+    const status = await statusShowing("You’re signed out.");
     const forget = within(status).getByRole("button", { name: "Forget Léa Okafor on this browser" });
     const user = userEvent.setup();
     await user.click(forget);
 
     await waitFor(() => expect(deletedTiles).toEqual(["t_lea"]));
-    expect(await screen.findByRole("status")).toHaveTextContent("Léa Okafor is forgotten on this browser.");
+    await statusShowing("Léa Okafor is forgotten on this browser.");
     // One name is left, so the form replaces the list.
     expect(await screen.findByLabelText("Email")).toBeVisible();
   });
@@ -222,14 +226,14 @@ describe("after a switch or a sign-out", () => {
     sessionStorage.setItem("azizam.handoff.last", JSON.stringify({ tile: "t_sam" }));
     remembered.people = [robin, lea];
     mount();
-    expect(await screen.findByRole("status")).toHaveTextContent("You’re signed out.");
-    expect(screen.queryByRole("button", { name: /^Forget .* on this browser$/ })).toBeNull();
+    const status = await statusShowing("You’re signed out.");
+    expect(within(status).queryByRole("button")).toBeNull();
   });
 
   it("confirms a sign-out everywhere", async () => {
     setAddress("/sign-in/?after=everywhere");
     mount();
-    expect(await screen.findByRole("status")).toHaveTextContent("You’re signed out everywhere.");
+    await statusShowing("You’re signed out everywhere.");
   });
 
   it("names the provider after a provider sign-out, and asks for a name", async () => {
@@ -237,9 +241,7 @@ describe("after a switch or a sign-out", () => {
     options.oidc = true;
     options.oidc_label = "Family login";
     mount();
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "You’re signed out of Family login. Choose your name to sign in again.",
-    );
+    await statusShowing("You’re signed out of Family login. Choose your name to sign in again.");
   });
 
   it("drops the link to the last page: the options and the sign-in both go Home", async () => {
@@ -449,7 +451,7 @@ describe("password sign-in for a remembered person", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Sam Okafor" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Opening Family login");
+    await statusShowing("Opening Family login");
     expect(screen.getByRole("button", { name: "Robin Okafor" })).toHaveAttribute("aria-disabled", "true");
     expect(navigateTo).toHaveBeenCalledWith("/login?tile=t_sam&remember=1");
   });
