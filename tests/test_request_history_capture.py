@@ -7,6 +7,7 @@ writer. The app key the caller sends is the canary: it must not appear in any fi
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import sqlite3
 import time
@@ -19,11 +20,13 @@ from fastapi.testclient import TestClient
 
 from gateway import (
     admin_store,
+    media_delivery,
     media_jobs,
     prompt_memory,
     receipt_store,
     request_history,
     request_history_capture,
+    request_history_slot,
     retention,
 )
 from gateway.receipts import RouteReceipt
@@ -76,7 +79,8 @@ def _post(body: dict):
 
 
 def _settle_staged_media_capture(admin_db: Path, media_db: Path, person_id: str, request_id: str,
-                                asset_id: str, *, created_at: int) -> None:
+                                asset_id: str, *, created_at: int, origin_id: str | None = None,
+                                prompt_text: str = "a late staged prompt") -> None:
     """Run the same combined writer after a Library delete wins the media transaction."""
     capture = object.__new__(request_history_capture._Capture)
     capture._owner = SimpleNamespace(_admin_path=lambda: admin_db)
@@ -94,8 +98,8 @@ def _settle_staged_media_capture(admin_db: Path, media_db: Path, person_id: str,
         "summary": {"route": "/v1/images/generations", "model": "image", "status": 200, "latency_ms": 1},
     }
     prompt = {
-        "asset_id": asset_id, "person_id": person_id, "prompt_text": "a late staged prompt",
-        "metadata": None, "created_at": created_at, "kept_until": None,
+        "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
+        "metadata": None, "created_at": created_at, "kept_until": None, "origin_id": origin_id,
     }
     capture._write_media_capture(
         decision, record, created_at, [(prompt, None)], request_id,
@@ -103,22 +107,24 @@ def _settle_staged_media_capture(admin_db: Path, media_db: Path, person_id: str,
     )
 
 
-def _publish_prompt_job(media_db: Path, person_id: str, request_id: str, asset_id: str) -> None:
+def _create_job(media_db: Path, request_id: str, asset_id: str) -> None:
+    """A finished image job that made ``asset_id``. Its creating receipt is ``request_id``."""
     media_jobs.create(media_jobs.MediaJob(
         request_id=request_id, parent_request_id=request_id, intent="image.generate",
         status=media_jobs.STATUS_SUCCEEDED,
         assets=[{"asset_id": asset_id, "media_type": "image/png"}],
     ), path=media_db)
+
+
+def _publish_prompt_job(media_db: Path, person_id: str, request_id: str, asset_id: str) -> None:
+    _create_job(media_db, request_id, asset_id)
     assert prompt_memory.put(
         asset_id, person_id, "the visible prompt", kept_until=None, path=media_db,
     )
 
 
-def _capture_stores(monkeypatch, tmp_path) -> tuple[str, Path, Path]:
-    admin_db = use_admin_db(monkeypatch, tmp_path)
-    person_id = admin_store.upsert_oidc_user(
-        "https://fixture.test", "late-capture-person", path=admin_db,
-    )["id"]
+def _remember(admin_db: Path, person_id: str) -> None:
+    """Keep Library prompts and request history for this member, as the defaults do for a new member."""
     for group, kind in (
         (retention.GROUP_PROMPTS, retention.LIBRARY_PROMPT),
         (retention.GROUP_REQUEST_HISTORY, retention.REQUEST_HISTORY),
@@ -127,6 +133,14 @@ def _capture_stores(monkeypatch, tmp_path) -> tuple[str, Path, Path]:
             person_id, remember=True, retention=retention.bundled().member_defaults(kind)["retention"],
             group=group, path=admin_db,
         )
+
+
+def _capture_stores(monkeypatch, tmp_path) -> tuple[str, Path, Path]:
+    admin_db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user(
+        "https://fixture.test", "late-capture-person", path=admin_db,
+    )["id"]
+    _remember(admin_db, person_id)
     media_db = tmp_path / "media_jobs.db"
     media_jobs.init_db(media_db)
     return person_id, media_db, admin_db
@@ -187,6 +201,74 @@ def test_library_delete_all_before_capture_settles_does_not_restore_prompt_or_hi
     assert prompt_memory.get(asset_id, person_id, path=media_db) is None
     with sqlite3.connect(media_db) as conn:
         assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=?", (request_id,)).fetchone() is None
+
+
+def test_a_distinct_request_that_makes_the_same_bytes_after_a_library_delete_is_kept(monkeypatch, tmp_path):
+    """The same bytes made again by a new job are a new Library item, so the delete of the first job does not refuse it."""
+    person_id, media_db, admin_db = _capture_stores(monkeypatch, tmp_path)
+    _publish_prompt_job(media_db, person_id, "receipt_first", "img_made_twice")
+    assert prompt_memory.delete_asset_for_person("img_made_twice", person_id, path=media_db) == 1
+    _create_job(media_db, "receipt_second", "img_made_twice")
+    _settle_staged_media_capture(
+        admin_db, media_db, person_id, "receipt_second", "img_made_twice", created_at=int(time.time()) - 1,
+        origin_id="receipt_second", prompt_text="the second prompt",
+    )
+
+    kept = prompt_memory.get("img_made_twice", person_id, path=media_db)
+    assert kept is not None and kept["prompt_text"] == "the second prompt"
+    with sqlite3.connect(media_db) as conn:
+        assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=?", ("receipt_second",)).fetchone()
+
+
+def test_a_late_write_for_the_deleted_request_stays_blocked_while_the_same_bytes_live_on(monkeypatch, tmp_path):
+    person_id, media_db, admin_db = _capture_stores(monkeypatch, tmp_path)
+    _publish_prompt_job(media_db, person_id, "receipt_deleted", "img_late_after_twin")
+    assert prompt_memory.delete_asset_for_person("img_late_after_twin", person_id, path=media_db) == 1
+    _create_job(media_db, "receipt_twin", "img_late_after_twin")
+    _settle_staged_media_capture(
+        admin_db, media_db, person_id, "receipt_deleted", "img_late_after_twin", created_at=int(time.time()) - 1,
+        origin_id="receipt_deleted", prompt_text="a late prompt for the deleted request",
+    )
+
+    assert prompt_memory.get("img_late_after_twin", person_id, path=media_db) is None
+    with sqlite3.connect(media_db) as conn:
+        assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=?", ("receipt_deleted",)).fetchone() is None
+
+
+def test_another_members_request_that_makes_the_same_bytes_is_unaffected_by_the_delete(monkeypatch, tmp_path):
+    person_id, media_db, admin_db = _capture_stores(monkeypatch, tmp_path)
+    other = admin_store.upsert_oidc_user("https://fixture.test", "other-capture-person", path=admin_db)["id"]
+    _remember(admin_db, other)
+    _publish_prompt_job(media_db, person_id, "receipt_member", "img_other_member")
+    assert prompt_memory.delete_asset_for_person("img_other_member", person_id, path=media_db) == 1
+    _create_job(media_db, "receipt_other", "img_other_member")
+    _settle_staged_media_capture(
+        admin_db, media_db, other, "receipt_other", "img_other_member", created_at=int(time.time()) - 1,
+        origin_id="receipt_other", prompt_text="the other member's prompt",
+    )
+
+    kept = prompt_memory.get("img_other_member", other, path=media_db)
+    assert kept is not None and kept["prompt_text"] == "the other member's prompt"
+    with sqlite3.connect(media_db) as conn:
+        assert conn.execute("SELECT 1 FROM kept_requests WHERE request_id=? AND person_id=?",
+                            ("receipt_other", other)).fetchone() is not None
+
+
+def test_a_staged_library_prompt_carries_the_receipt_of_the_request_that_creates_it(tmp_path):
+    media_db = tmp_path / "media_jobs.db"
+    receipt = RouteReceipt(protocol="openai.images", intent="image.generate", path="/v1/images/generations",
+                           request_id="receipt_creating")
+
+    def stage() -> list:
+        request_history_slot.open_slot("/v1/images/generations", media_path=media_db)
+        media_delivery.begin(plan_bound="none", receipt=receipt)
+        assert prompt_memory.safe_put("img_staged", "member-person", "a staged prompt", kept_until=None, path=media_db)
+        slot = request_history_slot.current()
+        assert slot is not None
+        return slot.take_library_prompts()
+
+    [(record, _)] = contextvars.Context().run(stage)
+    assert record.get("origin_id") == "receipt_creating"
 
 
 def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(chat_gateway):
