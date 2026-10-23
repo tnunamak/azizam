@@ -9,9 +9,10 @@ The guards make the App rules hold for every writer, not only for the routes:
   replaced rather than edited;
 * an App is disabled, never deleted; a control-plane key never becomes an App key.
 
-``install`` runs after every migration on a fresh database. A database that already held bindings is
-not guarded here: the ownership cut-over (design §8.1) applies ``install`` after its preview is
-accepted, because that cut-over is what removes the unproven bindings the guards would otherwise keep.
+``install`` runs after every migration on a fresh database, and on every start of a database whose cut-over is
+applied. A database that already held bindings is not guarded until its cut-over is applied: the cut-over
+(gateway/app_binding_cutover.py) installs the guards in the same transaction that removes the unproven bindings,
+because the guards would otherwise keep those bindings. Until then a start logs ``PENDING_NOTICE``.
 """
 
 from __future__ import annotations
