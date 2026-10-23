@@ -87,7 +87,7 @@ def test_a_gateway_serving_requests_through_its_asgi_app_holds_the_lifetime_lock
                                        "404 for a missing one, against _credential_not_found's single public result")
 def test_replacing_another_persons_key_looks_the_same_as_replacing_a_missing_key(gateway):
     desk = _member(gateway, "desk")
-    key_id = _legacy_key(gateway, _own_app(desk))
+    key_id = _legacy_key(gateway, _own_app(desk), created_by=gateway.user("desk@example.test")["id"])
     other = _member(gateway, "other")
 
     foreign = other.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(other))
@@ -101,7 +101,7 @@ def test_replacing_another_persons_key_looks_the_same_as_replacing_a_missing_key
 def test_replaying_a_replace_mints_no_second_key(gateway):
     desk = _member(gateway, "desk")
     app_id = _own_app(desk)
-    key_id = _legacy_key(gateway, app_id)
+    key_id = _legacy_key(gateway, app_id, created_by=gateway.user("desk@example.test")["id"])  # after the cut-over
 
     first = desk.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(desk))
     again = desk.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(desk))
@@ -116,7 +116,7 @@ def test_concurrent_replaces_of_one_key_leave_exactly_one_new_key(gateway):
     desk = _member(gateway, "desk")
     app_id = _own_app(desk)
     person_id = gateway.user("desk@example.test")["id"]
-    key_id = _legacy_key(gateway, app_id)
+    key_id = _legacy_key(gateway, app_id, created_by=person_id)
     results, barrier = [], threading.Barrier(4)
 
     def replace(n):
