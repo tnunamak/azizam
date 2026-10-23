@@ -7,7 +7,6 @@ the already-injected admin status provider, rebound before the app starts.
 from __future__ import annotations
 
 import argparse
-from tests.support.app_keys import accountable_person
 import asyncio
 import ctypes
 import errno
@@ -210,7 +209,7 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         admin_store.create_app(f"Fixture page {index:02d}", kind="personal", owner_user_id=people["user_a"]["id"], now=now, access_plan="person", path=db)
     app_credentials = []
     for app, label in ((app_a, "User A key"), (app_b, "User B key")):
-        app_credentials.append(admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, path=db, created_by=accountable_person(db, app["id"])))
+        app_credentials.append(admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, path=db, created_by=admin_store.get_app(app["id"], path=db)["owner_user_id"]))
     principal_credential = admin_store.create_credential_hash(subject_kind="service_account", subject_id=principal["id"], hash=hashlib.sha256(principal["id"].encode()).hexdigest(), prefix="oak_fixture", display_name=fixture["credential_name"], path=db)
     audit_id = admin_store.record_audit(fixture["audit_action"], actor_kind="user", actor_id=people["admin"]["id"], target_kind="app", target_id=app_a["id"], metadata={"fixture": True}, path=db)
     receipt_store.init_db(state_root / "receipts.db")

@@ -50,3 +50,23 @@ def test_a_person_cannot_trust_an_address_for_someone_elses_app(gateway):
     assert refused.status_code == 403, refused.text
     assert refused.json()["error"]["code"] == "not_your_app"
     assert gateway.rows("SELECT COUNT(*) AS n FROM app_trusted_addresses")[0]["n"] == 0
+
+
+def test_a_sign_out_that_lands_before_the_address_is_written_refuses_it_and_stores_nothing(gateway, monkeypatch):
+    from gateway import accounts, admin_store
+
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    member_id = gateway.user("desk@example.test")["id"]
+    original = admin_store.add_trusted_address
+
+    def sign_out_then_add(*args, **kw):
+        accounts.revoke_person_sessions(member_id, path=gateway.path)
+        return original(*args, **kw)
+
+    monkeypatch.setattr(admin_store, "add_trusted_address", sign_out_then_add)
+
+    response = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk), json={"address": "10.1.2.3"})
+
+    assert response.status_code == 401, response.text
+    assert gateway.rows("SELECT * FROM app_trusted_addresses") == []

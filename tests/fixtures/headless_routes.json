@@ -1266,6 +1266,14 @@
   {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_add_trusted_address",
+    "method": "POST",
+    "path": "/me/api/apps/{app_id}/trusted-addresses",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.home_api.connection_test",
     "method": "POST",
     "path": "/me/api/connection-test",

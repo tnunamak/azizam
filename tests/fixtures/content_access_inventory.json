@@ -3025,6 +3025,12 @@
       "access": "own-account"
     },
     {
+      "handler": "proxy.user_portal_add_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses",
+      "access": "own-account"
+    },
+    {
       "handler": "proxy.user_portal_receipt_detail",
       "method": "GET",
       "path": "/me/api/receipts/{request_id}",

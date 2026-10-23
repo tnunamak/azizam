@@ -499,7 +499,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             (now - 4 * 86400, people["casey"]["id"]),
         )
         conn.execute(
-            "UPDATE credentials SET last_used_at=?,revoked_at=? WHERE app_id=?",
+            # Keys already revoked by disabling their person keep that revocation; a key is revoked once.
+            "UPDATE credentials SET last_used_at=?,revoked_at=COALESCE(revoked_at,?) WHERE app_id=?",
             (now - 4 * 86400, now - 3 * 86400, apps["casey"]["id"]),
         )
         conn.execute(

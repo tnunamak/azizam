@@ -148,6 +148,8 @@ def _deliberate(key: str) -> str | None:
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if path == "/me/api/apps/{app_id}/trusted-addresses":
+        return "trusted-addresses"  # a person's own App's address, added after the baseline (tests/test_me_trusted_addresses.py)
     if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
             _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
         return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)

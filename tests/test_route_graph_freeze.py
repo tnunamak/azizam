@@ -58,6 +58,8 @@ ADDED_METHODS: dict[tuple[str, str], str] = {
                                          "tests/test_rename_apps_keys.py covers it",
     ("PATCH", "/me/api/credentials/{credential_id}"): "a person renames their own key's label (outside the OpenAPI schema); "
                                                        "tests/test_rename_apps_keys.py covers it",
+    ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "a person trusts an address for their own App (outside the OpenAPI "
+                                                         "schema); tests/test_me_trusted_addresses.py covers it"
 }
 
 
