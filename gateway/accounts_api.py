@@ -198,26 +198,35 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
 
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
-        same_origin(request)
-        path, cookie = path_provider(), cookie_provider()
-        token = remembered_people.device_token(request, secure=cookie.secure)
-        if body.tile is None:
-            user = accounts.login(body.email, body.password, client_ip(request), path=path)
-        else:
-            user = remembered_sign_in(request, body, token)
-        # The owner's own password always works. For everyone else the switch decides,
-        # and only a correct password learns that it is off.
-        if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
-                "user", user["id"], path=path):
-            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
-        # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
-        accounts.clear_signin_refusal(str(user["id"]), path=path)
-        response = issue(request, user, {"next": safe_browser_return_to(body.return_to)})
-        minted = remembered_people.keep(path=path, token=token, person_id=str(user["id"]), method="password",
-                                        issuer=None, remember=body.remember, from_tile=body.tile is not None)
-        if minted:
-            remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
-        return response
+        try:
+            same_origin(request)
+            path, cookie = path_provider(), cookie_provider()
+            token = remembered_people.device_token(request, secure=cookie.secure)
+            if body.tile is None:
+                user = accounts.login(body.email, body.password, client_ip(request), path=path)
+            else:
+                user = remembered_sign_in(request, body, token)
+            # The owner's own password always works. For everyone else the switch decides,
+            # and only a correct password learns that it is off.
+            if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
+                    "user", user["id"], path=path):
+                raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+            # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
+            accounts.clear_signin_refusal(str(user["id"]), path=path)
+            response = issue(request, user, {"next": safe_browser_return_to(body.return_to)})
+            minted = remembered_people.keep(path=path, token=token, person_id=str(user["id"]), method="password",
+                                            issuer=None, remember=body.remember, from_tile=body.tile is not None)
+            if minted:
+                remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
+            return response
+        except accounts.AccountError:
+            raise
+        except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+            return JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+            )
 
     @router.get("/auth/api/remembered")
     def remembered(request: Request):

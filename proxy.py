@@ -18218,6 +18218,18 @@ async def admin_oidc_callback(request: Request):
                 media_type="text/plain; charset=utf-8",
             )
         return clear_browser_binding(response, state) if state else response
+    except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+        response = _browser_signin_failure(
+            request, return_to=state.return_to if state else None, reason="provider",
+        )
+        if response is None:
+            response = JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+                headers={"cache-control": "no-store"},
+            )
+        return clear_browser_binding(response, state) if state else response
 
 
 def _provider_auth_time(claims: Mapping[str, Any]) -> float | None:
