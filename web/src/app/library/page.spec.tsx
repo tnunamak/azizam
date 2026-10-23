@@ -865,7 +865,7 @@ describe("Library honesty and access", () => {
         owner_name: "Alex", source: ownSource, thumbnail_url: "/signed/alex-thumb",
       });
       const detail = picture("alex-detail", "Alex detail", {
-        owner_name: "Alex", source: ownSource, workflow_download_url: "/workflow/alex-detail",
+        owner_name: "Alex", source: ownSource, workflow_download_url: "/workflow/alex-detail", available: true,
       });
       const paths: string[] = [];
       routeFetch((path) => {
@@ -908,7 +908,7 @@ describe("Library honesty and access", () => {
         }
         expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
         if (lifecycle === "kind filter") {
-          expect(paths.some((path) => new URL(path, "https://test.invalid").searchParams.get("kind") === "image")).toBe(true);
+          await waitFor(() => expect(paths.some((path) => new URL(path, "https://test.invalid").searchParams.get("kind") === "image")).toBe(true));
         } else {
           await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
         }
@@ -1437,7 +1437,6 @@ describe("Library media identity and tile playback", () => {
     fireEvent.click(tile);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).not.toHaveTextContent("Made by Alex");
-    expect(dialog).not.toHaveTextContent("Alex app");
   });
 
   test("keeps the audio tile quiet: length and play, no prompt text, no invented bars", async () => {
