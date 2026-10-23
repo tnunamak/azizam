@@ -12,7 +12,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from gateway import accounts, admin_store, session_policy, step_up
+from gateway import accounts, admin_store, browser_sessions, session_policy, step_up
 from gateway.admin_runtime import create_admin_service_account_key
 from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
@@ -596,17 +596,19 @@ def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
 
 # -- confirming with the identity provider -----------------------------------
 
-def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time="now"):
+def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time="now", between=None):
     """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback.
 
     The provider says the person signed in just now, as Keycloak does. ``auth_time=None`` is a provider whose
-    ID token carries no ``auth_time``."""
+    ID token carries no ``auth_time``. ``between`` runs after /login, while the person is at the provider."""
     if auth_time == "now":
         auth_time = int(time.time())
     params = {"return_to": "/settings/", **({"reauth": "1"} if reauth else {})}
     login = client.get("/login", params=params, follow_redirects=False)
     if "redirect_uri=" not in login.headers["location"]:
         login = client.get(login.headers["location"], follow_redirects=False)
+    if between is not None:
+        between()
     state, record = list(g.proxy.ADMIN_OIDC_STATES.items())[-1]
 
     async def exchange(code, *, config, pkce):
@@ -715,6 +717,22 @@ def test_a_person_with_no_recent_time_confirms_with_a_password_and_is_recent_aft
 
     assert confirmed.status_code == 200, confirmed.text
     assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_session_that_ends_while_the_person_is_at_the_provider_still_gets_a_new_session(sg):
+    """The provider has just proved who the person is, so a re-authentication whose session ended meanwhile
+    still signs them in: a fresh session and a redirect to the return address, as before sign-ins were atomic.
+    The ended session is not revived."""
+    client = owner_client(sg)
+    ended = cookie_session(client)
+
+    _, callback = through_provider(sg, client, reauth=True, auth_time=int(time.time()),
+                                   between=lambda: browser_sessions.end(ended, path=sg.path))
+
+    assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
+    assert session_cookies(callback)
+    assert cookie_session(client).session_id != ended.session_id
+    assert signed_in_state(client)
 
 
 def test_a_person_with_no_recent_time_confirms_through_a_provider_that_reports_the_time(sg):

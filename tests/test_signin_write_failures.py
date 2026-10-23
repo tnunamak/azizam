@@ -1,5 +1,6 @@
-"""A failed sign-in rolls back every success write on both browser paths."""
+"""A failed sign-in rolls back every success write on each browser path, and concurrent sign-ins all succeed."""
 
+import threading
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
@@ -15,6 +16,8 @@ from tests.support.access import store_plan
 PASSWORD_EMAIL = "password@example.test"
 PASSWORD = "a sufficiently long test password"
 OIDC_EMAIL = "trusted@example.test"
+INVITE_EMAIL = "invited@example.test"
+CLAIM_EMAIL = "first-owner@example.test"
 DEVICE_TOKEN = "known-device-token"
 
 
@@ -109,6 +112,12 @@ def _seed_incoming_session(gateway, client, person_id):
     )
 
 
+def _seed_invite(gateway):
+    plan = store_plan("Invited plan", path=gateway.path, caps=("chat",))
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email=INVITE_EMAIL, path=gateway.path)
+    return token
+
+
 def _state_snapshot(gateway):
     tables = (
         "users", "account_access", "account_signin_refusals", "account_sessions",
@@ -156,6 +165,19 @@ def _inject_write_failure(gateway, flow, failure):
         ("oidc", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
         ("oidc", "session_issue"): "BEFORE INSERT ON account_sessions",
         ("oidc", "remembered_people"): "BEFORE UPDATE ON remembered_people",
+        ("invite", "account"): "BEFORE INSERT ON users",
+        ("invite", "credential"): "BEFORE INSERT ON credentials",
+        ("invite", "invite_consume"): "BEFORE UPDATE OF used_at ON account_links",
+        ("invite", "invite_audit"): "BEFORE INSERT ON audit_events WHEN NEW.action='account.invite.accept'",
+        ("invite", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
+        ("invite", "session_issue"): "BEFORE INSERT ON account_sessions",
+        ("setup_claim", "owner_grant"): "BEFORE INSERT ON admin_role_assignments WHEN NEW.role='owner'",
+        ("setup_claim", "claim_audit"): "BEFORE INSERT ON audit_events WHEN NEW.action='setup.local_owner_create'",
+        ("setup_claim", "starter_plan"): "BEFORE INSERT ON access_plans WHEN NEW.name='Local only'",
+        ("setup_claim", "app_provision"): "BEFORE INSERT ON apps WHEN NEW.kind='personal'",
+        ("setup_claim", "app_audit"): "BEFORE INSERT ON audit_events WHEN NEW.action='app.self_create'",
+        ("setup_claim", "incoming_revoke"): "BEFORE INSERT ON account_session_revocations",
+        ("setup_claim", "session_issue"): "BEFORE INSERT ON account_sessions",
     }
     event = triggers[(flow, failure)]
     with accounts.connection(gateway.path) as conn:
@@ -182,6 +204,15 @@ def _inject_write_failure(gateway, flow, failure):
             "rule_plan", "avatar", "app_provision", "app_audit", "incoming_revoke", "session_issue",
             "remembered_people", "confirm_lineage", "bootstrap_owner_grant", "starter_plan",
         )
+    ] + [
+        ("invite", failure) for failure in (
+            "account", "credential", "invite_consume", "invite_audit", "incoming_revoke", "session_issue",
+        )
+    ] + [
+        ("setup_claim", failure) for failure in (
+            "owner_grant", "claim_audit", "starter_plan", "app_provision", "app_audit", "incoming_revoke",
+            "session_issue",
+        )
     ],
 )
 def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, failure):
@@ -198,6 +229,7 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
     if flow == "oidc" and failure in {"bootstrap_owner_grant", "starter_plan"}:
         gateway.set_config(replace(gateway.config, admin_emails=frozenset({OIDC_EMAIL})))
 
+    token = _seed_invite(gateway) if flow == "invite" else None
     before = _state_snapshot(gateway)
     throttle_before = _throttle_snapshot(gateway)
     _inject_write_failure(gateway, flow, failure)
@@ -210,6 +242,16 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
     elif flow == "setup_password":
         response = client.post(
             "/setup/local-login", data={"email": PASSWORD_EMAIL, "password": PASSWORD},
+        )
+    elif flow == "invite":
+        response = client.post(
+            "/auth/api/invite/accept",
+            json={"token": token, "email": INVITE_EMAIL, "name": "Invited Person", "password": PASSWORD},
+        )
+    elif flow == "setup_claim":
+        response = client.post(
+            "/setup/local-owner",
+            data={"email": CLAIM_EMAIL, "password": PASSWORD, "password_confirm": PASSWORD},
         )
     else:
         response = gateway.sign_in(
@@ -243,4 +285,51 @@ def test_signin_write_failure_leaves_all_signin_state_unchanged(gateway, flow, f
     assert "injected sign-in write failure" not in response.text
     assert _state_snapshot(gateway) == before
     # Abuse throttles must commit before the sign-in transaction so failed writes still count.
-    assert _throttle_snapshot(gateway) != throttle_before
+    # The first-owner claim takes no throttle, so only the other flows make one.
+    if flow != "setup_claim":
+        assert _throttle_snapshot(gateway) != throttle_before
+
+
+def test_a_failed_provider_sign_in_expires_the_browser_binding_cookie(gateway):
+    client = gateway.client()
+    login = client.get("/login", params={"return_to": "/"}, follow_redirects=False)
+    if "redirect_uri=" not in login.headers["location"]:
+        login = client.get(login.headers["location"], follow_redirects=False)
+    state, record = list(gateway.proxy.ADMIN_OIDC_STATES.items())[-1]
+
+    failure = client.get("/admin/oidc/callback", params={"state": state, "error": "access_denied"},
+                         headers={"accept": "text/html"}, follow_redirects=False)
+
+    assert failure.status_code == 303 and failure.headers["location"].startswith("/sign-in/?error=provider")
+    binding = [value for value in failure.headers.get_list("set-cookie")
+               if value.startswith(f"{record.browser_cookie_name}=")]
+    assert len(binding) == 1 and "max-age=0" in binding[0].lower()
+
+
+def test_concurrent_password_sign_ins_for_one_person_all_succeed(gateway):
+    person_id = _seed_person(gateway, "password")
+    clients = [_client(gateway) for _ in range(4)]
+    start, responses, errors = threading.Barrier(len(clients)), [], []
+
+    def sign_in(client):
+        try:
+            start.wait()
+            responses.append(client.post(
+                "/auth/api/login", json={"email": PASSWORD_EMAIL, "password": PASSWORD, "remember": True},
+            ))
+        except Exception as exc:  # noqa: BLE001  (a thread's failure must reach the assertion)
+            errors.append(exc)
+
+    threads = [threading.Thread(target=sign_in, args=(client,)) for client in clients]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert [response.status_code for response in responses] == [200] * len(clients)
+    assert all(
+        any(value.startswith(f"{gateway.config.cookie.name}=") for value in response.headers.get_list("set-cookie"))
+        for response in responses
+    )
+    assert len(gateway.rows("SELECT session_id FROM account_sessions WHERE user_id=?", (person_id,))) == len(clients)
