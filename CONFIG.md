@@ -49,6 +49,7 @@ an empty name clears it even when the environment variable is set.
 |---|---|---|
 | `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` | Public provider name; overrides `admin.oidc.display_name` at bootstrap | empty (single sign-on) |
 | `AZIZAM_OIDC_CLIENT_SECRET` | Client secret when referenced by `admin.oidc.client_secret_env` | unset |
+| `AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE` | Reads of the sign-in page's remembered-people list allowed per minute from one address. An invalid or non-positive value keeps the default. | `60` |
 
 ## Engine integrations
 

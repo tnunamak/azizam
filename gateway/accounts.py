@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterator
 from gateway import admin_store, request_connections, session_guard, sqlite_startup
 # A module import: admin_runtime imports this module through browser_sessions.
 from gateway import admin_runtime
+from gateway.compat import positive_int_env
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
 
@@ -515,7 +516,10 @@ def throttle_oidc(ip: str, *, path: Path, now: int | None = None) -> None:
 
 
 def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
-    """The sign-in page asks for its list once per load; a minute of 60 asks from one address is a scan, not a page."""
+    """The sign-in page asks for its list once per load; a minute of 60 asks from one address is a scan, not a page.
+
+    AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE sets the 60. The UI test gateways raise it, since their browsers share one address.
+    """
     initialize(path)
     ts = int(time.time()) if now is None else now
     bucket = "remembered:" + hashlib.sha256(ip.encode()).hexdigest()
@@ -525,7 +529,7 @@ def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
         conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
                      (bucket, ts))
         attempts = conn.execute("SELECT attempts FROM account_login_limits WHERE bucket=?", (bucket,)).fetchone()[0]
-    if attempts > 60:
+    if attempts > positive_int_env("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", 60):
         raise AccountError("login_rate_limited", "Too many requests. Try again in a minute.", 429)
 
 

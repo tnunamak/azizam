@@ -236,8 +236,10 @@ device. The server keeps the rows, and the page gets a tile for each name.
 
 - `GET /auth/api/remembered`: this device's names, as `{"remember", "people"}`.
   Each person has `tile`, `name`, `avatar` (`variant`, `initial`), `method`
-  (`password` or `sso`), `provider` and `hint`. No email, person id, picture,
-  role or session appears. Rate-limited to 60 reads a minute per address.
+  (`password` or `sso`), `provider` and `hint`. The entry of the person this
+  browser is signed in as also has `"you": true`; no other entry has that key.
+  No email, person id, picture, role or session appears. Rate-limited to 60 reads
+  a minute per address; `AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE` sets the 60.
 - `DELETE /auth/api/remembered/{tile}`: takes one name off this device's list. It
   does not sign anyone out or change their account. A tile from another device
   does nothing here.
@@ -253,7 +255,9 @@ device. The server keeps the rows, and the page gets a tile for each name.
   email in any URL. The callback accepts only a fresh sign-in by the person the
   tile named; any other sign-in is refused with `error=provider` and writes
   nothing. `remember=1` or `remember=0` on the same request has the same meaning
-  as on the password form.
+  as on the password form. A tile this device does not hold, including one
+  forgotten here, redirects (302) to `/sign-in/?error=tile_unknown` and asks the
+  provider nothing.
 - The owner sets "On shared computers" in `GET` and `PUT /admin/api/signin`, as
   `memory`: `remember` (the default) or `nobody`. Choosing `nobody` deletes every
   device's names at once and stops new ones. The owner's routes never show a tile

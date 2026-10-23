@@ -221,7 +221,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
 
     @router.get("/auth/api/remembered")
     def remembered(request: Request):
-        """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them."""
+        """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them,
+        except that the entry of the person this browser is signed in as carries ``you``: true."""
         same_origin(request)
         path, cookie = path_provider(), cookie_provider()
         # TODO(A4, not this round): throttle_remembered writes through accounts.connection, and any write there
@@ -240,9 +241,11 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                 return bool(opts["oidc"]) and row["provider_issuer"] == oidc.get("issuer")
             return bool(opts["built_in"])
 
+        session = session_reader(request)
         people = remembered_people.listing(
             remembered_people.device_token(request, secure=cookie.secure), path=path,
-            signing_key=signing_key_provider(), offered=offered, provider_label=opts["oidc_label"])
+            signing_key=signing_key_provider(), offered=offered, provider_label=opts["oidc_label"],
+            current_person_id=session.subject if session else None)
         return {"remember": True, "people": people}
 
     @router.delete("/auth/api/remembered/{tile}")

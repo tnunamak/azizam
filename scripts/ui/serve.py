@@ -73,7 +73,9 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
            'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache'),
            # A fixed signing key, so the step-up journey (web/e2e/step-up.spec.ts) can forge a
            # session whose last password check is days old. Test-only; a household run sets its own.
-           'AZIZAM_ADMIN_SESSION_KEY': 'ui-e2e-fixture-session-key-not-production'}
+           'AZIZAM_ADMIN_SESSION_KEY': 'ui-e2e-fixture-session-key-not-production',
+           # Parallel browser tests share 127.0.0.1, and each sign-in page load reads the remembered list once.
+           'AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE': '600'}
     if os.environ.get('UI_E2E_AVATAR_PICTURE'):
         env['UI_E2E_AVATAR_PICTURE'] = os.environ['UI_E2E_AVATAR_PICTURE']
     if os.environ.get('UI_E2E_ALLOWED_PORTS'):

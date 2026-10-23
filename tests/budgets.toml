@@ -221,7 +221,12 @@
 # the 503 for an unreadable view key, and a provider reauth keeping the view id. collect-only 16056 -> 16059.
 # W1 r3: +2 provider-path probes in test_session_rotation.py and +3 cases for the broken view key (health degraded,
 # health plainly healthy, the start-up report once) in test_session_asset_urls.py. collect-only 16059 -> 16064.
-pytest = 16064
+# Owner 401 probe: +3 cases in tests/test_remembered_people.py. A member signing in on another browser leaves the owner
+# signed in, by password and by remembered tile; a sign-in that carries the owner's cookie ends that sign-in. collect-only 16064 -> 16067.
+# A3 follow-ups in tests/test_remembered_people.py: +4 cases for the "you" mark on the signed-in person's entry, +1 for a
+# forgotten single sign-on tile (the unknown-tile case changed in place), +5 for the remembered-list read cap (default,
+# gateway setting, invalid settings). collect-only 16067 -> 16077.
+pytest = 16077
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

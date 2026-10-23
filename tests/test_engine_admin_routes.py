@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 
 from gateway import admin_store, engine_admin, engine_check, secret_store, service_registry, transforms
+from gateway.compat import positive_int_env
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.provider_sidecar import provider_secret_env_map_from_registry, provider_secret_origin_map_from_registry
 from tests.support.engine_dns import use_fake_engine_dns
@@ -856,7 +857,7 @@ def test_probe_limit_uses_a_rolling_minute_and_cleans_expired_callers():
 def test_invalid_probe_limit_configuration_keeps_safe_defaults(monkeypatch, invalid):
     for name, default in (("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2), ("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30)):
         monkeypatch.setenv(name, invalid)
-        assert engine_admin._probe_limit(name, default) == default
+        assert positive_int_env(name, default) == default
 
 
 @pytest.mark.parametrize("service_id,definition,base_alias", [

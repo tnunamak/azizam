@@ -170,8 +170,13 @@ def _hint(email: str | None) -> str | None:
 
 
 def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered: Callable[[Mapping[str, Any]], bool],
-            provider_label: str, now_ms: int | None = None) -> list[dict[str, Any]]:
-    """What the sign-in page may show for this browser: name, avatar, method, provider and tile, nothing else."""
+            provider_label: str, current_person_id: str | None = None,
+            now_ms: int | None = None) -> list[dict[str, Any]]:
+    """What the sign-in page may show for this browser: name, avatar, method, provider and tile, nothing else.
+
+    ``current_person_id`` is the person a live session of this browser is signed in as. Their entry, if it is listed,
+    carries ``"you": True``. No other entry carries the key, so a browser without that session gets the list as it was.
+    """
     if token is None or not signing_key:
         return []
     device = device_key(token)
@@ -186,7 +191,7 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
     for row in rows:
         name, may_hint = names[row["person_id"]]
         choice = choices[row["person_id"]]["choice"]
-        people.append({
+        entry = {
             "tile": tile_for(signing_key, device, row["person_id"]),
             "name": name,
             "avatar": {"variant": choice if choice in avatars.VARIANTS else _auto_variant(row["person_id"]),
@@ -196,7 +201,10 @@ def listing(token: str | None, *, path: Path, signing_key: bytes | None, offered
             # Two provider names that match are told apart by the start of their address. A name taken from an
             # address, or one equal to its local part, never shows one: with the hint it would give the address away.
             "hint": _hint(row["email"]) if may_hint and counts[name.casefold()] > 1 else None,
-        })
+        }
+        if row["person_id"] == current_person_id:
+            entry["you"] = True
+        people.append(entry)
     return people
 
 

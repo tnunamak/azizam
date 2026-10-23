@@ -105,7 +105,7 @@ def test_remembered_returns_only_tile_name_avatar_method_provider_hint(tls):
     body = listed(client)
     assert set(body) == {"remember", "people"} and body["remember"] is True
     [person] = body["people"]
-    assert set(person) == {"tile", "name", "avatar", "method", "provider", "hint"}
+    assert set(person) == {"tile", "name", "avatar", "method", "provider", "hint", "you"} and person["you"] is True
     assert set(person["avatar"]) == {"variant", "initial"}
     assert person["name"] == MEMBER_NAME and person["method"] == "password"
     assert person["provider"] is None and person["hint"] is None
@@ -113,6 +113,57 @@ def test_remembered_returns_only_tile_name_avatar_method_provider_hint(tls):
     text = client.get("/auth/api/remembered").text
     for leaked in (MEMBER, user_id, "pictures.example", "@", "picture"):
         assert leaked not in text
+
+
+def test_the_list_marks_only_the_entry_of_the_person_signed_in_on_this_browser(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)
+    sign_in_with_password(client, NEIGHBOUR, NEIGHBOUR_PASSWORD)  # both are listed; this browser is the neighbour's
+
+    marked = {person["name"]: person.get("you") for person in listed(client)["people"]}
+
+    assert marked == {MEMBER_NAME: None, NEIGHBOUR_NAME: True}
+
+
+def test_the_list_marks_nobody_for_a_browser_with_no_session(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)
+    anonymous = same_device(tls, client)  # the device cookie, and no session
+
+    [person] = listed(anonymous)["people"]
+
+    assert "you" not in person
+
+
+def test_the_list_marks_nobody_when_the_session_belongs_to_someone_else(tls):
+    owner_with_password(tls)
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    device = tls.client()
+    sign_in_with_password(device, MEMBER, MEMBER_PASSWORD)  # MEMBER is listed on this device
+    owner_browser = tls.client()
+    assert sign_in_with_password(owner_browser, OWNER, OWNER_PASSWORD).status_code == 200
+    holder = same_device(tls, device)  # this device, carrying the owner's session
+    put_cookie(holder, owner_browser.cookies.get(COOKIE))
+
+    [person] = listed(holder)["people"]
+
+    assert person["name"] == MEMBER_NAME and "you" not in person
+
+
+def test_the_list_marks_nobody_when_the_session_person_was_forgotten_on_this_browser(tls):
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    make_member(tls, NEIGHBOUR, NEIGHBOUR_NAME, NEIGHBOUR_PASSWORD)
+    client = tls.client()
+    sign_in_with_password(client, NEIGHBOUR, NEIGHBOUR_PASSWORD)
+    sign_in_with_password(client, MEMBER, MEMBER_PASSWORD)  # this browser is signed in as the member
+    assert client.delete(f"/auth/api/remembered/{tile_for(client, MEMBER_NAME)}").status_code == 200  # forgotten, still signed in
+
+    [person] = listed(client)["people"]
+
+    assert person["name"] == NEIGHBOUR_NAME and "you" not in person
 
 
 def test_device_cookie_is_host_prefixed_httponly_secure_lax(tls):
@@ -184,8 +235,20 @@ def test_an_unknown_tile_is_refused_before_any_provider_redirect(tls):
 
     unknown = same_device(tls, client).get("/login", params={"tile": "t_bogus"}, follow_redirects=False)
 
-    assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "tile_unknown"
-    assert "location" not in unknown.headers and session_cookies(unknown) == []
+    assert unknown.status_code == 302 and unknown.headers["location"] == "/sign-in/?error=tile_unknown"
+    assert session_cookies(unknown) == []
+
+
+def test_a_forgotten_tile_on_single_sign_on_goes_back_to_the_sign_in_page(tls):
+    client = tls.client()
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+    tile = next(person["tile"] for person in listed(client)["people"] if person["method"] == "sso")
+    assert client.delete(f"/auth/api/remembered/{tile}").status_code == 200
+
+    stale = same_device(tls, client).get("/login", params={"tile": tile}, follow_redirects=False)
+
+    assert stale.status_code == 302 and stale.headers["location"] == "/sign-in/?error=tile_unknown"
+    assert session_cookies(stale) == []
 
 
 def test_tile_login_resolves_the_person_from_the_device_not_the_request(tls):
@@ -223,6 +286,62 @@ def test_a_tile_sign_in_ends_the_session_the_browser_already_had(tls):
     assert response.status_code == 200 and len(session_cookies(response)) == 1
     assert not signed_in_state(previous)
     assert signed_in_state(client)
+
+
+def owner_with_password(g):
+    """The owner as the provider first makes them (the account and its owner role), then with a password of their own."""
+    owner_client(g)
+    admin_store.set_local_password_verifier(person_id(g, OWNER), accounts.hash_password(OWNER_PASSWORD), path=g.path)
+
+
+def test_a_member_signing_in_with_a_password_in_another_browser_leaves_the_owner_signed_in(tls):
+    owner_with_password(tls)
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    owner_browser = tls.client()
+    assert sign_in_with_password(owner_browser, OWNER, OWNER_PASSWORD).status_code == 200
+
+    member_browser = tls.client()                     # a separate browser: its own cookie jar, no owner cookie
+    assert sign_in_with_password(member_browser, MEMBER, MEMBER_PASSWORD).status_code == 200
+
+    assert signed_in_state(member_browser)
+    assert owner_browser.get("/admin/api/session").status_code == 200
+
+
+def test_a_member_signing_in_from_their_tile_in_another_browser_leaves_the_owner_signed_in(tls):
+    owner_with_password(tls)
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    owner_browser = tls.client()
+    assert sign_in_with_password(owner_browser, OWNER, OWNER_PASSWORD).status_code == 200
+    member_device = tls.client()
+    sign_in_with_password(member_device, MEMBER, MEMBER_PASSWORD)
+    tile = tile_for(member_device, MEMBER_NAME)
+
+    member_browser = same_device(tls, member_device)  # the member's browser on this device: the device cookie, no session
+    response = member_browser.post(LOGIN, json={"tile": tile, "password": MEMBER_PASSWORD})
+
+    assert response.status_code == 200 and len(session_cookies(response)) == 1
+    assert signed_in_state(member_browser)
+    assert owner_browser.get("/admin/api/session").status_code == 200
+
+
+def test_a_sign_in_that_carries_the_owners_cookie_ends_the_owners_sign_in(tls):
+    """Two contexts that both hold the owner's cookie (a shared jar, or a copied storage state), then a member's login.
+
+    The login ends the family of the cookie it carried (browser_sessions.end_incoming). The owner's copy is dead, so
+    the owner's check answers 401. The context the member signed in through is signed in as the member, not as an admin.
+    """
+    owner_with_password(tls)
+    make_member(tls, MEMBER, MEMBER_NAME, MEMBER_PASSWORD)
+    owner_browser = tls.client()
+    assert sign_in_with_password(owner_browser, OWNER, OWNER_PASSWORD).status_code == 200
+    second_context = tls.client()
+    put_cookie(second_context, owner_browser.cookies.get(COOKIE))
+    assert second_context.get("/admin/api/session").status_code == 200
+
+    assert sign_in_with_password(second_context, MEMBER, MEMBER_PASSWORD).status_code == 200
+
+    assert owner_browser.get("/admin/api/session").status_code == 401
+    assert second_context.get("/admin/api/session").status_code == 403
 
 
 def test_tile_for_removed_or_disabled_person_returns_tile_unknown(tls):
@@ -380,6 +499,31 @@ def test_remembered_list_is_rate_limited_per_ip(tls):
 
     assert statuses[:60] == [200] * 60
     assert statuses[60] == 429
+
+
+def test_the_list_read_cap_is_sixty_a_minute_when_the_gateway_sets_none(tls, monkeypatch):
+    monkeypatch.delenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", raising=False)
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(61)]
+
+    assert statuses[:60] == [200] * 60 and statuses[60] == 429
+
+
+def test_the_gateway_setting_replaces_the_list_read_cap(tls, monkeypatch):
+    monkeypatch.setenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", "3")
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(4)]
+
+    assert statuses == [200, 200, 200, 429]
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many"])
+def test_an_invalid_gateway_setting_keeps_the_list_read_cap_at_sixty(tls, monkeypatch, setting):
+    monkeypatch.setenv("AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE", setting)
+    client = tls.client()
+    statuses = [client.get("/auth/api/remembered").status_code for _ in range(61)]
+
+    assert statuses[:60] == [200] * 60 and statuses[60] == 429
 
 
 # ---------------------------------------------------------------------------
