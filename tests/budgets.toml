@@ -269,8 +269,11 @@
 # Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 16852 (2026-10-23).
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
-# Merge of main into slice 5b1: provisional until re-measured with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 16988
+# Slice 5b1 round 3 (the maker on each receipt, replies kept by default, the account switch's household-off state): +12
+# cases, 9 in tests/test_receipt_maker_retention.py and one each in tests/test_request_history_contract.py,
+# tests/test_request_history_member_choice.py and tests/test_request_history_capture.py.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 17039 (2026-10-23).
+pytest = 17039
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -296,7 +299,9 @@ pytest = 16988
 # Slice 5b1 round 2: src/lib/request-content.spec.ts (34 cases), src/app/history/history-kinds.spec.tsx (16), the
 # History page spec rewritten for the list and the drawer, and two Home notice cases. Full run: 223 files, 3327 cases,
 # all passed (2026-10-23).
-vitest = 3327
+# Slice 5b1 round 3: +1 case in src/app/account/request-history.spec.tsx (the owner's switch off for everyone).
+# vitest list measured 3328 (2026-10-23).
+vitest = 3328
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
