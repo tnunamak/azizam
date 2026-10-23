@@ -6,7 +6,7 @@ every stream it is serving at that moment. It grew out of the lane-4
 throwaway ``~/.tmp/gpu-lane-internal/swap_inflight_fake.py``.
 
 ``install_fake_engine`` points HOME at a temp dir (the drop-in path resolves
-under ``Path.home()``) and replaces ``asyncio.create_subprocess_exec`` and
+under ``Path.home()``) and replaces ``gateway.off_loop_spawn.run`` and
 ``httpx.AsyncClient`` (the driver's health poll). Nothing runs systemctl or
 opens a socket.
 """
@@ -14,12 +14,14 @@ opens a socket.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from gateway import lifecycle_drivers as ld
+from gateway import off_loop_spawn
 
 MODEL = "/models/fake.gguf"
 UNIT = "fake-llm.service"
@@ -89,6 +91,12 @@ class FakeEngine:
             if line.startswith("# Activation profile: "):
                 return line.removeprefix("# Activation profile: ").strip()
         return "unknown"
+
+    async def run(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        # The seam the gateway calls (off_loop_spawn.run): the same fake answer, as a CompletedProcess.
+        proc = await self.exec(*argv, **kwargs)
+        stdout, stderr = await proc.communicate()
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
     async def exec(self, *cmd: str, **_kwargs: Any) -> _Proc:
         verb = cmd[2] if cmd[1] == "--user" else cmd[1]
@@ -171,6 +179,6 @@ def install_fake_engine(monkeypatch: Any, home: Path, *, profile: str = "p-a") -
     dropin.parent.mkdir(parents=True)
     dropin.write_text(dropin_text(profile))
     engine = FakeEngine(dropin)
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", engine.exec)
+    monkeypatch.setattr(off_loop_spawn, "run", engine.run)
     monkeypatch.setattr(httpx, "AsyncClient", type("HealthClient", (_HealthClient,), {"engine": engine}))
     return engine

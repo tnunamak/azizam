@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -12790,25 +12790,22 @@ async def _run_workflow_drift_once() -> dict:
         }
     interpreter = sys.executable or "python3"
     try:
-        proc = await asyncio.create_subprocess_exec(
-            interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
+            done = await off_loop_spawn.run(
+                [interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose"],
+                capture_output=True,
+                cwd=str(Path(__file__).parent),
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
             return {
                 "status": "error",
                 "reason": "drift script timed out after 120s",
                 "checked_at": int(time.time()),
             }
-        rc = proc.returncode
-        out = (stdout or b"").decode("utf-8", errors="replace")
-        err = (stderr or b"").decode("utf-8", errors="replace")
+        rc = done.returncode
+        out = (done.stdout or b"").decode("utf-8", errors="replace")
+        err = (done.stderr or b"").decode("utf-8", errors="replace")
         return {
             "status": "ok" if rc == 0 else "drift" if rc == 1 else "error",
             "exit_code": rc,
@@ -18873,7 +18870,8 @@ async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
     body = {
         "status": "healthy",
-        "app_credentials_configured": active_app_credential_count(),
+        # SQLite on a worker thread: an open and a query on the loop would hold every other request.
+        "app_credentials_configured": await asyncio.to_thread(active_app_credential_count),
     }
     # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
     # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.

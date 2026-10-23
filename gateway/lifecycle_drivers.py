@@ -56,7 +56,7 @@ HttpLoadUnloadDriver  (http-load-unload)
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway import log_scrub, runtime_secrets
+from gateway import log_scrub, off_loop_spawn, runtime_secrets
 
 import asyncio
 import concurrent.futures
@@ -1551,36 +1551,21 @@ class SystemdDriver:
         as failed. Killing the client does not cancel a job systemd already
         queued; the rollback that follows queues its own restart.
         """
-        proc = None
-
-        async def run() -> bytes:
-            nonlocal proc
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            return stderr
-
         try:
-            stderr = await asyncio.wait_for(run(), timeout=self._SYSTEMCTL_JOB_TIMEOUT_S)
-        except asyncio.TimeoutError:
+            done = await off_loop_spawn.run(cmd, capture_output=True, timeout=self._SYSTEMCTL_JOB_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
             _say(
                 f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` did not finish within "
                 f"{self._SYSTEMCTL_JOB_TIMEOUT_S:.0f}s; treated as failed",
                 flush=True,
             )
-            if proc is not None and proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
             return False
         except Exception as e:
             _say(f"[lifecycle] SystemdDriver: subprocess error: {e}", flush=True)
             return False
-        if proc.returncode != 0:
+        if done.returncode != 0:
             _say(
-                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {log_scrub.describe_bytes(stderr, 'systemctl wrote')}",
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {log_scrub.describe_bytes(done.stderr, 'systemctl wrote')}",
                 flush=True,
             )
             return False

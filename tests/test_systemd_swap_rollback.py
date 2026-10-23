@@ -10,6 +10,7 @@ the fake engine in tests/fake_systemd_engine.py.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -257,24 +258,16 @@ def test_a_hung_systemctl_call_times_out_and_the_swap_ends(engine, monkeypatch) 
     assert engine.dropin.read_text() == dropin_text("p-a")
 
 
-def test_a_hung_systemctl_process_is_killed(monkeypatch) -> None:
-    class HungProc:
-        returncode = None
-        killed = False
-
-        async def communicate(self):
-            await asyncio.Event().wait()
-
-        def kill(self) -> None:
-            self.killed = True
-
-    proc = HungProc()
-
-    async def spawn(*_cmd, **_kwargs):
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+def test_a_hung_systemctl_process_is_killed(monkeypatch, tmp_path) -> None:
+    """A systemctl call that outlives its job timeout is killed and reaped, and the call is treated as failed."""
+    pid_file = tmp_path / "systemctl.pid"
+    fake = tmp_path / "bin" / "systemctl"
+    fake.parent.mkdir()
+    fake.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nexec sleep 30\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setattr(ld.SystemdDriver, "_SYSTEMCTL_JOB_TIMEOUT_S", 0.1)
     ok = asyncio.run(asyncio.wait_for(ld.SystemdDriver()._run_systemctl(["systemctl", "--user", "daemon-reload"]), 5))
     assert ok is False
-    assert proc.killed
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)  # gone: killed and reaped

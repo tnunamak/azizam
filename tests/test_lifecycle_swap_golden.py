@@ -9,7 +9,7 @@ dict). These were originally proven byte-identical to the now-deleted legacy
 swap functions; the expected values are pinned here directly.
 
 Side-effect surfaces captured:
-  - subprocess: asyncio.create_subprocess_exec calls → ("exec", argv)
+  - subprocess: off_loop_spawn.run calls → ("exec", argv)
   - filesystem: Path.write_text / Path.mkdir / Path.unlink → typed records
   - HTTP (httpx.AsyncClient): ("http", method, url, header_names, body) — header
     VALUES are never recorded (never print secrets).
@@ -42,6 +42,7 @@ HttpLoadUnloadDriver assertions (T1 fix):
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -147,7 +148,7 @@ def _http_swap_svc() -> dict:
 # ---------------------------------------------------------------------------
 
 def _mock_subprocess_ok():
-    """asyncio.create_subprocess_exec mock that always exits 0."""
+    """off_loop_spawn.run mock that always exits 0."""
     proc = AsyncMock()
     proc.returncode = 0
     proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -155,11 +156,21 @@ def _mock_subprocess_ok():
 
 
 def _mock_subprocess_fail(stderr: bytes = b"systemctl: error"):
-    """asyncio.create_subprocess_exec mock that exits non-zero."""
+    """off_loop_spawn.run mock that exits non-zero."""
     proc = AsyncMock()
     proc.returncode = 1
     proc.communicate = AsyncMock(return_value=(b"", stderr))
     return proc
+
+
+def _as_run(exec_fake):
+    """The gateway's seam is off_loop_spawn.run(argv, ...), which answers with a CompletedProcess. These goldens keep
+    their fakes as they were (argv unpacked, a process back), and this adapts them to the seam."""
+    async def run(argv, **kwargs):
+        proc = await exec_fake(*argv, **kwargs)
+        stdout, stderr = await proc.communicate()
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    return run
 
 
 def _httpx_client_200(json_body: dict | None = None, text: str = "") -> tuple:
@@ -215,7 +226,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
         mock_proc = _mock_subprocess_ok()
         mock_httpx_cls, mock_httpx_client = _httpx_client_200(text="ok")
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(AsyncMock(return_value=mock_proc))), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write_text), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
@@ -245,7 +256,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
         mock_proc = _mock_subprocess_ok()
         mock_httpx_cls, _ = _httpx_client_200(text="ok")
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(AsyncMock(return_value=mock_proc))), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write_text), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
@@ -273,7 +284,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
         activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
         mock_httpx_cls, _ = _httpx_client_200(text="ok")
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_fake_exec)), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
@@ -316,7 +327,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_fake_exec)), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch.object(Path, "unlink", _fake_unlink), \
@@ -339,7 +350,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_fake_exec)), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _raise_on_write):
             result = _run(self.driver.swap(self.svc, activation))
@@ -377,7 +388,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(AsyncMock(return_value=mock_proc))), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch.object(Path, "unlink", _fake_unlink), \
@@ -954,7 +965,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
         def _fake_write(self_path, text, *a, **kw):
             write_calls.append(text)
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_fake_exec)), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch.object(Path, "mkdir"):
             result = _run(self.kobold_driver.swap(self.kobold_svc, activation, ctx=ctx))
@@ -1004,7 +1015,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
 
         warned: set = set()
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_fake_exec)), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch.object(Path, "mkdir"), \
              patch("builtins.print", side_effect=_capture_print):
@@ -1059,13 +1070,12 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
         mock_httpx_cls, _ = _httpx_client_200(text="ok")
 
         # Capture exec argv via a side-effect that still returns the mock proc.
-        orig_create = asyncio.create_subprocess_exec
 
         async def _capture_exec(*args, **kwargs):
             exec_argv.append(list(args))
             return mock_proc
 
-        with patch("asyncio.create_subprocess_exec", side_effect=_capture_exec), \
+        with patch("gateway.off_loop_spawn.run", new=_as_run(_capture_exec)), \
              patch.object(Path, "mkdir"), \
              patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch("httpx.AsyncClient", mock_httpx_cls):

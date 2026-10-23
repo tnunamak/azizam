@@ -28,7 +28,7 @@ import wave
 import yaml
 
 from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, QueueClass, ResourceClaim, evaluate_admission
-from gateway import private_io, private_tmp, stt_chunking, stt_measure as measure, stt_samples
+from gateway import off_loop_spawn, private_io, private_tmp, stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
@@ -344,8 +344,8 @@ class Measurements:
 
     async def _prepare(self, job: dict, spec: stt_samples.SampleSpec, workspace: Path, policy: dict) -> tuple[Path, list[measure.RefWord]]:
         # Separate process makes download, XML parsing and ffmpeg cancellable together.
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "gateway.stt_measurement", "prepare", spec.id, str(workspace), str(policy["max_download_bytes"]), str(os.getpid()),
+        process = await off_loop_spawn.start(
+            [sys.executable, "-m", "gateway.stt_measurement", "prepare", spec.id, str(workspace), str(policy["max_download_bytes"]), str(os.getpid())],
             pass_fds=(self._lease_fd,) if self._lease_fd is not None else (),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
         last_phase, last_saved = None, 0.0

@@ -90,7 +90,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                             )
 
                         with patch.object(
-                            stt_chunking.asyncio, "create_subprocess_exec", new=spawn
+                            stt_chunking.off_loop_spawn, "start", new=spawn
                         ):
                             run = stt_chunking.execute_chunking(
                                 source_path=source,
@@ -283,7 +283,7 @@ class SttChunkingGapTests(unittest.IsolatedAsyncioTestCase):
                     [b"12", b"34", b"5"] if overflowing == "stderr" else [b"12", b"34"],
                 )
                 with patch.object(
-                    stt_chunking.asyncio, "create_subprocess_exec",
+                    stt_chunking.off_loop_spawn, "start",
                     new=AsyncMock(return_value=process),
                 ):
                     run = stt_chunking.run_media_command(
