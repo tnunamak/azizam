@@ -85,3 +85,32 @@ export function returnToFor(input: {
   if (input.after !== null || input.signedOut || input.fromTile) return "/";
   return input.requested || "/";
 }
+
+/** The sign-out screen for a sign-in the provider did not just confirm: a title and its paragraphs. */
+export type NotFresh = { title: string; body: string[] };
+
+/** The heading of that screen (S8 and S8b), also the page title before "· Azizam". */
+export const notFreshTitle = (provider: string) => `Sign out of ${provider} first`;
+
+/**
+ * The screen for a sign-in refused as not fresh (DESIGN.md section 6). With the provider's sign-out address (S8) it
+ * offers that sign-out; without one (S8b) it says who can sign out. The wording is DESIGN.md, word for word.
+ */
+export function notFreshFor(provider: string, signOut: boolean): NotFresh {
+  const title = notFreshTitle(provider);
+  if (signOut)
+    return {
+      title,
+      body: [
+        `Azizam couldn’t confirm that ${provider} just asked for a password, so it stopped. Someone may still be signed in to ${provider} in this browser.`,
+        `Signing out of ${provider} also signs out of other apps that use it in this browser.`,
+      ],
+    };
+  return {
+    title,
+    body: [
+      `Azizam couldn’t confirm that ${provider} just asked for a password, so it stopped. Ask the person who used ${provider} last to sign out of it. Or open ${provider} in a new tab, choose Sign out, and open nothing else there.`,
+      "If neither works, ask the person who runs Azizam.",
+    ],
+  };
+}

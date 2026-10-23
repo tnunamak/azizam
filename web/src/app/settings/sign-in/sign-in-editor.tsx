@@ -29,6 +29,7 @@ import {
   leadingBlocker,
   mid,
   NOTHING_TO_SAVE,
+  noFreshWarning,
   personChange,
   PREVIEW_FAILED,
   providerLabel,
@@ -50,6 +51,7 @@ import {
 } from "./form";
 import { RulesEditor } from "./rules-editor";
 import { SaveFooter } from "./save-footer";
+import { SharedComputers } from "./shared-computers";
 import { TestSignIn } from "./test-sign-in";
 import { useDiscovery } from "./use-discovery";
 import { useIsPhone } from "./use-media-query";
@@ -137,6 +139,16 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     : liveUnchanged || savedTested
       ? snapshot.provider.tested_at
       : null;
+  // What the last passed test found about a fresh sign-in: this session's test, else the saved connection's. The saved
+  // answer counts only once that connection has been tested (the snapshot says false for "not tested" too).
+  const freshLogin: boolean | null = tested
+    ? (test.passed?.freshLogin ?? null)
+    : liveUnchanged || savedTested
+      ? snapshot.provider.tested_at !== null
+        ? snapshot.provider.fresh_login_supported
+        : null
+      : null;
+  const freshWarning = freshLogin === false ? noFreshWarning(label) : null;
 
   // A turn-on is the intent whenever the provider is off, so the server can ask for the test.
   const proposal: SignInProposal = {
@@ -335,11 +347,13 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
             testedAt,
             liveBefore: live,
             hasConnection: hasSavedConnection(snapshot),
+            freshLogin,
           })}
           hasAddress={
             discovery.state === "ok" || hasSavedConnection(snapshot)
           }
           canTurnOnProvider={tested || liveUnchanged || savedTested}
+          freshWarning={freshWarning}
           owner={snapshot.owner}
           recoveryCommand={snapshot.recovery_command}
           onPassword={(password) =>
@@ -411,6 +425,10 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
           phone={phone}
           onChange={setRules}
           onDismissNotice={() => dismiss.mutate()}
+        />
+        <SharedComputers
+          value={form.memory ?? "remember"}
+          onChange={(memory) => setForm((f) => ({ ...f, memory }))}
         />
         {showChanges && preview && (
           <WhatChanges
