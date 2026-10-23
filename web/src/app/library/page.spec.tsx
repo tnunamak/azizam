@@ -910,7 +910,7 @@ describe("Library honesty and access", () => {
         await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
         if (lifecycle !== "deep link") {
           navigation.searchParams.set("asset", "alex-detail");
-          // Keep the same tree shape as renderLibrary, or React remounts LibraryPage and resets the owner filter.
+          // Keep the same tree shape as renderLibrary, or React remounts LibraryPage and resets page state.
           view.rerender(<QueryClientProvider client={view.queryClient}><Profiler id="library" onRender={() => {}}><LibraryPage /></Profiler></QueryClientProvider>);
         }
         const dialog = await screen.findByRole("dialog", { name: "Alex detail" });
@@ -927,6 +927,7 @@ describe("Library honesty and access", () => {
         for (const path of paths) {
           const params = new URL(path, "https://test.invalid").searchParams;
           expect(params.has("scope"), path).toBe(false);
+          expect(params.has("owner"), path).toBe(false);
           expect(params.has("person"), path).toBe(false);
         }
         view.queryClient.clear();

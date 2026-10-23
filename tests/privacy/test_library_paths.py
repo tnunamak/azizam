@@ -157,22 +157,28 @@ def test_download_requires_access(library_world, actor):
 
 
 @pytest.mark.parametrize("actor", ACTORS)
-def test_job_status_actor_matrix(library_world, actor):
+@pytest.mark.parametrize("route", ("feed", "detail"))
+def test_job_status_actor_matrix(library_world, actor, route):
     world = library_world
     case = world["case"]
+    job_id = world["jobs"][actor] if actor in SESSION_ACTORS else world["jobs"]["member_a"]
+    path = "/me/api/jobs?watch=1" if route == "feed" else f"/me/api/jobs/{job_id}"
     if actor in SESSION_ACTORS:
         case.current_user = world["actors"][actor][0]
         with patch("gateway.me_media.decide_own", wraps=content_access.decide_own) as decide:
-            response = case.client.get("/me/api/jobs?watch=1")
+            response = case.client.get(path)
         assert response.status_code == 200, response.text
-        assert [job["job_id"] for job in response.json()["jobs"]] == [world["jobs"][actor]]
+        if route == "feed":
+            assert [job["job_id"] for job in response.json()["jobs"]] == [job_id]
+        else:
+            assert response.json()["job"]["job_id"] == job_id
         assert decide.call_count >= 1
+        for foreign_actor in set(SESSION_ACTORS) - {actor}:
+            denied = case.client.get(f"/me/api/jobs/{world['jobs'][foreign_actor]}")
+            assert denied.status_code == 404, denied.text
         return
 
-    response = case.client.get(
-        "/me/api/jobs?watch=1",
-        headers={"authorization": f"Bearer {world[actor]}"},
-    )
+    response = case.client.get(path, headers={"authorization": f"Bearer {world[actor]}"})
     assert response.status_code == 401
 
 
