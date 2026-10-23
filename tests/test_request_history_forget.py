@@ -256,10 +256,11 @@ def test_a_kept_request_writes_the_receipt_entry_with_its_deadline_and_parts(ans
 
 
 def test_a_forced_writer_failure_is_recorded_as_failed_never_kept(answering_gateway, monkeypatch):
-    def broken(record, *, path=None):
+    def broken(conn, record):
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(request_history, "insert", broken)
+    # The writer inserts inside its media transaction, through insert_record (REQUEST_RETENTION.md 3.6).
+    monkeypatch.setattr(request_history, "insert_record", broken)
     _send("/v1/chat/completions", {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]})
     entries = _receipt_retention(_latest_receipt_id())
     assert {"kind": "request_history", "decision": "failed", "reason": "write_failed"} in entries
