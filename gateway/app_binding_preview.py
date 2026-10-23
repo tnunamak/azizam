@@ -80,8 +80,6 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
     recent_from = as_of - RECENT_SECONDS
     previewed = []
     for app in apps:
-        if app["id"] in session_app_ids:
-            continue
         owner = app["owner_user_id"]
         app_keys = [k for k in keys if _key_app_id(k) == app["id"]]
         app_addresses = [a for a in addresses if a["app_id"] == app["id"]]
@@ -100,6 +98,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
             "app_id": app["id"],
             "name": app["name"],
             "kind": app["kind"],
+            "session_app": app["id"] in session_app_ids,
             "accountable_person_id": owner,
             "access_plan": app["access_plan"],
             "disabled": app["disabled_at"] is not None,
@@ -128,7 +127,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
     blocked = sorted({app["app_id"] for app in previewed if app["blocks_apply"]})
     summary = {
         "apps": len(previewed),
-        "session_apps_excluded": len(session_app_ids),
+        "session_apps": sum(1 for app in previewed if app["session_app"]),
         "keys_to_revoke": sum(1 for a in previewed for k in a["keys"] if k["action"] == "revoke"),
         "addresses_to_remove": sum(1 for a in previewed for t in a["trusted_addresses"] if t["action"] == "remove"),
         "apps_blocking_apply": blocked,
@@ -150,8 +149,21 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def digest(body: dict[str, Any]) -> str:
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    """The digest an acceptance cites. It covers what the cut-over decides, so the clock and the times of last use do not move it.
+
+    A last use that changes whether an App would stop while in use still moves it: that is the ``blocks_apply`` list.
+    """
+    canonical = json.dumps(_decision_view(body), sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _decision_view(body: dict[str, Any]) -> dict[str, Any]:
+    view = {name: value for name, value in body.items() if name != "as_of"}
+    view["apps"] = [
+        {**app, "keys": [{name: value for name, value in key.items() if name != "last_used_at"} for key in app["keys"]]}
+        for app in body["apps"]
+    ]
+    return view
 
 
 def render(body: dict[str, Any], preview_digest: str) -> str:
@@ -162,7 +174,7 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
         "",
     ]
     for app in body["apps"]:
-        lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']} "
+        lines.append(f"App {app['app_id']} \"{app['name']}\" kind={app['kind']}{' (session App)' if app['session_app'] else ''} "
                      f"accountable={app['accountable_person_id']} plan={app['access_plan']}"
                      f"{' disabled' if app['disabled'] else ''}")
         if app["kind"] == "personal":
@@ -186,7 +198,7 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
     s = body["summary"]
     lines += [
         "",
-        f"summary: apps={s['apps']} session_apps_excluded={s['session_apps_excluded']} "
+        f"summary: apps={s['apps']} session_apps={s['session_apps']} "
         f"keys_to_revoke={s['keys_to_revoke']} addresses_to_remove={s['addresses_to_remove']} "
         f"apps_blocking_apply={len(s['apps_blocking_apply'])}",
     ]
