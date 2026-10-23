@@ -152,7 +152,6 @@ def test_an_app_keys_secret_cannot_be_rewritten_in_place(guarded):
 
 # --- Finding 6: the /me address route skips the disabled-App check that key minting has -----------------
 
-@pytest.mark.xfail(strict=True, reason="review finding 6: /me trusted-address add accepts a disabled App; /me key mint refuses it")
 def test_a_disabled_app_takes_no_new_trusted_address_from_me(gateway):
     gateway.set_rules([], fallback="open")
     member, _ = signed_in(gateway, sub="desk", email="desk@example.test")

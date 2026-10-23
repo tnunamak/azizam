@@ -517,19 +517,11 @@ def add_user_trusted_address(
 
     The same rule as the admin route: only the accountable person adds an address, and the address
     records them as its creator. The insert runs in the sign-in's own transaction, so a sign-out that
-    lands first adds nothing. An App that is not theirs is refused with the same reason as a foreign
-    key request.
+    lands first adds nothing. The App is looked up the way key minting looks it up: another person's
+    App is not found (404), a disabled App is refused (403), and a session App takes no address.
     """
     user = _user_from_session(session, path=path)
-    app = admin_store.get_app(app_id, path=path)
-    if app is None:
-        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
-    if app.get("owner_user_id") != str(user["id"]):
-        raise UserPortalError(
-            "not_your_app",
-            "Only the person this App answers for can add a trusted address to it.",
-            status_code=403,
-        )
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
     try:
         address = trusted_addresses.normalize_entry(data.get("address"))
         record = admin_store.add_trusted_address(
