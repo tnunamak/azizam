@@ -31,7 +31,7 @@ import threading
 import time
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional
 
 import httpx
 import yaml
@@ -72,6 +72,9 @@ _COMMIT_HASH: Optional[str] = _resolve_commit_hash()
 # slow or loaded host. 3 s lets a busy host finish its handshake without
 # stretching the whole-status budget (probes run concurrently).
 _HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
+# An engine probe still running at this deadline is reported as slow instead of waited for. The probes' own
+# timeouts end most slow probes first. This ends one that keeps its connection busy, such as a body that trickles in.
+_BACKEND_GRID_DEADLINE_S = 4.0
 
 # httpx builds an SSL context (reads the CA bundle) for every client it creates.
 # That is seconds of CPU on a loaded host, so build it once, off the event loop.
@@ -413,7 +416,55 @@ def _merge_backend_observations(rows: list[dict[str, Any]]) -> list[dict[str, An
     return sorted(merged.values(), key=lambda row: _ROLE_ORDER.get(str(row.get("role") or "required"), 99))
 
 
-async def _backend_grid(config: dict) -> list[dict]:
+def _http_target_row(target: Mapping[str, Any], status: str, error: Optional[str]) -> dict[str, Any]:
+    """The row for an HTTP engine that was not measured, or that did not answer in time."""
+    return {
+        "key": target["key"],
+        "service_id": target["key"],
+        "name": target["name"],
+        "url": target["url"],
+        "role": target["role"],
+        "note": target.get("note"),
+        "status": status,
+        "live_status": status,
+        "latency_ms": None,
+        "last_error": error,
+        "kind": "no_response",
+    }
+
+
+def _overdue_http_row(target: Mapping[str, Any]) -> dict[str, Any]:
+    # Slow, not down: the same verdict as a probe that times out on its own.
+    return {**_http_target_row(target, "degraded", "timeout"), "observed_at_s": int(time.time())}
+
+
+def _overdue_lifecycle_row(target: Mapping[str, Any]) -> dict[str, Any]:
+    return _row_for_lifecycle_state(target, "unknown", "status check did not finish")
+
+
+async def _within_deadline(
+    probe: Awaitable[dict[str, Any]], deadline_s: float, target: Mapping[str, Any],
+    overdue: Callable[[Mapping[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    """The probe's row, or the overdue row when the probe is still running at the deadline."""
+    try:
+        return await asyncio.wait_for(probe, timeout=deadline_s)
+    except TimeoutError:
+        return overdue(target)
+
+
+def checking_backend_rows(config: dict) -> list[dict]:
+    """The grid's rows before any engine has been measured.
+
+    Unknown, not down: the availability layer reads an unknown status as not measured,
+    and any other status it does not recognise as unavailable.
+    """
+    rows = [_http_target_row(t, "unknown", None) for t in _resolve_backend_targets(config)]
+    rows += [_row_for_lifecycle_state(t, "unknown") for t in _lifecycle_backend_targets(config)]
+    return _merge_backend_observations(rows)
+
+
+async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADLINE_S) -> list[dict]:
     targets = _resolve_backend_targets(config)
     lifecycle_targets = _lifecycle_backend_targets(config)
     backends = config.get("backends", {}) or {}
@@ -424,16 +475,14 @@ async def _backend_grid(config: dict) -> list[dict]:
             row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
             row["observed_at_s"] = int(time.time())
             return row
+        # Each probe has its own deadline, so one slow engine does not hold up the rows of the others.
         http_results, lifecycle_results = await asyncio.gather(
             asyncio.gather(
-                *[
-                    configured_probe(t)
-                    for t in targets
-                ],
+                *[_within_deadline(configured_probe(t), deadline_s, t, _overdue_http_row) for t in targets],
                 return_exceptions=False,
             ),
             asyncio.gather(
-                *[_lifecycle_probe(t, backends) for t in lifecycle_targets],
+                *[_within_deadline(_lifecycle_probe(t, backends), deadline_s, t, _overdue_lifecycle_row) for t in lifecycle_targets],
                 return_exceptions=False,
             ),
         )

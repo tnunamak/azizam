@@ -13993,10 +13993,36 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     return {**payload, "protocol_issues": issues, "health_sources": sources}
 
 
-# Home's engine rows, kept for the status cache's TTL. The lock makes a burst of
-# Home reads wait for one probe pass instead of starting one each.
-_ENGINE_ROWS: dict[str, Any] = {}
-_ENGINE_ROWS_LOCK = asyncio.Lock()
+# Home's engine rows. One refresh runs at a time, shielded from the Home reads that wait on it:
+# a read that is cancelled does not abandon the refresh, and a burst of reads shares one probe pass.
+_ENGINE_ROWS: dict[str, Any] = {}  # {"ts": monotonic time, "payload": rows} of the last complete pass
+_ENGINE_ROWS_TASK: asyncio.Task | None = None
+# Rows older than the status cache's TTL are served at once while a refresh runs, up to this age.
+_ENGINE_ROWS_MAX_STALE_S = 60.0
+# A read that has no rows it may serve waits this long for the refresh, then gets checking rows.
+_ENGINE_ROWS_FIRST_WAIT_S = 0.5
+
+
+def _start_engine_rows_refresh() -> asyncio.Task:
+    """The refresh in flight, started if there is none."""
+    global _ENGINE_ROWS_TASK
+    if _ENGINE_ROWS_TASK is None or _ENGINE_ROWS_TASK.done():
+        _ENGINE_ROWS_TASK = asyncio.get_running_loop().create_task(_refresh_engine_rows())
+        _ENGINE_ROWS_TASK.add_done_callback(_log_engine_rows_failure)
+    return _ENGINE_ROWS_TASK
+
+
+async def _refresh_engine_rows() -> dict[str, Any]:
+    backends = await status_endpoint._backend_grid(config)
+    payload = {"backends": backends, "generated_at": int(time.time())}
+    _ENGINE_ROWS.update(ts=time.monotonic(), payload=payload)
+    return payload
+
+
+def _log_engine_rows_failure(task: asyncio.Task) -> None:
+    # A refresh that no reader awaits still reports its failure.
+    if not task.cancelled() and task.exception() is not None:
+        logging.getLogger(__name__).error("Home's engine rows refresh failed", exc_info=task.exception())
 
 
 async def _engine_rows_payload() -> dict[str, Any]:
@@ -14004,20 +14030,25 @@ async def _engine_rows_payload() -> dict[str, Any]:
 
     A fresh status page already holds them. Otherwise only the engine probes run, the
     same probes the status page runs, so Home never waits for the GPU, disk, log and
-    git reads that it does not show.
+    git reads that it does not show. Nor does a Home read wait for the probes, except
+    briefly when it has no rows to serve; then it gets checking rows if they are not in yet.
     """
     cached = _cached_status_payload_for_availability()
     if cached:
         return {"backends": list(cached.get("backends") or []), "generated_at": cached.get("generated_at")}
     ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    async with _ENGINE_ROWS_LOCK:
-        held = _ENGINE_ROWS.get("payload")
-        if held is not None and time.monotonic() - float(_ENGINE_ROWS.get("ts", 0.0)) < ttl:
-            return held
-        backends = await status_endpoint._backend_grid(config)
-        payload = {"backends": backends, "generated_at": int(time.time())}
-        _ENGINE_ROWS.update(ts=time.monotonic(), payload=payload)
-        return payload
+    held = _ENGINE_ROWS.get("payload")
+    age = time.monotonic() - float(_ENGINE_ROWS.get("ts", 0.0))
+    if held is not None and age < ttl:
+        return held
+    refresh = _start_engine_rows_refresh()
+    if held is not None and age < _ENGINE_ROWS_MAX_STALE_S:
+        return held
+    try:
+        # Shielded: a reader that is cancelled leaves the refresh running for the next reader.
+        return await asyncio.wait_for(asyncio.shield(refresh), timeout=_ENGINE_ROWS_FIRST_WAIT_S)
+    except Exception:  # noqa: BLE001 - a refresh that is late or failed reads as checking rows
+        return {"backends": status_endpoint.checking_backend_rows(config), "generated_at": int(time.time())}
 
 
 async def _home_status_payload() -> Mapping[str, Any]:

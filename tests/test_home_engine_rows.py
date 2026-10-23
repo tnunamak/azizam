@@ -6,12 +6,21 @@ which Home never shows. A cold status cache used to make every Home read wait fo
 of them, so a read after the cache expired cost about a second on the perf fixture and
 more on a loaded host. These tests pin that Home takes the engine rows alone, and that a
 burst of Home reads shares one probe pass.
+
+A slow engine must not hold Home up either. Home is served the last rows while one shielded
+refresh runs, and when it has none it waits briefly and then gets checking rows. Each engine
+probe also has a deadline, so a probe that keeps its connection busy cannot stall the refresh.
 """
 from __future__ import annotations
 
 import asyncio
+import time
+
+import pytest
 
 import proxy
+import status_endpoint
+from tests.support.fake_upstream.loopback import LoopbackServer
 
 
 def _rows() -> list[dict]:
@@ -21,6 +30,16 @@ def _rows() -> list[dict]:
 
 def _registry() -> dict:
     return {"services": {"chat": {"enabled": True, "config": {"base_url": "http://chat.test"}}}}
+
+
+def _engine_config() -> dict:
+    return {"backends": {"chat": {"name": "Chat", "health_endpoint": "http://chat.test/health", "role": "required"}}}
+
+
+async def _until_stored(previous) -> None:
+    """Wait until a refresh has stored rows other than ``previous``."""
+    while proxy._ENGINE_ROWS.get("payload") is previous:
+        await asyncio.sleep(0.01)
 
 
 def _cold_home(monkeypatch, grid) -> None:
@@ -34,7 +53,7 @@ def _cold_home(monkeypatch, grid) -> None:
     monkeypatch.setattr(proxy.status_endpoint, "_CACHE", {})
     monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", grid)
     monkeypatch.setattr(proxy, "_ENGINE_ROWS", {})
-    monkeypatch.setattr(proxy, "_ENGINE_ROWS_LOCK", asyncio.Lock())
+    monkeypatch.setattr(proxy, "_ENGINE_ROWS_TASK", None)
     monkeypatch.setattr(proxy, "_models_catalog_health_evidence", no_catalog_evidence)
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: _registry())
     monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda context: [])
@@ -91,3 +110,155 @@ def test_home_engine_rows_use_a_fresh_status_page_when_one_is_cached(monkeypatch
     payload = asyncio.run(proxy._engine_rows_payload())
 
     assert payload == {"backends": cached_rows, "generated_at": 90}
+
+
+def test_a_burst_during_a_slow_probe_is_served_the_last_rows_at_once(monkeypatch):
+    stored = {"backends": _rows(), "generated_at": 100}
+    grid_calls: list[dict] = []
+
+    async def scenario():
+        release = asyncio.Event()
+
+        async def grid(config):
+            grid_calls.append(config)
+            await release.wait()  # the probe stays slow until the burst has returned
+            return _rows()
+
+        _cold_home(monkeypatch, grid)
+        # Rows from a pass 20 s ago: older than the status TTL, so a refresh starts, but within the stale limit.
+        monkeypatch.setattr(proxy, "_ENGINE_ROWS", {"ts": time.monotonic() - 20.0, "payload": stored})
+
+        # A read that waited for the blocked probe would time out here.
+        results = await asyncio.wait_for(asyncio.gather(*(proxy._engine_rows_payload() for _ in range(6))), timeout=1.0)
+        assert all(result == stored for result in results)
+        assert len(grid_calls) == 1, "the burst shares one refresh"
+
+        release.set()
+        await asyncio.wait_for(_until_stored(stored), timeout=2.0)
+        assert proxy._ENGINE_ROWS["payload"]["backends"] == _rows()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stored_age_s", [None, 120.0], ids=["nothing-stored", "stored-past-the-stale-limit"])
+def test_a_burst_with_no_rows_to_serve_gets_checking_rows_after_the_first_wait(monkeypatch, stored_age_s):
+    grid_calls: list[dict] = []
+
+    async def scenario():
+        release = asyncio.Event()
+
+        async def grid(config):
+            grid_calls.append(config)
+            await release.wait()
+            return _rows()
+
+        _cold_home(monkeypatch, grid)
+        monkeypatch.setattr(proxy, "config", _engine_config())
+        if stored_age_s is not None:
+            monkeypatch.setattr(proxy, "_ENGINE_ROWS", {"ts": time.monotonic() - stored_age_s,
+                                                       "payload": {"backends": _rows(), "generated_at": 100}})
+        previous = proxy._ENGINE_ROWS.get("payload")
+
+        results = await asyncio.wait_for(asyncio.gather(*(proxy._engine_rows_payload() for _ in range(6))), timeout=2.0)
+        for result in results:
+            assert [row["status"] for row in result["backends"]] == ["unknown"], "nothing was measured yet"
+            assert all("observed_at_s" not in row for row in result["backends"])
+        assert len(grid_calls) == 1
+
+        release.set()
+        await asyncio.wait_for(_until_stored(previous), timeout=2.0)
+
+    asyncio.run(scenario())
+
+
+def test_a_cancelled_first_reader_does_not_abandon_the_refresh(monkeypatch):
+    grid_calls: list[dict] = []
+
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def grid(config):
+            grid_calls.append(config)
+            started.set()
+            await release.wait()
+            return _rows()
+
+        _cold_home(monkeypatch, grid)
+        first = asyncio.create_task(proxy._engine_rows_payload())
+        await started.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        release.set()
+        # No reader is waiting now, yet the refresh still stores its rows.
+        await asyncio.wait_for(_until_stored(None), timeout=2.0)
+        second = await proxy._engine_rows_payload()
+        assert second["backends"] == _rows()
+        assert len(grid_calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_refresh_reads_as_checking_rows_and_is_logged(monkeypatch, caplog):
+    async def grid(config):
+        raise RuntimeError("probe pass broke")
+
+    async def scenario():
+        _cold_home(monkeypatch, grid)
+        monkeypatch.setattr(proxy, "config", _engine_config())
+        payload = await proxy._engine_rows_payload()
+        await asyncio.sleep(0.01)  # the failure is logged by a callback on the finished refresh
+        return payload
+
+    payload = asyncio.run(scenario())
+
+    assert [row["status"] for row in payload["backends"]] == ["unknown"]
+    assert "Home's engine rows refresh failed" in caplog.text
+
+
+async def _trickling_body(scope, receive, send):
+    """A health endpoint that answers 200 and then sends its body a few bytes at a time, slowly."""
+    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+    for _ in range(200):
+        await send({"type": "http.response.body", "body": b" ", "more_body": True})
+        await asyncio.sleep(0.05)
+    await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+
+async def _ready(scope, receive, send):
+    await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+    await send({"type": "http.response.body", "body": b'{"status": "ready"}', "more_body": False})
+
+
+def test_the_grid_deadline_ends_a_trickling_probe_and_keeps_the_other_rows():
+    slow = LoopbackServer(_trickling_body).start()
+    fast = LoopbackServer(_ready).start()
+    try:
+        config = {"backends": {
+            "slow": {"name": "Slow", "health_endpoint": f"{slow.base_url}/health", "role": "required"},
+            "fast": {"name": "Fast", "health_endpoint": f"{fast.base_url}/health", "role": "required"},
+        }}
+        started = time.monotonic()
+        rows = asyncio.run(status_endpoint._backend_grid(config, deadline_s=0.3))
+        elapsed = time.monotonic() - started
+    finally:
+        slow.stop()
+        fast.stop()
+
+    by_key = {row["key"]: row for row in rows}
+    assert elapsed < 2.0, "the deadline, not the 10 s body, ends the slow probe"
+    assert (by_key["slow"]["status"], by_key["slow"]["last_error"]) == ("degraded", "timeout")
+    assert by_key["fast"]["status"] == "up"
+
+
+def test_the_grid_deadline_reports_a_lifecycle_check_that_does_not_finish_as_unknown(monkeypatch):
+    async def never_finishes(target, backends):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(status_endpoint, "_lifecycle_probe", never_finishes)
+    config = {"backends": {"engine": {"name": "Engine", "role": "required", "lifecycle": {"driver": "systemd"}}}}
+
+    (row,) = asyncio.run(status_endpoint._backend_grid(config, deadline_s=0.1))
+
+    assert (row["status"], row["last_error"]) == ("unknown", "status check did not finish")
