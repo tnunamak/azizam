@@ -78,7 +78,7 @@ with `409 keep_needs_confirmation` until the owner confirms:
 - `unnamed_people` counts the people with no display name. An email address is never shown
   as a name, so a person whose only name is an address is counted here.
 - `admin_keys` counts the control-plane keys (service accounts) that held the admin or
-  superadmin role, one each, and names none of them. A service account that held only the
+  superadmin role, one per service account, and names none of them. A service account that held only the
   owner role is the owner's own control-plane key and is not counted.
 
 The `message` says the same thing in one sentence, and leaves out an empty part: "Administrators at
