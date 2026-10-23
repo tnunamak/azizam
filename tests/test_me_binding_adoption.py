@@ -831,7 +831,7 @@ def test_the_owner_is_offered_keep_for_an_unproven_key_and_the_count_covers_thei
     assert _key_cutovers(owner, hall) == {key_id: "keep"}
     assert _snapshot_app(owner, hall)["addresses_to_check"] == 1
 
-    kept = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
+    kept = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner), json=CONFIRM)
 
     assert kept.status_code == 200, kept.text
     assert _snapshot_app(owner, hall)["addresses_to_check"] == 0
@@ -889,10 +889,10 @@ def test_the_marked_bindings_are_exactly_the_ones_the_cut_over_removes_and_each_
     assert entries[made_address]["made_by_name"] == person_label(desk_user)
     assert "made_by_name" not in entries[legacy_address]
 
-    assert owner.post(f"/me/api/credentials/{legacy_key}/adopt", headers=_headers(owner)).status_code == 200
-    assert owner.post(f"/me/api/credentials/{made_key}/adopt", headers=_headers(owner)).status_code == 409
+    assert owner.post(f"/me/api/credentials/{legacy_key}/adopt", headers=_headers(owner), json=CONFIRM).status_code == 200
+    assert owner.post(f"/me/api/credentials/{made_key}/adopt", headers=_headers(owner), json=CONFIRM).status_code == 409
     assert owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{legacy_address}/adopt",
-                      headers=_headers(owner)).status_code == 200
+                      headers=_headers(owner), json=CONFIRM).status_code == 200
     assert owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{made_address}/adopt",
                       headers=_headers(owner)).status_code == 409
     assert _key_cutovers(owner, app_id) == {made_key: "replace"}
@@ -918,3 +918,117 @@ def test_an_address_an_app_already_trusts_cannot_be_added_again_so_an_unkept_one
 
     assert again.status_code == 400, again.text
     assert again.json()["error"]["code"] == "invalid_trusted_address"
+
+
+# --- Adding an address again: one step, so a failed step leaves the old entry in place -------------------
+
+def test_the_owner_adds_an_unkept_address_again_in_one_step_and_is_its_creator(gateway):
+    owner, owner_id, _plan, _admin = owner_and_admin(gateway)
+    hall = _own_app(owner, name="Hall")
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, hall, "10.0.0.50")
+    conn = sqlite3.connect(gateway.path)
+    try:
+        conn.execute("UPDATE app_trusted_addresses SET note = 'office' WHERE id = ?", (entry_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    readded = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/readd", headers=_headers(owner))
+
+    assert readded.status_code == 201, readded.text
+    entry = readded.json()["trusted_address"]
+    assert (entry["address"], entry["note"], entry["created_by"]) == ("10.0.0.50", "office", owner_id)
+    assert readded.json()["replaced_entry_id"] == entry_id
+    assert [row["id"] for row in gateway.rows("SELECT id FROM app_trusted_addresses WHERE app_id = ?", (hall,))] == [entry["id"]]
+    (audit,) = _audit(gateway, "app.trusted_address.readd")
+    assert (audit["actor_kind"], audit["actor_id"]) == ("user", owner_id)
+    assert json.loads(audit["metadata_json"]) == {"address": "10.0.0.50", "entry_id": entry["id"], "replaced_entry_id": entry_id}
+
+
+def test_adding_an_address_again_is_one_transaction_so_a_failed_step_leaves_the_old_entry(gateway, monkeypatch):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+    hall = _own_app(owner, name="Hall")
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, hall, "10.0.0.51")
+
+    def fail_after_the_delete_and_the_insert(*_args, **_kwargs):
+        raise RuntimeError("the audit write failed")
+
+    monkeypatch.setattr(admin_store, "_record_audit_in_transaction", fail_after_the_delete_and_the_insert)
+    with pytest.raises(RuntimeError, match="the audit write failed"):
+        owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/readd", headers=_headers(owner))
+
+    assert [row["id"] for row in gateway.rows("SELECT id FROM app_trusted_addresses WHERE app_id = ?", (hall,))] == [entry_id]
+    assert _creator_of_address(gateway, entry_id) is None
+
+
+def test_adding_an_address_again_on_someone_elses_app_is_not_found(gateway):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, app_id, "10.0.0.52")
+    other = _member(gateway, "other")
+
+    refused = other.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd", headers=_headers(other))
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (404, "app_not_found")
+    assert [row["id"] for row in gateway.rows("SELECT id FROM app_trusted_addresses WHERE app_id = ?", (app_id,))] == [entry_id]
+    assert _audit(gateway, "app.trusted_address.readd") == []
+
+
+def test_adding_a_missing_address_again_is_not_found(gateway):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+    hall = _own_app(owner, name="Hall")
+
+    missing = owner.post(f"/me/api/apps/{hall}/trusted-addresses/tad_does_not_exist/readd", headers=_headers(owner))
+
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "trusted_address_not_found")
+
+
+def test_adding_an_address_again_without_the_user_action_header_writes_nothing(gateway):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+    hall = _own_app(owner, name="Hall")
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, hall, "10.0.0.53")
+
+    refused = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/readd", headers=csrf_for(owner))
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (403, "user_action_header_required")
+    assert _creator_of_address(gateway, entry_id) is None
+
+
+def test_adding_an_address_again_on_a_session_app_is_not_found(gateway):
+    owner, owner_id, _plan, _admin = owner_and_admin(gateway)
+    app_id = _own_app(owner)
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, app_id, "10.0.0.54")
+    conn = sqlite3.connect(gateway.path)
+    try:
+        conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (owner_id, app_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    refused = owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd", headers=_headers(owner))
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (404, "app_not_found")
+    assert _creator_of_address(gateway, entry_id) is None
+
+
+def test_adding_an_address_again_is_a_sensitive_action_that_asks_for_a_recent_sign_in():
+    assert step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/readd")
+
+
+def test_the_snapshot_and_the_owners_address_list_name_the_administrators_a_keep_must_confirm(gateway):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
+    hall = _own_app(owner, name="Hall")
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, hall)
+    entry_id = _unproven_address(gateway, hall, "10.0.0.55")
+
+    key = next(item for item in _snapshot_app(owner, hall)["credentials"] if item["id"] == key_id)
+    entries = {entry["id"]: entry for entry in owner.get(f"/admin/api/apps/{hall}/trusted-addresses").json()["trusted_addresses"]}
+
+    assert (key["cutover"], key["administrators"]) == ("keep", ["unnamed administrator"])
+    assert (entries[entry_id]["cutover"], entries[entry_id]["administrators"]) == ("keep", ["unnamed administrator"])
