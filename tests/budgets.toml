@@ -236,7 +236,9 @@
 # Slice 5a round-4 review fixes: +72 cases in tests/test_request_history_s5a_r4_fixes.py (the sub-delim and ambiguous
 # user-info cases, the depth limit and fullwidth names, cancelled writes and drains, and body forgets in flight).
 # collect-only 16322 -> 16394 (2026-10-23).
-pytest = 16394
+# Slice 5a round-5 review fixes: +55 cases in tests/test_request_history_s5a_r5_fixes.py (12 for JSON carried in a
+# string value, 43 for format characters in a credential name). collect-only 16394 -> 16449 (2026-10-23).
+pytest = 16449
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
