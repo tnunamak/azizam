@@ -122,9 +122,10 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
 - **The backend sampler runs all the time.** It makes one HTTP GET per backend with a health URL each minute,
   and it starts no process. A backend with a lifecycle driver and no health URL has no sample now. Its recorded
   uptime was always zero before this change, because a lifecycle state alone never reads as up.
-- **The sampler's HTTP-only probe changes one stored value.** A stopped systemd unit reads as down (0) rather
-  than stopped (0). Uptime and the status series are the same. Only the error kind differs, and nothing in the
-  gateway reads that value.
+- **The sampler's HTTP-only probe can differ from the grid.** A stopped systemd unit reads as down (0) rather
+  than stopped (0), and only the error-kind label differs. A unit that systemd reports as starting or draining,
+  while its health URL answers, reads as 0 in the grid and as the health URL says in the sampler. Nothing in the
+  gateway reads the error kind.
 - **The metrics sampler still runs on its own clock.** It samples the GPU, RAM, disk, Xid and queue series
   every 10 s and every 60 s. Its GPU probe starts `nvidia-smi` on every 10 s tick, and its kernel-journal read
   starts `journalctl` on every tick unless a commit is pending. Neither is part of the idle window, so the
