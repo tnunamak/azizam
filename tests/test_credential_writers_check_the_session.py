@@ -52,6 +52,7 @@ CREATES = re.compile(
 GUARDED = {
     "gateway/admin_store.py::create_credential_hash": "App keys, Try keys, admin keys",
     "gateway/admin_store.py::create_admin_key_with_role": "a dashboard admin key with its service account and role, in one transaction",
+    "gateway/admin_store.py::replace_app_credential": "a new App key on the signed-in person's App, in place of an old one, in one transaction",
     "gateway/admin_store.py::set_local_password_verifier": "the owner's password",
     "gateway/accounts.py::create_link": "invitation and password-reset links",
     "gateway/mcp_oauth_store.py::Store.create_grant": "an MCP connection (consent)",
@@ -88,7 +89,7 @@ REGISTRY_WRITERS = {"write_service_registry", "write_service_registry_with_audit
                     "write_service_registry_and_setting_with_audits"}
 SECRET_STORE_WRITERS = {"put_provider_secret", "delete_provider_secret"}
 CALLED_AS = ({"create_credential_hash", "create_admin_key_with_role", "set_local_password_verifier", "create_link",
-              "create_grant"} | REGISTRY_WRITERS)
+              "create_grant", "replace_app_credential"} | REGISTRY_WRITERS)
 # Writers whose plain name another function also has (the runtime's own ``add_trusted_address(actor=...)``), called
 # by their dotted names.
 CALLED_AS_DOTTED = {"admin_store.add_trusted_address", "signin_admin.link_identity"}
@@ -437,7 +438,7 @@ def test_every_table_is_classified_so_a_new_credential_table_is_not_missed():
 
 
 GUARDED_NAMES = {"create_credential_hash", "create_admin_key_with_role", "create_link", "set_local_password_verifier",
-                 "create_grant"}
+                 "create_grant", "replace_app_credential"}
 
 
 def test_routes_that_make_a_credential_are_found_through_their_helpers():
@@ -538,6 +539,19 @@ def world(tmp_path):
         state["n"] += 1
         return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db, created_by=accountable_person(db, app["id"]))
 
+    def make_replacement(session):
+        state["n"] += 1
+        old = admin_store.create_credential_hash(
+            subject_kind="app", subject_id=app["id"], hash=f"old{state['n']}", prefix="opk_old",
+            created_by=accountable_person(db, app["id"]), path=db)["id"]
+        return admin_store.replace_app_credential(
+            old, app_id=app["id"], person_id=user["id"], hash=f"rep{state['n']}", prefix="opk_rep",
+            display_name=None, session=session, path=db)
+
+    def replacements():
+        with closing(sqlite3.connect(db)) as conn:
+            return conn.execute("SELECT COUNT(*) FROM credentials WHERE hash LIKE 'rep%'").fetchone()[0]
+
     def make_identity_link(session):
         state["n"] += 1
         return signin_admin.link_identity(db, "https://idp.test", f"other-{state['n']}", user["id"], linked_by=user["id"],
@@ -550,6 +564,7 @@ def world(tmp_path):
         "add_trusted_address": (make_trusted_address, lambda: count("app_trusted_addresses")),
         "link_identity": (make_identity_link, lambda: count("oidc_identity_links")),
         "create_credential_hash": (make_key, lambda: count("credentials")),
+        "replace_app_credential": (make_replacement, replacements),
         "create_link": (make_link, lambda: count("account_links")),
         "set_local_password_verifier": (make_password, lambda: count("local_password_credentials")),
         "create_grant": (make_grant, lambda: count("mcp_oauth_grants")),

@@ -451,6 +451,8 @@ Selected successful workflows are exercised separately.
 | `POST /me/api/apps/{app_id}/trusted-addresses` | session-only | denied | `proxy.user_portal_add_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
 | `POST /me/api/credentials/{credential_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_key`; Browser session; mutations require CSRF/action header; only the App's accountable person keeps an unproven key | hidden |
 | `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person keeps an unproven address | hidden |
+| `POST /me/api/credentials/{credential_id}/replace` | session-only | denied | `proxy.user_portal_replace_key`; Browser session; mutations require CSRF/action header; only the App's accountable person replaces a key it cannot keep | hidden |
+| `DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}` | session-only | denied | `proxy.user_portal_remove_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
 | `POST /me/api/connection-test` | session-only | denied | `gateway.home_api.connection_test`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_rename_key`; Browser session; mutations require CSRF/action header | hidden |

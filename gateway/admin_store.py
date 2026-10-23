@@ -2157,12 +2157,61 @@ def delete_trusted_address(
     return _row_to_dict(row)
 
 
+class KeepNotProvable(ValueError):
+    """A binding nobody else could have made is kept by the owner only. Any other binding is replaced, or added again."""
+
+
+def _owner_only_ever(conn: sqlite3.Connection, person_id: str) -> bool:
+    """True when ``person_id`` holds the owner role now and no other subject ever has.
+
+    Before the cut-over the owner role could issue a key or an address on any App, and so could a control-plane
+    key that held it. Every holder of the role is therefore a possible maker. Revoked grants stay in the table,
+    so they still count.
+    """
+    holders = {(kind, subject) for kind, subject in conn.execute(
+        "SELECT DISTINCT subject_kind, subject_id FROM admin_role_assignments WHERE role = 'owner'")}
+    if holders != {("user", person_id)}:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' AND subject_kind = 'user' AND subject_id = ? "
+        "AND scope_app_id IS NULL AND revoked_at IS NULL", (person_id,),
+    ).fetchone() is not None
+
+
+def _keep_provable(conn: sqlite3.Connection, person_id: str, creations: list[tuple[str, str | None]]) -> bool:
+    """A binding is kept only when nobody else could have made it: the owner, and no audit event names another maker."""
+    return _owner_only_ever(conn, person_id) and all(
+        kind == "user" and actor == person_id for kind, actor in creations)
+
+
+def _key_creations(conn: sqlite3.Connection, cred_id: str) -> list[tuple[str, str | None]]:
+    """The (actor kind, actor id) of every audit event that created this key."""
+    return [(row[0], row[1]) for row in conn.execute(
+        "SELECT actor_kind, actor_id FROM audit_events WHERE target_id = ? "
+        "AND target_kind IN ('credential', 'account_link') AND action IN ('credential.create', 'credential.self_create')",
+        (cred_id,),
+    ).fetchall()]
+
+
+def _address_creations(conn: sqlite3.Connection, app_id: str, entry_id: str) -> list[tuple[str, str | None]]:
+    """The (actor kind, actor id) of every audit event that added this trusted address."""
+    creations = []
+    for kind, actor, metadata in conn.execute(
+        "SELECT actor_kind, actor_id, metadata_json FROM audit_events "
+        "WHERE action = 'app.trusted_address.add' AND target_kind = 'app' AND target_id = ?", (app_id,),
+    ).fetchall():
+        if json.loads(metadata or "{}").get("entry_id") == entry_id:
+            creations.append((kind, actor))
+    return creations
+
+
 def adopt_app_credential(
     cred_id: str, *, app_id: str, person_id: str, session: session_guard.BrowserSession | None = None,
     now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Make ``person_id`` the creator of a live key on ``app_id`` (owner visibility §3.5: keeping an unproven key).
 
+    Only a key nobody else could have made is kept (``KeepNotProvable`` otherwise; the owner keeps, nobody else).
     The sign-in is checked and the audit row is written in the same transaction as the change, so a sign-out
     that lands first changes nothing. A key that already names the person is returned as it is and writes
     nothing. None when no live App key with that id is on the App.
@@ -2181,6 +2230,9 @@ def adopt_app_credential(
         if row["created_by"] == person_id:
             conn.rollback()
             return _credential_row_to_dict(row)
+        if not _keep_provable(conn, person_id, _key_creations(conn, cred_id)):
+            conn.rollback()
+            raise KeepNotProvable("this key cannot be kept")
         conn.execute("UPDATE credentials SET created_by = ? WHERE id = ?", (person_id, cred_id))
         _record_audit_in_transaction(
             conn, "credential.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
@@ -2199,7 +2251,8 @@ def adopt_trusted_address(
 ) -> dict[str, Any] | None:
     """Make ``person_id`` the creator of one trusted address on ``app_id`` (owner visibility §3.5).
 
-    Same rules as ``adopt_app_credential``: one transaction with the audit row, nothing written when the
+    Same rules as ``adopt_app_credential``: only an address nobody else could have added is kept
+    (``KeepNotProvable`` otherwise), one transaction with the audit row, nothing written when the
     address already names the person, None when the App has no such address.
     """
     ts = _now() if now is None else int(now)
@@ -2215,6 +2268,9 @@ def adopt_trusted_address(
         if row["created_by"] == person_id:
             conn.rollback()
             return _row_to_dict(row)
+        if not _keep_provable(conn, person_id, _address_creations(conn, app_id, entry_id)):
+            conn.rollback()
+            raise KeepNotProvable("this address cannot be kept")
         conn.execute("UPDATE app_trusted_addresses SET created_by = ? WHERE id = ?", (person_id, entry_id))
         _record_audit_in_transaction(
             conn, "app.trusted_address.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
@@ -2225,6 +2281,43 @@ def adopt_trusted_address(
         conn.commit()
         row = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (entry_id,)).fetchone()
     return _row_to_dict(row)
+
+
+def replace_app_credential(
+    cred_id: str, *, app_id: str, person_id: str, hash: str, prefix: str, display_name: str | None,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Issue a new App key for ``person_id`` on ``app_id`` and revoke ``cred_id``, in one transaction.
+
+    The new key is made the way a key from the Apps page is made: the person is its creator, the App's plan
+    applies unchanged, and it has no expiry. The sign-in is checked first, and the insert, the revoke and the
+    audit row share one transaction, so a failure leaves the old key live and no new key behind. None when no
+    live App key with that id is on the App (owner visibility §3.5).
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        old = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ?", (cred_id, app_id),
+        ).fetchone()
+        if old is None:
+            conn.rollback()
+            return None
+        record = _insert_credential_in(
+            conn, subject_kind="app", subject_id=app_id, app_id=app_id, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=None, created_by=person_id, expires_at=None, session_id=None, ts=ts,
+        )
+        revoke_credential_in(conn, cred_id, now=ts)
+        _record_audit_in_transaction(
+            conn, "credential.replace", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="credential", target_id=cred_id,
+            metadata={"app_id": app_id, "prefix": old["prefix"], "replaced_by": record["id"], "new_prefix": prefix},
+            now=ts,
+        )
+        conn.commit()
+    return record
 
 
 def enable_app(
@@ -3965,6 +4058,8 @@ __all__ = [
     "delete_trusted_address",
     "adopt_app_credential",
     "adopt_trusted_address",
+    "KeepNotProvable",
+    "replace_app_credential",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",

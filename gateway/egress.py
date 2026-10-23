@@ -79,6 +79,8 @@ UNMANAGED_ME_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "the signed-in person's own apps: a trusted address they add to one of them",
     ("POST", "/me/api/credentials/{credential_id}/adopt"): "the signed-in person's own apps: an existing key they keep on one of them",
     ("POST", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt"): "the signed-in person's own apps: an existing trusted address they keep on one of them",
+    ("POST", "/me/api/credentials/{credential_id}/replace"): "the signed-in person's own apps: a new key they make on one of them in place of an old one",
+    ("DELETE", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}"): "the signed-in person's own apps: a trusted address they remove from one of them",
     ("POST", "/me/api/connection-test"): "the signed-in person's home page and connection test: no service record content",
     ("DELETE", "/me/api/credentials/{credential_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",
     ("PATCH", "/me/api/credentials/{credential_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",

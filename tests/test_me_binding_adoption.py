@@ -475,8 +475,8 @@ def test_a_person_cannot_remove_an_address_on_someone_elses_app(gateway):
 
     refused = other.delete(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}", headers=_headers(other))
 
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "not_your_app"
+    assert refused.status_code == 404, refused.text  # the same answer as adding an address to that App
+    assert refused.json()["error"]["code"] == "app_not_found"
     assert gateway.rows("SELECT COUNT(*) AS n FROM app_trusted_addresses WHERE id = ?", (entry_id,))[0]["n"] == 1
 
 

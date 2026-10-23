@@ -56,7 +56,6 @@ def _digest(path: Path) -> str:
 
 # --- Finding 1: keeping a key someone else minted gives that key the member's identity -------------------
 
-@pytest.mark.xfail(strict=True, reason="review finding 1: adopt launders a key the owner minted (and holds) into the member's person scope")
 def test_a_member_cannot_keep_a_key_the_audit_log_shows_someone_else_minted(gateway):
     signed_in(gateway, sub="owner", email=OWNER)
     owner_id = gateway.user(OWNER)["id"]

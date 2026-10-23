@@ -568,6 +568,17 @@ def _require_own_app(app: dict[str, Any] | None, user: Mapping[str, Any]) -> dic
     return app
 
 
+KEEP_KEY_REFUSED = (
+    "Nobody can prove who made this key, so it cannot be kept. Replace it instead: "
+    "POST /me/api/credentials/{credential_id}/replace issues a new key on this App (shown once) and revokes this one."
+)
+KEEP_ADDRESS_REFUSED = (
+    "Nobody can prove who added this address, so it cannot be kept. Add it again yourself with "
+    "POST /me/api/apps/{app_id}/trusted-addresses, then delete this one with "
+    "DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}."
+)
+
+
 def adopt_user_app_key(
     session: AdminSession,
     credential_id: str,
@@ -576,8 +587,8 @@ def adopt_user_app_key(
 ) -> dict[str, Any]:
     """Keep an App key on an App the signed-in person answers for: they become its recorded creator.
 
-    Only an unproven key needs this (a key with no creator, or another person's). The cut-over keeps a key
-    that names its person and revokes the rest, so keeping one is how a person saves a key they still use.
+    Only the owner keeps, and only a key nobody else could have made (owner visibility §3.5). Any other key is
+    refused with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``).
     """
     user = _user_from_session(session, path=path)
     credential = admin_store.get_credential(credential_id, path=path)
@@ -592,11 +603,49 @@ def adopt_user_app_key(
         )
     except session_guard.SessionEnded as exc:
         raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except admin_store.KeepNotProvable:
+        raise UserPortalError("keep_not_provable", KEEP_KEY_REFUSED.format(credential_id=credential_id),
+                              status_code=409) from None
     if record is None:  # revoked since the check above
         raise _credential_not_found()
     out = _sanitize_credential(record)
     out["active"] = True
     return out
+
+
+def replace_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Replace an App key the signed-in person answers for: a new key on the same App, and this one revoked.
+
+    The way a person keeps using a key that cannot be kept. The new key has the old key's name and is made the
+    way a key from the Apps page is made (no expiry). The secret is returned once, with the replaced id.
+    """
+    user = _user_from_session(session, path=path)
+    credential = admin_store.get_credential(credential_id, path=path)
+    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
+        raise _credential_not_found()
+    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+    app = _require_own_app(admin_store.get_app(app_id, path=path), user)
+    api_key = generate_app_api_key()
+    try:
+        record = admin_store.replace_app_credential(
+            credential_id, app_id=app_id, person_id=str(user["id"]), hash=hash_api_key(api_key),
+            prefix=_key_prefix(api_key), display_name=credential.get("display_name") or "Self-service key",
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if record is None:  # revoked since the check above
+        raise _credential_not_found()
+    out = _sanitize_credential(record)
+    out["active"] = True
+    out["api_key"] = api_key
+    out["prompt_memory"] = app_key_prompt_memory(app, record)
+    return {"credential": out, "replaced_credential_id": credential_id}
 
 
 def adopt_user_trusted_address(
@@ -606,7 +655,11 @@ def adopt_user_trusted_address(
     *,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator."""
+    """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator.
+
+    Only the owner keeps, and only an address nobody else could have added. Any other address is refused with
+    ``keep_not_provable``: the person adds it again and then removes this entry.
+    """
     user = _user_from_session(session, path=path)
     _require_own_app(admin_store.get_app(app_id, path=path), user)
     try:
@@ -616,9 +669,41 @@ def adopt_user_trusted_address(
         )
     except session_guard.SessionEnded as exc:
         raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except admin_store.KeepNotProvable:
+        raise UserPortalError("keep_not_provable", KEEP_ADDRESS_REFUSED.format(app_id=app_id, entry_id=entry_id),
+                              status_code=409) from None
     if record is None:
         raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
     return record
+
+
+def remove_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Remove one trusted address from an App the signed-in person answers for.
+
+    A removal only narrows access, and it is audited. Another person's App gets the same 404 as adding an
+    address to it (``_app_belongs_to_user``).
+    """
+    user = _user_from_session(session, path=path)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    removed = admin_store.delete_trusted_address(app_id, entry_id, path=path)
+    if removed is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    admin_store.record_audit(
+        "app.trusted_address.remove",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=app_id,
+        metadata={"address": removed["address"], "entry_id": entry_id},
+        path=path,
+    )
+    return removed
 
 
 def ensure_try_session_key(

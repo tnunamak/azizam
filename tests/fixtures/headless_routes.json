@@ -1290,6 +1290,22 @@
   {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_replace_key",
+    "method": "POST",
+    "path": "/me/api/credentials/{credential_id}/replace",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_remove_trusted_address",
+    "method": "DELETE",
+    "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.home_api.connection_test",
     "method": "POST",
     "path": "/me/api/connection-test",
