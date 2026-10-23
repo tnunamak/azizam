@@ -94,12 +94,12 @@ async function seed(baseURL: string, storagePath: string) {
   // The App answers for the seeded owner, and its key is minted through that owner's sign-in: the owner is
   // the accountable person, so no control-plane key mints it (owner visibility step 2).
   const { users } = await (await api.get("/admin/api/users")).json();
-  const owner = users.find((user: { email?: string }) => user.email === "owner@example.test");
-  if (!owner) throw new Error("The seeded owner is not in the user list");
+  const seededOwner = users.find((user: { email?: string }) => user.email === "owner@example.test");
+  if (!seededOwner) throw new Error("The seeded owner is not in the user list");
   const { app } = await post("/admin/api/apps", {
     name: "Browser test app",
     kind: "personal",
-    owner_user_id: owner.id,
+    owner_user_id: seededOwner.id,
     access_plan: plan.id,
   });
   const { credential } = await post(`/admin/api/apps/${app.id}/keys`, {
