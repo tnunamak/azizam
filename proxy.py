@@ -224,6 +224,8 @@ from gateway.models_catalog import (
     create_models_catalog_router,
     registered_model_capabilities,
     HealthProbeNoResponse,
+    HealthProbeRefused,
+    HealthProbeTimedOut,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -16396,8 +16398,13 @@ async def _models_catalog_health_evidence(
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
-            response = await client.get(url)
+        try:
+            async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException as exc:
+            raise HealthProbeTimedOut() from exc
+        except httpx.ConnectError as exc:
+            raise HealthProbeRefused() from exc
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()

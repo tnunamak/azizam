@@ -277,7 +277,8 @@ async def _probe(
         }
     except httpx.ConnectError:
         if starts_on_demand(service or {}):
-            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process"}
+            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process",
+                    "starts_on_demand": True}
         return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
@@ -345,7 +346,7 @@ def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str
     else:
         live_status = "unknown"
         error = None
-    return {
+    row = {
         "key": target["key"],
         "service_id": target["key"],
         "name": target["name"],
@@ -359,6 +360,9 @@ def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str
         "source": "lifecycle",
         "kind": "process",
     }
+    if target.get("service") and starts_on_demand(target["service"]):
+        row["starts_on_demand"] = True
+    return row
 
 
 async def _lifecycle_probe(target: Mapping[str, Any], config_backends: Mapping[str, Any]) -> dict[str, Any]:
@@ -3116,6 +3120,10 @@ def _record_backend_health_samples(backends: Optional[list[dict]]) -> None:
         status = str(
             backend.get("live_status") or backend.get("status") or "down"
         ).lower()
+        if status == "stopped" and backend.get("starts_on_demand") is True:
+            # Idle until a request starts it: not up, and not a failed check. Recording it as down made
+            # the 24-hour strip show down for an engine that was simply not running.
+            continue
         status_value = _SERVICE_STATUS_VALUE.get(status, 0.0)
         tags = json.dumps(
             _backend_history_tags(backend), sort_keys=True, separators=(",", ":")
