@@ -57,8 +57,11 @@ ADDED_PATHS: dict[str, str] = {
                                                       "new credential, so no step-up); tests/test_rename_apps_keys.py covers it",
     "/gateway/v1/requests": "the maker's own kept requests: list, read, delete and delete all (REQUEST_RETENTION.md section 10); "
                             "a delegated credential without the privacy permission cannot delete; tests/test_request_history_routes.py covers them",
+    "/gateway/v1/me/retention": "a delegated App key or MCP grant reads the person's request history choice; writes need privacy permission; tests/test_request_history_routes.py covers it",
     "/me/api/retention": "the member's own request history choice, session only (D50: a member can turn history off); "
                          "tests/test_request_history_member_choice.py covers it",
+    "/me/api/credentials/{credential_id}/privacy-permission": "the accountable person changes request-history access for one of their own App keys after step-up; tests/test_request_history_privacy_permission.py covers it",
+    "/me/api/mcp/connections/{grant_id}/privacy-permission": "the signed-in person changes request-history access for one of their own MCP grants after step-up; tests/test_request_history_privacy_permission.py covers it",
 }
 
 # Deliberate additions of one method to a path that was already frozen: (method, path template) -> reason. The path
