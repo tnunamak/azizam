@@ -22,6 +22,21 @@ export async function signInWithForm(page: Page, email: string, password: string
   await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 }
 
+/**
+ * The chooser is on the page, with its list. The gateway answers 60 list reads a minute per address, shared by every
+ * test on its server, and a refused read shows the plain form. So the first look is at the page as it is, and a
+ * refused list is read again from `address` (the sign-in address the page arrived at, so its status line comes back)
+ * until the minute turns. Remove this wait once the base has AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE (gateway/accounts.py
+ * reads it; scripts/ui/serve.py sets it to 600 for the UI gateways), because no read is then refused.
+ */
+export async function expectChooser(page: Page, address = "/sign-in/") {
+  let looks = 0;
+  await expect(async () => {
+    if (looks++ > 0) await page.goto(address);
+    await expect(page.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible({ timeout: 4_000 });
+  }).toPass({ timeout: 90_000, intervals: [5_000] });
+}
+
 /** The chooser's rows, in order: each is a list item whose first button names the person. */
 export function rows(page: Page): Locator {
   return page.getByRole("list").getByRole("listitem");
@@ -51,6 +66,6 @@ export async function twoPeopleOnOneBrowser(isolated: Isolated): Promise<TwoPeop
   await signInWithForm(page, lea.email, lea.password);
   await page.goto("/");
   await signOut(page);
-  await expect(page.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible();
+  await expectChooser(page, "/sign-in/?after=sign-out");
   return { page, robin, lea, robinName: isolated.name("Robin"), leaName: isolated.name("Léa") };
 }

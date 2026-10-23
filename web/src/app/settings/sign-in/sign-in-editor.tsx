@@ -150,14 +150,9 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
       : null;
   const freshWarning = freshLogin === false ? noFreshWarning(label) : null;
 
-  // A turn-on is the intent whenever the provider is off, so the server can ask for the test.
-  const proposal: SignInProposal = {
-    ...form,
-    methods: {
-      password: form.methods.password,
-      provider: live ? form.methods.provider : true,
-    },
-  };
+  // The provider switch is the intent. With it off, a save leaves single sign-on off, and the server asks for no test:
+  // gateway/signin_api.py asks only when single sign-on is on and its connection has changed since a passed test.
+  const proposal: SignInProposal = form;
   const { preview, settled, failed } = usePreview(proposal, testId, !readOnly);
 
   const patchConnection = (change: Partial<ProviderConnection>) =>
@@ -245,7 +240,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   const blocker = preview ? leadingBlocker(preview.blockers, live) : undefined;
   const verdict = preview?.test_verdict ?? null;
   const unlinked = Boolean(testId) && verdict?.kind === "owner_unlinked";
-  const turnOnIntent = !live && !form.methods.provider;
+  const turnOnIntent = !live && form.methods.provider;
   let caption: string;
   let mobileCaption: string;
   let need = false;
@@ -261,7 +256,13 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     });
     need = true;
   } else if (!live) {
-    const base = turnOnIntent ? turnOnCaption(label) : APPLY_NEXT;
+    // A passed test for this connection gets the turn-on sentence: the switch above turns it on, and Save leaves it off.
+    const base =
+      turnOnIntent || tested || savedTested
+        ? turnOnCaption(label)
+        : dirty
+          ? APPLY_NEXT
+          : NOTHING_TO_SAVE;
     caption = base + (unlinked ? unlinkedNote(label) : "");
     mobileCaption = base + (unlinked ? unlinkedNoteShort : "");
     need = unlinked;
@@ -274,8 +275,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   } else {
     caption = mobileCaption = NOTHING_TO_SAVE;
   }
-  const canSave =
-    settled && !failed && Boolean(preview) && !blocker && (live ? dirty : true);
+  const canSave = settled && !failed && Boolean(preview) && !blocker && dirty;
 
   const showChanges =
     Boolean(preview) && !readOnly && ((live && dirty) || (!live && (preview?.people.length ?? 0) > 0));
