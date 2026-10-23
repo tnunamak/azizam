@@ -94,13 +94,14 @@ def detail(monkeypatch, tmp_path):
     case = Case()
     case.alice, case.bob, case.alice_app, case.bob_app = alice, bob, alice_app, bob_app
     case.owner_session, case.admin_path, case.receipts_path = sessions["owner"], admin_path, receipts_path
+    case.sessions = sessions
     case.store, case.get, case.listed = store, get, listed
     return case
 
 
 def test_job_submission_detail_names_person_app_workflow_and_time(detail):
     detail.store("req_job", JOB_RECEIPT, detail.alice_app["id"], JOB_CREATED_AT)
-    response = detail.get("req_job", "owner")
+    response = detail.get("req_job", "alice")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["person_label"] == "Alice Example"
@@ -113,7 +114,7 @@ def test_job_submission_detail_names_person_app_workflow_and_time(detail):
 
 def test_chat_detail_names_person_model_and_time(detail):
     detail.store("req_chat", CHAT_RECEIPT, detail.bob_app["id"], 1792300000)
-    body = detail.get("req_chat", "owner").json()
+    body = detail.get("req_chat", "bob").json()
     assert (body["person_label"], body["app_label"]) == ("Bob Example", "Phone")
     assert body["created_at"] == 1792300000
     assert (body["requested_model"], body["resolved_model"]) == ("fast", "demo-model")
@@ -122,20 +123,21 @@ def test_chat_detail_names_person_model_and_time(detail):
 @pytest.mark.parametrize("app_id", ["app_deleted_long_ago", None])
 def test_receipt_without_an_owner_is_unattributed_not_blank(detail, app_id):
     detail.store("req_orphan", CHAT_RECEIPT, app_id, 1792300001)
-    body = detail.get("req_orphan", "owner").json()
-    assert body["person_label"] == "Unattributed request"
-    assert body["created_at"] == 1792300001
-    assert body["resolved_model"] == "demo-model"
+    # No person made it, so no person opens it (D52). The admin list still labels it.
+    for viewer in ("owner", "alice", "bob"):
+        assert detail.get("req_orphan", viewer).status_code == 404
+    row = detail.listed("req_orphan")
+    assert row["person_label"] == "Unattributed request"
+    assert row["created_at"] == 1792300001
 
 
-@pytest.mark.parametrize("request_id,receipt,app", [
-    ("req_job", JOB_RECEIPT, "alice_app"), ("req_chat", CHAT_RECEIPT, "bob_app"),
-    ("req_orphan", CHAT_RECEIPT, None),
+@pytest.mark.parametrize("request_id,receipt,app,maker", [
+    ("req_job", JOB_RECEIPT, "alice_app", "alice"), ("req_chat", CHAT_RECEIPT, "bob_app", "bob"),
 ])
-def test_detail_and_list_agree_on_person_app_and_time(detail, request_id, receipt, app):
-    app_id = getattr(detail, app)["id"] if app else None
+def test_detail_and_list_agree_on_person_app_and_time(detail, request_id, receipt, app, maker):
+    app_id = getattr(detail, app)["id"]
     detail.store(request_id, receipt, app_id, 1792300002)
-    row, body = detail.listed(request_id), detail.get(request_id, "owner").json()
+    row, body = detail.listed(request_id), detail.get(request_id, maker).json()
     assert body["person_label"] == row["person_label"]
     assert body["app_label"] == row["app_label"]
     assert body["created_at"] == row["created_at"]
@@ -166,13 +168,44 @@ def test_retention_detail_is_visible_to_maker_but_not_to_owner_or_admin(detail, 
     receipt = {**CHAT_RECEIPT, "maker_person_id": detail.alice["id"], "retention": [entry]}
     detail.store("req_private_retention", receipt, detail.alice_app["id"], 1792300000)
     maker = detail.get("req_private_retention", "alice").json()["retention"]
-    owner = detail.get("req_private_retention", "owner").json()["retention"]
     admin = detail.listed("req_private_retention")["receipt"]["retention"]
+    assert detail.get("req_private_retention", "owner").status_code == 404
     home = build_user_activity_snapshot(
-        detail.owner_session, path=detail.admin_path, receipts_path=detail.receipts_path,
+        detail.sessions["alice"], path=detail.admin_path, receipts_path=detail.receipts_path,
     )["receipts"][0]["retention"]
-    assert maker == receipt["retention"]
-    assert owner == admin == home == [{"kind": entry["kind"], "decision": entry["decision"]}]
+    owner_feed = build_user_activity_snapshot(
+        detail.owner_session, path=detail.admin_path, receipts_path=detail.receipts_path,
+    )["receipts"]
+    assert maker == home == receipt["retention"]
+    assert admin == [{"kind": entry["kind"], "decision": entry["decision"]}]
+    assert owner_feed == []
+
+
+def test_owner_cannot_open_a_member_receipt_or_see_it_in_activity(detail):
+    detail.store("req_bob_chat", CHAT_RECEIPT, detail.bob_app["id"], 1792300006)
+    assert detail.get("req_bob_chat", "owner").status_code == 404
+    feed = build_user_activity_snapshot(detail.owner_session, path=detail.admin_path, receipts_path=detail.receipts_path)
+    assert feed["receipts"] == []
+
+
+def test_an_absent_receipt_and_an_unauthorized_one_answer_alike(detail):
+    detail.store("req_bob_chat2", CHAT_RECEIPT, detail.bob_app["id"], 1792300007)
+    absent = detail.get("req_no_such_receipt", "owner")
+    denied = detail.get("req_bob_chat2", "owner")
+    assert (absent.status_code, denied.status_code) == (404, 404)
+    assert absent.json() == denied.json()
+
+
+def test_a_member_reads_their_own_receipt_made_through_a_service_app(detail):
+    service = admin_store.create_app("Household", kind="service", owner_user_id=detail.owner_session.subject,
+                                     access_plan="person", path=detail.admin_path)
+    detail.store("req_alice_service", {**CHAT_RECEIPT, "maker_person_id": detail.alice["id"]}, service["id"], 1792300008)
+    assert detail.get("req_alice_service", "alice").status_code == 200
+    assert detail.get("req_alice_service", "owner").status_code == 404
+    alice_feed = build_user_activity_snapshot(detail.sessions["alice"], path=detail.admin_path, receipts_path=detail.receipts_path)
+    assert [row["request_id"] for row in alice_feed["receipts"]] == ["req_alice_service"]
+    owner_feed = build_user_activity_snapshot(detail.owner_session, path=detail.admin_path, receipts_path=detail.receipts_path)
+    assert owner_feed["receipts"] == []
 
 
 def test_shared_app_receipt_route_masks_other_makers_retention(detail):

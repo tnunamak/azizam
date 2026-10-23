@@ -129,6 +129,92 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/me/api/jobs").json()["jobs"]), 3)
         self.assertEqual(self.client.get("/me/api/jobs?watch=1&since=bad").status_code, 400)
 
+    def _service_app_member_work(self, *, maker: dict | None) -> tuple[str, str]:
+        """A receipt, a job and a cached item in the owner's service App, made by ``maker`` (None: no person)."""
+        service = admin_store.create_app("Household", kind="service", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "9" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", service["id"])], request_id="req_service_work", created_at=time.time())
+        if maker is not None:
+            meta = self._asset_metadata(asset_id)
+            meta["maker_person_ids"] = [maker["id"]]
+            self._meta_path(asset_id).write_text(json.dumps(meta))
+        self._receipt(service["id"], "req_service_work", maker_person_id=maker["id"] if maker else None)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_service_work", job_id="job_service_work", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=service["id"],
+            assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        return asset_id, "job_service_work"
+
+    def test_owning_a_service_app_grants_no_member_work_in_it(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=self.alice)
+        self.current_user = self.alice
+        self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 200)
+        self.assertEqual([job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]], [job_id])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 200)
+
+        self.current_user = self.owner
+        self.signed_asset_ids.clear()
+        self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        self.assertEqual(self.client.get("/me/api/jobs").json()["jobs"], [])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+
+    def test_admin_and_another_member_get_no_member_work_from_a_service_app(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=self.alice)
+        admin = admin_store.upsert_oidc_user("issuer", "admin-sub", email="admin@example.com", path=self.admin_db)
+        admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=admin["id"], path=self.admin_db)
+        self.signed_asset_ids.clear()
+        for user in (admin, self.bob):
+            self.current_user = user
+            self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+
+    def test_a_person_less_row_in_a_service_app_is_read_by_no_person(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=None)
+        for user in (self.owner, self.alice, self.bob):
+            self.current_user = user
+            self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+
+    def test_a_cached_member_item_in_a_service_app_is_hidden_from_the_owner(self) -> None:
+        service = admin_store.create_app("Household cache", kind="service", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "7" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", service["id"])], created_at=time.time())
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
+        self.signed_asset_ids.clear()
+        self.current_user = self.owner
+        self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+        self.current_user = self.alice
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+
+    def test_a_personal_app_row_without_a_recorded_maker_is_still_its_persons(self) -> None:
+        owner_app = admin_store.create_app("Owner personal", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "8" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", owner_app["id"])], request_id="req_owner_make", created_at=time.time())
+        self._receipt(owner_app["id"], "req_owner_make")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_owner_make", job_id="job_owner_make", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=owner_app["id"],
+            assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        self.current_user = self.owner
+        self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_owner_make").status_code, 200)
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
@@ -226,6 +312,7 @@ class MeMediaRouterTests(unittest.TestCase):
         owner_key_hash: str | None = None,
         connection_id: str | None = None,
         api_key_name: str | None = None,
+        maker_person_id: str | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -239,6 +326,7 @@ class MeMediaRouterTests(unittest.TestCase):
             owner_key_hash=owner_key_hash,
             connection_id=connection_id,
             api_key_name=api_key_name,
+            maker_person_id=maker_person_id,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
