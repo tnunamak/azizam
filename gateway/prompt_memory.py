@@ -434,11 +434,15 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:
-    """Delete a person's prompts and their Library hides in one transaction; returns the prompts deleted."""
+    """Delete a person's Library prompts, hides and request history in one transaction."""
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
         count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
         media_jobs.delete_person_hides_in(conn, person_id)
+        from gateway import request_history
+
+        request_history.delete_person_in(conn, person_id)
         conn.commit()
         return count
     except BaseException:
@@ -607,12 +611,24 @@ def prune_person_before(
     """Retry reconciliation by deleting rows at or before an erasure cutoff."""
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        asset_ids = [str(row[0]) for row in conn.execute(
+            "SELECT asset_id FROM asset_prompts WHERE person_id=? AND created_at<=?",
+            (person_id, int(cutoff)),
+        ).fetchall()]
+        request_ids = media_jobs.request_ids_for_assets_in(conn, asset_ids)
+        from gateway import request_history
+
+        request_history.delete_linked_in(conn, person_id, request_ids)
         deleted = conn.execute(
             "DELETE FROM asset_prompts WHERE person_id=? AND created_at<=?",
             (person_id, int(cutoff)),
         ).rowcount
         conn.commit()
         return deleted
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -631,9 +647,21 @@ def delete_all(*, path: Path | None = None) -> int:
 def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        request_ids = media_jobs.request_ids_for_assets_in(conn, (asset_id,))
+        people = [str(row[0]) for row in conn.execute(
+            "SELECT DISTINCT person_id FROM asset_prompts WHERE asset_id=?", (asset_id,),
+        ).fetchall()]
+        from gateway import request_history
+
+        for person_id in people:
+            request_history.delete_linked_in(conn, person_id, request_ids)
         count = conn.execute("DELETE FROM asset_prompts WHERE asset_id=?", (asset_id,)).rowcount
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -969,6 +997,9 @@ def remove_missing_media(
     """
     if media_folder is None:
         raise PublicFailure("media_folder_unavailable", 503)
+    gone_asset_ids = tuple(dict.fromkeys(str(asset_id) for asset_id in gone_asset_ids if asset_id))
+    hides = tuple(hides)
+    job_ids = tuple(dict.fromkeys(str(job_id) for job_id in job_ids if job_id))
     conn = _connect(path)
     other = None
     try:
@@ -981,6 +1012,11 @@ def remove_missing_media(
         conn.execute("BEGIN IMMEDIATE")
         try:
             _require_media_folder(conn, media_folder, media_identity)
+            request_ids = media_jobs.request_ids_for_assets_in(conn, gone_asset_ids)
+            request_ids.update(media_jobs.request_ids_for_jobs_in(conn, job_ids))
+            from gateway import request_history
+
+            request_history.delete_linked_in(conn, person_id, request_ids)
             conn.executemany(
                 f"DELETE FROM {prompts} WHERE asset_id=? AND person_id=?",
                 [(asset_id, person_id) for asset_id in gone_asset_ids],
@@ -1003,10 +1039,18 @@ def remove_missing_media(
 def delete_asset_for_person(asset_id: str, person_id: str, *, path: Path | None = None) -> int:
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        request_ids = media_jobs.request_ids_for_assets_in(conn, (asset_id,))
+        from gateway import request_history
+
+        request_history.delete_linked_in(conn, person_id, request_ids)
         count = conn.execute(
             "DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (asset_id, person_id),
         ).rowcount
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()

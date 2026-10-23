@@ -19,7 +19,7 @@ import string
 import unicodedata
 import uuid
 from bisect import bisect_right
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -753,6 +753,31 @@ def delete_row(record_id: str, *, path: Path | None = None) -> bool:
         return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+def delete_linked_in(conn: sqlite3.Connection, person_id: str, request_ids: Iterable[str]) -> int:
+    """Delete one person's history rows for these media request IDs inside the caller's transaction."""
+    ids = sorted({str(request_id) for request_id in request_ids if request_id})
+    if not ids or not _has_table(conn, "kept_requests"):
+        return 0
+    deleted = 0
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        cursor = conn.execute(
+            f"DELETE FROM kept_requests WHERE kind=? AND person_id=? AND request_id IN ({marks})",
+            (KIND, person_id, *chunk),
+        )
+        deleted += cursor.rowcount
+    return deleted
+
+
+def delete_person_in(conn: sqlite3.Connection, person_id: str) -> int:
+    """Delete all of one person's request history inside the caller's transaction."""
+    if not _has_table(conn, "kept_requests"):
+        return 0
+    cursor = conn.execute("DELETE FROM kept_requests WHERE kind=? AND person_id=?", (KIND, person_id))
+    return cursor.rowcount
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:

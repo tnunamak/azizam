@@ -820,6 +820,49 @@ def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
     return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
 
 
+def request_ids_for_assets_in(conn: sqlite3.Connection, asset_ids: Iterable[str]) -> set[str]:
+    """The request IDs of jobs that produced these assets, read inside the caller's transaction."""
+    ids = sorted({str(asset_id) for asset_id in asset_ids if asset_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            "SELECT DISTINCT job.request_id FROM media_jobs AS job "
+            "WHERE job.request_id IS NOT NULL AND job.request_id!='' AND EXISTS ("
+            " SELECT 1 FROM json_each(CASE WHEN json_valid(job.job_json) THEN job.job_json ELSE '{}' END, '$.assets') AS asset "
+            f" WHERE json_extract(asset.value,'$.asset_id') IN ({marks}) "
+            f" OR json_extract(asset.value,'$.id') IN ({marks})"
+            ")",
+            (*chunk, *chunk),
+        ).fetchall()
+        found.update(str(row[0]) for row in rows if row[0])
+    return found
+
+
+def request_ids_for_jobs_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> set[str]:
+    """The request IDs of these jobs, read inside the caller's transaction."""
+    ids = sorted({str(job_id) for job_id in job_ids if job_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT request_id FROM media_jobs WHERE job_id IN ({marks}) AND request_id IS NOT NULL AND request_id!=''",
+            chunk,
+        ).fetchall()
+        found.update(str(row[0]) for row in rows if row[0])
+    return found
+
+
 # The connection already waits ``busy_timeout`` for a lock; these are the retries after that.
 _HIDDEN_READ_RETRY_PAUSES_S = (0.05, 0.1, 0.2)
 
