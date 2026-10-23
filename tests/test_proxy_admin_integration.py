@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store  # noqa: E402
-from tests.support.app_keys import issue_app_credential, issue_app_key
+from tests.support.app_keys import accountable_person, issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from tests.support.signin import seed_rules  # noqa: E402
@@ -1263,23 +1263,20 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             hash=hash_api_key("user-a-test-secret"),
             prefix="opk_user_a",
             display_name="User A key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         credential_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_b["id"],
             hash=hash_api_key("user-b-test-secret"),
             prefix="opk_user_b",
             display_name="User B key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_b["id"]))
         inactive_credential = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_a["id"],
             hash=hash_api_key("user-a-inactive-secret"),
             prefix="opk_user_a_inactive",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         admin_store.revoke_credential(inactive_credential["id"], path=self.db)
         wrong_kind_credential = admin_store.create_credential_hash(
             subject_kind="user",

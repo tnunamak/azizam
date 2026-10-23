@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import base64
 import json
 import time
@@ -626,7 +627,7 @@ class SessionAppStoreTests(unittest.TestCase):
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
-                                               hash="h" * 64, prefix="opk_x", path=self.admin)
+                                               hash="h" * 64, prefix="opk_x", path=self.admin, created_by=accountable_person(self.admin, app["id"]))
         for actor in ("admin", self.user["id"]):
             with self.subTest(actor=actor), self.assertRaises(ValueError):
                 AdminSQLiteStore(self.admin).create_credential(
@@ -636,7 +637,7 @@ class SessionAppStoreTests(unittest.TestCase):
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
-                                           hash="o" * 64, prefix="opk_o", path=self.admin)
+                                           hash="o" * 64, prefix="opk_o", path=self.admin, created_by=accountable_person(self.admin, ordinary["id"]))
 
     def test_a_session_app_key_never_authenticates(self) -> None:
         from gateway.admin_runtime import runtime_identity_for_app_credential_hash
@@ -649,7 +650,7 @@ class SessionAppStoreTests(unittest.TestCase):
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         kept = admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
-                                                  hash="o" * 64, prefix="opk_o", path=self.admin)
+                                                  hash="o" * 64, prefix="opk_o", path=self.admin, created_by=accountable_person(self.admin, ordinary["id"]))
         legacy = self._legacy_session_app_key(app["id"], "s" * 64)
         admin_store.init_db(self.admin)
         credentials = {item["id"]: item for item in admin_store.list_credentials(path=self.admin)}
@@ -657,7 +658,7 @@ class SessionAppStoreTests(unittest.TestCase):
         self.assertIsNone(credentials[kept["id"]]["revoked_at"])
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
-                                               hash="n" * 64, prefix="opk_n", path=self.admin)
+                                               hash="n" * 64, prefix="opk_n", path=self.admin, created_by=accountable_person(self.admin, app["id"]))
 
 
 if __name__ == "__main__":

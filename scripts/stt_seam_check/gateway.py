@@ -34,7 +34,7 @@ with sqlite3.connect(path) as conn:
                  (user["id"], plan["id"]))
 app = admin_store.create_app("seam check", kind="personal", owner_user_id=user["id"], access_plan="person", now=now, path=path)
 admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key(key),
-                                   prefix="seamchk", display_name="seam check", now=now, path=path)
+                                   prefix="seamchk", display_name="seam check", now=now, path=path, created_by=app["owner_user_id"])
 """
 
 

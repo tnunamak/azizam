@@ -480,8 +480,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             prefix=f"fixture_{slug}",
             display_name="Desktop" if slug == "codex" else "Household app key",
             now=now - (45 - index) * 86400,
-            path=paths["admin"],
-        )
+            path=paths["admin"], created_by=app["owner_user_id"])
         if slug != "telegram":
             admin_store.touch_credential_last_used(
                 cred["id"], now=now - index * 3600, path=paths["admin"]

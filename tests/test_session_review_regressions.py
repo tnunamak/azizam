@@ -4,6 +4,7 @@ Each test is a probe from that review, turned round: it passed there by showing 
 by showing it closed. The review's input is named in each test.
 """
 import copy
+from tests.support.app_keys import accountable_person
 import time
 from dataclasses import replace
 
@@ -272,7 +273,7 @@ def test_signing_out_everywhere_revokes_a_try_key_even_when_its_session_was_neve
     from gateway.runtime_auth import hash_api_key as hashed
     record = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], hash=hashed("opk_probe"), prefix="opk_pr", session_id="never-registered",
-        expires_at=int(time.time()) + DAY, path=sg.path)
+        expires_at=int(time.time()) + DAY, path=sg.path, created_by=accountable_person(sg.path, app["id"]))
 
     accounts.revoke_person_sessions(session.subject, path=sg.path)
 

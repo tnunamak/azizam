@@ -239,6 +239,7 @@ from gateway.user_runtime import (
     ensure_try_session_key,
     get_user_app_credential,
     get_user_receipt,
+    add_user_trusted_address,
     mint_user_app_key,
     rename_person_app,
     rename_person_key,
@@ -16699,6 +16700,33 @@ async def user_portal_mint_key(app_id: str, request: Request):
     return JSONResponse(
         status_code=201,
         content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses", include_in_schema=False)
+async def user_portal_add_trusted_address(app_id: str, request: Request):
+    """Trust a client address for an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = add_user_trusted_address(
+            session, app_id, body if isinstance(body, Mapping) else {}, path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content={"trusted_address": record},
         headers={"cache-control": "no-store"},
     )
 

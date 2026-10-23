@@ -7,6 +7,7 @@ reached the table, an audit row that was never written, a guard that never refus
 from __future__ import annotations
 
 import re
+from tests.support.app_keys import accountable_person
 import sqlite3
 
 import pytest
@@ -120,17 +121,17 @@ def test_a_failed_claim_leaves_nothing_behind_when_an_owner_already_exists(db):
 
 def test_a_credential_needs_a_subject_hash_and_prefix_and_binds_data_plane_keys_to_their_app(db):
     with pytest.raises(ValueError, match=r"\Asubject_id\ is\ required\Z"):
-        store.create_credential_hash(subject_kind="app", subject_id="", hash="h", prefix="p", path=db)
+        store.create_credential_hash(subject_kind="app", subject_id="", hash="h", prefix="p", path=db, created_by=accountable_person(db, ""))
     for kwargs in (dict(hash="", prefix="p"), dict(hash="h", prefix="")):
         with pytest.raises(ValueError, match=r"\Ahash\ and\ prefix\ are\ required\Z"):
-            store.create_credential_hash(subject_kind="app", subject_id="app1", path=db, **kwargs)
+            store.create_credential_hash(subject_kind="app", subject_id="app1", path=db, **kwargs, created_by=accountable_person(db, "app1"))
     app1 = make_app(db, "one")
     with pytest.raises(ValueError, match=r"\Adata\-plane\ credentials\ must\ have\ app_id\ ==\ subject_id\Z"):
-        store.create_credential_hash(subject_kind="app", subject_id=app1, app_id="app2", hash="h", prefix="p", path=db)
+        store.create_credential_hash(subject_kind="app", subject_id=app1, app_id="app2", hash="h", prefix="p", path=db, created_by=accountable_person(db, app1))
     with pytest.raises(ValueError, match="admin credentials must not be bound to an app_id"):
         store.create_credential_hash(subject_kind="user", subject_id="u1", app_id=app1, hash="h", prefix="p", path=db)
     created = store.create_credential_hash(subject_kind="app", subject_id=app1, hash="h", prefix="p",
-                                           scopes=["b", "a", "", "a"], now=7, path=db)
+                                           scopes=["b", "a", "", "a"], now=7, path=db, created_by=accountable_person(db, app1))
     assert created["app_id"] == app1
     assert rows(db, "SELECT scopes_json FROM credentials") == [{"scopes_json": '["a", "b"]'}]
 
@@ -140,7 +141,7 @@ def test_a_signed_in_app_cannot_hold_an_api_key(db):
     with sqlite3.connect(db) as conn:
         conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES ('u-sess', ?)", (app,))
     with pytest.raises(ValueError, match=r"\Athis\ App\ is\ a\ person's\ signed\-in\ App\ and\ cannot\ hold\ API\ keys\Z"):
-        store.create_credential_hash(subject_kind="app", subject_id=app, hash="h", prefix="p", path=db)
+        store.create_credential_hash(subject_kind="app", subject_id=app, hash="h", prefix="p", path=db, created_by=accountable_person(db, app))
 
 
 # --- admin roles -----------------------------------------------------------------------------
@@ -246,8 +247,8 @@ def test_identity_claims_are_replaced_per_kind_normalized_and_empty_values_dropp
 def test_a_credential_is_listed_until_revoked_or_expired_and_revocation_reports_change(db):
     app = make_app(db, "keys")
     other = make_app(db, "other")
-    live = store.create_credential_hash(subject_kind="app", subject_id=app, hash="h1", prefix="p1", now=1, path=db)
-    expiring = store.create_credential_hash(subject_kind="app", subject_id=other, hash="h2", prefix="p2", now=2, expires_at=50, path=db)
+    live = store.create_credential_hash(subject_kind="app", subject_id=app, hash="h1", prefix="p1", now=1, path=db, created_by=accountable_person(db, app))
+    expiring = store.create_credential_hash(subject_kind="app", subject_id=other, hash="h2", prefix="p2", now=2, expires_at=50, path=db, created_by=accountable_person(db, other))
     assert [c["id"] for c in store.list_active_credentials(now=10, path=db)] == [live["id"], expiring["id"]]
     assert [c["id"] for c in store.list_active_credentials(now=50, path=db)] == [live["id"]]      # expires_at == now is expired
     assert [c["id"] for c in store.list_active_credentials(subject_kind="app", subject_id=other, now=10, path=db)] == [expiring["id"]]
@@ -261,9 +262,9 @@ def test_a_credential_is_listed_until_revoked_or_expired_and_revocation_reports_
 
 def test_older_session_keys_are_revoked_keeping_the_newest_and_the_count_is_returned(db):
     app = make_app(db, "sess-keys")
-    ids = [store.create_credential_hash(subject_kind="app", subject_id=app, hash=f"h{i}", prefix=f"p{i}", session_id="S", now=5, path=db)["id"]
+    ids = [store.create_credential_hash(subject_kind="app", subject_id=app, hash=f"h{i}", prefix=f"p{i}", session_id="S", now=5, path=db, created_by=accountable_person(db, app))["id"]
            for i in range(4)]
-    store.create_credential_hash(subject_kind="app", subject_id=app, hash="hx", prefix="px", session_id="OTHER", now=5, path=db)
+    store.create_credential_hash(subject_kind="app", subject_id=app, hash="hx", prefix="px", session_id="OTHER", now=5, path=db, created_by=accountable_person(db, app))
     assert store.revoke_older_session_credentials(app, "S", keep=2, now=9, path=db) == 2
     still = {c["id"] for c in store.list_active_credentials(app_id=app, now=9, path=db) if c["session_id"] == "S"}
     assert still == set(ids[2:])
@@ -308,6 +309,6 @@ def test_an_unknown_claim_kind_is_skipped_without_dropping_the_known_ones_after_
 
 def test_time_defaults_to_now_when_the_caller_gives_none(db):
     app = make_app(db, "clock")
-    store.create_credential_hash(subject_kind="app", subject_id=app, hash="h", prefix="p", session_id="S", path=db)
+    store.create_credential_hash(subject_kind="app", subject_id=app, hash="h", prefix="p", session_id="S", path=db, created_by=accountable_person(db, app))
     assert store.revoke_older_session_credentials(app, "S", keep=0, path=db) == 1
     assert store.revoke_older_session_credentials(app, "S", keep=0, path=db) == 0

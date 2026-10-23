@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from tests.support.app_keys import accountable_person
 import sys
 import tempfile
 import threading
@@ -132,8 +133,7 @@ class RequestHotpathTests(unittest.TestCase):
             hash=f"hash-{app['id']}",
             prefix="opk_test",
             expires_at=expires_at,
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app["id"]))
         return app, credential
 
     def test_auth_observes_plan_app_and_credential_changes_on_next_lookup(self) -> None:

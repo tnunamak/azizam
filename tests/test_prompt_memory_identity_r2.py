@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from tests.support.app_keys import accountable_person
 import json
 import time
 from pathlib import Path
@@ -202,7 +203,7 @@ def test_app_library_visibility_does_not_depend_on_maker_metadata(hh, makers):
 def test_legacy_service_key_stays_no_person(hh):
     sa = admin_store.ensure_service_account("legacy-svc", path=hh.admin)
     app = service_app("Shared", path=hh.admin)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("old-service"), prefix="old", path=hh.admin)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("old-service"), prefix="old", path=hh.admin, created_by=accountable_person(hh.admin, app["id"]))
     assert _ctx_for("old-service", hh.admin).identity.person_id is None
 
 
@@ -230,7 +231,7 @@ def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
 def test_unresolved_legacy_personal_key_has_no_prompt_access(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"],
-        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin)
+        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin, created_by=accountable_person(hh.admin, hh.robin_app["id"]))
     auth = _ctx_for("legacy-off-key", hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:

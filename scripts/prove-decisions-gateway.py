@@ -87,7 +87,7 @@ owner = admin_store.upsert_oidc_user("https://proof.invalid", "proof", display_n
 accounts.change_person(owner["id"], "proof", path=db, plan_id=plan["id"])
 app = admin_store.create_app("proof", kind="service", owner_user_id=owner["id"], access_plan=plan["id"], path=db)
 key = sys.stdin.readline().strip()
-admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:"+hashlib.sha256(key.encode()).hexdigest(), prefix="proof", app_id=app["id"], path=proxy.ADMIN_STORE.path)
+admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:"+hashlib.sha256(key.encode()).hexdigest(), prefix="proof", app_id=app["id"], path=proxy.ADMIN_STORE.path, created_by=app["owner_user_id"])
 receipt_store.init_db()
 # This disposable process has no sidecar and never starts any engine.
 proxy._litellm_runtime_config = lambda: __import__('types').SimpleNamespace(enabled=False)

@@ -47,7 +47,7 @@ def make_app(db, owner, name, kind="personal"):
 def make_key(db, app, label, secret=None):
     return admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], hash=hash_api_key(secret or f"opk_{label}"), prefix="opk_test_0123456",
-        display_name=label, path=db)
+        display_name=label, path=db, created_by=accountable_person(db, app["id"]))
 
 
 @pytest.mark.parametrize("text, code", [
@@ -355,7 +355,7 @@ def admin_app(client, name, **extra):
 def admin_key(client, app_id, label="first"):
     """A key on the App, issued by the App's accountable person: an administrator may not mint on someone else's App."""
     import proxy
-    from tests.support.app_keys import issue_app_credential
+    from tests.support.app_keys import accountable_person, issue_app_credential
 
     return issue_app_credential(proxy.ADMIN_STORE.path, app_id, label=label)
 

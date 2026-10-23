@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from dataclasses import replace
 
 import pytest
+from tests.support.app_keys import accountable_person
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -39,7 +40,7 @@ def home_case(tmp_path):
     client_app = create_user_app(session, name="Open WebUI", path=db)["app"]
     outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], access_plan="person", path=db)
     def credential(app, key, **kwargs):
-        return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs)
+        return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs, created_by=accountable_person(db, app["id"]))
     key = "test-home-key"
     cred = credential(client_app, key)
     other_cred = credential(outsider, "other-key")
@@ -251,7 +252,7 @@ def test_connection_rejects_revoked_and_expired_keys(home_case):
     c = home_case
     admin_store.revoke_credential(c.cred["id"], path=c.db)
     assert c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).status_code == 404
-    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("expired"), prefix="masked", expires_at=1, path=c.db)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("expired"), prefix="masked", expires_at=1, path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
     assert c.http.post("/me/api/connection-test", json={"api_key": "expired"}, headers=c.headers).status_code == 404
     assert c.calls == []
 
@@ -296,7 +297,7 @@ def test_setup_legacy_receipt_without_source_is_not_observed_app_use(home_case):
 
 def test_setup_default_app_used_does_not_complete_app_step(home_case):
     c = home_case
-    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db)
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.personal["id"]))
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
     admin_store.record_audit("app.self_create", actor_kind="user", target_kind="app", target_id=c.personal["id"], metadata={"via": "setup_local_owner"}, path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
@@ -315,7 +316,7 @@ def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
     c = home_case
     named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
     admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
-    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db)
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, named["id"]))
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
     assert not next(step for step in steps if step["id"] == "connect_app")["done"]
@@ -427,7 +428,7 @@ def test_home_and_connection_use_the_apps_own_access_plan(home_case):
     no_chat = store_plan("no-chat", path=c.db, caps=())
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.revoke_credential(c.cred["id"], path=c.db)
-    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db)
+    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
     c.give_app(c.client_app, no_chat)
     data = c.http.get("/me/api/home").json()
     assert data["credential_aliases"][restricted["id"]] == []
@@ -558,7 +559,7 @@ def test_workflow_and_service_aliases_preserve_permissions():
 def test_recipe_aliases_are_app_scoped_and_new_app_follows_the_persons_plan(home_case):
     c = home_case
     narrow_app = admin_store.create_app("Narrow", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
-    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=narrow_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", path=c.db)
+    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=narrow_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, narrow_app["id"]))
     c.give_app(narrow_app, store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
     assert [alias["id"] for alias in data["aliases"]] == ["fast"]

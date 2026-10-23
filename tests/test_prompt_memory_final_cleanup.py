@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from tests.support.app_keys import accountable_person
 import json
 import sqlite3
 import time
@@ -46,7 +47,7 @@ def household(tmp_path, monkeypatch, isolated_receipts):
 def test_upgrade_backfills_legacy_creator_from_creation_audit(household, action, target_kind, minter):
     hh = household
     key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-        hash='sha256:legacy', prefix='test', path=hh.admin)
+        hash='sha256:legacy', prefix='test', path=hh.admin, created_by=accountable_person(hh.admin, hh.app['id']))
     actor = getattr(hh, minter)['id'] if minter != 'automation' else 'svc_automation'
     admin_store.record_audit(action, actor_kind='service_account' if minter == 'automation' else 'user',
         actor_id=actor, target_kind=target_kind, target_id=key['id'], path=hh.admin)
@@ -204,7 +205,7 @@ def test_explicit_prompt_deadline_still_expires_prompts(household):
 def test_delete_scrubs_legacy_credential_scoped_video_job(household):
     hh = household
     credential = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-        hash='sha256:old-key', prefix='test', path=hh.admin)
+        hash='sha256:old-key', prefix='test', path=hh.admin, created_by=accountable_person(hh.admin, hh.app['id']))
     job = media_jobs.create(media_jobs.MediaJob(intent='video.generate', owner_key_hash=credential['hash'],
         metadata={'request_hash': 'legacy-video-body-hash'}, created_at=int(time.time()) - 10), path=hh.jobs)
     proxy._purge_person_prompt_memory(hh.robin['id'])

@@ -16,6 +16,7 @@ Three kinds of test keep it that way:
 from __future__ import annotations
 
 import ast
+from tests.support.app_keys import accountable_person
 import re
 import sqlite3
 import time
@@ -482,7 +483,7 @@ def world(tmp_path):
     def make_key(session):
         state["n"] += 1
         return admin_store.create_credential_hash(
-            subject_kind="app", subject_id=app["id"], hash=f"h{state['n']}", prefix="opk_x", session=session, path=db)
+            subject_kind="app", subject_id=app["id"], hash=f"h{state['n']}", prefix="opk_x", session=session, path=db, created_by=accountable_person(db, app["id"]))
 
     def make_link(session):
         return accounts.create_link("invite", user["id"], path=db, plan_id=plan["id"], session=session)
@@ -531,7 +532,7 @@ def world(tmp_path):
 
     def make_trusted_address(session):
         state["n"] += 1
-        return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db)
+        return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db, created_by=accountable_person(db, app["id"]))
 
     def make_identity_link(session):
         state["n"] += 1

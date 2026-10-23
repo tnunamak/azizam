@@ -8,6 +8,7 @@ route. No model runs; the tool call asks for a job that does not exist.
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import json
 import secrets
 import time
@@ -171,7 +172,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
                                      access_plan="person", path=self.admin)
         key = "opk_" + secrets.token_urlsafe(24)
         admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"],
-                                           hash=proxy.hash_api_key(key), prefix=key[:8], path=self.admin)
+                                           hash=proxy.hash_api_key(key), prefix=key[:8], path=self.admin, created_by=accountable_person(self.admin, app["id"]))
         self.handshake(key)  # an App key acts as its App, not as a person
 
     def test_oauth_dynamic_registration_mode(self) -> None:
@@ -289,7 +290,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         mine = admin_store.create_app("Laptop", kind="personal", owner_user_id=self.person["id"],
                                       access_plan="person", path=self.admin)
         key = admin_store.create_credential_hash(subject_kind="app", subject_id=mine["id"], hash="hash-1",
-                                                 prefix="opk_secretsecret1", display_name="Editor", path=self.admin)
+                                                 prefix="opk_secretsecret1", display_name="Editor", path=self.admin, created_by=accountable_person(self.admin, mine["id"]))
         other = admin_store.upsert_oidc_user("issuer", "bo", email="bo@example.test", path=self.admin)
         theirs = admin_store.create_app("Theirs", kind="personal", owner_user_id=other["id"],
                                         access_plan="person", path=self.admin)
@@ -320,9 +321,9 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         laptop = next(app for app in admin_store.list_apps_for_user(self.person["id"], path=self.admin)
                       if app["name"] == "Laptop")
         first = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="h1", prefix="opk_x",
-                                                   display_name="Editor", path=self.admin)
+                                                   display_name="Editor", path=self.admin, created_by=accountable_person(self.admin, laptop["id"]))
         second = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="h2", prefix="opk_x",
-                                                    display_name="Editor", path=self.admin)
+                                                    display_name="Editor", path=self.admin, created_by=accountable_person(self.admin, laptop["id"]))
 
         def refused(tool: str, arguments: dict) -> dict:
             result = self.rename(token, tool, arguments)
@@ -381,7 +382,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         laptop = admin_store.create_app("Laptop", kind="personal", owner_user_id=self.person["id"],
                                         access_plan="person", path=self.admin)
         key = admin_store.create_credential_hash(subject_kind="app", subject_id=laptop["id"], hash="old-h",
-                                                 prefix="opk_x", display_name="Editor", path=self.admin)
+                                                 prefix="opk_x", display_name="Editor", path=self.admin, created_by=accountable_person(self.admin, laptop["id"]))
         # What a grant made before the permission existed looks like: its scope names only the MCP scope.
         with admin_store._conn(self.admin) as conn:
             conn.execute("UPDATE mcp_oauth_grants SET scope = 'mcp offline_access'")

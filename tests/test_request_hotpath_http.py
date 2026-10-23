@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from tests.support.app_keys import accountable_person
 from fastapi.testclient import TestClient
 
 import proxy
@@ -18,8 +19,7 @@ def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immedia
     key = "hotpath-http-fixture"
     credential = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"],
-        hash=hash_api_key(key), prefix="fixture", path=db,
-    )
+        hash=hash_api_key(key), prefix="fixture", path=db, created_by=accountable_person(db, app["id"]))
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
     monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"})

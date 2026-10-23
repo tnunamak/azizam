@@ -1,6 +1,7 @@
 """Hermetic account lifecycle tests using temporary SQLite and ASGI clients."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from tests.support.app_keys import accountable_person
 import sqlite3
 import threading
 import time
@@ -655,7 +656,7 @@ def test_oidc_invite_binding_gives_preexisting_apps_the_invited_plan(account_db,
     user = admin_store.upsert_oidc_user("https://identity.example", "existing-subject", email="person@example.test", path=path)
     for index in range(2):
         app = admin_store.create_app(f"Existing app {index}", kind="personal", owner_user_id=user["id"], access_plan="person", path=path)
-        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=f"preexisting-{index}", prefix="test", path=path)
+        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=f"preexisting-{index}", prefix="test", path=path, created_by=accountable_person(path, app["id"]))
     accounts.record_oidc_verification(user["id"], True, path=path)
     session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False))
     state["session"] = session

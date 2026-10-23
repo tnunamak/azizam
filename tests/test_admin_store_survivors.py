@@ -7,6 +7,7 @@ the sweep on main a9e8f43d; the trusted-networks merge moved them).
 from __future__ import annotations
 
 import re
+from tests.support.app_keys import accountable_person
 import sqlite3
 from contextlib import contextmanager
 
@@ -41,7 +42,7 @@ def make_app(db, name="a"):
 
 def add_key(db, app_id, digest):
     return store.create_credential_hash(
-        subject_kind="app", subject_id=app_id, app_id=app_id, hash=digest, prefix="k", path=db)["id"]
+        subject_kind="app", subject_id=app_id, app_id=app_id, hash=digest, prefix="k", path=db, created_by=accountable_person(db, app_id))["id"]
 
 
 def claim(db):
@@ -203,7 +204,7 @@ def test_the_legacy_try_key_migration_audits_what_it_revoked(db):
     import json
     owner, app = make_app(db, name="Try")
     cred = store.create_credential_hash(subject_kind="app", subject_id=app, app_id=app, hash="try-h", prefix="t",
-                                        display_name=store.TRY_KEY_LABEL, path=db)["id"]
+                                        display_name=store.TRY_KEY_LABEL, path=db, created_by=accountable_person(db, app))["id"]
     with sqlite3.connect(db) as conn:
         conn.row_factory = sqlite3.Row
         store._revoke_unbound_try_keys(conn)

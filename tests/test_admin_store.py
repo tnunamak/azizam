@@ -7,6 +7,7 @@ Uses a temporary SQLite file per test. Covers schema invariants and the
 from __future__ import annotations
 
 import hashlib
+from tests.support.app_keys import accountable_person
 import sqlite3
 import sys
 import tempfile
@@ -68,8 +69,7 @@ class TestSchema(AdminStoreTestBase):
             subject_id=app["id"],
             hash=_hash("s"),
             prefix="sk_test",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app["id"]))
         self.assertTrue(cred["id"].startswith("cred_"))
 
         aud = admin_store.record_audit("ping", path=self.db)
@@ -327,8 +327,7 @@ class TestCredentialInvariants(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash("dp"),
             prefix="sk_live",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         self.assertEqual(cred["subject_kind"], "app")
         self.assertEqual(cred["app_id"], self.app["id"])
 
@@ -375,8 +374,7 @@ class TestCredentialInvariants(AdminStoreTestBase):
                 app_id=other_app["id"],
                 hash=_hash("mismatch"),
                 prefix="sk",
-                path=self.db,
-            )
+                path=self.db, created_by=accountable_person(self.db, self.app["id"]))
 
     def test_unknown_subject_kind_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -396,8 +394,7 @@ class TestCredentialInvariants(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash(secret),
             prefix="sk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         with open(self.db, "rb") as f:
             blob = f.read()
         self.assertNotIn(secret.encode("utf-8"), blob)
@@ -417,15 +414,13 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash("keep"),
             prefix="sk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         gone = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app["id"],
             hash=_hash("gone"),
             prefix="sk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         self.assertTrue(admin_store.revoke_credential(gone["id"], path=self.db))
         # second revoke is a no-op
         self.assertFalse(
@@ -448,8 +443,7 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash("used"),
             prefix="opk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         cid = cred["id"]
         # A fresh credential has no last-used timestamp.
         self.assertIsNone(
@@ -492,8 +486,7 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             prefix="sk",
             expires_at=500,
             now=100,
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         # at t=400 still active
         active = admin_store.list_active_credentials(
             app_id=self.app["id"], now=400, path=self.db
@@ -511,8 +504,7 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash("findme"),
             prefix="sk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         found = admin_store.find_credential_by_hash(_hash("findme"), path=self.db)
         self.assertIsNotNone(found)
         self.assertEqual(found["id"], cred["id"])  # type: ignore[index]
@@ -526,8 +518,7 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             subject_id=self.app["id"],
             hash=_hash("listed"),
             prefix="sk",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         admin_store.revoke_credential(cred["id"], path=self.db)
         rows = admin_store.list_credentials(path=self.db)
         self.assertEqual([row["id"] for row in rows], [cred["id"]])
@@ -540,8 +531,7 @@ class TestCredentialLifecycle(AdminStoreTestBase):
             hash=_hash("scoped"),
             prefix="sk",
             scopes=["chat", "images", "chat"],
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, self.app["id"]))
         self.assertEqual(sorted(cred["scopes"]), ["chat", "images"])
 
 
@@ -691,8 +681,7 @@ class TestBrotherFlow(AdminStoreTestBase):
             hash=secret_hash,
             prefix="sk_live_brother",
             display_name="brother's editor key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app["id"]))
         self.assertEqual(cred["subject_kind"], "app")
         self.assertEqual(cred["app_id"], app["id"])
 

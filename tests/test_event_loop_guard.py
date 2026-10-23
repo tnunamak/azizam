@@ -6,6 +6,7 @@ slow disk. The probes record such calls by thread and assert there are none;
 no wall-clock time is part of the oracle, so host load cannot flip them.
 """
 import asyncio
+from tests.support.app_keys import accountable_person
 import builtins
 import contextlib
 import os
@@ -99,7 +100,7 @@ def gateway(tmp_path, monkeypatch):
     admin_store.seed_first_owner_plan(user["id"], path=db)
     app = admin_store.ensure_personal_app_for_user(user["id"], path=db)
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("guard-key"),
-                                       prefix="masked", path=db)
+                                       prefix="masked", path=db, created_by=accountable_person(db, app["id"]))
     session = session_from_claims({"sub": user["id"], "email": "owner@example.com"}, role="owner", cookie=cookie)
     # An owned video job makes the /v1/videos routes resolve owner keys (SQLite)
     # on every run, not only when an earlier test left a record behind.

@@ -6,6 +6,7 @@ Real key lookup and plan evaluation in the test-owned admin.db, no stubbed ident
 from __future__ import annotations
 
 import ipaddress
+from tests.support.app_keys import accountable_person
 import sys
 import uuid
 from pathlib import Path
@@ -73,7 +74,7 @@ def _trusted_app(store, address, *, access_plan=None, name="Living room display"
     entry = None
     if address:
         entry = admin_store.add_trusted_address(app["id"], trusted_addresses.normalize_entry(address),
-                                                max_entries=32, path=store)
+                                                max_entries=32, path=store, created_by=accountable_person(store, app["id"]))
     return app["id"], entry
 
 
@@ -308,7 +309,7 @@ def test_a_session_app_cannot_be_trusted_by_address(store):
     if session_app is None:
         session_app = admin_store.ensure_session_app_for_user(person, name="Azizam", path=store)
     with pytest.raises(ValueError):
-        admin_store.add_trusted_address(session_app["id"], "192.168.1.50", max_entries=32, path=store)
+        admin_store.add_trusted_address(session_app["id"], "192.168.1.50", max_entries=32, path=store, created_by=accountable_person(store, session_app["id"]))
 
 
 def test_receipts_carry_the_app_and_the_address(store):

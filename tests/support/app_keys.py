@@ -28,3 +28,8 @@ def issue_app_credential(path: Path, app_id: str, *, label: str = "test key") ->
 def issue_app_key(path: Path, app_id: str, *, label: str = "test key") -> str:
     """The plaintext of a new key on the App, with the App's accountable person as creator."""
     return issue_app_credential(path, app_id, label=label)["api_key"]
+
+
+def accountable_person(path: Path, app_id: str) -> str:
+    """The person the App answers for: the creator a key or trusted address on it must record."""
+    return admin_store.get_app(app_id, path=path)["owner_user_id"]

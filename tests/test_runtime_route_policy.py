@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import copy
 import json
 import os
@@ -1491,8 +1492,8 @@ class ProtocolLoopbackIdentityTests(unittest.IsolatedAsyncioTestCase):
                                            access_plan=plan["id"], path=admin)
             kitchen = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner["id"],
                                              access_plan=plan["id"], path=admin)
-            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin)
-            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin)
+            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin, created_by=accountable_person(admin, local["id"]))
+            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin, created_by=accountable_person(admin, kitchen["id"]))
             _AuthenticatingLoopbackClient.seen = []
             with patch.object(proxy.ADMIN_STORE, "path", admin), \
                     patch.object(proxy.httpx, "AsyncClient", _AuthenticatingLoopbackClient):

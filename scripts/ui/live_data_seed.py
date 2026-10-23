@@ -188,8 +188,8 @@ def seed(state: Path, port: int) -> dict[str, object]:
     member_key = "opk_live_member_fixture_key"
     owner_hash = hash_api_key(owner_key)
     member_hash = hash_api_key(member_key)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=owner_app["id"], app_id=owner_app["id"], hash=owner_hash, prefix="opk_live_owner", path=admin_path)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=member_app["id"], app_id=member_app["id"], hash=member_hash, prefix="opk_live_member", path=admin_path)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=owner_app["id"], app_id=owner_app["id"], hash=owner_hash, prefix="opk_live_owner", path=admin_path, created_by=owner_app["owner_user_id"])
+    admin_store.create_credential_hash(subject_kind="app", subject_id=member_app["id"], app_id=member_app["id"], hash=member_hash, prefix="opk_live_member", path=admin_path, created_by=member_app["owner_user_id"])
 
     cache = state / "images"
     service_asset = _sha_asset(cache, PNG_1X1, ".png", [], "req_service_media")
