@@ -96,8 +96,10 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
 5. **Availability trusts backend rows only while the backend section is fresh.** `latest_payload()` returns `{}`
    when the backend section's last answer is older than `SNAPSHOT_FRESH_S` (60 s), or when it has never answered.
    The build's own time does not count: a section that times out keeps its last answer inside a fresh build. The
-   capability and model-catalog answers then probe the services they need, with the 12 s row cache. Without this
-   rule, the first read after a long idle would trust rows that were hours old.
+   capability and model-catalog answers then probe the services they need, with the 12 s row cache. The availability
+   summary that each build stores (Home and the admin status read it) uses the same rule. It leaves out a stale
+   section's rows, so its services read as unknown until the section answers again. The status page still shows the
+   stale rows, with their age. Without this rule, the first read after a long idle would trust rows that were hours old.
    **Shutdown cancels and joins both background tasks.** The lifespan calls `status_endpoint.stop_snapshot()`
    where it used to call `_stop_home_refreshes()`, and `stop_backend_samples()` after it. After
    `stop_snapshot()`, no read starts a refresher.
@@ -168,7 +170,8 @@ stopped (0), and a backend with no health URL has no sample.
   window; a read inside the window keeps it going; a read after the stop gets the stale snapshot and its age
   at once; concurrent reads start one refresher; an idle gateway starts no status process; shutdown cancels
   and joins; a backend answer older than the freshness bound is not trusted for availability, even inside a fresh
-  build; the lifespan opens the snapshot and the sampler before serving and joins both after.
+  build, nor in the summary a build stores; the lifespan opens the snapshot and the sampler before serving and joins
+  both after.
 - `tests/test_backend_health_sampler.py`: the sampler probes the HTTP health URLs and starts no process; it
   samples once at startup and then once a minute; shutdown joins the sampler and waits, up to its bound, for a write
   that has started; the status build writes no samples.
