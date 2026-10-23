@@ -12,9 +12,8 @@ transaction, the order the Library and Responses writers use (3.6).
 
 The per-request control is read here, for every data-plane route: ``extensions["com.azizam.prompts"]`` in a JSON body
 (whatever its Content-Type) or in a form's fields, and ``X-Azizam-Prompts: forget`` for a body the gateway does not
-parse. The header is removed before
-the handler runs and carried on the request's slot, which the Responses and media decisions read. A forget keeps
-nothing but the receipt's structural entry.
+parse. The header is removed before the handler runs and carried on the request's slot, which the Responses and media
+decisions read. A forget keeps nothing but the receipt's structural entry.
 """
 from __future__ import annotations
 

@@ -1934,6 +1934,10 @@ that they pin now passes with its mark removed. The tests the review did not pin
   container that does not parse, and is within 1 MiB, keeps its `unsupported_container` record, as section 3.5 rule 7 and
   `test_without_the_header_a_non_json_body…` require. A body over 1 MiB in such a container leaves no row, since its
   control cannot be read in full. This is our reading of "unparsed body".
+- **Parts at write time (round 2, R2-6).** The parts a record keeps are the member's choice read under the household
+  lock when the record is written, not the choice made when the request started. A reply the member has stopped keeping
+  during the request is not kept, and its omissions are not recorded. The receipt lists the parts that were kept. A
+  member whose history is off at write time keeps nothing.
 - **Disconnects (section 3.6).** `http.disconnect` is not a complete body. A body cut short before the route ran is
   replayed with `more_body` still set, so the route sees the disconnect. The drain stops at a disconnect.
 - **Cost (sections 3.3, 3.6, 12).** The decision is made as soon as the caller is known. A member whose history is off,
@@ -1965,7 +1969,9 @@ that they pin now passes with its mark removed. The tests the review did not pin
 - **Busy store (section 12).** A read or write that the store's lock refuses returns `503 retry_required`, with
   `Retry-After: 1`. Delete all writes its fence first, so a busy fence erases nothing. A row delete that fails after
   the fence returns `202` with `pending: true`. The rows are already hidden, and maintenance deletes them. A turn-off
-  whose row delete fails keeps its erasure intent and still succeeds. Maintenance settles that intent.
+  whose row delete fails keeps its erasure intent and still succeeds. Maintenance settles that intent. When the rows are
+  deleted and only the intent cannot be cleared, delete all returns the real count with `pending: false`, and
+  maintenance clears the intent (round 2 nit).
 - **Design-owner rulings (review item 13; no change).** A second key of the same App reads that App's rows, as D52's
   "its own App" says. The `connection_id` rule applies to MCP grants only. `store:false` ends the conversation only,
   and history follows the person's switch (section 3.3). The native passthrough lane is not captured in 5a.
