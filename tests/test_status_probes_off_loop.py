@@ -141,3 +141,34 @@ def test_an_availability_failure_is_logged_as_one_line_with_only_its_type(monkey
     assert len(lines) == 1 and "ValueError" in lines[0]
     assert "/var/lib" not in lines[0] and "locked" not in lines[0]
     assert payload == {}
+
+
+def test_a_row_past_its_deadline_leaves_the_shared_systemd_batch_running_for_the_rest(monkeypatch):
+    """Every systemd row waits for the one batch. A row that hits its deadline is cancelled, and that must not
+    cancel the batch too: the rows still waiting would then lose their answers."""
+    batch_outcome: list[str] = []
+
+    async def batch(targets, backends):
+        try:
+            await asyncio.sleep(0.3)
+        except asyncio.CancelledError:
+            batch_outcome.append("cancelled")
+            raise
+        batch_outcome.append("finished")
+        return {}
+
+    async def never_answers(target, backends, state=None):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(status_endpoint, "_systemd_lifecycle_states", batch)
+    monkeypatch.setattr(status_endpoint, "_lifecycle_probe", never_answers)
+
+    async def scenario():
+        rows = await status_endpoint._backend_grid(_systemd_config(["a.service", "b.service"]), deadline_s=0.05)
+        await asyncio.sleep(0.5)  # the batch is still running after the grid has answered
+        return rows
+
+    rows = asyncio.run(scenario())
+
+    assert [row["last_error"] for row in rows] == ["status check did not finish", "status check did not finish"]
+    assert batch_outcome == ["finished"]
