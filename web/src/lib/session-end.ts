@@ -15,6 +15,7 @@
  * without BroadcastChannel reads the same record from the `storage` event.
  */
 import { navigate } from "@/lib/navigate";
+import { leavingTile, type RememberedList, type SignedInName } from "@/lib/remembered-people";
 import { endingRequest } from "@/lib/network-error";
 import {
   closeSession,
@@ -59,6 +60,11 @@ const ADMIN_SESSION_PATH = "/admin/api/session";
 const LOGOUT_PATH = "/logout";
 const SIGN_OUT_EVERYWHERE_PATH = "/auth/api/sign-out-everywhere";
 const SIGN_IN_PATH = "/sign-in/";
+const REMEMBERED_PATH = "/auth/api/remembered";
+/** Where the sign-in page finds who left: this tab's record, kept through the wipe (SECURITY.md section 4). */
+const LAST_KEY = "azizam.handoff.last";
+/** How long a sign-out waits for the remembered list, to name who left. The sign-out itself does not wait for it. */
+const LEAVER_MS = 3_000;
 /** No answer from the gateway within this long is "no answer" (DESIGN 4.4). */
 const ANSWER_MS = 10_000;
 /** Storage that survives a sign-out: the theme, and the handoff record. */
@@ -359,7 +365,7 @@ function runSignOut(): Promise<void> {
     attempt = gatewayAnswer(kind)
       .then(async (answer) => {
         if (answer.ended) {
-          await finish(answer.next);
+          await finish(answer.next, answer.who);
           return;
         }
         tries += 1;
@@ -373,12 +379,51 @@ function runSignOut(): Promise<void> {
   return attempt;
 }
 
-async function finish(next: string): Promise<void> {
+async function finish(next: string, who: SignedInName | null): Promise<void> {
   // The page is leaving: a retry that succeeded shows the cover, not its "Trying again" button.
   show({ kind: "signing-out" });
+  // Who left, for the sign-in page's order and Forget line. A sign-out everywhere offers neither, so it names no one.
+  const tile = kind === "sign-out-everywhere" || who === null ? null : await leavingTileOf(who);
   await wipeBrowserState();
+  recordLeaver(tile);
   publish({ state: "SIGNED_OUT", since: Date.now(), kind });
-  navigate.replace(next);
+  navigate.replace(afterUrl(next, kind));
+}
+
+/** The ending the sign-in page reads from `?after=` (SECURITY.md section 3). */
+const AFTER_FOR: Record<EndKind, string> = {
+  switch: "switch",
+  "sign-out": "sign-out",
+  "sign-out-everywhere": "everywhere",
+};
+
+function afterUrl(next: string, end: EndKind): string {
+  return next === SIGN_IN_PATH ? `${SIGN_IN_PATH}?after=${AFTER_FOR[end]}` : next;
+}
+
+/** The remembered tile of the person who is leaving, or null. Bounded and best effort: the sign-out never waits long for it. */
+async function leavingTileOf(who: SignedInName): Promise<string | null> {
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), LEAVER_MS);
+  try {
+    const response = await endingRequest(REMEMBERED_PATH, { credentials: "same-origin", cache: "no-store", signal: budget.signal });
+    if (!response.ok) return null;
+    const list = (await response.json().catch(() => null)) as Partial<RememberedList> | null;
+    return leavingTile(list?.people ?? [], who);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Writes the record the sign-in page reads: the tile of who left, or an empty record. It holds no name. */
+function recordLeaver(tile: string | null): void {
+  try {
+    sessionStorage.setItem(LAST_KEY, JSON.stringify(tile ? { tile } : {}));
+  } catch {
+    /* storage blocked: the sign-in page then names nobody */
+  }
 }
 
 /** Writes the record for the other tabs and posts it on the channel when there is one. */
@@ -432,7 +477,7 @@ function scheduleTakeover(since: number): void {
   }, TAKEOVER_MS);
 }
 
-type Answer = { ended: true; next: string } | { ended: false; reason: FailureReason };
+type Answer = { ended: true; next: string; who: SignedInName | null } | { ended: false; reason: FailureReason };
 
 /** One attempt, under one budget of ANSWER_MS for everything it asks. */
 async function gatewayAnswer(end: EndKind): Promise<Answer> {
@@ -451,46 +496,47 @@ async function gatewayAnswer(end: EndKind): Promise<Answer> {
 
 /** What this sign-out sends: the member's own CSRF token, or the owner's admin session's. "ended" when no
  * session is left to end; "refuse" when a session exists but no token can be had, so nothing is sent. */
-type TokenAnswer = { kind: "token"; token: string } | { kind: "ended" } | { kind: "refuse" };
+type TokenAnswer = { kind: "token"; token: string; who: SignedInName | null } | { kind: "ended" } | { kind: "refuse" };
 
 async function tokenFor(signal: AbortSignal): Promise<TokenAnswer> {
   const seen = await readSession(signal);
-  if (seen.csrf) return { kind: "token", token: seen.csrf };
+  if (seen.csrf) return { kind: "token", token: seen.csrf, who: seen.who };
   const admin = await readAdmin(signal);
-  if (admin.live) return admin.csrf ? { kind: "token", token: admin.csrf } : { kind: "refuse" };
+  if (admin.live) return admin.csrf ? { kind: "token", token: admin.csrf, who: seen.who } : { kind: "refuse" };
   return seen.authenticated ? { kind: "refuse" } : { kind: "ended" };
 }
 
 async function askGateway(end: EndKind, signal: AbortSignal): Promise<Answer> {
   const path = end === "sign-out-everywhere" ? SIGN_OUT_EVERYWHERE_PATH : LOGOUT_PATH;
   let token = await tokenFor(signal);
-  if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH };
+  if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH, who: null };
   if (token.kind === "refuse") return { ended: false, reason: "gateway-error" };
   let response = await post(path, token.token, signal);
   if (response.status === 403) {
     // A stale CSRF token: one retry with a fresh one (DESIGN.md 4.4).
     token = await tokenFor(signal);
-    if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH };
+    if (token.kind === "ended") return { ended: true, next: SIGN_IN_PATH, who: null };
     if (token.kind === "refuse") return { ended: false, reason: "gateway-error" };
     response = await post(path, token.token, signal);
   }
+  const who = token.who;
   const body = await response.json().catch(() => null);
   if (response.ok) {
     // Only the gateway's own JSON answer ends the session. Any other 2xx (a captive portal, a proxy
     // page) is not an answer: the session decides.
-    if (body !== null) return { ended: true, next: nextPage(body) };
+    if (body !== null) return { ended: true, next: nextPage(body), who };
     return (await sessionStillLive(signal))
       ? { ended: false, reason: "gateway-error" }
-      : { ended: true, next: SIGN_IN_PATH };
+      : { ended: true, next: SIGN_IN_PATH, who };
   }
   if (response.status === 401 && errorCode(body) === "login_required") {
-    return { ended: true, next: SIGN_IN_PATH };
+    return { ended: true, next: SIGN_IN_PATH, who };
   }
   if (response.status === 401 || response.status === 403) {
     // Still signed in means the gateway refused a live session: a gateway error, not an ended one.
     return (await sessionStillLive(signal))
       ? { ended: false, reason: "gateway-error" }
-      : { ended: true, next: SIGN_IN_PATH };
+      : { ended: true, next: SIGN_IN_PATH, who };
   }
   return { ended: false, reason: "gateway-error" };
 }
@@ -511,17 +557,17 @@ async function sessionStillLive(signal: AbortSignal): Promise<boolean> {
 
 /** A snapshot read. `unavailable` is set when the gateway says this sign-in cannot be identified right now (503
  * session_view_unavailable): the sign-in is still there, and the answer still carries its CSRF token. */
-type SessionRead = SessionView & { csrf: string | null; unavailable: boolean };
+type SessionRead = SessionView & { csrf: string | null; unavailable: boolean; who: SignedInName | null };
 
 async function readSession(signal: AbortSignal): Promise<SessionRead> {
   const response = await endingRequest(SESSION_PATH, { credentials: "same-origin", cache: "no-store", signal });
   if (response.status === 401) {
-    return { authenticated: false, epoch: null, person: null, csrf: null, unavailable: false };
+    return { authenticated: false, epoch: null, person: null, csrf: null, unavailable: false, who: null };
   }
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   const csrf = typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null;
   if (response.status === 503 && errorCode(body) === "session_view_unavailable") {
-    return { authenticated: true, epoch: null, person: null, csrf, unavailable: true };
+    return { authenticated: true, epoch: null, person: null, csrf, unavailable: true, who: null };
   }
   if (!response.ok) throw new GatewayStatus(response.status);
   return {
@@ -530,6 +576,7 @@ async function readSession(signal: AbortSignal): Promise<SessionRead> {
     person: personOf(body),
     csrf,
     unavailable: false,
+    who: personNameOf(body),
   };
 }
 
@@ -538,6 +585,16 @@ export function personOf(body: Record<string, unknown> | null): string | null {
   const user = body?.user as { person_id?: unknown; id?: unknown } | undefined;
   const id = user?.person_id ?? user?.id;
   return typeof id === "string" && id !== "" ? id : null;
+}
+
+/** The name and email `/me/api/session` gives the signed-in person: what the remembered list is matched by. */
+function personNameOf(body: Record<string, unknown> | null): SignedInName | null {
+  const user = body?.user as { name?: unknown; email?: unknown } | undefined;
+  if (!user) return null;
+  return {
+    name: typeof user.name === "string" ? user.name : null,
+    email: typeof user.email === "string" ? user.email : null,
+  };
 }
 
 /** The owner's admin session, for a browser whose own snapshot has no CSRF token. Members get 403 here. */
