@@ -794,7 +794,7 @@ def _owned_app_ids(user_id: str, path: Path) -> list[str]:
 def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _MediaScope:
     for name in ("scope", "owner", "person"):
         if name in request.query_params:
-            raise PublicFailure("param_not_supported", 400, param=name)
+            raise PublicFailure("param_not_supported", 400, copy="unsupported_field", param=name)
     return _member_media_scope(actor.user_id, admin_db_path)
 
 

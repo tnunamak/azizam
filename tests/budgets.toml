@@ -263,10 +263,11 @@
 # Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
 # punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
-# Owner visibility step 3 slice 1: +36 cases in test_library_paths.py and
-# +1 owner/admin/member activity-feed case. Focused hermetic run collected the
-# affected files; no full-suite collection was run. Total: 16813 + 37 = 16850.
-pytest = 16850
+# Owner visibility step 3 slice 1: +36 cases in test_library_paths.py, one
+# activity-feed projection case and one client-projection shape case. Focused
+# hermetic run collected affected files; no full-suite collection was run.
+# Total: 16813 + 38 = 16851.
+pytest = 16851
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -421,7 +421,8 @@ def build_user_activity_snapshot(
     )
     receipts = []
     for receipt in candidates:
-        app_id = receipt.get("app_id")
+        source = receipt.get("source")
+        app_id = source.get("app_id") if isinstance(source, Mapping) else None
         if not isinstance(app_id, str) or not app_id:
             continue
         decision = decide(
