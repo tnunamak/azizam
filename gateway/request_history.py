@@ -118,11 +118,25 @@ def _forms(word: str) -> set[str]:
     return forms
 
 
+#: Default_Ignorable_Code_Point characters that are not format characters (category Cf), as code point ranges (R6-4).
+#: They show as nothing, as a format character does. U+2065 and U+FFF0-U+FFF8 are unassigned, and the property covers them.
+_DEFAULT_IGNORABLE_RANGES = (
+    (0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x2065, 0x2065), (0x3164, 0x3164),
+    (0xFE00, 0xFE0F), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xE0000, 0xE0FFF),
+)
+
+
+def _is_ignorable(char: str) -> bool:
+    """A character that shows as nothing: a format character (category Cf), or a default-ignorable code point."""
+    code = ord(char)
+    return unicodedata.category(char) == "Cf" or any(low <= code <= high for low, high in _DEFAULT_IGNORABLE_RANGES)
+
+
 def is_credential_name(name: str) -> bool:
     """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept.
-    Format characters (category Cf, such as a zero-width space) are dropped first, then the name is NFKC-normalised,
+    Characters that show as nothing (see ``_is_ignorable``, R6-4) are dropped first, then the name is NFKC-normalised,
     so a fullwidth ``ｐａｓｓｗｏｒｄ`` reads as ``password``."""
-    visible = "".join(char for char in str(name) if unicodedata.category(char) != "Cf")
+    visible = "".join(char for char in str(name) if not _is_ignorable(char))
     words = [_forms(part) for part in segments(unicodedata.normalize("NFKC", visible))]
     if any(_CREDENTIAL_SEGMENTS & forms for forms in words):
         return True
