@@ -860,7 +860,7 @@ describe("Library honesty and access", () => {
     async (lifecycle) => {
       session.viewer = { role: "owner", name: "Alex", id: "alex" };
       session.home = { receipts: [], user: { id: "alex" }, apps: [] };
-      const ownSource = { id: "app:alex", kind: "app", label: "Alex app", app_id: "alex" };
+      const ownSource = { id: "app:alex", kind: "app", label: "Alex app", app_id: "alex", person_id: "alex" };
       const own = picture("alex-image", "Alex image", {
         owner_name: "Alex", source: ownSource, thumbnail_url: "/signed/alex-thumb",
       });
@@ -907,7 +907,11 @@ describe("Library honesty and access", () => {
           await screen.findByRole("button", { name: /^Open Alex image,/ });
         }
         expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
-        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
+        if (lifecycle === "kind filter") {
+          expect(paths.some((path) => new URL(path, "https://test.invalid").searchParams.get("kind") === "image")).toBe(true);
+        } else {
+          await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
+        }
         if (lifecycle !== "deep link") {
           navigation.searchParams.set("asset", "alex-detail");
           // Keep the same tree shape as renderLibrary, or React remounts LibraryPage and resets page state.
@@ -1426,7 +1430,7 @@ describe("Library media identity and tile playback", () => {
     renderLibrary();
     expect(await screen.findByText("Your creations and prompts are private to you.")).toBeVisible();
     expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
-    const tile = screen.getByRole("button", { name: /^Open My own picture,/ });
+    const tile = await screen.findByRole("button", { name: /^Open My own picture,/ });
     await userEvent.hover(tile.closest("article")!);
     expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
     expect(screen.queryByRole("tooltip")).toBeNull();
