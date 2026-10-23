@@ -31,7 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
-from gateway import request_connections, secret_store, session_guard
+from gateway import app_binding_guard, request_connections, secret_store, session_guard
 from gateway import retention as retention_contract
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
@@ -565,6 +565,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
+    # Until the ownership cut-over is applied, live App keys keep the person the audit log proves for them.
+    # Afterwards the guards hold creators fixed, so the back-fill never runs again (gateway/app_binding_guard.py).
+    if not fresh and not app_binding_guard.recorded(conn):
+        _backfill_credential_creators(conn)
     current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if int(current[0]) == _PRE_ACCESS_PLANS_VERSION:
         _migrate_to_access_plans(conn)
@@ -572,10 +576,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.executescript(_SCHEMA)
         conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
     conn.executescript(_ACCESS_PLAN_DDL)
-    if fresh:
-        from gateway import app_binding_guard
-
+    # A fresh or cut-over database keeps the release's guards in place on every start. Any other database
+    # runs in pre-cut-over mode: it starts, and the notice says what the cut-over would do.
+    if fresh or app_binding_guard.recorded(conn):
         app_binding_guard.install(conn)
+    else:
+        print(app_binding_guard.PENDING_NOTICE, flush=True)
 
 
 def access_plans_backup_path(path: Path) -> Path:
@@ -629,6 +635,54 @@ def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
         flush=True,
     )
     print("[admin_store] pre-migration database backup is available beside the database", flush=True)
+
+
+def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
+    """Recover legacy App-key makers with bounded, restart-safe commits.
+
+    Audit lookup runs outside the write transaction. Unknown makers stay NULL;
+    a recorded actor other than the App owner explicitly loses person scope.
+    Runs only before the ownership cut-over (gateway/app_binding_guard.py).
+    """
+    cursor = ""
+    resolved = 0
+    while True:
+        rows = conn.execute(
+            "SELECT c.id, a.owner_user_id FROM credentials c LEFT JOIN apps a "
+            "ON a.id=COALESCE(c.app_id,c.subject_id) "
+            "WHERE c.subject_kind='app' AND c.created_by IS NULL AND c.id>? "
+            "ORDER BY c.id LIMIT 100", (cursor,),
+        ).fetchall()
+        if not rows:
+            break
+        updates = []
+        for credential_id, owner in rows:
+            events = conn.execute(
+                "SELECT actor_kind, actor_id FROM audit_events WHERE target_id=? "
+                "AND action IN ('credential.create','credential.self_create') "
+                "AND target_kind IN ('credential','account_link')", (credential_id,),
+            ).fetchall()
+            if events:
+                creator = owner if owner and all(kind == "user" and actor == owner
+                                                for kind, actor in events) else ""
+                updates.append((creator, credential_id))
+        if updates:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                changed = conn.executemany(
+                    "UPDATE credentials SET created_by=? WHERE id=? AND created_by IS NULL", updates,
+                ).rowcount
+                resolved += changed
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        cursor = rows[-1][0]
+    unresolved = conn.execute(
+        "SELECT COUNT(*) FROM credentials WHERE subject_kind='app' AND created_by IS NULL"
+    ).fetchone()[0]
+    if resolved or unresolved:
+        print(f"[admin_store] legacy App-key creators: resolved={resolved} unresolved={unresolved}", flush=True)
 
 
 def _prompt_memory_default(conn: sqlite3.Connection) -> bool:

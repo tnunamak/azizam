@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import contextlib
-from tests.support.app_keys import accountable_person
 import json
 import sqlite3
 import time
@@ -39,6 +38,41 @@ def household(tmp_path, monkeypatch, isolated_receipts):
         app_id=apps[1]['id'], person_id=people[1]['id']))
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, owner=people[0], robin=people[1],
                            other=people[2], app=apps[1], other_app=apps[2], auth=auth)
+
+
+@pytest.mark.parametrize('action,target_kind', [('credential.create', 'credential'),
+    ('credential.self_create', 'credential'), ('credential.create', 'account_link')])
+@pytest.mark.parametrize('minter', ['owner', 'robin', 'automation'])
+def test_upgrade_backfills_legacy_creator_from_creation_audit(household, action, target_kind, minter):
+    hh = household
+    key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
+        hash='sha256:legacy', prefix='test', path=hh.admin)
+    actor = getattr(hh, minter)['id'] if minter != 'automation' else 'svc_automation'
+    admin_store.record_audit(action, actor_kind='service_account' if minter == 'automation' else 'user',
+        actor_id=actor, target_kind=target_kind, target_id=key['id'], path=hh.admin)
+    admin_store.init_db(hh.admin)
+    upgraded = admin_store.find_credential_by_hash('sha256:legacy', path=hh.admin)
+    expected = hh.robin['id'] if minter == 'robin' else ''
+    assert upgraded['created_by'] == expected
+    assert person_for_app_credential(hh.app, upgraded) == (hh.robin['id'] if minter == 'robin' else None)
+    admin_store.init_db(hh.admin)
+    assert admin_store.find_credential_by_hash('sha256:legacy', path=hh.admin)['created_by'] == expected
+
+
+def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys):
+    hh = household
+    for suffix, creator in [('unknown', None), ('known', hh.robin['id'])]:
+        key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
+            hash=f'sha256:{suffix}', prefix='test', created_by=creator, path=hh.admin)
+        if creator:
+            admin_store.record_audit('credential.create', actor_kind='user', actor_id=hh.owner['id'],
+                target_kind='credential', target_id=key['id'], path=hh.admin)
+    admin_store.init_db(hh.admin)
+    unknown = admin_store.find_credential_by_hash('sha256:unknown', path=hh.admin)
+    assert unknown['created_by'] is None
+    assert person_for_app_credential(hh.app, unknown) is None
+    assert admin_store.find_credential_by_hash('sha256:known', path=hh.admin)['created_by'] == hh.robin['id']
+    assert 'unresolved=1' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('cache_state', ['missing', 'empty'])
@@ -136,6 +170,39 @@ def test_disable_retains_prompt_and_chat_then_remove_erases_both(household):
     assert proxy.responses_store.get('resp_disabled', path=proxy.responses_store.DB_PATH) is None
 
 
+def test_creator_backfill_uses_short_transactions(household):
+    hh = household
+    with sqlite3.connect(hh.admin) as conn:
+        conn.executemany(
+            "INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,created_at) "
+            "VALUES(?,'app',?,?,?,'test',1)",
+            [(f'cred_batch_{i:03}', hh.app['id'], hh.app['id'], f'sha256:batch{i}') for i in range(205)],
+        )
+        conn.executemany(
+            "INSERT INTO audit_events(id,created_at,actor_kind,actor_id,action,target_kind,target_id) "
+            "VALUES(?,1,'user',?,'credential.create','credential',?)",
+            [(f'aud_batch_{i:03}', hh.owner['id'], f'cred_batch_{i:03}') for i in range(205)],
+        )
+    batches = []
+    audit_locks = []
+    writes = 0
+    with sqlite3.connect(hh.admin) as conn:
+        def trace(statement):
+            nonlocal writes
+            if statement.startswith('SELECT actor_kind'):
+                audit_locks.append(conn.in_transaction)
+            if statement.startswith('UPDATE credentials'):
+                writes += 1
+            if statement == 'COMMIT':
+                batches.append(writes)
+                writes = 0
+        conn.set_trace_callback(trace)
+        admin_store._backfill_credential_creators(conn)
+        assert batches == [100, 100, 5]
+        assert audit_locks and not any(audit_locks)
+        assert conn.execute("SELECT COUNT(*) FROM credentials WHERE created_by='' ").fetchone()[0] == 205
+
+
 def test_missing_preference_under_lock_degrades_to_dont_store(household):
     hh = household
     with sqlite3.connect(hh.admin) as conn:
@@ -170,7 +237,7 @@ def test_explicit_prompt_deadline_still_expires_prompts(household):
 def test_delete_scrubs_legacy_credential_scoped_video_job(household):
     hh = household
     credential = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-        hash='sha256:old-key', prefix='test', path=hh.admin, created_by=accountable_person(hh.admin, hh.app['id']))
+        hash='sha256:old-key', prefix='test', path=hh.admin)
     job = media_jobs.create(media_jobs.MediaJob(intent='video.generate', owner_key_hash=credential['hash'],
         metadata={'request_hash': 'legacy-video-body-hash'}, created_at=int(time.time()) - 10), path=hh.jobs)
     proxy._purge_person_prompt_memory(hh.robin['id'])

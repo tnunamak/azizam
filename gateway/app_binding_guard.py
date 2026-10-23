@@ -20,6 +20,11 @@ import sqlite3
 import uuid
 
 RECEIPT = "ownership-version-1"
+PENDING_NOTICE = (
+    "[admin_store] App-binding cut-over is pending: existing App keys and trusted addresses are not checked "
+    "until it is applied. To preview it, copy admin.db and run: "
+    "python -m gateway.app_binding_preview --admin-db <copy of admin.db> (docs/ops/OWNER_BINDINGS.md)"
+)
 
 GUARDS: tuple[tuple[str, str], ...] = (
     ("apps_kind_fixed", """CREATE TRIGGER apps_kind_fixed
@@ -72,6 +77,13 @@ BEGIN SELECT RAISE(ABORT, 'a trusted address is replaced, not edited'); END"""),
 
 class GuardError(RuntimeError):
     """The installed guards differ from this release, or a guard fails its own self-test."""
+
+
+def recorded(conn: sqlite3.Connection) -> bool:
+    """True once the ownership cut-over is applied: its version row is in the database."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration_steps'").fetchone() is None:
+        return False
+    return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name = ?", (RECEIPT,)).fetchone() is not None
 
 
 def verify(conn: sqlite3.Connection) -> list[str]:
