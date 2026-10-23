@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import sqlite3
 import time
 from collections.abc import Callable
@@ -83,8 +84,6 @@ _BATCH = 100
 
 
 def _item(row: dict[str, Any]) -> dict[str, Any]:
-    import json
-
     return {
         "record_id": row["record_id"], "request_id": row.get("request_id"), "kind": row["kind"],
         "created_at": int(row["created_at"]), "kept_until": row.get("kept_until"),
@@ -105,6 +104,51 @@ def _cursor_position(cursor: str | None) -> tuple[int, str] | None:
     if not separator or not record_id or not created.isdigit():
         raise ValueError(cursor)
     return int(created), record_id
+
+
+#: The newest pages of the person's history a Home read may scan for chats, so a history of other requests stays bounded.
+_CHAT_SCAN_PAGES = 3
+
+
+def _is_chat(row: dict[str, Any]) -> bool:
+    summary = json.loads(row["summary_json"])
+    return str(summary.get("route") or "").endswith("/chat/completions")
+
+
+def recent_chats(person_id: str, *, admin_path: Path, media_path: Path | None, limit: int,
+                 now: int | None = None) -> list[dict[str, Any]]:
+    """The person's own kept chats, newest first, each titled by its first user message.
+
+    A chat appears only while history keeps its body, so a conversation the person forgot or that expired is not
+    listed. Rows are read by the same ownership rule as the list route, and the title is read now, not stored.
+    """
+    viewer = content_access.Viewer(person_id=person_id, auth_kind="session")
+    now = int(time.time()) if now is None else now
+    after = retention.group_cutoff(admin_path, person_id, GROUP)
+    chats: list[dict[str, Any]] = []
+    before: tuple[int, str] | None = None
+    for _ in range(_CHAT_SCAN_PAGES):
+        batch = request_history.page_for_person(person_id, after=after, now=now, before=before, limit=_BATCH,
+                                                path=media_path)
+        for row in batch:
+            if len(chats) == limit:
+                break
+            if not _is_chat(row):
+                continue
+            if isinstance(content_access.decide(viewer, content_access.request_history_record(row), "read"),
+                          content_access.Own):
+                chats.append(row)
+        if len(chats) == limit or len(batch) < _BATCH:
+            break
+        before = (int(batch[-1]["created_at"]), str(batch[-1]["record_id"]))
+    bodies = request_history.parts_json_for([str(row["record_id"]) for row in chats], path=media_path)
+    titled = []
+    for row in chats:
+        title = request_history.first_user_text(bodies.get(str(row["record_id"])))
+        if title is not None:
+            titled.append({"request_id": row.get("request_id"), "record_id": row["record_id"],
+                           "created_at": int(row["created_at"]), "title": title})
+    return titled
 
 
 def create_request_history_router(

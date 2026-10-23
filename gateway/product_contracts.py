@@ -93,19 +93,28 @@ class CapabilitiesResponse(TypedDict):
     capabilities: list[CapabilitySummary]
 
 
+class CostHint(TypedDict):
+    # free: a local model, no charge. paid: a remote model. unknown: the gateway cannot tell.
+    kind: Literal["free", "paid", "unknown"]
+    # A USD amount only when the service declares one; null is "no amount", never zero.
+    price_usd: float | None
+
+
 class HomeCapability(CapabilitySummary):
     capability: str
     status: AvailabilityStatus
     reason_code: str
+    # Seconds a run usually takes, from catalog data; null when no data says.
+    typical_seconds: float | None
+    cost_hint: CostHint
 
 
-class HomeAlias(TypedDict):
-    local: NotRequired[bool]
-    id: str
-    operation: str
-    available: bool
-    status: AvailabilityStatus
-    reason_code: str
+class HomeChat(TypedDict):
+    request_id: str
+    record_id: str
+    created_at: int
+    # The first user message, cut to 80 characters, read when the list is read; never stored.
+    title: str
 
 
 class StatusSummary(TypedDict):
@@ -166,12 +175,10 @@ class HomeProjection(TypedDict):
     public_base_url: str
     api_base_url: str
     capabilities: list[HomeCapability]
-    aliases: list[HomeAlias]
-    credential_aliases: dict[str, list[HomeAlias]]
-    new_app_aliases: list[HomeAlias]
     status: StatusSummary
     receipts: list[HomeReceipt]
-    creations: None
+    # The person's own kept chats, newest first. Empty when history kept none.
+    recent_chats: list[HomeChat]
 
 
 class SetupObservation(TypedDict):

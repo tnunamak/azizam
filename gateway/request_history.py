@@ -745,6 +745,54 @@ def get_row(record_id: str, *, path: Path | None = None) -> dict[str, Any] | Non
     return rows[0] if rows else None
 
 
+def parts_json_for(record_ids: list[str], *, path: Path | None = None) -> dict[str, str]:
+    """The stored ``parts_json`` of the named records, in one read. Only a caller that shows a body reads one."""
+    if not record_ids:
+        return {}
+    marks = ",".join("?" for _ in record_ids)
+    rows = _rows(f"SELECT record_id, parts_json FROM kept_requests WHERE kind=? AND record_id IN ({marks})",
+                 (KIND, *record_ids), path=path)
+    return {row["record_id"]: row["parts_json"] for row in rows}
+
+
+#: The characters of a chat's first user message that a conversation title keeps.
+TITLE_CHARS = 80
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(part["text"] for part in content
+                        if isinstance(part, Mapping) and isinstance(part.get("text"), str))
+    return ""
+
+
+def first_user_text(parts_json: str | None) -> str | None:
+    """A kept chat's first user message as one line of text, or None when the kept body holds none.
+
+    The title is read from the body each time it is shown; nothing stores it, so erasing the record erases it.
+    """
+    if not parts_json:
+        return None
+    try:
+        parts = json.loads(parts_json)
+    except ValueError:
+        return None
+    accepted = parts.get("accepted") if isinstance(parts, Mapping) else None
+    body = accepted.get("body") if isinstance(accepted, Mapping) else None
+    messages = body.get("messages") if isinstance(body, Mapping) else None
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if not isinstance(message, Mapping) or message.get("role") != "user":
+            continue
+        text = " ".join(_message_text(message.get("content")).split())
+        if text:
+            return text[:TITLE_CHARS]
+    return None
+
+
 def delete_row(record_id: str, *, path: Path | None = None) -> bool:
     conn = connect(path)
     try:
