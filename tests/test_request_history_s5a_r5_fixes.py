@@ -117,7 +117,7 @@ def test_r5_1_h_tool_arguments_are_stored_compact():
 def test_r5_1_i_prose_that_starts_with_a_bracket_but_does_not_parse_is_cleaned_as_text():
     kept, found = request_history.redact_json(_message("user", "[note] see https://u:SYNTHETIC_MARKER@h.test/x now"))
     assert SECRET not in json.dumps(kept)
-    assert _content_of(kept) == "[note] see https://[removed]@h.test/x now"
+    assert _content_of(kept) == "[note] see [url removed] now"
     assert found == ["url_parts_removed"]
 
 

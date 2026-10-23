@@ -34,29 +34,30 @@ SECRET = "SYNTHETIC_MARKER"
 # ------------------------------------------------------------------ R6-1: the authority ends at the first /, ? or #
 
 
-@pytest.mark.parametrize(("url", "kept_as"), [
-    (f"https://h.test/#token=prefix@{SECRET}", "https://h.test/"),
-    (f"https://h.test/?token=prefix@{SECRET}", "https://h.test/?token=[removed]"),
-    (f"https://h.test?token=prefix@{SECRET}", "https://h.test?token=[removed]"),
-    (f"https://h.test#token=prefix@{SECRET}", "https://h.test"),
-    (f"https://h.test/a?x=1&token=prefix@{SECRET}#frag@{SECRET}", "https://h.test/a?x=[removed]&token=[removed]"),
-    (f"https://u:pw@h.test/a?token=prefix@{SECRET}", "https://[removed]@h.test/a?token=[removed]"),
+# R7-1 replaced this rule: an @ anywhere in a URL now removes the whole URL, so every case below is replaced whole.
+@pytest.mark.parametrize("url", [
+    f"https://h.test/#token=prefix@{SECRET}",
+    f"https://h.test/?token=prefix@{SECRET}",
+    f"https://h.test?token=prefix@{SECRET}",
+    f"https://h.test#token=prefix@{SECRET}",
+    f"https://h.test/a?x=1&token=prefix@{SECRET}#frag@{SECRET}",
+    f"https://u:pw@h.test/a?token=prefix@{SECRET}",
 ])
-def test_r6_1_a_an_at_sign_after_the_authority_never_makes_its_text_a_host(url, kept_as):
+def test_r6_1_a_an_at_sign_after_the_authority_never_makes_its_text_a_host(url):
     kept, found = request_history.redact_json({"u": url})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"u": kept_as}
+    assert kept == {"u": "[url removed]"}
     assert "url_parts_removed" in found
 
 
-@pytest.mark.parametrize(("url", "sentence"), [
-    (f"https://h.test/#token=prefix@{SECRET}", "see https://h.test/ now"),
-    (f"https://h.test/?token=prefix@{SECRET}", "see https://h.test/?token=[removed] now"),
+@pytest.mark.parametrize("url", [
+    f"https://h.test/#token=prefix@{SECRET}",
+    f"https://h.test/?token=prefix@{SECRET}",
 ])
-def test_r6_1_b_the_same_rule_holds_for_a_url_inside_a_sentence(url, sentence):
+def test_r6_1_b_the_same_rule_holds_for_a_url_inside_a_sentence(url):
     kept, _ = request_history.redact_json({"content": f"see {url} now"})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"content": sentence}
+    assert kept == {"content": "see [url removed] now"}
 
 
 @pytest.mark.parametrize("url", [
@@ -78,12 +79,12 @@ def test_r6_1_c_a_url_that_cannot_be_split_is_replaced_whole_and_no_part_of_it_i
 
 
 @pytest.mark.parametrize(("url", "kept_as"), [
-    ("https://user:pw@h.test:8443/a?x=1", "https://[removed]@h.test:8443/a?x=[removed]"),
-    ("https://u:p@[::1]:8080/x", "https://[removed]@[::1]:8080/x"),
-    ("https://u:p@h.test/x@y", "https://[removed]@h.test/x@y"),
-    ("https://h.test:8443/a?x=1", "https://h.test:8443/a?x=[removed]"),
+    ("https://" + "user:pw" + "@" + "h.test:8443/a?x=1", "[url removed]"),
+    ("https://" + "u:p" + "@" + "[::1]:8080/x", "[url removed]"),
+    ("https://" + "u:p" + "@" + "h.test/x@y", "[url removed]"),
+    ("https://h.test:8443/a?x=1", "https://h.test:8443/a?[removed]"),
 ])
-def test_r6_1_d_user_info_before_the_authority_ends_is_removed_and_the_host_is_kept(url, kept_as):
+def test_r6_1_d_user_info_replaces_the_whole_url_and_a_url_without_it_keeps_its_port(url, kept_as):
     kept, _ = request_history.redact_json({"u": url})
     assert kept == {"u": kept_as}
 
@@ -147,7 +148,7 @@ def test_r6_2_c_a_string_literal_of_plain_text_is_kept_as_it_was():
 def test_r6_2_d_a_string_literal_holding_a_credential_url_keeps_no_secret():
     kept, found = request_history.redact_json(_message("user", json.dumps(f"see https://user:{SECRET}@h.test/x now")))
     assert SECRET not in json.dumps(kept)
-    assert json.loads(_content_of(kept)) == "see https://[removed]@h.test/x now"
+    assert json.loads(_content_of(kept)) == "see [url removed] now"
     assert found == ["url_parts_removed"]
 
 
@@ -155,7 +156,7 @@ def test_r6_2_e_a_string_literal_of_bracketed_prose_is_cleaned_as_text():
     text = json.dumps(f"[note] see https://user:{SECRET}@h.test/x now")
     kept, _ = request_history.redact_json(_message("user", text))
     assert SECRET not in json.dumps(kept)
-    assert json.loads(_content_of(kept)) == "[note] see https://[removed]@h.test/x now"
+    assert json.loads(_content_of(kept)) == "[note] see [url removed] now"
 
 
 @pytest.mark.parametrize(("depth", "omitted"), [(60, False), (63, True)])

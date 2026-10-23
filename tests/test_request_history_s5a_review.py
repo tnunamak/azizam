@@ -266,11 +266,12 @@ def test_a_bracketed_json_key_is_a_credential_name_like_a_bracketed_form_field()
     assert "credential_field" in found
 
 
-def test_a_signed_url_followed_by_punctuation_loses_its_query_values_and_keeps_the_punctuation():
+def test_a_signed_url_followed_by_punctuation_loses_its_query_and_the_punctuation_with_it():
+    """A query runs to the next space, so a full stop written straight after it is part of the query and goes with it."""
     text = f"see https://bucket.example.test/a.png?X-Amz-Signature={CANARY}."
     kept, _ = request_history.redact_json({"content": text})
     assert CANARY not in json.dumps(kept)
-    assert kept["content"] == "see https://bucket.example.test/a.png?X-Amz-Signature=[removed]."
+    assert kept["content"] == "see https://bucket.example.test/a.png?[removed]"
 
 
 def test_tool_call_arguments_that_are_not_json_are_cleaned_as_text():

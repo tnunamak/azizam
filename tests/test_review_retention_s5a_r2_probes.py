@@ -106,7 +106,7 @@ def test_user_info_and_query_values_are_removed_from_any_url_scheme(text):
 def test_positive_control_a_lower_case_https_url_in_text_is_scrubbed():
     kept, found = request_history.redact_json({"content": f"see https://h.test/a.png?sig={CANARY}, thanks"})
     assert CANARY not in json.dumps(kept) and "url_parts_removed" in found
-    assert json.dumps(kept).endswith(', thanks"}')
+    assert kept == {"content": "see https://h.test/a.png?[removed] thanks"}
 
 
 # ------------------------------------------------------------------ the header forget reaches Library prompts

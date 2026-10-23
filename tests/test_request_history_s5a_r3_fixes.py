@@ -97,7 +97,9 @@ def test_r2_3_a_bare_query_token_is_removed_whole_and_inside_text():
     whole, _ = request_history.redact_json({"image_url": f"https://h.test/a.png?{CANARY}"})
     inside, found = request_history.redact_json({"content": f"see https://h.test/a.png?{CANARY}, thanks"})
     assert CANARY not in json.dumps(whole) and CANARY not in json.dumps(inside)
-    assert "url_parts_removed" in found and json.dumps(inside).endswith(', thanks"}')
+    assert whole == {"image_url": "https://h.test/a.png?[removed]"}
+    assert inside == {"content": "see https://h.test/a.png?[removed] thanks"}
+    assert "url_parts_removed" in found
 
 
 # ------------------------------------------------------------------ R2-4: a slot is held only by a request that keeps

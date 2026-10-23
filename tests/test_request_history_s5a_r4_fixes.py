@@ -40,18 +40,19 @@ def own_admission_limit(monkeypatch):
 # ------------------------------------------------------------------ R4-1: a URL's user info, sub-delims included
 
 
+# Round 7 (R7-1) replaced the output of the next four tests: a URL with an @ is replaced whole, and so is any URL in them.
 @pytest.mark.parametrize("delimiter", USER_INFO_DELIMITERS)
 def test_r4_1_a_user_info_with_a_delimiter_is_removed_from_a_url_in_text(delimiter):
     kept, found = request_history.redact_json({"content": f"connect postgres://user:a{delimiter}{SECRET}@db/app now"})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"content": "connect postgres://[removed]@db/app now"}
+    assert kept == {"content": "connect [url removed] now"}
     assert "url_parts_removed" in found
 
 
 @pytest.mark.parametrize("delimiter", USER_INFO_DELIMITERS)
 def test_r4_1_b_user_info_with_a_delimiter_is_removed_from_a_url_that_is_a_whole_value(delimiter):
     kept, _ = request_history.redact_json({"dsn": f"postgres://user:a{delimiter}{SECRET}@db/app"})
-    assert kept == {"dsn": "postgres://[removed]@db/app"}
+    assert kept == {"dsn": "[url removed]"}
 
 
 # Round 6 (R6-1) replaced the rule this test pinned, which cut user info at the last @ anywhere in the URL. Each of these
@@ -73,14 +74,14 @@ def test_r4_1_c_an_ambiguous_user_info_boundary_removes_the_whole_url(url):
 def test_r4_1_d_a_query_value_with_a_delimiter_is_removed_from_a_url_in_text(delimiter):
     kept, _ = request_history.redact_json({"content": f"see https://h.test/a?token=abc{delimiter}{SECRET}&x=1 now"})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"content": "see https://h.test/a?token=[removed]&x=[removed] now"}
+    assert kept == {"content": "see https://h.test/a?[removed] now"}
 
 
 @pytest.mark.parametrize("delimiter", QUERY_DELIMITERS)
 def test_r4_1_e_a_query_value_with_a_delimiter_is_removed_from_a_url_that_is_a_whole_value(delimiter):
     kept, _ = request_history.redact_json({"u": f"https://h.test/a?token=abc{delimiter}{SECRET}&x=1"})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"u": "https://h.test/a?token=[removed]&x=[removed]"}
+    assert kept == {"u": "https://h.test/a?[removed]"}
 
 
 def test_r4_1_f_a_quoted_user_info_in_a_message_keeps_no_secret_in_the_row(member_db):
@@ -89,7 +90,7 @@ def test_r4_1_f_a_quoted_user_info_in_a_message_keeps_no_secret_in_the_row(membe
     _drive(db, media, person, chunks=[raw], content_type="application/json")
     rows = _kept(media)
     assert len(rows) == 1
-    assert SECRET not in rows[0] and "postgres://[removed]@db/app" in rows[0]
+    assert SECRET not in rows[0] and "[url removed]" in rows[0]
 
 
 # ------------------------------------------------------------------ R4-2: JSON too deep to clean is omitted, not kept
@@ -142,7 +143,7 @@ def test_r4_2_b_tool_arguments_that_look_like_json_but_do_not_parse_are_omitted(
 
 def test_r4_2_c_tool_arguments_that_are_plain_text_are_cleaned_as_text():
     kept, found = request_history.redact_json(_tool_call(f"fetch https://u:{SECRET}@h.test/x now"))
-    assert _arguments_of(kept) == "fetch https://[removed]@h.test/x now"
+    assert _arguments_of(kept) == "fetch [url removed] now"
     assert found == ["url_parts_removed"]
 
 

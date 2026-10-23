@@ -51,14 +51,22 @@ def test_rule_8_names_are_compared_in_snake_kebab_and_camel_case():
     assert not rh.is_credential_name("api")
 
 
-def test_rule_4_a_url_in_a_body_keeps_scheme_host_path_and_query_names_only():
-    url = "https://user:pw-secret@cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret"
+def test_rule_4_a_url_with_user_info_is_replaced_whole():
+    url = "https://" + "user:pw-secret" + "@" + "cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret"
     redacted, omissions = rh.redact_json({"image_url": url})
     text = json.dumps(redacted)
-    assert redacted["image_url"] == "https://[removed]@cdn.example.test:8443/v1/img/a.png?sig=[removed]&expires=[removed]"
+    assert redacted["image_url"] == "[url removed]"
     assert "pw-secret" not in text
     assert "SIGNED-SECRET" not in text
     assert "frag-secret" not in text
+    assert "url_parts_removed" in omissions
+
+
+def test_rule_4_a_signed_url_without_user_info_keeps_scheme_host_port_and_path_only():
+    url = "https://cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret"
+    redacted, omissions = rh.redact_json({"image_url": url})
+    assert redacted["image_url"] == "https://cdn.example.test:8443/v1/img/a.png?[removed]#[removed]"
+    assert "SIGNED-SECRET" not in json.dumps(redacted)
     assert "url_parts_removed" in omissions
 
 
