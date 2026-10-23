@@ -6,6 +6,7 @@ Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -302,6 +303,60 @@ def require(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
     if isinstance(access, Deny):
         raise PublicFailure("not_found", 404)
     return access
+
+
+def request_history_record(row: Mapping[str, Any]) -> RequestHistoryRecord:
+    """The content record of one stored kept request: who made it, and through which credential (D52)."""
+    origin_kind, origin_id = row.get("origin_kind"), row.get("origin_id")
+    origin: ContentOrigin | None = None
+    if origin_kind == "app_key":
+        origin = ContentOrigin("app_key", credential_id=origin_id)
+    elif origin_kind == "mcp_grant":
+        origin = ContentOrigin("mcp_grant", connection_id=origin_id)
+    elif origin_kind == "session":
+        origin = ContentOrigin("session")
+    return RequestHistoryRecord(person_id=row.get("person_id"), app_id=row.get("app_id"), origin=origin)
+
+
+_MAKER_CONTENT_SEAL = object()
+
+
+@dataclass(frozen=True)
+class MakerContent:
+    """One kept request as its maker may read it. Only ``maker_content`` builds one, after the read check passes,
+    so no route can hand out request content that the check did not allow (REQUEST_RETENTION.md 13.2)."""
+
+    record_id: str
+    kind: str
+    created_at: int
+    kept_until: int | None
+    parts: Mapping[str, Any]
+    omissions: tuple[str, ...]
+    summary: Mapping[str, Any]
+    origin_kind: str
+    request_id: str | None
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _MAKER_CONTENT_SEAL:
+            raise TypeError("MakerContent is built by maker_content, after the read check")
+
+
+def maker_content(viewer: Viewer, row: Mapping[str, Any]) -> MakerContent:
+    """The projection of one stored kept request for ``viewer``. Anyone else gets the same 404 as a missing row."""
+    require(viewer, request_history_record(row), "read")
+    return MakerContent(
+        record_id=row["record_id"], kind=row["kind"], created_at=int(row["created_at"]),
+        kept_until=row.get("kept_until"), parts=json.loads(row["parts_json"]),
+        omissions=tuple(json.loads(row["omissions_json"])), summary=json.loads(row["summary_json"]),
+        origin_kind=row.get("origin_kind") or "", request_id=row.get("request_id"),
+        _seal=_MAKER_CONTENT_SEAL,
+    )
+
+
+def visible_maker_rows(viewer: Viewer, rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The rows this viewer may read, in their order. Pagination runs over this list, never before it (16.1.4)."""
+    return [row for row in rows if isinstance(decide(viewer, request_history_record(row), "read"), Own)]
 
 
 def operational(viewer: Viewer) -> bool:
