@@ -2,7 +2,7 @@
 
 The capture middleware opens a slot for each captured request. Receipts that the request records or finalizes report
 here, so the capture knows which stored receipt to update with its retention outcome (REQUEST_RETENTION.md 13.3). A
-receipt joins the slot only when its path is the request's path and it has no parent, so an inner hop does not claim
+receipt joins the slot only when its path is the request's route and it has no parent, so an inner hop does not claim
 the caller's receipt.
 """
 from __future__ import annotations
@@ -39,9 +39,19 @@ def prompts_forget() -> bool:
     return slot is not None and slot.forget
 
 
+def _canonical(path: str) -> str:
+    """The route a path names. The OpenAI mount serves the same route as /v1 (``/openai/v1/x`` is ``/v1/x``)."""
+    return path.removeprefix("/openai") if path.startswith("/openai/") else path
+
+
 def observe(receipt_id: str | None, path: str | None, parent: str | None) -> None:
-    """Called by the receipt store for each receipt it records or finalizes. Never raises."""
+    """Called by the receipt store for each receipt it records or finalizes. Never raises.
+
+    A receipt names the canonical route, so a request that came through the /openai mount is matched on that route.
+    """
     slot = _CURRENT.get()
-    if slot is None or slot.receipt_id is not None or not receipt_id or parent or path != slot.path:
+    if slot is None or slot.receipt_id is not None or not receipt_id or parent or not path:
+        return
+    if _canonical(path) != _canonical(slot.path):
         return
     slot.receipt_id = receipt_id
