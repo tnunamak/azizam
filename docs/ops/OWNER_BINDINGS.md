@@ -93,30 +93,49 @@ The audit event names the administrators confirmed, in `confirmed_administrators
   leaves the old key live and no new key behind.
 - The response is `201`: `credential` holds the new key, with its secret in `api_key`
   (shown once), and `replaced_credential_id` holds the old key's id.
-- It answers another person's key or App as a missing one, with `404 credential_not_found`.
-  A disabled App is refused with `403 app_disabled`. A key that is missing, revoked, not
-  an App key, or on a session App is `404 credential_not_found`.
+- It answers a key of another person's App as a missing key, with `404 credential_not_found`, and an
+  address of another person's App with `404 app_not_found`. A disabled App is refused with `403 app_disabled`.
+  A key that is missing, revoked, not an App key, or on a session App is `404 credential_not_found`.
 
 **Add an address again.** An address that cannot be kept is refused with
-`409 keep_not_provable`. The person adds it again with
-`POST /me/api/apps/{app_id}/trusted-addresses`, then removes the old entry with
-`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`. The removal returns `200`.
-Its audit event is written in the same transaction, so a removal never happens without
-it. Another person's App gets `404 app_not_found`.
+`409 keep_not_provable`. The person removes the old entry with
+`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`, then adds the address again
+with `POST /me/api/apps/{app_id}/trusted-addresses`, with the same note. The order matters:
+an App holds each address once, so the add is refused with `400 invalid_trusted_address`
+while the old entry remains. The removal returns `200` and is audited. Another person's
+App gets `404 app_not_found`.
 
 Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`). Each
 replacement writes `credential.replace`, naming both keys. Each removal writes
 `app.trusted_address.remove`.
 
-Keys and addresses are kept one at a time, on the Apps page of the signed-in person:
+The gateway names the one remedy each binding the apply would remove needs. The
+snapshot at `/me/api/session` carries it, and so does the owner's trusted-address list:
 
-- A key with no recorded creator shows a notice and a **Keep** button in the **Rename keys**
-  list of its App.
-- A trusted address with no recorded creator shows the same notice and button in the
-  **Trusted addresses** list of its App. Only the owner can open that list, so a member
-  cannot keep an address on their own App from the Apps page yet.
-- Above the list of Apps, one line counts the keys and addresses that need a check, and
-  links to the first App that has one. The count includes addresses for the owner only.
+- A key the apply would remove has `cutover`: `keep` or `replace`. A trusted address has
+  `cutover`: `keep` or `readd`. A binding whose recorded creator is another person also
+  has `made_by_name`. A binding the apply keeps has no `cutover`.
+- The gateway decides `keep` with the rule the keep routes apply, so the page and the
+  routes never disagree. Anyone else gets `replace` (a key) or `readd` (an address).
+- `addresses_to_check` on each App, for the owner only, counts its addresses with a
+  `cutover`.
+
+The Apps page shows only that remedy for each binding, and the owner's count line covers
+keys and addresses alike:
+
+- A key with `keep` shows the notice and a **Keep** button in the **Rename keys** list of
+  its App.
+- A key with `replace` shows a notice and a **Replace key** button. The new key has the
+  old key's name and is on the same App, and it is shown once. The old key's row goes
+  away. A personal App's row offers the same replacement when one key needs it.
+- A trusted address with `keep` shows the keep notice and button in the **Trusted
+  addresses** list of its App. With `readd` it shows **Add again**, which removes the
+  entry and adds the address again. Only the owner can open that list.
+- Above the list of Apps, one line counts the bindings with a `cutover`, and links to
+  the first App that has one.
+
+A key or address that names another person is removed by the apply too. The Apps page
+flags it with its remedy, so it no longer waits for a check in the preview.
 
 A keep can also be sent by hand. From the browser console on the signed-in Azizam page, the
 owner keeps a key like this. If the answer is `409 keep_needs_confirmation`, read its
@@ -130,9 +149,6 @@ await fetch("/me/api/credentials/<key id>/adopt", {
   body: JSON.stringify({ confirm_admins_could_have_made_it: true }),  // only after reading the administrators
 });
 ```
-
-A key or address that names another person is also revoked or removed by the apply. The
-Apps page does not flag it. The preview lists it as not proven, so check it there.
 
 A `401` with `reauth_required` opens the same prompt to confirm your sign-in that adding a
 key uses. The keep runs again once you confirm.
