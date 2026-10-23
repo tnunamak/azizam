@@ -231,7 +231,9 @@
 # Step 2 security review fixes (keep only by the owner and only when provable, replace, the /me address removal, the
 # lifetime lock, orphaned bindings, the guard on App-key secret and expiry, the fresh-install marker, the probes as plain
 # assertions): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16219.
-pytest = 16219
+# Owner visibility step 2, round 4 (the keep rule with administrator confirmation, /me misses, the address removal's
+# audit, the lifespan lock): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16245.
+pytest = 16245
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
