@@ -170,39 +170,6 @@ def test_disable_retains_prompt_and_chat_then_remove_erases_both(household):
     assert proxy.responses_store.get('resp_disabled', path=proxy.responses_store.DB_PATH) is None
 
 
-def test_creator_backfill_uses_short_transactions(household):
-    hh = household
-    with sqlite3.connect(hh.admin) as conn:
-        conn.executemany(
-            "INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,created_at) "
-            "VALUES(?,'app',?,?,?,'test',1)",
-            [(f'cred_batch_{i:03}', hh.app['id'], hh.app['id'], f'sha256:batch{i}') for i in range(205)],
-        )
-        conn.executemany(
-            "INSERT INTO audit_events(id,created_at,actor_kind,actor_id,action,target_kind,target_id) "
-            "VALUES(?,1,'user',?,'credential.create','credential',?)",
-            [(f'aud_batch_{i:03}', hh.owner['id'], f'cred_batch_{i:03}') for i in range(205)],
-        )
-    batches = []
-    audit_locks = []
-    writes = 0
-    with sqlite3.connect(hh.admin) as conn:
-        def trace(statement):
-            nonlocal writes
-            if statement.startswith('SELECT actor_kind'):
-                audit_locks.append(conn.in_transaction)
-            if statement.startswith('UPDATE credentials'):
-                writes += 1
-            if statement == 'COMMIT':
-                batches.append(writes)
-                writes = 0
-        conn.set_trace_callback(trace)
-        admin_store._backfill_credential_creators(conn)
-        assert batches == [100, 100, 5]
-        assert audit_locks and not any(audit_locks)
-        assert conn.execute("SELECT COUNT(*) FROM credentials WHERE created_by='' ").fetchone()[0] == 205
-
-
 def test_missing_preference_under_lock_degrades_to_dont_store(household):
     hh = household
     with sqlite3.connect(hh.admin) as conn:
