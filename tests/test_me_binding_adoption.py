@@ -244,3 +244,31 @@ def test_an_api_key_cannot_keep_a_binding(gateway):
 def test_keeping_is_a_sensitive_action_that_asks_for_a_recent_sign_in():
     assert step_up.is_sensitive("POST", "/me/api/credentials/cred_abc/adopt")
     assert step_up.is_sensitive("POST", "/me/api/apps/app_abc/trusted-addresses/tad_abc/adopt")
+
+
+def _snapshot_app(client, app_id):
+    snapshot = client.get("/me/api/session").json()
+    return next(app for app in snapshot["apps"] if app["id"] == app_id)
+
+
+def test_the_owner_is_told_how_many_addresses_on_their_app_have_no_creator_until_they_keep_them(gateway):
+    owner = owner_and_admin(gateway)[0]
+    assert owner.get("/me/api/session").json()["user"]["role"] == "owner"
+    hall = _own_app(owner, name="Hall")
+    before_the_cut_over(gateway.path)
+    entry_id = _unproven_address(gateway, hall, "10.0.0.7")
+    assert _snapshot_app(owner, hall)["addresses_without_creator"] == 1
+
+    kept = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
+
+    assert kept.status_code == 200, kept.text
+    assert _snapshot_app(owner, hall)["addresses_without_creator"] == 0
+
+
+def test_a_member_is_not_sent_a_count_of_addresses_they_cannot_list(gateway):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    before_the_cut_over(gateway.path)
+    _unproven_address(gateway, app_id, "10.0.0.8")
+
+    assert "addresses_without_creator" not in _snapshot_app(desk, app_id)
