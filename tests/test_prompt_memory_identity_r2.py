@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import io
-from tests.support.app_keys import accountable_person
+from tests.support.app_keys import accountable_person, unguarded
 import json
 import time
 from pathlib import Path
@@ -110,6 +110,7 @@ def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     # (test_signin_who_can_enter), but keys made before that rule still exist.
     # Model one directly: it was minted by the administrator, who is removed below.
     key = generate_app_api_key()
+    unguarded(hh.admin)  # a key a removed admin's service key made, written before the guards
     admin_store.create_credential_hash(subject_kind="app", subject_id=svc["id"], hash=hash_api_key(key),
                                        prefix=key[:8], created_by=admin_member["id"], path=hh.admin)
     accounts.change_person(admin_member["id"], hh.owner["id"], remove=True, path=hh.admin)
@@ -230,8 +231,9 @@ def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
 
 def test_unresolved_legacy_personal_key_has_no_prompt_access(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
+    unguarded(hh.admin)  # a legacy personal key whose creator is not its person, written before the guards
     admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"],
-        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin, created_by=accountable_person(hh.admin, hh.robin_app["id"]))
+        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin, created_by=hh.owner["id"])
     auth = _ctx_for("legacy-off-key", hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:

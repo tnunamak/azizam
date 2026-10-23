@@ -33,3 +33,21 @@ def issue_app_key(path: Path, app_id: str, *, label: str = "test key") -> str:
 def accountable_person(path: Path, app_id: str) -> str:
     """The person the App answers for: the creator a key or trusted address on it must record."""
     return admin_store.get_app(app_id, path=path)["owner_user_id"]
+
+
+def unguarded(path: Path) -> None:
+    """Drop the App-binding guards: the state an existing database is in until the ownership cut-over.
+
+    Tests use it to write the legacy rows (an unproven key or address) that a fresh database refuses.
+    """
+    import sqlite3
+
+    from gateway import app_binding_guard
+
+    conn = sqlite3.connect(path)
+    try:
+        for name, _ in app_binding_guard.GUARDS:
+            conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        conn.commit()
+    finally:
+        conn.close()

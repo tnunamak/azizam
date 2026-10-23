@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import accounts, admin_store, app_binding_guard, app_binding_preview  # noqa: E402
+from tests.support.app_keys import unguarded  # noqa: E402
 from tests.test_access_plan_migration import build_v6  # noqa: E402
 
 AS_OF = 1_800_000_000
@@ -42,12 +43,7 @@ def _service_app(path: Path, owner: dict, name: str = "Desk") -> dict:
 
 
 def _unguarded(path: Path) -> None:
-    """The state an existing database is in before the cut-over: no guards, so unproven rows can exist."""
-    conn = sqlite3.connect(path)
-    for name, _ in app_binding_guard.GUARDS:
-        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
-    conn.commit()
-    conn.close()
+    unguarded(path)
 
 
 def _insert_key(path: Path, app_id: str, *, created_by: str | None, last_used_at: int | None = None, prefix: str = "opk_x") -> str:

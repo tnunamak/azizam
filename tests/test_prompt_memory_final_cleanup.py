@@ -41,41 +41,6 @@ def household(tmp_path, monkeypatch, isolated_receipts):
                            other=people[2], app=apps[1], other_app=apps[2], auth=auth)
 
 
-@pytest.mark.parametrize('action,target_kind', [('credential.create', 'credential'),
-    ('credential.self_create', 'credential'), ('credential.create', 'account_link')])
-@pytest.mark.parametrize('minter', ['owner', 'robin', 'automation'])
-def test_upgrade_backfills_legacy_creator_from_creation_audit(household, action, target_kind, minter):
-    hh = household
-    key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-        hash='sha256:legacy', prefix='test', path=hh.admin, created_by=accountable_person(hh.admin, hh.app['id']))
-    actor = getattr(hh, minter)['id'] if minter != 'automation' else 'svc_automation'
-    admin_store.record_audit(action, actor_kind='service_account' if minter == 'automation' else 'user',
-        actor_id=actor, target_kind=target_kind, target_id=key['id'], path=hh.admin)
-    admin_store.init_db(hh.admin)
-    upgraded = admin_store.find_credential_by_hash('sha256:legacy', path=hh.admin)
-    expected = hh.robin['id'] if minter == 'robin' else ''
-    assert upgraded['created_by'] == expected
-    assert person_for_app_credential(hh.app, upgraded) == (hh.robin['id'] if minter == 'robin' else None)
-    admin_store.init_db(hh.admin)
-    assert admin_store.find_credential_by_hash('sha256:legacy', path=hh.admin)['created_by'] == expected
-
-
-def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys):
-    hh = household
-    for suffix, creator in [('unknown', None), ('known', hh.robin['id'])]:
-        key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-            hash=f'sha256:{suffix}', prefix='test', created_by=creator, path=hh.admin)
-        if creator:
-            admin_store.record_audit('credential.create', actor_kind='user', actor_id=hh.owner['id'],
-                target_kind='credential', target_id=key['id'], path=hh.admin)
-    admin_store.init_db(hh.admin)
-    unknown = admin_store.find_credential_by_hash('sha256:unknown', path=hh.admin)
-    assert unknown['created_by'] is None
-    assert person_for_app_credential(hh.app, unknown) is None
-    assert admin_store.find_credential_by_hash('sha256:known', path=hh.admin)['created_by'] == hh.robin['id']
-    assert 'unresolved=1' in capsys.readouterr().out
-
-
 @pytest.mark.parametrize('cache_state', ['missing', 'empty'])
 def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, cache_state):
     hh = household

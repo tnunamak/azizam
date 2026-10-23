@@ -333,12 +333,12 @@ def test_adding_a_trusted_address_takes_the_write_lock_and_stores_the_entry_as_g
     owner = store.upsert_oidc_user("i", "o", path=admin_db)["id"]
     app = store.create_app("a", kind="personal", owner_user_id=owner, access_plan="person", path=admin_db)["id"]
     seen = trace(monkeypatch, store)
-    entry = store.add_trusted_address(app, "10.0.0.0/24", max_entries=3, path=admin_db)
+    entry = store.add_trusted_address(app, "10.0.0.0/24", max_entries=3, path=admin_db, created_by=owner)
     assert_locked_before(seen, "SELECT 1 FROM apps")
     assert entry["id"].startswith("tad") and entry["note"] is None
-    assert store.add_trusted_address(app, "10.0.1.0/24", note="  Kitchen  ", max_entries=3, path=admin_db)["note"] == "Kitchen"
+    assert store.add_trusted_address(app, "10.0.1.0/24", note="  Kitchen  ", max_entries=3, path=admin_db, created_by=owner)["note"] == "Kitchen"
     with sqlite3.connect(admin_db) as conn:
         conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (owner, app))
     with pytest.raises(ValueError) as raised:
-        store.add_trusted_address(app, "10.0.2.0/24", max_entries=3, path=admin_db)
+        store.add_trusted_address(app, "10.0.2.0/24", max_entries=3, path=admin_db, created_by=owner)
     assert str(raised.value) == "A person's own signed-in app cannot be reached by address."

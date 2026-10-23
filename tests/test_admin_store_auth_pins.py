@@ -121,10 +121,10 @@ def test_a_failed_claim_leaves_nothing_behind_when_an_owner_already_exists(db):
 
 def test_a_credential_needs_a_subject_hash_and_prefix_and_binds_data_plane_keys_to_their_app(db):
     with pytest.raises(ValueError, match=r"\Asubject_id\ is\ required\Z"):
-        store.create_credential_hash(subject_kind="app", subject_id="", hash="h", prefix="p", path=db, created_by=accountable_person(db, ""))
+        store.create_credential_hash(subject_kind="app", subject_id="", hash="h", prefix="p", path=db, created_by="usr_owner")
     for kwargs in (dict(hash="", prefix="p"), dict(hash="h", prefix="")):
         with pytest.raises(ValueError, match=r"\Ahash\ and\ prefix\ are\ required\Z"):
-            store.create_credential_hash(subject_kind="app", subject_id="app1", path=db, **kwargs, created_by=accountable_person(db, "app1"))
+            store.create_credential_hash(subject_kind="app", subject_id="app1", path=db, **kwargs, created_by="usr_owner")
     app1 = make_app(db, "one")
     with pytest.raises(ValueError, match=r"\Adata\-plane\ credentials\ must\ have\ app_id\ ==\ subject_id\Z"):
         store.create_credential_hash(subject_kind="app", subject_id=app1, app_id="app2", hash="h", prefix="p", path=db, created_by=accountable_person(db, app1))

@@ -608,6 +608,9 @@ class SessionAppStoreTests(unittest.TestCase):
         """Write a key the way a gateway without the session-App guard could."""
         import sqlite3
 
+        from tests.support.app_keys import unguarded
+
+        unguarded(self.admin)
         conn = sqlite3.connect(self.admin)
         try:
             conn.execute("DROP TRIGGER IF EXISTS credentials_never_on_session_apps")

@@ -168,7 +168,8 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         self.assertEqual(metadata["code_challenge_methods_supported"], ["S256"])
 
     def test_api_key_mode_still_works(self) -> None:
-        app = admin_store.create_app("Key app", kind="personal", owner_user_id=self.person["id"],
+        # A service App's key acts as its App and carries no person; a personal App's owner key would carry one.
+        app = admin_store.create_app("Key app", kind="service", owner_user_id=self.person["id"],
                                      access_plan="person", path=self.admin)
         key = "opk_" + secrets.token_urlsafe(24)
         admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"],
