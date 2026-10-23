@@ -16,7 +16,20 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, mcp_oauth_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
+from gateway import (
+    admin_store,
+    mcp_oauth_store,
+    media_delivery,
+    media_jobs,
+    media_metadata,
+    me_make,
+    me_media,
+    ownership,
+    prompt_memory,
+    provenance,
+    receipt_store,
+    request_history,
+)
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -591,11 +604,61 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertFalse(deleted.json()["physical_removed"])
         self.assertTrue(self._asset_path(asset_id).exists())
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
-
         self.current_user = self.bob
         bob_list = self.client.get("/me/api/media")
         self.assertEqual(bob_list.status_code, 200)
         self.assertEqual([item["asset_id"] for item in bob_list.json()["assets"]], [asset_id])
+
+    def test_deleting_library_item_erases_the_request_history_that_made_it(self) -> None:
+        asset_id = "img_" + "a" * 64
+        request_id = "req_library_delete"
+        self._receipt(self.app_a["id"], request_id)
+        self._job(request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": request_id,
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                        "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        deleted = self.client.delete(
+            f"/me/api/media/{asset_id}",
+            headers={"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"},
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
+
+    def test_erasing_all_person_library_prompts_erases_their_linked_history(self) -> None:
+        asset_id = "img_" + "b" * 64
+        request_id = "req_library_erase_all"
+        self._receipt(self.app_a["id"], request_id)
+        self._job(request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": request_id,
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                        "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        deleted = prompt_memory.prune_person_before(
+            self.alice["id"], int(time.time()) + 1, path=self.prompt_db,
+        )
+
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
 
     def test_cache_fallback_survives_without_job_or_receipt(self) -> None:
         asset_id = "img_" + "f" * 64
