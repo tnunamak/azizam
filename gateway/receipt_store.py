@@ -344,6 +344,8 @@ def finalize(
         for field in _IMMUTABLE_ACCEPTED_FIELDS:
             if field in accepted:
                 merged[field] = accepted[field]
+        # The maker decides who reads the full retention entry, so the accepted value wins, absent or not.
+        merged["maker_person_id"] = accepted.get("maker_person_id")
         for field in PHASE_FIELDS:
             if accepted.get(field) is not None:
                 merged[field] = accepted[field]

@@ -131,3 +131,18 @@ def test_a_trusted_address_request_names_no_maker_and_its_app_owner_sees_only_ki
                            expires_at=4_000_000_000)
     entry = get_user_receipt(session, mine[0]["request_id"], path=world.db, receipts_path=world.receipts)["retention"]
     assert entry == [{"kind": "request_history", "decision": "not_kept"}]
+
+
+@pytest.mark.parametrize("accepted, final", [("alice", None), ("alice", "bob"), (None, "bob")],
+                         ids=["kept-when-final-has-none", "not-replaced", "not-added"])
+def test_finalize_keeps_the_maker_recorded_when_the_receipt_was_accepted(tmp_path, accepted, final):
+    from gateway.receipts import RouteReceipt
+    path = tmp_path / "receipts.db"
+    receipt_store.init_db(path)
+    first = RouteReceipt(protocol="test", intent="chat", maker_person_id=accepted)
+    receipt_store.begin(first, now_ms=100, path=path)
+    later = RouteReceipt(protocol="test", intent="chat", request_id=first.request_id, maker_person_id=final)
+    later.finish("succeeded", now_ms=140)
+    assert receipt_store.finalize(later, path=path)
+    row = receipt_store.get(first.request_id, audience="internal", path=path)
+    assert row.get("maker_person_id") == accepted
