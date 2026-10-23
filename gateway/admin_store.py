@@ -2157,6 +2157,76 @@ def delete_trusted_address(
     return _row_to_dict(row)
 
 
+def adopt_app_credential(
+    cred_id: str, *, app_id: str, person_id: str, session: session_guard.BrowserSession | None = None,
+    now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Make ``person_id`` the creator of a live key on ``app_id`` (owner visibility §3.5: keeping an unproven key).
+
+    The sign-in is checked and the audit row is written in the same transaction as the change, so a sign-out
+    that lands first changes nothing. A key that already names the person is returned as it is and writes
+    nothing. None when no live App key with that id is on the App.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM credentials WHERE id = ? AND subject_kind = 'app' AND revoked_at IS NULL "
+            "AND COALESCE(NULLIF(app_id, ''), subject_id) = ?", (cred_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        if row["created_by"] == person_id:
+            conn.rollback()
+            return _credential_row_to_dict(row)
+        conn.execute("UPDATE credentials SET created_by = ? WHERE id = ?", (person_id, cred_id))
+        _record_audit_in_transaction(
+            conn, "credential.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="credential", target_id=cred_id,
+            metadata={"app_id": app_id, "prefix": row["prefix"], "previous_created_by": row["created_by"]},
+            now=ts,
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
+    return _credential_row_to_dict(row)
+
+
+def adopt_trusted_address(
+    app_id: str, entry_id: str, *, person_id: str, session: session_guard.BrowserSession | None = None,
+    now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Make ``person_id`` the creator of one trusted address on ``app_id`` (owner visibility §3.5).
+
+    Same rules as ``adopt_app_credential``: one transaction with the audit row, nothing written when the
+    address already names the person, None when the App has no such address.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        if row["created_by"] == person_id:
+            conn.rollback()
+            return _row_to_dict(row)
+        conn.execute("UPDATE app_trusted_addresses SET created_by = ? WHERE id = ?", (person_id, entry_id))
+        _record_audit_in_transaction(
+            conn, "app.trusted_address.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
+            target_kind="app", target_id=app_id,
+            metadata={"address": row["address"], "entry_id": entry_id, "previous_created_by": row["created_by"]},
+            now=ts,
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (entry_id,)).fetchone()
+    return _row_to_dict(row)
+
+
 def enable_app(
     app_id: str, *, path: Path = DB_PATH
 ) -> dict[str, Any] | None:
@@ -3893,6 +3963,8 @@ __all__ = [
     "list_trusted_addresses",
     "add_trusted_address",
     "delete_trusted_address",
+    "adopt_app_credential",
+    "adopt_trusted_address",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",

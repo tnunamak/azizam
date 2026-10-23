@@ -240,6 +240,8 @@ from gateway.user_runtime import (
     get_user_app_credential,
     get_user_receipt,
     add_user_trusted_address,
+    adopt_user_app_key,
+    adopt_user_trusted_address,
     mint_user_app_key,
     rename_person_app,
     rename_person_key,
@@ -16726,6 +16728,48 @@ async def user_portal_add_trusted_address(app_id: str, request: Request):
         return _user_action_response_error(exc)
     return JSONResponse(
         status_code=201,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_key(credential_id: str, request: Request):
+    """Keep an unproven key on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        credential = adopt_user_app_key(session, credential_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Keep an unproven trusted address on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        record = adopt_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
         content={"trusted_address": record},
         headers={"cache-control": "no-store"},
     )

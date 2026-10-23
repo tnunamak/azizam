@@ -553,6 +553,74 @@ def add_user_trusted_address(
     return record
 
 
+def _require_own_app(app: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, Any]:
+    """The App the signed-in person answers for, or the refusal to keep one of its bindings (owner visibility §3.5)."""
+    if app is None:
+        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
+    if app.get("owner_user_id") != str(user["id"]):
+        raise UserPortalError(
+            "not_your_app",
+            "Only the person this App answers for can keep one of its keys or trusted addresses.",
+            status_code=403,
+        )
+    if app.get("disabled_at"):
+        raise UserPortalError("app_disabled", "App is disabled", status_code=403)
+    return app
+
+
+def adopt_user_app_key(
+    session: AdminSession,
+    credential_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Keep an App key on an App the signed-in person answers for: they become its recorded creator.
+
+    Only an unproven key needs this (a key with no creator, or another person's). The cut-over keeps a key
+    that names its person and revokes the rest, so keeping one is how a person saves a key they still use.
+    """
+    user = _user_from_session(session, path=path)
+    credential = admin_store.get_credential(credential_id, path=path)
+    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
+        raise _credential_not_found()
+    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    try:
+        record = admin_store.adopt_app_credential(
+            credential_id, app_id=app_id, person_id=str(user["id"]),
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if record is None:  # revoked since the check above
+        raise _credential_not_found()
+    out = _sanitize_credential(record)
+    out["active"] = True
+    return out
+
+
+def adopt_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    entry_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator."""
+    user = _user_from_session(session, path=path)
+    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    try:
+        record = admin_store.adopt_trusted_address(
+            app_id, entry_id, person_id=str(user["id"]),
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if record is None:
+        raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
+    return record
+
+
 def ensure_try_session_key(
     session: AdminSession,
     *,
