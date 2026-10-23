@@ -42,6 +42,8 @@
     "/gateway/v1/providers/{provider}": "d21a265bddb83a49c435cabf71f6ee0ba40870cfee90ca6fdefbef7234cdbf67",
     "/gateway/v1/receipts": "0bc3375eb4bdb78d6b71ba6594f7044668302c0b3f0fac382178020ef520a6a8",
     "/gateway/v1/receipts/{request_id}": "aa501d786c6087bc93524e43c82173475715475448f536480d407e20f8af2b85",
+    "/gateway/v1/requests": "d8f4fc426f064f0bb9f3fa21a049606d2a427187438abbdf0da1d26dfcc1b3c6",
+    "/gateway/v1/requests/{record_id}": "df6c29db90aec350ae6af84578df85435287ea10ea9036ceafc347823ab789f4",
     "/gateway/v1/resources": "c3c1638cb69a48cd70e6094b81b677846ee71fb7b915902306ab468a4fc1b354",
     "/gateway/v1/workflows": "a6cad1dd57878822650b1de1e14a4352f57457724da2aef6ff9af5136611df3b",
     "/gateway/v1/workflows/bernini-r-remix/run": "fc733293d5544537331af4bf44623cfdb50598450e0a4369905fcd6f143faf3d",

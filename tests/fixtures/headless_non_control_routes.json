@@ -1,6 +1,8 @@
 [
   ["DELETE", "/api/delete", "proxy.ollama_delete"],
   ["DELETE", "/gateway/v1/providers/{provider}/{native_path:path}", "proxy.provider_native_request"],
+  ["DELETE", "/gateway/v1/requests", "gateway.request_history_api.delete_all_requests"],
+  ["DELETE", "/gateway/v1/requests/{record_id}", "gateway.request_history_api.delete_request"],
   ["DELETE", "/mcp", "gateway.mcp_server.mcp_no_stream"],
   ["DELETE", "/native/{engine_id}/{native_path:path}", "proxy.native_engine_request"],
   ["DELETE", "/ollama/api/delete", "proxy.ollama_delete"],
@@ -51,6 +53,8 @@
   ["GET", "/gateway/v1/providers/{provider}/{native_path:path}", "proxy.provider_native_request"],
   ["GET", "/gateway/v1/receipts", "gateway.api.list_receipts"],
   ["GET", "/gateway/v1/receipts/{request_id}", "gateway.api.get_receipt"],
+  ["GET", "/gateway/v1/requests", "gateway.request_history_api.list_requests"],
+  ["GET", "/gateway/v1/requests/{record_id}", "gateway.request_history_api.read_request"],
   ["GET", "/gateway/v1/resources", "gateway.api.list_resources"],
   ["GET", "/gateway/v1/workflows", "gateway.api.list_workflows"],
   ["GET", "/gateway/v1/workflows/{workflow_id}", "gateway.api.get_workflow"],

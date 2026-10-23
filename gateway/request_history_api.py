@@ -179,14 +179,14 @@ def create_request_history_router(
             return _error(401, "unauthorized", "Sign in required.", kind="authentication_error")
         return str(session.subject)
 
-    @router.get("/me/api/retention")
+    @router.get("/me/api/retention", include_in_schema=False)
     def get_my_retention(request: Request) -> Any:
         person = _session_person(request)
         if isinstance(person, JSONResponse):
             return person
         return _choice(person)
 
-    @router.put("/me/api/retention")
+    @router.put("/me/api/retention", include_in_schema=False)
     async def put_my_retention(request: Request) -> Any:
         session = session_provider(request)
         if session is None:

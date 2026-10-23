@@ -171,6 +171,8 @@ def _deliberate(key: str) -> str | None:
         return "deleted"
     if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
         return "native"
+    if path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/") or path == "/me/api/retention":
+        return "request_history"  # the maker's kept requests and the member's own choice; tests/test_request_history_*.py
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
@@ -275,6 +277,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
             continue  # new member routes; tests/test_me_avatar.py and tests/test_avatar_signin.py cover them
+        if kind == "request_history" and key not in old:
+            continue  # new maker routes and the member choice; tests/test_request_history_*.py cover them
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -314,7 +318,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered", "request_history"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue
