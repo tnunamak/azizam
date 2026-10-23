@@ -567,9 +567,13 @@ class AdminSQLiteStore:
         return _plan_record(record)
 
     def list_trusted_addresses(self, *, app_id: str) -> list[dict[str, Any]] | None:
-        if admin_store.get_app(app_id, path=self.path) is None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is None:
             return None
-        return admin_store.list_trusted_addresses(app_id, path=self.path)
+        entries = admin_store.list_trusted_addresses(app_id, path=self.path)
+        # What the cut-over does to each entry, and the remedy the App's person has (the rule their keep route applies).
+        view = admin_store.cutover_for_bindings(app.get("owner_user_id"), addresses=entries, path=self.path)
+        return [{**entry, **view.get(entry["id"], {})} for entry in entries]
 
     def add_trusted_address(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext

@@ -34,6 +34,7 @@ from __future__ import annotations
 from gateway import app_binding_guard, request_connections, secret_store, session_guard
 from gateway import retention as retention_contract
 from gateway.compat import get_env
+from gateway.receipt_context import person_label
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
 import json
@@ -2214,6 +2215,54 @@ def _address_creations(conn: sqlite3.Connection, app_id: str, entry_id: str) -> 
     return creations
 
 
+CUTOVER_KEEP = "keep"
+CUTOVER_REPLACE = "replace"
+CUTOVER_READD = "readd"
+
+
+def cutover_for_bindings(
+    person_id: str | None, *, keys: Iterable[Mapping[str, Any]] = (),
+    addresses: Iterable[Mapping[str, Any]] = (), path: Path = DB_PATH,
+) -> dict[str, dict[str, str]]:
+    """What the App-binding cut-over does to each binding, and the one remedy the App's person has for it.
+
+    The cut-over keeps a key or address only when its recorded creator is the App's person (the preview in
+    gateway/app_binding_preview.py). Every other binding is removed, so each one gets a remedy. The remedy is
+    decided here, by the rule the keep routes apply (``_keep_provable``): ``keep`` when that rule accepts the
+    binding, otherwise ``replace`` for a key and ``readd`` for an address. Bindings the cut-over keeps are not in
+    the result. A binding whose stored creator is another person also gets ``made_by_name``.
+
+    ``keys`` and ``addresses`` are rows with ``id``, ``app_id`` and ``created_by``. ``person_id`` is the App's
+    accountable person; None means no one can keep anything, so the result is empty.
+    """
+    if not person_id:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    creators: dict[str, str | None] = {}
+    with _conn(path) as conn:
+        for key in keys:
+            if key["created_by"] == person_id:
+                continue
+            proven = _keep_provable(conn, person_id, key["created_by"], _key_creations(conn, key["id"]))
+            out[key["id"]] = {"cutover": CUTOVER_KEEP if proven else CUTOVER_REPLACE}
+            creators[key["id"]] = key["created_by"]
+        for entry in addresses:
+            if entry["created_by"] == person_id:
+                continue
+            proven = _keep_provable(conn, person_id, entry["created_by"],
+                                    _address_creations(conn, entry["app_id"], entry["id"]))
+            out[entry["id"]] = {"cutover": CUTOVER_KEEP if proven else CUTOVER_READD}
+            creators[entry["id"]] = entry["created_by"]
+    # Names are read after the connection above is closed, one lookup per creator.
+    labels: dict[str, str] = {}
+    for binding_id, creator in creators.items():
+        if creator and creator != person_id:
+            if creator not in labels:
+                labels[creator] = person_label(get_user(creator, path=path) or {})
+            out[binding_id]["made_by_name"] = labels[creator]
+    return out
+
+
 def adopt_app_credential(
     cred_id: str, *, app_id: str, person_id: str, session: session_guard.BrowserSession | None = None,
     now: int | None = None, path: Path = DB_PATH,
@@ -4069,6 +4118,7 @@ __all__ = [
     "adopt_trusted_address",
     "KeepNotProvable",
     "replace_app_credential",
+    "cutover_for_bindings",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",

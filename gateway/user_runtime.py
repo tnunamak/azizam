@@ -174,13 +174,16 @@ def _plan_summary(
 
 def _credentials_for_app(
     app_id: str, *, path: Path, active: Mapping[str, list[dict[str, Any]]] | None = None,
+    cutover: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """``active`` holds every listed app's credentials, read in one query."""
+    """``active`` holds every listed app's credentials, read in one query. ``cutover`` holds the remedy of each key the
+    cut-over would remove (``admin_store.cutover_for_bindings``); a key the cut-over keeps carries none."""
     credentials = []
     for record in (admin_store.list_active_credentials(subject_kind="app", app_id=app_id, path=path)
                    if active is None else active.get(app_id, ())):
         item = _sanitize_credential(record)
         item["active"] = True
+        item.update(cutover.get(record["id"], {}) if cutover else {})
         credentials.append(item)
     return credentials
 
@@ -223,14 +226,25 @@ def _live_role_for_user(user_id: str, *, path: Path) -> str:
     return "none"
 
 
-def _addresses_without_creator(apps: list[dict[str, Any]], *, path: Path) -> dict[str, int]:
-    """How many trusted addresses on each of these Apps have no recorded creator (owner visibility step 2)."""
-    app_ids = {str(app["id"]) for app in apps}
+def _cutover_view(
+    person_id: str, apps: list[dict[str, Any]], credentials_by_app: Mapping[str, list[dict[str, Any]]], *,
+    owner: bool, path: Path,
+) -> tuple[dict[str, dict[str, str]], dict[str, int] | None]:
+    """The cut-over's remedy for each binding on these Apps, and for the owner, how many trusted addresses on each App
+    have one (owner visibility step 2). Keys are read for every person; addresses only for the owner, who lists them."""
+    keys = [key for app in apps for key in credentials_by_app.get(str(app["id"]), [])]
+    addresses: list[dict[str, Any]] = []
+    if owner and apps:
+        listed = {str(app["id"]) for app in apps}
+        addresses = [entry for entry in admin_store.list_trusted_addresses(path=path) if entry["app_id"] in listed]
+    view = admin_store.cutover_for_bindings(person_id, keys=keys, addresses=addresses, path=path)
+    if not owner:
+        return view, None
     counts: dict[str, int] = {}
-    for entry in admin_store.list_trusted_addresses(path=path):
-        if entry.get("created_by") is None and entry["app_id"] in app_ids:
+    for entry in addresses:
+        if entry["id"] in view:
             counts[entry["app_id"]] = counts.get(entry["app_id"], 0) + 1
-    return counts
+    return view, counts
 
 
 def _app_payload(
@@ -239,9 +253,10 @@ def _app_payload(
     path: Path,
     credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
     plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
-    addresses_without_creator: Mapping[str, int] | None = None,
+    cutover: Mapping[str, Mapping[str, str]] | None = None,
+    addresses_to_check: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
+    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app, cutover=cutover)
     plan = _plan_summary(app, path=path, listing=plan_listing)
     payload: dict[str, Any] = {
         "id": app.get("id"),
@@ -256,9 +271,9 @@ def _app_payload(
         "created_at": app.get("created_at"),
     }
     # Sent to the owner only: the owner is the one who lists and keeps an App's trusted addresses. Keys carry
-    # their creator in `credentials`, so the Apps page counts those itself.
-    if addresses_without_creator is not None:
-        payload["addresses_without_creator"] = addresses_without_creator.get(str(app["id"]), 0)
+    # their remedy in `credentials`, so the Apps page counts those itself.
+    if addresses_to_check is not None:
+        payload["addresses_to_check"] = addresses_to_check.get(str(app["id"]), 0)
     return payload
 
 
@@ -305,13 +320,13 @@ def build_user_portal_snapshot(
         {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
     ) if listed else None
     role = _live_role_for_user(str(user["id"]), path=path)
-    addresses_without_creator = (
-        _addresses_without_creator(listed, path=path) if listed and role == "owner" else None
+    cutover, addresses_to_check = _cutover_view(
+        str(user["id"]), listed, credentials_by_app, owner=role == "owner", path=path,
     )
     apps: list[dict[str, Any]] = [
         _app_payload(
             app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing,
-            addresses_without_creator=addresses_without_creator,
+            cutover=cutover, addresses_to_check=addresses_to_check,
         )
         for app in listed
     ]
@@ -568,29 +583,15 @@ def add_user_trusted_address(
     return record
 
 
-def _require_own_app(app: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, Any]:
-    """The App the signed-in person answers for, or the refusal to keep one of its bindings (owner visibility §3.5)."""
-    if app is None:
-        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
-    if app.get("owner_user_id") != str(user["id"]):
-        raise UserPortalError(
-            "not_your_app",
-            "Only the person this App answers for can keep one of its keys or trusted addresses.",
-            status_code=403,
-        )
-    if app.get("disabled_at"):
-        raise UserPortalError("app_disabled", "App is disabled", status_code=403)
-    return app
-
-
 KEEP_KEY_REFUSED = (
     "Nobody can prove who made this key, so it cannot be kept. Replace it instead: "
     "POST /me/api/credentials/{credential_id}/replace issues a new key on this App (shown once) and revokes this one."
 )
+# The address must be removed before it is added again: an App holds each address once, so the add would be refused.
 KEEP_ADDRESS_REFUSED = (
-    "Nobody can prove who added this address, so it cannot be kept. Add it again yourself with "
-    "POST /me/api/apps/{app_id}/trusted-addresses, then delete this one with "
-    "DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}."
+    "Nobody can prove who added this address, so it cannot be kept. Remove it with "
+    "DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}, then add it again yourself with "
+    "POST /me/api/apps/{app_id}/trusted-addresses."
 )
 
 
@@ -603,14 +604,15 @@ def adopt_user_app_key(
     """Keep an App key on an App the signed-in person answers for: they become its recorded creator.
 
     Only the owner keeps, and only a key nobody else could have made (owner visibility §3.5). Any other key is
-    refused with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``).
+    refused with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``). Another
+    person's App is not found (404), the same answer as adding an address to it.
     """
     user = _user_from_session(session, path=path)
     credential = admin_store.get_credential(credential_id, path=path)
     if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
         raise _credential_not_found()
     app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
     try:
         record = admin_store.adopt_app_credential(
             credential_id, app_id=app_id, person_id=str(user["id"]),
@@ -644,7 +646,7 @@ def replace_user_app_key(
     if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
         raise _credential_not_found()
     app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    app = _require_own_app(admin_store.get_app(app_id, path=path), user)
+    app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
     api_key = generate_app_api_key()
     try:
         record = admin_store.replace_app_credential(
@@ -673,10 +675,10 @@ def adopt_user_trusted_address(
     """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator.
 
     Only the owner keeps, and only an address nobody else could have added. Any other address is refused with
-    ``keep_not_provable``: the person adds it again and then removes this entry.
+    ``keep_not_provable``: the person removes this entry and then adds the address again.
     """
     user = _user_from_session(session, path=path)
-    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
     try:
         record = admin_store.adopt_trusted_address(
             app_id, entry_id, person_id=str(user["id"]),
