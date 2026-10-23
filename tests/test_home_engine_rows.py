@@ -254,7 +254,7 @@ def test_the_grid_deadline_ends_a_trickling_probe_and_keeps_the_other_rows():
 
 
 def test_the_grid_deadline_reports_a_lifecycle_check_that_does_not_finish_as_unknown(monkeypatch):
-    async def never_finishes(target, backends):
+    async def never_finishes(target, backends, state=None):  # state: the systemd batch's answer for this engine
         await asyncio.Event().wait()
 
     monkeypatch.setattr(status_endpoint, "_lifecycle_probe", never_finishes)
