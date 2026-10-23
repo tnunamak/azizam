@@ -1,6 +1,7 @@
 // Principal state: the invite creates a member, so the address is namespaced
 // and two copies of this case can run at once (fixtures/isolation.ts).
 import { expect, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("invited member creates a password account and signs in again", async ({
   browser,
@@ -122,6 +123,7 @@ test("a refused invitation sign-in shows the sign-out screen, and Back goes back
       oidc_label: "Household accounts",
       oidc_url: "/login?return_to=%2Finvite%2F",
       instance_name: "Azizam",
+      fresh_sign_in: true,
     }),
   );
   await page.goto("/sign-in/?error=not_fresh&return_to=%2Finvite%2F&provider_sign_out=1");
