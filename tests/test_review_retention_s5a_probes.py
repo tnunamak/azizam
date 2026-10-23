@@ -120,7 +120,6 @@ def _kept(media: Path) -> list[str]:
 # ------------------------------------------------------------------ 1. the secret floor
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: bracket-flattened multipart names bypass rule 8")
 @pytest.mark.parametrize("name", ["headers[Authorization]", "provider[api_key]", "auth[password]",
                                   "extensions[com.example][api_key]"])
 def test_a_bracketed_multipart_credential_field_is_removed(name):
@@ -131,7 +130,6 @@ def test_a_bracketed_multipart_credential_field_is_removed(name):
     assert CANARY not in json.dumps(kept)
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: a signed URL inside text keeps its query values")
 def test_a_signed_url_inside_message_text_loses_its_query_values():
     """Rule 4 is 'URLs inside a body'. Only a string that is a whole URL is scrubbed; a pasted signed URL in a
     message keeps its signature."""
@@ -140,7 +138,6 @@ def test_a_signed_url_inside_message_text_loses_its_query_values():
     assert CANARY not in json.dumps(kept)
 
 
-@pytest.mark.xfail(strict=True, reason="review follow-up: tool-call arguments are a JSON string, not parsed")
 def test_a_credential_field_inside_tool_call_arguments_is_removed():
     args = json.dumps({"url": "https://api.example.test/v1", "api_key": CANARY})
     body = {"messages": [{"role": "assistant", "tool_calls": [

@@ -35,8 +35,13 @@ RESPONSE_HEADERS = frozenset({"content-type"})
 
 _CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "credentials", "authorization", "apikey"})
 _CREDENTIAL_PAIRS = frozenset({("api", "key"), ("access", "token"), ("refresh", "token"), ("id", "token"), ("auth", "token")})
-_SEGMENT_BOUNDARY = re.compile(r"[-_\s.]+|(?<=[a-z0-9])(?=[A-Z])")
+# One tokenizer for every name the secret floor reads. Brackets split too: a nested form value arrives as
+# ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
+_SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
+#: A URL inside a longer string runs to the next space or quote; punctuation that closes a sentence is not part of it.
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`]+")
+_URL_TRAILING_PUNCTUATION = ".,;:!?)]}"
 
 _TABLE = """
 CREATE TABLE IF NOT EXISTS kept_requests (
@@ -124,12 +129,41 @@ def _redact_text(value: str, found: set[str]) -> Any:
         found.add("media")
         return {"omitted": "media", "media_type": "unknown", "bytes": len(value) * 3 // 4}
     scrubbed = _scrub_url(value)
-    if scrubbed is None:
-        return value
-    text, changed = scrubbed
-    if changed:
-        found.add("url_parts_removed")
-    return text
+    if scrubbed is not None:
+        text, changed = scrubbed
+        if changed:
+            found.add("url_parts_removed")
+        return text
+    if "http://" in value or "https://" in value:
+        return _scrub_urls_in_text(value, found)
+    return value
+
+
+def _scrub_urls_in_text(value: str, found: set[str]) -> str:
+    """Rule 4 for a URL inside a longer string, such as a pasted signed link: each URL found is scrubbed as a whole."""
+    def scrub(match: re.Match[str]) -> str:
+        url = match.group(0)
+        core = url.rstrip(_URL_TRAILING_PUNCTUATION)
+        scrubbed = _scrub_url(core)
+        if scrubbed is None:
+            return url
+        text, changed = scrubbed
+        if changed:
+            found.add("url_parts_removed")
+        return text + url[len(core):]
+
+    return _URL_IN_TEXT.sub(scrub, value)
+
+
+def _redact_arguments(text: str, found: set[str]) -> Any:
+    """A tool call's ``arguments`` is a JSON string. Its JSON is cleaned like any JSON; text that is not JSON is cleaned as text."""
+    try:
+        parsed = json.loads(text)
+    except (ValueError, RecursionError):
+        return _redact_text(text, found)
+    if not isinstance(parsed, (dict, list)):
+        return _redact_text(text, found)
+    return json.dumps(_redact(parsed, found), ensure_ascii=False)
 
 
 def _redact(value: Any, found: set[str]) -> Any:
@@ -139,6 +173,8 @@ def _redact(value: Any, found: set[str]) -> Any:
             if is_credential_name(str(key)):
                 result[key] = REMOVED
                 found.add("credential_field")
+            elif key == "arguments" and isinstance(item, str):
+                result[key] = _redact_arguments(item, found)
             else:
                 result[key] = _redact(item, found)
         return result
