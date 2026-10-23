@@ -4,9 +4,10 @@ docs/design/REQUEST_RETENTION.md sections 3.5 (parts and the secret floor), 3.6 
 This module holds the kind's rules and its store. It decides nothing about policy: ``retention`` does that, and
 the capture layer (``request_history_capture``) calls it once per request.
 
-The secret floor is code, not data: a credential-named field is removed at any depth, a URL keeps its scheme, host, port
-and path (its query and fragment become markers), a large media string is not copied, and a body the gateway does not
-parse is recorded as omitted. Only the request headers and reply headers named below are kept.
+The secret floor is code, not data: a credential-named field is removed at any depth, a URL keeps its scheme, host and
+port, and its path except a segment that reads as a credential or a token (its query and fragment become markers), a
+large media string is not copied, and a body the gateway does not parse is recorded as omitted. Only the request
+headers and reply headers named below are kept.
 """
 from __future__ import annotations
 
@@ -56,6 +57,10 @@ _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _SCHEME_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+.-")
 _SCHEME_LETTER = re.compile(r"[A-Za-z]")
 _WHITESPACE = re.compile(r"\s")
+#: A path segment is a token (R8-1) when it is 20 or more characters from this set, with a letter and a digit.
+_TOKEN_CHARACTERS = re.compile(r"[A-Za-z0-9_-]{20,}")
+_LETTER = re.compile(r"[A-Za-z]")
+_DIGIT = re.compile(r"[0-9]")
 #: What a URL reads as when it holds an ``@`` or cannot be split into its parts. The whole URL is replaced, so no part
 #: of it is kept.
 URL_REMOVED = "[url removed]"
@@ -168,11 +173,21 @@ def _url_runs(text: str) -> list[tuple[int, int]]:
     return runs
 
 
+def _is_token_segment(segment: str) -> bool:
+    """Rule 4 for one path segment (R8-1). A segment with a colon is a token, as an ``<id>:<secret>`` pair is. So is a
+    segment of 20 or more characters from ``[A-Za-z0-9_-]`` that holds a letter and a digit, as a webhook token or a
+    UUID is. Only the shape is read, so a short slug and a numeric id are kept."""
+    if ":" in segment:
+        return True
+    return (_TOKEN_CHARACTERS.fullmatch(segment) is not None
+            and _LETTER.search(segment) is not None and _DIGIT.search(segment) is not None)
+
+
 def _scrub_url(url: str) -> tuple[str, bool]:
     """Rule 4 for one URL (R7-1). An ``@`` or ``%40`` anywhere replaces the whole URL, as does one that cannot be split
-    into a scheme and a non-empty ASCII host. Otherwise the scheme, host, port and path are kept, a path segment that is
-    a credential name becomes ``[removed]``, and a query or fragment becomes a marker, ``?[removed]`` or ``#[removed]``.
-    The second value says whether any part was removed."""
+    into a scheme and a non-empty ASCII host. Otherwise the scheme, host and port are kept, a path segment that is a
+    credential name or a token (R8-1) becomes ``[removed]``, and a query or fragment becomes a marker, ``?[removed]`` or
+    ``#[removed]``. The second value says whether any part was removed."""
     if "@" in url or "%40" in url:
         return URL_REMOVED, True
     try:
@@ -183,7 +198,7 @@ def _scrub_url(url: str) -> tuple[str, bool]:
     if not parts.scheme or not parts.hostname or not parts.hostname.isascii():
         return URL_REMOVED, True
     segments = parts.path.split("/")
-    kept = [REMOVED if is_credential_name(segment) else segment for segment in segments]
+    kept = [REMOVED if is_credential_name(segment) or _is_token_segment(segment) else segment for segment in segments]
     text = f"{parts.scheme}://{parts.netloc}{'/'.join(kept)}"
     if parts.query:
         text += f"?{REMOVED}"
