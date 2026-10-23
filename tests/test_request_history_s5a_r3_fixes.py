@@ -311,8 +311,10 @@ def _receipts() -> dict[str, dict]:
 
 
 def _new_receipt(before: dict[str, dict]) -> dict:
-    """The one receipt written since ``before`` was taken. Two requests in one second cannot be told apart by time."""
-    fresh = [row for request_id, row in _receipts().items() if request_id not in before]
+    """The one image receipt written since ``before`` was taken. Two requests in one second cannot be told apart by time,
+    so the receipts are told apart by what is new, and by their route."""
+    fresh = [row for request_id, row in _receipts().items()
+             if request_id not in before and row.get("path") == "/v1/images/generations"]
     assert len(fresh) == 1, fresh
     return fresh[0]
 
