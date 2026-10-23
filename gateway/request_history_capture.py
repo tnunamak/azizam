@@ -296,15 +296,19 @@ class _Capture:
         except Exception:
             log.warning("request history decision could not be read", exc_info=False)
             decision = retention.Decision(getattr(identity, "person_id", None), False, "storage_unavailable", kind=KIND)
-        if decision.keep:
+        if decision.keep and self.complete:
+            # The body was whole before the caller was known, so its controls are read now: a forget takes no slot, and
+            # no reply is buffered for it (R6-3). The decision is published after this, under the lock in decide_once.
+            await self.settle_body_controls()
+        if decision.keep and self._early_reason is None:
             self.admitted = _PENDING.acquire(blocking=False)
         self._decision = decision
 
     async def settle_body_controls(self) -> None:
-        """Read the body's controls as soon as the body is whole. A forget, or a control that cannot be read in full,
-        settles the outcome now, so the slot is given back while the route still runs (R4-4)."""
-        if self._decision is None or not self.admitted:
-            return
+        """Read the body's controls once the body is whole. A forget, or a control that cannot be read in full, settles
+        the outcome now, so the slot is given back while the route still runs (R4-4). The caller has checked that the
+        decision keeps the body. It runs when the body completes with a slot held, and at the first decision for a body
+        that was already whole (R6-3)."""
         try:
             await asyncio.to_thread(self.body.result)
         except Exception:
@@ -332,7 +336,7 @@ class _Capture:
                 else:
                     self._fed = False
                 self.complete = not message.get("more_body", False)
-                if self.complete:
+                if self.complete and self.admitted:
                     await self.settle_body_controls()
             elif message["type"] == "http.disconnect":
                 self.disconnected = True
