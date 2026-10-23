@@ -855,7 +855,7 @@ describe("Library honesty and access", () => {
     }
   });
 
-  test.each(["first load", "remount", "kind filter", "deep link"])(
+  test.each(["first load", "remount", "search filter", "deep link"])(
     "test_owner_library_all_fetches_are_own (%s)",
     async (lifecycle) => {
       session.viewer = { role: "owner", name: "Alex", id: "alex" };
@@ -901,16 +901,11 @@ describe("Library honesty and access", () => {
           view = renderLibrary();
           await screen.findByRole("button", { name: /^Open Alex image,/ });
         }
-        if (lifecycle === "kind filter") {
-          fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
-          paths.length = 0;
-          await screen.findByRole("button", { name: /^Open Alex image,/ });
-        }
         expect(view.container.querySelector('img[src="/signed/alex-thumb"]')).not.toBeNull();
-        if (lifecycle === "kind filter") {
-          await waitFor(() => expect(paths.some((path) => new URL(path, "https://test.invalid").searchParams.get("kind") === "image")).toBe(true));
-        } else {
-          await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
+        await waitFor(() => expect(paths.some((path) => path.includes("/alex-poster/download"))).toBe(true));
+        if (lifecycle === "search filter") {
+          fireEvent.change(screen.getByRole("textbox", { name: "Search your creations" }), { target: { value: "Alex" } });
+          await waitFor(() => expect(paths.some((path) => new URL(path, "https://test.invalid").searchParams.get("q") === "Alex")).toBe(true));
         }
         if (lifecycle !== "deep link") {
           navigation.searchParams.set("asset", "alex-detail");
@@ -922,8 +917,8 @@ describe("Library honesty and access", () => {
         await waitFor(() => expect(anchorClick).toHaveBeenCalled());
         fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
         await waitFor(() => expect(share).toHaveBeenCalledOnce());
-        fireEvent.click(within(dialog).getByRole("button", { name: "Actions for Alex detail" }));
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Download with details" }));
+        await userEvent.click(within(dialog).getByRole("button", { name: "Actions for Alex detail" }));
+        await userEvent.click(await screen.findByRole("menuitem", { name: "Download with details" }));
         await waitFor(() => expect(paths.some((path) => path.includes("/alex-detail/download?metadata=full"))).toBe(true));
         expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media")).toBe(true);
         expect(paths.some((path) => new URL(path, "https://test.invalid").pathname === "/me/api/media/alex-detail")).toBe(true);
