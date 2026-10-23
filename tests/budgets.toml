@@ -264,7 +264,8 @@
 # punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
-pytest = 16953
+# Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
+pytest = 16988
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
