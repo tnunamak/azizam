@@ -22,7 +22,7 @@ def _url(user_info: str, rest: str) -> str:
 
 
 def _escaped_slashes(text: str) -> str:
-    """A JSON string literal of ``text`` with each slash written as ``\\u002f``, so no ``://`` shows in the encoded text."""
+    """A JSON string literal of ``text`` with each slash as ``\\u002f``, so no ``://`` shows in the encoded text."""
     return json.dumps(text).replace("/", "\\u002f")
 
 
