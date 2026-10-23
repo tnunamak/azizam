@@ -188,7 +188,7 @@ def test_the_refresher_builds_each_interval_and_stops_once_the_idle_window_has_p
     start, task = run(scenario())
 
     assert task.done()
-    assert built == [start + INTERVAL * i for i in range(WINDOW // INTERVAL)]
+    assert built == [start + INTERVAL * i for i in range(int(WINDOW // INTERVAL))]
 
 
 def test_a_read_inside_the_window_keeps_the_refresher_going(clock, snapshot_state):
@@ -263,7 +263,7 @@ def test_concurrent_reads_start_one_refresher(clock, snapshot_state):
 
     start = run(scenario())
 
-    assert built == [start + INTERVAL * i for i in range(WINDOW // INTERVAL)], "one build per interval, not per read"
+    assert built == [start + INTERVAL * i for i in range(int(WINDOW // INTERVAL))], "one build per interval, not per read"
 
 
 def test_an_idle_gateway_spawns_no_status_process(clock, snapshot_state, monkeypatch):
