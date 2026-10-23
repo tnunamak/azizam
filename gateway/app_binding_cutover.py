@@ -63,8 +63,8 @@ def accept(admin_db: Path, digest: str, accepted_by: str) -> str:
             body = app_binding_preview.build(conn, as_of=int(time.time()))
             current = app_binding_preview.digest(body)
             if current != digest:
-                raise CutoverError(f"the database changed since this preview; its digest is now {current}. "
-                                   "Re-run the preview and accept that digest.")
+                raise CutoverError(f"the database changed since this preview (its digest is now {current}); "
+                                   "re-run the preview and accept that digest.")
             _require_unblocked(body)
             record_acceptance(conn, current, accepted_by)
             conn.execute("COMMIT")
@@ -231,7 +231,8 @@ def _operator() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m gateway.app_binding_cutover", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="python -m gateway.app_binding_cutover",
+                                     description="Accept, then apply, the ownership cut-over for App keys and trusted addresses.")
     commands = parser.add_subparsers(dest="command", required=True)
     accept_cmd = commands.add_parser("accept", help="record that the owner accepts the preview with this digest")
     accept_cmd.add_argument("--admin-db", required=True, type=Path)

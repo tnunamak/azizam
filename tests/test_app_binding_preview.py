@@ -178,20 +178,17 @@ def test_an_app_whose_only_binding_is_an_address_is_blocked_while_its_use_histor
     assert app["id"] in body["summary"]["apps_blocking_apply"]
 
 
-def test_session_apps_are_listed_and_their_unproven_bindings_are_classified_like_any_other(db):
-    # The apply revokes every unproven App key, so the preview must list the session App's keys too.
+def test_session_apps_are_listed_and_marked_and_hold_no_bindings(db):
+    # The schema refuses a credential on a session App, so the preview lists it with nothing to classify.
     owner = _person(db, "owner@example.test")
     session_app = admin_store.ensure_session_app_for_user(owner["id"], name="Azizam", path=db)
-    _unguarded(db)
-    _insert_key(db, session_app["id"], created_by=None)
 
     body = _json(db)
 
     listed = next(app for app in body["apps"] if app["app_id"] == session_app["id"])
     assert listed["session_app"] is True
-    assert [key["action"] for key in listed["keys"]] == ["revoke"]
+    assert listed["keys"] == [] and listed["trusted_addresses"] == []
     assert body["summary"]["session_apps"] == 1
-    assert body["summary"]["keys_to_revoke"] == 1
 
 
 def test_the_digest_ignores_the_clock_and_the_last_use_time_of_a_key_that_is_not_decisive(db):
