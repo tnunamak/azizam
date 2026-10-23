@@ -9,11 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
 
-from gateway import admin_store, media_jobs, receipt_store
+from gateway import admin_store, media_jobs, receipt_store, request_history
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 from tests.support import gateway as gateway_support
 from tests.support.gateway import gateway_client, register_litellm, use_admin_db
@@ -74,7 +75,7 @@ def _kept_rows(media: Path) -> list[sqlite3.Row]:
         conn.close()
 
 
-def test_a_chat_request_from_a_new_member_is_kept_once_with_its_accepted_body(chat_gateway):
+def test_a_chat_request_from_a_new_member_is_kept_once_with_its_request_and_reply(chat_gateway):
     tmp_path, media, _ = chat_gateway
     body = {"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]}
     response = _post(body)
@@ -86,7 +87,21 @@ def test_a_chat_request_from_a_new_member_is_kept_once_with_its_accepted_body(ch
     assert row["person_id"]
     assert row["kept_until"] is not None
     assert SENTENCE in row["parts_json"]
-    assert "received" not in row["parts_json"]  # default parts: accepted only (registry/retention.yml)
+    # The default keeps what was sent and what came back (registry/retention.yml, D50).
+    parts = json.loads(row["parts_json"])
+    assert set(parts) == {"accepted", "received"}
+    assert parts["received"]["status"] == 200
+
+
+def test_a_member_who_chose_sent_only_keeps_the_request_without_its_reply(chat_gateway):
+    tmp_path, media, db = chat_gateway
+    person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
+    request_history.set_member_choice(person_id, keep=True, retention_id="7_days", parts=["accepted"],
+                                      admin_path=db, path=media, now=int(time.time()))
+    response = _post({"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]})
+    assert response.status_code == 200, response.text
+    row = _kept_rows(media)[-1]
+    assert set(json.loads(row["parts_json"])) == {"accepted"}
 
 
 def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(chat_gateway):
@@ -98,7 +113,7 @@ def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(c
 
 
 def test_a_member_who_keeps_replies_also_gets_the_status_and_the_reply_body(chat_gateway):
-    """The received part is kept only for a member whose parts include it (section 3.5); default is accepted only."""
+    """The received part is kept for a member whose parts include it (section 3.5), and the status and body come with it."""
     tmp_path, media, db = chat_gateway
     conn = sqlite3.connect(db)
     person = conn.execute("SELECT id FROM users WHERE subject='fixture-person' OR email LIKE 'fixture%' LIMIT 1").fetchone()

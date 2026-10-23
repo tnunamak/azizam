@@ -56,12 +56,19 @@ def _keep_one(member) -> None:
     }, path=member.media)
 
 
-def test_a_new_member_sees_history_on_with_the_default_period_and_accepted_parts(member):
+def test_a_new_member_sees_history_on_with_the_default_period_and_replies(member):
     body = TestClient(member.app).get("/me/api/retention").json()
     assert body["keep"] is True
     assert body["retention"] == "7_days"
-    assert body["parts"] == ["accepted"]
+    assert body["parts"] == ["accepted", "received"]
     assert body["choices"] == ["1_day", "7_days", "30_days"]
+
+
+def test_a_member_who_chose_sent_only_keeps_sent_only_under_the_replies_default(member):
+    client = TestClient(member.app)
+    response = client.put("/me/api/retention", json={"keep": True, "retention": "7_days", "parts": ["accepted"]})
+    assert response.status_code == 200, response.text
+    assert client.get("/me/api/retention").json()["parts"] == ["accepted"]
 
 
 def test_the_choice_names_the_parts_the_gateway_offers_so_a_screen_can_offer_them(member):
