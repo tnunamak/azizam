@@ -117,6 +117,8 @@ def _forget_requested(body: request_history.BodyCapture) -> bool:
 
     Every media type is read for a JSON control, because the routes parse one whatever the Content-Type says. A form
     is also read for its fields, as the routes read a form."""
+    if body.duplicate_control:
+        return True
     if body.media_type == "multipart/form-data":
         return _form_forget(body.control_source or {}, body.control_files)
     if body.form_source is not None and _form_forget(body.form_source, set()):

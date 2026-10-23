@@ -267,7 +267,10 @@
 # tests/test_request_history_notice.py and 14 in tests/test_request_history_preview.py. The base commit c0402b68e
 # collects 16837: slice 5b1 added cases without moving the ceiling, so this sets the measured count, not the sum.
 # Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 16852 (2026-10-23).
-pytest = 16852
+# Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
+# Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
+# Merge of main into slice 5b1: provisional until re-measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+pytest = 16988
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
