@@ -64,6 +64,11 @@ def test_a_new_member_sees_history_on_with_the_default_period_and_accepted_parts
     assert body["choices"] == ["1_day", "7_days", "30_days"]
 
 
+def test_the_choice_names_the_parts_the_gateway_offers_so_a_screen_can_offer_them(member):
+    body = TestClient(member.app).get("/me/api/retention").json()
+    assert body["allowed_parts"] == ["accepted", "received"]
+
+
 def test_turning_it_off_erases_the_kept_requests_and_refuses_new_ones(member):
     _keep_one(member)
     assert _kept(member.media, member.person) == 1
