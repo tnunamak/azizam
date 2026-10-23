@@ -17,6 +17,7 @@ import uuid
 import pytest
 
 from gateway import admin_store, app_binding_preview, step_up
+from gateway.receipt_context import person_label
 from gateway.runtime_auth import hash_api_key
 from tests.support.app_keys import before_the_cut_over, issue_app_key
 from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway, owner_and_admin, signed_in  # noqa: F401  (gateway is a fixture)
@@ -186,8 +187,9 @@ def test_a_member_who_is_not_the_owner_cannot_keep_an_address_and_is_told_to_add
     assert refused.status_code == 409, refused.text
     error = refused.json()["error"]
     assert error["code"] == "keep_not_provable"
+    assert f"DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}" in error["message"]
     assert f"POST /me/api/apps/{app_id}/trusted-addresses" in error["message"]
-    assert "then delete" in error["message"]
+    assert error["message"].index("DELETE") < error["message"].index("POST")  # removed first: an App holds each address once
     assert _creator_of_address(gateway, entry_id) is None
     assert _audit(gateway, "app.trusted_address.adopt") == []
 
@@ -802,24 +804,99 @@ def test_the_cut_over_preview_gives_each_binding_its_remedy(gateway):
 
     assert (key["action"], key["remedy"], key["administrators"]) == ("revoke", "keep", ["Helper Person"])
 
+# --- What the snapshot and the address list tell the person: the remedy each binding needs --------------
 
 def _snapshot_app(client, app_id):
     snapshot = client.get("/me/api/session").json()
     return next(app for app in snapshot["apps"] if app["id"] == app_id)
 
 
-def test_the_owner_is_told_how_many_addresses_on_their_app_have_no_creator_until_they_keep_them(gateway):
-    owner = owner_and_admin(gateway)[0]
-    assert owner.get("/me/api/session").json()["user"]["role"] == "owner"
+def _key_cutovers(client, app_id):
+    """{key id: remedy} for each key the cut-over would remove. A key the cut-over keeps has no entry."""
+    return {key["id"]: key["cutover"] for key in _snapshot_app(client, app_id)["credentials"] if "cutover" in key}
+
+
+def _address_cutovers(client, app_id):
+    """{entry id: remedy} for each address the cut-over would remove, from the owner's address list."""
+    entries = client.get(f"/admin/api/apps/{app_id}/trusted-addresses").json()["trusted_addresses"]
+    return {entry["id"]: entry["cutover"] for entry in entries if "cutover" in entry}
+
+
+def test_the_owner_is_offered_keep_for_an_unproven_key_and_the_count_covers_their_addresses(gateway):
+    owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
     hall = _own_app(owner, name="Hall")
     before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, hall)
     entry_id = _unproven_address(gateway, hall, "10.0.0.7")
-    assert _snapshot_app(owner, hall)["addresses_without_creator"] == 1
+    assert _key_cutovers(owner, hall) == {key_id: "keep"}
+    assert _snapshot_app(owner, hall)["addresses_to_check"] == 1
 
     kept = owner.post(f"/me/api/apps/{hall}/trusted-addresses/{entry_id}/adopt", headers=_headers(owner))
 
     assert kept.status_code == 200, kept.text
-    assert _snapshot_app(owner, hall)["addresses_without_creator"] == 0
+    assert _snapshot_app(owner, hall)["addresses_to_check"] == 0
+
+
+def test_a_member_is_offered_replace_for_an_unproven_key_on_their_own_app_because_the_owner_exists(gateway):
+    owner_and_admin(gateway)
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    assert _key_cutovers(desk, app_id) == {key_id: "replace"}
+    assert "made_by_name" not in _snapshot_app(desk, app_id)["credentials"][0]  # nobody is recorded as its maker
+
+
+def test_a_key_another_person_made_is_offered_replace_and_the_remedy_names_its_maker(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _member(gateway, "desk")
+    desk_user = gateway.user("desk@example.test")
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id, created_by=desk_user["id"])
+
+    credential = _snapshot_app(owner, app_id)["credentials"][0]
+    assert credential["id"] == key_id
+    assert credential["cutover"] == "replace"
+    assert credential["made_by_name"] == person_label(desk_user)
+
+
+def test_the_marked_bindings_are_exactly_the_ones_the_cut_over_removes_and_each_remedy_matches_the_keep_route(gateway):
+    owner, owner_id, app_id = _owner_and_app(gateway)
+    _member(gateway, "desk")
+    desk_user = gateway.user("desk@example.test")
+    before_the_cut_over(gateway.path)
+    own_key = _unproven_key(gateway, app_id, created_by=owner_id)  # the cut-over keeps it
+    legacy_key = _unproven_key(gateway, app_id)  # keep: nobody else is recorded, and the owner is the only owner
+    made_key = _unproven_key(gateway, app_id, created_by=desk_user["id"])  # replace: another person made it
+    legacy_address = _unproven_address(gateway, app_id, "10.0.0.31")  # keep
+    made_address = _unproven_address(gateway, app_id, "10.0.0.32", created_by=desk_user["id"])  # readd
+
+    conn = app_binding_preview.connect_read_only(gateway.path)
+    try:
+        listed = next(app for app in app_binding_preview.build(conn, as_of=1_800_000_000)["apps"]
+                      if app["app_id"] == app_id)
+    finally:
+        conn.close()
+    removed = ({key["id"] for key in listed["keys"] if key["action"] == "revoke"}
+               | {entry["id"] for entry in listed["trusted_addresses"] if entry["action"] == "remove"})
+    assert removed == {legacy_key, made_key, legacy_address, made_address}
+    assert own_key not in removed
+
+    assert _key_cutovers(owner, app_id) == {legacy_key: "keep", made_key: "replace"}
+    assert _address_cutovers(owner, app_id) == {legacy_address: "keep", made_address: "readd"}
+    entries = {entry["id"]: entry for entry in owner.get(f"/admin/api/apps/{app_id}/trusted-addresses").json()["trusted_addresses"]}
+    assert entries[made_address]["made_by_name"] == person_label(desk_user)
+    assert "made_by_name" not in entries[legacy_address]
+
+    assert owner.post(f"/me/api/credentials/{legacy_key}/adopt", headers=_headers(owner)).status_code == 200
+    assert owner.post(f"/me/api/credentials/{made_key}/adopt", headers=_headers(owner)).status_code == 409
+    assert owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{legacy_address}/adopt",
+                      headers=_headers(owner)).status_code == 200
+    assert owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{made_address}/adopt",
+                      headers=_headers(owner)).status_code == 409
+    assert _key_cutovers(owner, app_id) == {made_key: "replace"}
+    assert _address_cutovers(owner, app_id) == {made_address: "readd"}
 
 
 def test_a_member_is_not_sent_a_count_of_addresses_they_cannot_list(gateway):
@@ -828,4 +905,16 @@ def test_a_member_is_not_sent_a_count_of_addresses_they_cannot_list(gateway):
     before_the_cut_over(gateway.path)
     _unproven_address(gateway, app_id, "10.0.0.8")
 
-    assert "addresses_without_creator" not in _snapshot_app(desk, app_id)
+    assert "addresses_to_check" not in _snapshot_app(desk, app_id)
+
+
+def test_an_address_an_app_already_trusts_cannot_be_added_again_so_an_unkept_one_is_removed_first(gateway):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    first = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk), json={"address": "10.0.0.40"})
+    assert first.status_code == 201, first.text
+
+    again = desk.post(f"/me/api/apps/{app_id}/trusted-addresses", headers=_headers(desk), json={"address": "10.0.0.40"})
+
+    assert again.status_code == 400, again.text
+    assert again.json()["error"]["code"] == "invalid_trusted_address"

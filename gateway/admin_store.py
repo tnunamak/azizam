@@ -34,6 +34,7 @@ from __future__ import annotations
 from gateway import app_binding_guard, request_connections, secret_store, session_guard
 from gateway import retention as retention_contract
 from gateway.compat import get_env
+from gateway.receipt_context import person_label
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
 import json
@@ -2230,20 +2231,6 @@ def _accountable_person_changed(conn: sqlite3.Connection, app_id: str, person_id
     return False
 
 
-def _keep_provable(conn: sqlite3.Connection, person_id: str, app_id: str, recorded: str | None,
-                   creations: list[tuple[str, str | None]]) -> bool:
-    """A binding is kept only when nobody else could have made it (D55 amendment).
-
-    The creator on record is unknown or the person, every audit event that created it names the person, the person is the
-    sole current owner, and the App never answered to anyone else.
-    """
-    if recorded not in (None, "", person_id):
-        return False
-    if not all(kind == "user" and actor == person_id for kind, actor in creations):
-        return False
-    return _sole_current_owner(conn, person_id) and not _accountable_person_changed(conn, app_id, person_id)
-
-
 def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> list[str]:
     """Display names of everyone who held the admin, superadmin or owner role at any time, other than ``person_id``.
 
@@ -2283,7 +2270,14 @@ def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapp
     if answers and binding["created_by"] == person_id:
         return {"remedy": KEEP, "administrators": []}
     creations = _key_creations(conn, binding["id"]) if kind == "key" else _address_creations(conn, app_id, binding["id"])
-    if not (answers and _keep_provable(conn, person_id, app_id, binding["created_by"], creations)):
+    # The amended keep rule (D55): the recorded creator is unknown or the person, every audit event that made the
+    # binding names the person, the person is the sole current owner, and the App never answered to anyone else.
+    proven = (
+        answers and binding["created_by"] in (None, "", person_id)
+        and all(actor_kind == "user" and actor == person_id for actor_kind, actor in creations)
+        and _sole_current_owner(conn, person_id) and not _accountable_person_changed(conn, app_id, person_id)
+    )
+    if not proven:
         return {"remedy": REPLACE if kind == "key" else READD, "administrators": []}
     return {"remedy": KEEP, "administrators": keep_administrators(conn, person_id=person_id)}
 
@@ -2315,6 +2309,45 @@ def _address_creations(conn: sqlite3.Connection, app_id: str, entry_id: str) -> 
         if json.loads(metadata or "{}").get("entry_id") == entry_id:
             creations.append((kind, actor))
     return creations
+
+
+def cutover_for_bindings(
+    person_id: str | None, *, keys: Iterable[Mapping[str, Any]] = (),
+    addresses: Iterable[Mapping[str, Any]] = (), path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """The remedy each binding the App-binding cut-over would remove has, for the person it is shown to.
+
+    The cut-over keeps a key or address only when its recorded creator is the App's person (the preview in
+    gateway/app_binding_preview.py). Every other binding is removed, so each one gets the remedy that
+    ``binding_cutover_remedy`` names: ``keep`` (with the ``administrators`` to confirm, if any), ``replace`` for a key,
+    or ``readd`` for an address. A binding whose stored creator is another person also gets ``made_by_name``.
+    Bindings the person already holds are not in the result. None means no one can keep anything, so the result is
+    empty.
+
+    ``keys`` and ``addresses`` are rows with ``id``, ``app_id`` and ``created_by``.
+    """
+    if not person_id:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    creators: dict[str, str | None] = {}
+    with _conn(path) as conn:
+        for kind, rows in (("key", keys), ("address", addresses)):
+            for binding in rows:
+                if binding["created_by"] == person_id:
+                    continue
+                remedy = binding_cutover_remedy(
+                    conn, kind=kind, binding=binding, app_id=binding["app_id"], person_id=person_id,
+                )
+                out[binding["id"]] = {"cutover": remedy["remedy"], "administrators": remedy["administrators"]}
+                creators[binding["id"]] = binding["created_by"]
+    # Names are read after the connection above is closed, one lookup per creator.
+    labels: dict[str, str] = {}
+    for binding_id, creator in creators.items():
+        if creator:
+            if creator not in labels:
+                labels[creator] = person_label(get_user(creator, path=path) or {})
+            out[binding_id]["made_by_name"] = labels[creator]
+    return out
 
 
 def adopt_app_credential(
@@ -4188,6 +4221,7 @@ __all__ = [
     "binding_cutover_remedy",
     "keep_administrators",
     "replace_app_credential",
+    "cutover_for_bindings",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",
