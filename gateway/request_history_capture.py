@@ -264,6 +264,9 @@ class _Capture:
         #: keep, and it is released when the write is done, so a request that keeps nothing never holds one.
         self.admitted = False
         self._decision: retention.Decision | None = None
+        #: Set when the body's controls settle the outcome as the body completes (a forget, or a control that cannot be
+        #: read in full). Nothing is kept then, and the admission slot has already been given back.
+        self._early_reason: str | None = None
         self._deciding = asyncio.Lock()
 
     @property
@@ -295,6 +298,28 @@ class _Capture:
             self.admitted = _PENDING.acquire(blocking=False)
         self._decision = decision
 
+    async def settle_body_controls(self) -> None:
+        """Read the body's controls as soon as the body is whole. A forget, or a control that cannot be read in full,
+        settles the outcome now, so the slot is given back while the route still runs (R4-4)."""
+        if self._decision is None or not self.admitted:
+            return
+        try:
+            await asyncio.to_thread(self.body.result)
+        except Exception:
+            self._settle_early("incomplete")
+            return
+        if _forget_requested(self.body):
+            self._settle_early("request_forget")
+        elif not self.body.control_readable():
+            self._settle_early("incomplete")
+
+    def _settle_early(self, reason: str) -> None:
+        """Nothing will be kept: the receipt records ``reason`` at the end, the slot is given back now, and the reply is
+        no longer buffered."""
+        self._early_reason = reason
+        self.reply = None
+        self.release()
+
     def receive_wrapped(self, receive: Callable) -> Callable:
         async def wrapped() -> dict:
             message = await receive()
@@ -305,6 +330,8 @@ class _Capture:
                 else:
                     self._fed = False
                 self.complete = not message.get("more_body", False)
+                if self.complete:
+                    await self.settle_body_controls()
             elif message["type"] == "http.disconnect":
                 self.disconnected = True
             return message
@@ -352,6 +379,10 @@ class _Capture:
         decision = self._decision
         if not decision.keep:
             _record_entry(receipt_id, retention.WriteOutcome(False, decision.reason), [])
+            return
+        if self._early_reason is not None:
+            # The body's controls settled this as the body completed, and the slot was given back then (R4-4).
+            _record_entry(receipt_id, retention.WriteOutcome(False, self._early_reason), [])
             return
         if not self.admitted:
             _record_entry(receipt_id, retention.WriteOutcome(False, "storage_unavailable"), [])
