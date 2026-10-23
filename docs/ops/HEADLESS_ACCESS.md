@@ -243,10 +243,11 @@ device. The server keeps the rows, and the page gets a tile for each name.
   `{"email", "password"}`, never both. A tile only names a person. The person's
   own password still has to match, and a wrong one counts toward the same limit
   as an email sign-in. That limit is 60 attempts per address in 15 minutes
-  (`AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` sets the 60) and 10 per email. `"remember"` is three-valued: `true` keeps the person on
-  this device's list, `false` takes that person off this device's list after a
-  successful sign-in, and omitted or `null` leaves the list alone (headless
-  clients). A tile sign-in never adds a name.
+  (`AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` sets the 60) and 10 per email.
+  `"remember"` is three-valued: `true` keeps the person on this device's list,
+  `false` takes that person off this device's list after a successful sign-in,
+  and omitted or `null` leaves the list alone (headless clients). A tile sign-in
+  never adds a name.
 - `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
   person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
   email in any URL. The callback accepts only a fresh sign-in by the person the
