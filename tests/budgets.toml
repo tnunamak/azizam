@@ -263,7 +263,10 @@
 # Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
 # punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
-pytest = 16813
+# Owner visibility step 3 slice 1: +36 cases in test_library_paths.py and
+# +1 owner/admin/member activity-feed case. Focused hermetic run collected the
+# affected files; no full-suite collection was run. Total: 16813 + 37 = 16850.
+pytest = 16850
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -286,14 +289,19 @@ pytest = 16813
 # administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
 # Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
 # administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
-vitest = 3232
+# Owner visibility step 3 slice 1: replace three maker-display tests with one
+# private-copy check and reduce the owner fetch lifecycle matrix from five to four.
+# Affected-file Vitest run: 147 cases; suite budget: 3232 - 4 = 3228.
+vitest = 3228
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
 # playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
 # playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
-playwright = 525
+# Owner visibility step 3 slice 1: the Library owner fetch matrix moves from five
+# cases to four; gate total 525 - 1 = 524.
+playwright = 524
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

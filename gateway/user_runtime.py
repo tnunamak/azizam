@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping
 
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
+from gateway.content_access import Own, ReceiptRecord, Viewer, decide
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
@@ -391,12 +392,7 @@ def build_user_activity_snapshot(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return recent API-call receipts for the signed-in Home page.
-
-    Members are scoped server-side to their owned Apps. Owners see the
-    instance-level feed by default, including service apps and no-key local
-    network receipts.
-    """
+    """Return recent receipts for the signed-in person's owned Apps."""
     if session is None:
         return {"authenticated": False, "receipts": []}
     try:
@@ -409,24 +405,43 @@ def build_user_activity_snapshot(
         }
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
-    owned = _owned_app_ids(str(user["id"]), path=path)
-    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
-    owner = bool(owner_roles & {"owner", "superadmin"})
-    receipts = receipt_store.recent(
+    user_id = str(user["id"])
+    owned = _owned_app_ids(user_id, path=path)
+    viewer = Viewer(
+        person_id=user_id,
+        owner_keys=frozenset(f"app:{app_id}" for app_id in owned),
+        auth_kind="session",
+    )
+    candidates = receipt_store.recent(
         limit=safe_limit,
         audience="client",
-        viewer_person_id=str(user["id"]),
-        # OWNER_VISIBILITY_STEP3: remove owner-everyone activity scope.
-        app_ids=None if owner else owned,
+        viewer_person_id=user_id,
+        app_ids=owned,
         path=receipts_path,
     )
+    receipts = []
+    for receipt in candidates:
+        app_id = receipt.get("app_id")
+        if not isinstance(app_id, str) or not app_id:
+            continue
+        decision = decide(
+            viewer,
+            ReceiptRecord(
+                owner_keys=frozenset({f"app:{app_id}"}),
+                app_id=app_id,
+                request_id=str(receipt.get("request_id") or "") or None,
+            ),
+            "read",
+        )
+        if isinstance(decision, Own):
+            receipts.append(receipt)
     return {
         "authenticated": True,
         # No fabricated rows: an empty list means the user has made no
         # attributable calls yet (or none in the retention window).
         "receipts": receipts,
         "scoped_app_count": len(owned),
-        "scope": "instance" if owner else "me",
+        "scope": "me",
     }
 
 

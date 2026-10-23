@@ -4,10 +4,8 @@ import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
-  createContext,
   memo,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -56,15 +54,7 @@ import { MakingTile } from "@/components/product/making-tile";
 import { DelayedSpinner } from "@/components/product/status-ui";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
-import {
-  PersonMark,
-  type PersonAvatarState,
-} from "@/components/product/person-mark";
-import { useAvatarDirectory } from "@/lib/use-avatars";
-import {
-  KeyValueList,
-  type KeyValueItem,
-} from "@/components/product/key-value";
+import { KeyValueList, type KeyValueItem } from "@/components/product/key-value";
 import {
   AudioFace,
   DayChip,
@@ -103,7 +93,6 @@ import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
 import { markCreationOpened } from "@/components/jobs/opened-creations";
-import { api, queryKeys } from "@/lib/api";
 import { networkFetch } from "@/lib/network-error";
 import { accountApi } from "@/lib/account-api";
 import {
@@ -262,8 +251,6 @@ function buildMediaPath(filters: {
   model: string;
   date: DateFilter;
   search: string;
-  owner: string;
-  source: string;
 }) {
   const params = new URLSearchParams({ limit: "40" });
   if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
@@ -276,13 +263,6 @@ function buildMediaPath(filters: {
     );
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
-  // Default and Mine are the same view; send the scope explicitly.
-  if (filters.owner === "everyone")
-    params.set("scope", "everyone");
-  else if (filters.owner === "mine" || filters.owner === "default")
-    params.set("scope", "me");
-  else params.set("person", filters.owner);
-  if (filters.source !== "all") params.set("source", filters.source);
   return `/me/api/media?${params.toString()}`;
 }
 
@@ -291,16 +271,12 @@ function hasActiveFilters(filters: {
   model: string;
   date: DateFilter;
   search: string;
-  owner: string;
-  source: string;
 }) {
   return (
     filters.kind !== "all" ||
     filters.model !== "all" ||
     filters.date !== "all" ||
-    filters.search.trim() !== "" ||
-    (filters.owner !== "default" && filters.owner !== "mine") ||
-    filters.source !== "all"
+    filters.search.trim() !== ""
   );
 }
 
@@ -605,10 +581,9 @@ function UnavailablePreview({
  */
 async function prepareDownload(
   asset: MediaAsset,
-  everyone: boolean,
   withDetails = false,
 ) {
-  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}${withDetails ? "&metadata=full" : ""}`;
+  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download${withDetails ? "?metadata=full" : ""}`;
   const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
   const link = document.createElement("a");
   link.href = payload.download_url;
@@ -622,8 +597,8 @@ async function prepareDownload(
  * Falls back to sharing the creation's title alone if files cannot be
  * shared; the signed link would expire, so it is never shared.
  */
-async function shareCreation(asset: MediaAsset, everyone: boolean) {
-  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
+async function shareCreation(asset: MediaAsset) {
+  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download`;
   const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
   let media: Response;
   try {
@@ -694,7 +669,6 @@ function AudioTile({
   duration,
   sizeBytes,
   visible,
-  everyone,
 }: {
   assetId: string;
   src: string;
@@ -702,7 +676,6 @@ function AudioTile({
   duration?: number | null;
   sizeBytes?: number | null;
   visible: boolean;
-  everyone: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const renewedSrc = useRef<string | null>(null);
@@ -794,7 +767,7 @@ function AudioTile({
             if (error === "media") {
               setBuffering(true);
               const renewed = await mediaRequest<{ download_url: string }>(
-                `/me/api/media/${encodeURIComponent(assetId)}/download?scope=${everyone ? "everyone" : "me"}`,
+                `/me/api/media/${encodeURIComponent(assetId)}/download`,
               );
               if (!renewed.download_url) throw new Error("Missing audio");
               if (!audio.isConnected) return;
@@ -1082,12 +1055,10 @@ function LargeVideoPlayer({
 function Preview({
   asset,
   large = false,
-  everyone = false,
   visible = true,
 }: {
   asset: MediaAsset;
   large?: boolean;
-  everyone?: boolean;
   visible?: boolean;
 }) {
   const src = asset.download_url ?? null;
@@ -1115,12 +1086,12 @@ function Preview({
     isError: posterLoadFailed,
     refetch: refetchPoster,
   } = useQuery({
-    queryKey: ["library", "poster", asset.poster_asset_id, everyone],
+    queryKey: ["library", "poster", asset.poster_asset_id],
     // Off-screen tiles wait: one poster link per video would flood a large Library.
     enabled: posterEnabled,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
-        `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
+        `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download`,
       ),
     retry: false,
   });
@@ -1174,7 +1145,7 @@ function Preview({
           setRetryKey((value) => value + 1);
           if (asset.poster_asset_id) void refetchPoster();
           void mediaRequest<{ download_url?: string }>(
-            `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`,
+            `/me/api/media/${encodeURIComponent(asset.asset_id)}/download`,
           ).then(
             (payload) => {
               if (payload?.download_url) {
@@ -1400,75 +1371,6 @@ function Preview({
 }
 
 /* ------------------------------------------------------------------ */
-/* People: who made a creation                                         */
-/* ------------------------------------------------------------------ */
-
-type PersonLookup = (asset: MediaAsset) => string | null;
-
-/** A maker's person id and avatar by display name, so every mark draws from the same id. */
-type MakerMarkFor = (name: string) => {
-  personId?: string | null;
-  avatar?: PersonAvatarState | null;
-};
-const MakerMarksContext = createContext<MakerMarkFor>(() => ({}));
-
-function MakerMark(props: Omit<Parameters<typeof PersonMark>[0], "personId" | "avatar">) {
-  const mark = useContext(MakerMarksContext)(props.name);
-  return <PersonMark {...props} {...mark} />;
-}
-
-function usePeople(enabled: boolean, sources: MediaSource[]) {
-  const {
-    data: users,
-    isError,
-    isFetching,
-    refetch,
-  } = useQuery({
-    queryKey: queryKeys.users,
-    queryFn: api.users.list,
-    enabled,
-    retry: false,
-  });
-  const people = useMemo(
-    () =>
-      (users ?? [])
-        .map((user) => ({
-          id: user.id,
-          name: (user.display_name || user.name || "").trim(),
-        }))
-        .filter((person) => person.name && !person.name.includes("@")),
-    [users],
-  );
-  // Preserve the first match, as find() did, including an absent app id.
-  const ownersByApp = useMemo(() => {
-    const owners = new Map<string | undefined, string | null | undefined>();
-    for (const source of sources) {
-      if (!owners.has(source.app_id))
-        owners.set(source.app_id, source.owner_user_id);
-    }
-    return owners;
-  }, [sources]);
-  const namesById = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const person of people) {
-      if (!names.has(person.id)) names.set(person.id, person.name);
-    }
-    return names;
-  }, [people]);
-  const lookup: PersonLookup = useCallback((asset) => {
-    if (asset.owner_name) return asset.owner_name;
-    const appId =
-      asset.source?.app_id ??
-      (asset.source?.id?.startsWith("app:")
-        ? asset.source.id.slice(4)
-        : undefined);
-    const owner = ownersByApp.get(appId);
-    return owner == null ? null : namesById.get(owner) ?? null;
-  }, [ownersByApp, namesById]);
-  return { people, lookup, query: { isError, isFetching, refetch } };
-}
-
-/* ------------------------------------------------------------------ */
 /* Grid                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1523,16 +1425,12 @@ function navigateTiles(event: KeyboardEvent<HTMLDivElement>) {
 const AssetTile = memo(function AssetTile({
   asset,
   onOpen,
-  everyone,
-  person,
   selected,
   day,
   today,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
-  everyone: boolean;
-  person: string | null;
   selected: boolean;
   /** Local day boundary; unchanged during unrelated page updates. */
   today: number;
@@ -1540,7 +1438,6 @@ const AssetTile = memo(function AssetTile({
   day?: string | null;
 }) {
   const { ref: visibilityRef, visible } = usePreviewVisible();
-  const [makerTooltip, setMakerTooltip] = useState(false);
   const playableAudio =
     asset.kind === "audio" && asset.download_url && asset.available !== false;
   const hoverTitle = playableAudio
@@ -1551,30 +1448,13 @@ const AssetTile = memo(function AssetTile({
     ? null
     : tileDate(toDateValue(asset.created_at), new Date(today));
   return (
-    <article
-      className="group relative min-w-0"
-      onMouseEnter={() => setMakerTooltip(true)}
-      onMouseLeave={(event) =>
-        setMakerTooltip(event.currentTarget.contains(document.activeElement))
-      }
-      onFocus={() => setMakerTooltip(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget))
-          setMakerTooltip(false);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setMakerTooltip(false);
-      }}
-    >
+    <article className="group relative min-w-0">
       <button
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
         className="rounded-media absolute inset-0 z-10 min-h-6 min-w-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         aria-label={assetOpenLabel(asset)}
-        aria-describedby={
-          everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
-        }
       />
       <div
         ref={visibilityRef}
@@ -1587,7 +1467,6 @@ const AssetTile = memo(function AssetTile({
           <AudioTile
             key={mediaResource(asset.download_url!)}
             assetId={asset.asset_id}
-            everyone={everyone}
             src={asset.download_url!}
             title={assetTitle(asset)}
             duration={asset.duration_s}
@@ -1598,41 +1477,20 @@ const AssetTile = memo(function AssetTile({
           <Preview
             key={`preview-${asset.asset_id}-${asset.download_url}`}
             asset={asset}
-            everyone={everyone}
             visible={visible}
           />
         )}
         {/* Play, type and duration form one control; the day is the second
-            persistent overlay. Maker and supplemental facts remain on focus. */}
-        {/* D1.6: the day on the first tile of each day, and the maker when
-            the whole household is shown; the grid stays continuous. */}
+            persistent overlay. */}
         {day ? (
           <span data-tile-cue="day" className="pointer-events-none absolute top-2 left-2 z-20">
             <DayChip>{day}</DayChip>
           </span>
         ) : null}
-        {everyone && person ? (
-          <MakerMark
-            name={person}
-            size="2xs"
-            label={person}
-            className="ring-media-badge absolute top-2 right-2 z-20 ring-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
-          />
-        ) : null}
-        {everyone && person && makerTooltip ? (
-          <span
-            id={`maker-${asset.asset_id}`}
-            role="tooltip"
-            className="bg-media-badge text-media-badge-foreground text-badge pointer-events-none absolute top-8 right-2 z-30 max-w-full rounded-badge px-2 py-1"
-          >
-            Made by {person}
-          </span>
-        ) : null}
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
             a wide screen, hover or keyboard focus shows a short title (whole
-            words, two lines) and the day. The maker is the mark and its
-            tooltip, and the day is not repeated where its chip shows. The
+            words, two lines) and the day. The day is not repeated where its
             button's name carries the full prompt for screen readers. */}
         {hoverTitle || hoverDate ? (
           <div
@@ -1667,13 +1525,7 @@ function MoreFilters({
   models,
   date,
   setDate,
-  source,
-  setSource,
-  sources,
-  instanceView,
   nameModel,
-  phoneExtras,
-  phoneActive = 0,
   onClear,
 }: {
   model: string;
@@ -1681,22 +1533,13 @@ function MoreFilters({
   models: string[];
   date: DateFilter;
   setDate: (value: DateFilter) => void;
-  source: string;
-  setSource: (value: string) => void;
-  sources: MediaSource[];
-  instanceView: boolean;
   nameModel: NameModel;
-  /** Controls that live in the row on wide screens and here on a phone. */
-  phoneExtras?: ReactNode;
-  /** How many of those are set, for the count on a phone. */
-  phoneActive?: number;
   /** Clear every filter; shown here on a phone, beside the row elsewhere. */
   onClear?: () => void;
 }) {
   const active =
     (model !== "all" ? 1 : 0) +
-    (date !== "all" ? 1 : 0) +
-    (source !== "all" ? 1 : 0);
+    (date !== "all" ? 1 : 0);
   const badge = (count: number, className: string) =>
     count ? (
       <span
@@ -1718,22 +1561,11 @@ function MoreFilters({
         >
           <ListFilter aria-hidden="true" />
           <span className="max-sm:sr-only">Filters</span>
-          {/* A phone counts the person too, which lives in here. */}
-          {badge(
-            active + phoneActive,
-            "absolute -top-1.5 -right-1.5 flex sm:hidden",
-          )}
+          {badge(active, "absolute -top-1.5 -right-1.5 flex sm:hidden")}
           {badge(active, "max-sm:hidden sm:flex")}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-4">
-        {phoneExtras ? (
-          // Labelled like the filters under it (D1.5).
-          <div className="space-y-1.5 sm:hidden">
-            <p className="text-label">Person</p>
-            {phoneExtras}
-          </div>
-        ) : null}
         <div className="space-y-1.5">
           <p className="text-label">Model</p>
           <Select value={model} onValueChange={setModel}>
@@ -1767,24 +1599,6 @@ function MoreFilters({
             </SelectContent>
           </Select>
         </div>
-        {instanceView ? (
-          <div className="space-y-1.5">
-            <p className="text-label">App</p>
-            <Select value={source} onValueChange={setSource}>
-              <SelectTrigger aria-label="App" className="w-full">
-                <SelectValue placeholder="All apps" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All apps</SelectItem>
-                {sources.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ) : null}
         {onClear ? (
           <Button
             variant="outline"
@@ -1855,9 +1669,7 @@ function CreationViewer({
   assets,
   onSelect,
   onClose,
-  everyone,
   nameModel,
-  person,
   downloading,
   onDownload,
   onShare,
@@ -1869,9 +1681,7 @@ function CreationViewer({
   assets: MediaAsset[];
   onSelect: (asset: MediaAsset) => void;
   onClose: () => void;
-  everyone: boolean;
   nameModel: NameModel;
-  person: string | null;
   downloading: boolean;
   onDownload: (asset: MediaAsset, withDetails?: boolean) => void;
   onShare: (asset: MediaAsset) => void;
@@ -1886,9 +1696,9 @@ function CreationViewer({
 }) {
   useEffect(() => { pauseOtherMedia(); }, [asset.asset_id]);
   const { data: renewed, isFetching: renewing, isError: renewalFailed, refetch: renew } = useQuery({
-    queryKey: ["library", "download", asset.asset_id, everyone],
+    queryKey: ["library", "download", asset.asset_id],
     queryFn: () => mediaRequest<{ download_url: string }>(
-      `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`,
+      `/me/api/media/${encodeURIComponent(asset.asset_id)}/download`,
     ),
     staleTime: 0,
     refetchOnMount: "always",
@@ -1907,11 +1717,11 @@ function CreationViewer({
     isFetching: receiptFetching,
     refetch: retryReceipt,
   } = useQuery({
-    queryKey: ["library", "receipt", asset.request_id, everyone],
+    queryKey: ["library", "receipt", asset.request_id],
     enabled: Boolean(asset.request_id),
     queryFn: () =>
       mediaRequest<ReceiptCost>(
-        `/me/api/receipts/${encodeURIComponent(asset.request_id!)}${everyone ? "?scope=everyone" : ""}`,
+        `/me/api/receipts/${encodeURIComponent(asset.request_id!)}`,
       ),
     retry: false,
   });
@@ -2036,7 +1846,6 @@ function CreationViewer({
                   key={`${asset.asset_id}-${renewed.download_url}`}
                   asset={{ ...asset, download_url: renewed.download_url, available: true, unavailable_reason: null }}
                   large
-                  everyone={everyone}
                 /> : null}
               </div>
             </div>
@@ -2133,14 +1942,7 @@ function CreationViewer({
                 </div>
               </div>
               <p className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1">
-                {person ? (
-                  <>
-                    <MakerMark name={person} size="sm" />
-                    <span className="font-medium">{person}</span>
-                  </>
-                ) : (
-                  <span className="font-medium">{kindLabel(asset.kind)}</span>
-                )}
+                <span className="font-medium">{kindLabel(asset.kind)}</span>
                 {asset.created_at ? (
                   <span className="text-muted-foreground">
                     <time {...formatTimestamp(asset.created_at)} />
@@ -2387,7 +2189,6 @@ export default function LibraryPage() {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const removedAssetIds = useRef(new Set<string>());
   const deletingAssetId = useRef<string | null>(null);
-  const canChooseOwner = ["owner", "superadmin"].includes(viewer.role);
   const [kind, setKind] = useState("all");
   const [model, setModel] = useState("all");
   const [date, setDate] = useState<DateFilter>("all");
@@ -2395,8 +2196,6 @@ export default function LibraryPage() {
   // On a phone the search field opens from a button in the control row.
   const [phoneSearch, setPhoneSearch] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [owner, setOwner] = useState("default");
-  const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
@@ -2406,15 +2205,8 @@ export default function LibraryPage() {
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
-  const instanceView = canChooseOwner && !["default", "mine"].includes(owner);
   const debouncedSearch = useDebouncedValue(search, 250);
-  // The payload also supplies identity/apps, so keep its initial read. Only
-  // poll rapidly when running work can actually appear under these filters.
-  const showRunningMedia =
-    ["default", "everyone", "mine"].includes(owner) &&
-    model === "all" &&
-    source === "all" &&
-    !debouncedSearch.trim();
+  const showRunningMedia = model === "all" && !debouncedSearch.trim();
   const {
     data: home,
     isError: homeError,
@@ -2432,7 +2224,7 @@ export default function LibraryPage() {
         ? 15_000
         : false,
   });
-  const filters = { kind, model, date, search: debouncedSearch, owner, source };
+  const filters = { kind, model, date, search: debouncedSearch };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
   const { data: removalState, isPending: removalPending, isError: removalError } = useQuery({
@@ -2449,8 +2241,6 @@ export default function LibraryPage() {
     setModel("all");
     setDate("all");
     setSearch("");
-    setOwner("default");
-    setSource("all");
   }
   const openAsset = useCallback((asset: MediaAsset) => {
     setClosedDeepLinkId(null);
@@ -2486,13 +2276,7 @@ export default function LibraryPage() {
   } = useInfiniteQuery({
     queryKey: ["library", filters],
     initialPageParam: "",
-    // Results stay bound to the person filter that produced them: keep the old
-    // grid while other filters change, but never across a change of person.
-    placeholderData: (previous, previousQuery) =>
-      (previousQuery?.queryKey[1] as { owner?: string } | undefined)?.owner ===
-      owner
-        ? previous
-        : undefined,
+    placeholderData: (previous) => previous,
     queryFn: ({ pageParam, signal }) =>
       mediaRequest<MediaResponse>(
         mediaPath +
@@ -2504,21 +2288,16 @@ export default function LibraryPage() {
     getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
     retry: false,
   });
-  const lastLoadedPages = useRef<{ owner: string; pages: MediaResponse[] }>({
-    owner,
-    pages: [],
-  });
+  const lastLoadedPages = useRef<MediaResponse[]>([]);
   useEffect(() => {
     if (data && !isPlaceholderData)
-      lastLoadedPages.current = { owner, pages: data.pages };
-  }, [data, isPlaceholderData, owner]);
+      lastLoadedPages.current = data.pages;
+  }, [data, isPlaceholderData]);
   const mediaPages = useMemo(
     () =>
       data?.pages ??
-      (isError && lastLoadedPages.current.owner === owner
-        ? lastLoadedPages.current.pages
-        : []),
-    [data?.pages, isError, owner],
+      (isError ? lastLoadedPages.current : []),
+    [data?.pages, isError],
   );
   const assets = useMemo(() => {
     const listed = mediaPages
@@ -2535,13 +2314,9 @@ export default function LibraryPage() {
         !posters.has(item.asset_id) && (kind === "all" || item.kind === kind),
     );
   }, [mediaPages, kind]);
-  const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
-  const { people, lookup: personFor, query: peopleQuery } = usePeople(canChooseOwner, sources);
   useEffect(() => {
     setSelected((current) => current ? assets.find((item) => item.asset_id === current.asset_id) ?? current : null);
   }, [assets]);
-  const viewerPerson =
-    viewer.name && viewer.name !== "Your account" ? viewer.name : null;
   const hasLoadedAssets = assets.length > 0;
   const updating = isFetching && isPlaceholderData && hasLoadedAssets;
   const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
@@ -2560,11 +2335,11 @@ export default function LibraryPage() {
     isFetching: deepLinkedAssetFetching,
     refetch: refetchDeepLinkedAsset,
   } = useQuery({
-    queryKey: ["library", "asset", deepLinkedAssetId, instanceView],
+    queryKey: ["library", "asset", deepLinkedAssetId],
     enabled: Boolean(deepLinkedAssetId) && !listedDeepLinkedAsset,
     queryFn: () =>
       mediaRequest<{ asset: MediaAsset }>(
-        `/me/api/media/${encodeURIComponent(deepLinkedAssetId)}?scope=${instanceView ? "everyone" : "me"}`,
+        `/me/api/media/${encodeURIComponent(deepLinkedAssetId)}`,
       ),
     retry: false,
   });
@@ -2667,18 +2442,6 @@ export default function LibraryPage() {
   useEffect(() => {
     if (loadMoreFocus) focusTile(loadMoreFocus, removedAssetIds.current, headingRef.current);
   }, [loadMoreFocus]);
-  const visiblePeople = useMemo(
-    () => instanceView
-      ? Array.from(
-          new Set(
-            [...storedAssets, ...(goneOpen ? goneAssets : [])]
-              .map(personFor)
-              .filter((person): person is string => Boolean(person)),
-          ),
-        )
-      : [],
-    [instanceView, storedAssets, goneOpen, goneAssets, personFor],
-  );
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2693,33 +2456,13 @@ export default function LibraryPage() {
   ];
   const nameModel: NameModel = (id, workflowId) =>
     modelDisplayName(id, modelCatalog, nameCapabilities, workflowId);
-  // Delete only what the viewer made. In a person or "Everyone" view that must
-  // be shown by the creation's app; if it cannot be, Delete is not offered.
   const viewerUserId = home?.user?.id ?? null;
-  const viewerAppIds = new Set(
-    (Array.isArray(home?.apps) ? home.apps : []).map((app) => app.id),
-  );
   /** The viewer made this item: they hold its prompt, or the gateway names
    * them as its maker. Owning the App is not enough (CORE_CONTRACTS). */
   function isMaker(asset: MediaAsset) {
     if (asset.prompt) return true;
     const me = viewerUserId ?? viewer.id ?? null;
     return Boolean(me && asset.source?.person_id === me);
-  }
-  function madeByViewer(asset: MediaAsset) {
-    if (!instanceView) return true;
-    const appId =
-      asset.source?.app_id ??
-      (asset.source?.id?.startsWith("app:")
-        ? asset.source.id.slice(4)
-        : undefined);
-    if (appId && viewerAppIds.has(appId)) return true;
-    const ownerId = sources.find(
-      (item) =>
-        (appId && item.app_id === appId) ||
-        (asset.source?.id && item.id === asset.source.id),
-    )?.owner_user_id;
-    return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
   // Remove missing entries clears the viewer's own entries, whoever is shown.
   const missingItemCount = removalState?.removal_plan?.missing_items ?? 0;
@@ -2830,71 +2573,6 @@ export default function LibraryPage() {
       toast.error(failureCopy(error));
     },
   });
-  const personOptions = canChooseOwner
-    ? [
-        { value: "everyone", label: "Everyone" },
-        { value: "mine", label: "Mine" },
-        ...people
-          .filter((person) => person.name !== viewerPerson)
-          .map((person) => ({ value: person.id, label: person.name })),
-      ]
-    : [];
-  const ownerValue = owner === "default" ? "mine" : owner;
-  // Kind and person: in the control row on wide screens, inside Filters on a
-  // phone. One function so both places stay the same control.
-  const personPicker = (place: "row" | "sheet") => (
-    <>
-      {canChooseOwner ? (
-        <Select
-          value={ownerValue}
-          onValueChange={(value) => {
-            setOwner(value);
-            setSource("all");
-          }}
-        >
-          <SelectTrigger
-            aria-label="Person"
-            // A toolbar control: 32, like the segments and Filters (44 on a phone).
-            size="sm"
-            className={place === "sheet" ? "w-full" : "w-auto min-w-40"}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {personOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                <span className="flex items-center gap-2">
-                  {option.value === "everyone" ? (
-                    // The household at a glance: up to three people's marks.
-                    <span className="flex -space-x-1">
-                      {people.slice(0, 3).map((person) => (
-                        <MakerMark
-                          key={person.id}
-                          name={person.name}
-                          size="xs"
-                          className="ring-card ring-2"
-                        />
-                      ))}
-                    </span>
-                  ) : (
-                    <MakerMark
-                      name={
-                        option.value === "mine"
-                          ? (viewerPerson ?? "You")
-                          : option.label
-                      }
-                      size="xs"
-                    />
-                  )}
-                  {option.label}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : null}
-    </>
-  );
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const days = useMemo(
@@ -2911,14 +2589,12 @@ export default function LibraryPage() {
         key={asset.asset_id}
         asset={asset}
         onOpen={openAsset}
-        everyone={instanceView}
-        person={instanceView ? personFor(asset) : null}
         selected={selectedId === asset.asset_id}
         day={days[index]}
         today={today}
       />
     )),
-    [storedAssets, openAsset, instanceView, personFor, selectedId, days, today],
+    [storedAssets, openAsset, selectedId, days, today],
   );
   const goneTiles = useMemo(
     () => goneAssets.map((asset) => (
@@ -2926,33 +2602,13 @@ export default function LibraryPage() {
         key={asset.asset_id}
         asset={asset}
         onOpen={openAsset}
-        everyone={instanceView}
-        person={instanceView ? personFor(asset) : null}
         selected={selectedId === asset.asset_id}
         today={today}
       />
     )),
-    [goneAssets, openAsset, instanceView, personFor, selectedId, today],
-  );
-  const selectedPerson = selected
-    ? instanceView
-      ? personFor(selected)
-      : viewerPerson
-    : null;
-  const avatarDirectory = useAvatarDirectory(canChooseOwner);
-  const makerMarkFor = useCallback<MakerMarkFor>(
-    (name) => {
-      if (name === viewerPerson)
-        return { personId: viewer.id, avatar: viewer.avatar };
-      const person = people.find((entry) => entry.name === name);
-      return person
-        ? { personId: person.id, avatar: avatarDirectory?.[person.id] }
-        : {};
-    },
-    [viewerPerson, viewer.id, viewer.avatar, people, avatarDirectory],
+    [goneAssets, openAsset, selectedId, today],
   );
   return (
-    <MakerMarksContext.Provider value={makerMarkFor}>
     <div>
       {/* The title and count, then one row of controls with search first
           (D1.3: search floated alone at the right, and on a phone four rows
@@ -2962,16 +2618,21 @@ export default function LibraryPage() {
           heading keeps a ref so the viewer can return focus to it. */}
       {linkedJobId ? <JobResult jobId={linkedJobId} /> : null}
       <header className="mb-(--space-title) flex min-h-8 items-center">
-        <h1 ref={headingRef} tabIndex={-1} className="text-title">
-          Library
-          {hasLoadedAssets && !hasNextPage && !activeFilters ? (
-            // The count is what the grid shows; files no longer stored are
-            // counted beside it, not inside it (red team round 2).
-            <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
-              {storedAssets.length}
-            </span>
-          ) : null}
-        </h1>
+        <div>
+          <h1 ref={headingRef} tabIndex={-1} className="text-title">
+            Library
+            {hasLoadedAssets && !hasNextPage && !activeFilters ? (
+              // The count is what the grid shows; files no longer stored are
+              // counted beside it, not inside it (red team round 2).
+              <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
+                {storedAssets.length}
+              </span>
+            ) : null}
+          </h1>
+          <p className="text-meta text-muted-foreground mt-1">
+            Your creations and prompts are private to you.
+          </p>
+        </div>
         {!isLoading && !showInitialError && goneAssets.length > 0 ? (
           <button
             type="button"
@@ -3053,34 +2714,13 @@ export default function LibraryPage() {
           >
             <Search aria-hidden="true" />
           </Button>
-          <div className="contents max-sm:hidden">{personPicker("row")}</div>
-          {visiblePeople.length > 1 ? (
-            <div
-              role="group"
-              aria-label="Creation makers"
-              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-1 max-sm:overflow-visible max-sm:whitespace-normal"
-            >
-              {visiblePeople.map((person) => (
-                <span key={person} className="inline-flex min-w-0 items-center gap-1.5">
-                  <MakerMark name={person} size="2xs" label={person} />
-                  <span className="min-w-0 break-words">{person}</span>
-                </span>
-              ))}
-            </div>
-          ) : null}
           <MoreFilters
             model={model}
             setModel={setModel}
             models={models}
             date={date}
             setDate={setDate}
-            source={source}
-            setSource={setSource}
-            sources={sources}
-            instanceView={instanceView}
             nameModel={nameModel}
-            phoneExtras={canChooseOwner ? personPicker("sheet") : undefined}
-            phoneActive={instanceView ? 1 : 0}
             onClear={activeFilters ? clearFilters : undefined}
           />
           {activeFilters ? (
@@ -3094,7 +2734,6 @@ export default function LibraryPage() {
           ) : null}
         </section>
         <QueryFeedback label="model names" query={{ isError: modelCatalogError, isFetching: modelCatalogFetching, refetch: refetchModelCatalog }} />
-        {canChooseOwner ? <QueryFeedback label="people" query={peopleQuery} /> : null}
         {showRunningMedia ? <QueryFeedback label="running work" query={{ isError: homeError, isFetching: homeFetching, refetch: refetchHome }} /> : null}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetFetching ? <p role="status">Opening that creation…</p> : null}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetError ? (
@@ -3203,7 +2842,7 @@ export default function LibraryPage() {
                 : goneConfirmed
                   ? `${goneAssets.length} files are no longer stored.`
                   : `${goneAssets.length} files are unavailable.`}{" "}
-              {/* One explanation for owners and members alike. */}
+              {/* Receipts remain available after a media file is removed. */}
               <span className="text-muted-foreground">Receipts remain.</span>
             </p>
             <div className="flex flex-wrap items-center gap-x-4">
@@ -3294,16 +2933,14 @@ export default function LibraryPage() {
           assets={assets}
           onSelect={openAsset}
           onClose={closeAsset}
-          everyone={instanceView}
           nameModel={nameModel}
-          person={selectedPerson}
           downloading={downloadingAssetId !== null}
           maker={isMaker(selected)}
           onShare={(asset) => {
             if (preparing.current) return;
             preparing.current = true;
             setDownloadingAssetId(asset.asset_id);
-            void shareCreation(asset, instanceView).catch((error) => {
+            void shareCreation(asset).catch((error) => {
               if (!(error instanceof Error && error.name === "AbortError")) toast.error(failureCopy(error));
             }).finally(() => {
               preparing.current = false;
@@ -3314,7 +2951,7 @@ export default function LibraryPage() {
             if (preparing.current) return;
             preparing.current = true;
             setDownloadingAssetId(asset.asset_id);
-            void prepareDownload(asset, instanceView, withDetails).then(
+            void prepareDownload(asset, withDetails).then(
               () => {
                 preparing.current = false;
                 toast.success("Download ready.");
@@ -3327,12 +2964,10 @@ export default function LibraryPage() {
               },
             );
           }}
-          onDelete={
-            madeByViewer(selected) ? (asset) => {
-              setDeleteAnnouncement("");
-              setConfirming(asset);
-            } : null
-          }
+          onDelete={(asset) => {
+            setDeleteAnnouncement("");
+            setConfirming(asset);
+          }}
           onReturnFocus={returnFocus}
         />
       ) : null}
@@ -3371,6 +3006,5 @@ export default function LibraryPage() {
         }}
       />
     </div>
-    </MakerMarksContext.Provider>
   );
 }

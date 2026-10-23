@@ -142,12 +142,21 @@ def create_me_media_router(
                 raise PublicFailure("invalid_since", 400, param="since", expected="Unix timestamp")
             # Inclusive seconds replay ties; capture the watermark before reading.
             updated_since = (int(since) if since is not None else polled_at) if watch else None
-            rows = media_jobs.recent(
-                101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
-                before=_decode_cursor(request.query_params.get("cursor")),
-                updated_since=updated_since, include_active=watch and since is None,
-                path=_resolve_path(media_jobs_path),
-            )
+            rows = []
+            scan_cursor = _decode_cursor(request.query_params.get("cursor"))
+            while len(rows) <= 100:
+                batch = media_jobs.recent(
+                    101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
+                    before=scan_cursor,
+                    updated_since=updated_since, include_active=watch and since is None,
+                    path=_resolve_path(media_jobs_path),
+                )
+                if not batch:
+                    break
+                rows.extend(job for job in batch if _job_in_scope(job, scope))
+                scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
+                if len(batch) < 101:
+                    break
             page = rows[:100]
             cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
             return _json({"jobs": [me_make._client_view(job, asset_path_resolver=asset_path_resolver) for job in page],
@@ -204,8 +213,6 @@ def create_me_media_router(
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
             )
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.library.everyone", admin_path)
             return _json(result)
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -235,8 +242,6 @@ def create_me_media_router(
             )
             if item is None:
                 raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.detail.everyone", admin_path)
             return _json({"asset": item})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -425,8 +430,6 @@ def create_me_media_router(
                 raise PublicFailure("invalid_metadata", 400, param="metadata", accepted=["none", "full"])
             if mode == "full" and not item.get("workflow_download_url"):
                 raise PublicFailure("prompt_not_accessible", 403, asset_id=asset_id)
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.download.everyone", admin_path)
             return _json({"asset_id": asset_id, "download_url": signed_url_builder(request, asset_id, mode)})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -789,30 +792,10 @@ def _owned_app_ids(user_id: str, path: Path) -> list[str]:
 
 
 def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _MediaScope:
-    raw_scope = request.query_params.get("scope") or request.query_params.get("owner")
-    person = request.query_params.get("person")
-    if person:
-        if person in {"self", actor.user_id}:
-            return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
-        if not actor.owner:
-            raise PublicFailure("owner_required", 403, param="person")
-        if person == "all":
-            # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
-            return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
-        # OWNER_VISIBILITY_STEP3: remove the owner other-person Library selector.
-        return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
-    # Everyone starts with their own work; "everyone" is an explicit owner choice.
-    scope = str(raw_scope or "me")
-    if scope == "everyone":
-        # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
-        if not actor.owner:
-            raise PublicFailure("owner_required", 403, param="scope")
-        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
+    for name in ("scope", "owner", "person"):
+        if name in request.query_params:
+            raise PublicFailure("param_not_supported", 400, param=name)
     return _member_media_scope(actor.user_id, admin_db_path)
-
-
-def _scope_requested(request: Request) -> bool:
-    return any(request.query_params.get(name) for name in ("scope", "owner", "person"))
 
 
 def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None, viewer_person_id: str | None = None) -> _MediaScope:
@@ -879,8 +862,8 @@ def _list_media(
     return {
         "schema_version": 1,
         "authenticated": True,
-        "scope": "everyone" if scope.app_ids is None else "me",
-        "default_scope": "explicit" if _scope_requested(request) else "self",
+        "scope": "me",
+        "default_scope": "self",
         "source": source_filter,
         "sources": sources,
         "assets": assets,
@@ -1112,14 +1095,13 @@ def _media_entries(
                 ),
             ))
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
-        credential_hashes = _credential_hashes_for_scope(scope, admin_db_path)
         for asset_id in asset_catalog_provider():
             asset_id = str(asset_id or "")
             if not asset_id or asset_id in seen or asset_id in deleted:
                 continue
             metadata = dict(asset_metadata_reader(asset_id) or {})
             owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
-            if credential_hashes is not None and not (owners & credential_hashes):
+            if not decide_own(scope._key_viewer, owners):
                 continue
             path = asset_path_resolver(asset_id)
             if path is None or not path.exists():
@@ -1426,7 +1408,7 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
 
 def _receipt_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
     if scope.app_ids is None:
-        # OWNER_VISIBILITY_STEP3: delete owner-everyone / unscoped collection access.
+        # Unscoped callers use this only to compute aggregate operational totals.
         return True
     if record is None:
         return False

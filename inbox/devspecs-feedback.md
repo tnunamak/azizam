@@ -1,5 +1,14 @@
 # devspecs feedback
 
+## 2026-10-23 — Owner-private Library slice
+
+`ds tldr` and `ds recent` returned promptly; `recent` found the just-committed
+acceptance work. A focused `ds find` started an auto-index of 2,861 files and
+returned only progress after ten seconds, with no evidence pack. I stopped only
+that exact process and continued from the supplied design plan and source reads.
+A bounded read-only lookup should use the last completed index while refresh is
+in progress.
+
 ## 2026-10-20 — STT measurement scoring
 
 `ds recent` returned relevant STT work. A sliced `ds task` and a retry with
