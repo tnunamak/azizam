@@ -265,7 +265,10 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
-pytest = 16988
+# Walkthrough small fixes (2026-10-23): step-up no longer asks for a person's own keys, addresses or Try key. The
+# SENSITIVE_ROUTES cases drop nine; the own-account cases add ten plus one list check; one review test (a confirmed
+# key) is retired. collect-only 16988 -> 16989.
+pytest = 16989
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -288,14 +291,20 @@ pytest = 16988
 # administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
 # Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
 # administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
-vitest = 3232
+# Walkthrough small fixes (2026-10-23): +14 cases. Library full screen +5, Apps quick-check line +3, the sign-in picture
+# as the default avatar +5 (person-avatar +4, account-avatar +1), the account-menu nav +1, reauth transport +1, account API
+# -1 (keep and replace asks became one routine case; the consent asks are new). Full run: 218 files, 3246 cases, all passed.
+vitest = 3246
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
 # playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
 # playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
-playwright = 525
+# Walkthrough small fixes (2026-10-23): +2 in e2e/step-up.spec.ts (a stale owner's own key, at 1440 and 390 px, in the
+# global-state lane) and +4 in e2e/library-fullscreen.spec.ts (picture full screen and its fallback, at 1440 and 390 px).
+# playwright.config.ts 510, live-data 3, household 18: 531.
+playwright = 531
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
