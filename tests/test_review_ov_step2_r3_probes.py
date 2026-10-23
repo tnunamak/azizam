@@ -75,7 +75,7 @@ def test_the_owner_keeps_an_unaudited_key_only_after_confirming_the_administrato
 
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert asked.json()["error"]["administrators"] == {"people": ["Helper Person"], "unnamed_people": 0, "admin_keys": 0}
     assert admin_store.get_credential(key_id, path=gateway.path)["created_by"] is None
 
     kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner),

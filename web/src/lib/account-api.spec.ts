@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { accountApi, administratorsToConfirm } from "./account-api";
+import {
+  accountApi,
+  administratorsSentence,
+  administratorsToConfirm,
+  hasAdministrators,
+  type AdministratorsOnRecord,
+} from "./account-api";
 import { requestReauth } from "./reauth";
 
 vi.mock("./reauth", async (importOriginal) => ({
@@ -225,22 +231,51 @@ it("keepTrustedAddress sends the owner's confirmation in the same body", async (
   expect(sent[0].body).toEqual({ confirm_admins_could_have_made_it: true });
 });
 
-it("administratorsToConfirm names the administrators a keep asks the owner to confirm, and nothing for other refusals", async () => {
+it("administratorsToConfirm returns the administrators a keep asks the owner to confirm, and nothing for other refusals", async () => {
   reply = {
     status: 409,
-    body: { error: { code: "keep_needs_confirmation", message: "Confirm them.", administrators: ["Alex", "unnamed administrator"] } },
+    body: {
+      error: {
+        code: "keep_needs_confirmation",
+        message: "Confirm them.",
+        administrators: { people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 },
+      },
+    },
   };
   const asked = await accountApi.keepKey("key-1").catch((error: unknown) => error);
-  expect(administratorsToConfirm(asked)).toEqual(["Alex", "unnamed administrator"]);
+  expect(administratorsToConfirm(asked)).toEqual({ people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 });
 
   reply = { status: 409, body: { error: { code: "keep_needs_confirmation", message: "Confirm them." } } };
-  const unnamed = await accountApi.keepKey("key-1").catch((error: unknown) => error);
-  expect(administratorsToConfirm(unnamed)).toEqual([]);
+  const withoutNames = await accountApi.keepKey("key-1").catch((error: unknown) => error);
+  expect(administratorsToConfirm(withoutNames)).toEqual({ people: [], unnamed_people: 0, admin_keys: 0 });
 
   reply = { status: 409, body: { error: { code: "keep_not_provable", message: "This key cannot be kept." } } };
   const refused = await accountApi.keepKey("key-1").catch((error: unknown) => error);
   expect(administratorsToConfirm(refused)).toBeNull();
   expect(administratorsToConfirm(new Error("offline"))).toBeNull();
+});
+
+it("administratorsSentence names the people, then counts the people with no name and the administrator keys", () => {
+  const cases: [AdministratorsOnRecord, string][] = [
+    [{ people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 }, "Simon Agent, 1 person with no name, and 23 administrator keys"],
+    [{ people: [], unnamed_people: 2, admin_keys: 0 }, "2 people with no name"],
+    [{ people: [], unnamed_people: 0, admin_keys: 1 }, "1 administrator key"],
+    [{ people: ["Ann", "Bob"], unnamed_people: 0, admin_keys: 0 }, "Ann and Bob"],
+    [{ people: ["Ann"], unnamed_people: 1, admin_keys: 0 }, "Ann and 1 person with no name"],
+    [{ people: ["Ann", "Bob"], unnamed_people: 0, admin_keys: 2 }, "Ann, Bob, and 2 administrator keys"],
+    [{ people: ["Ann"], unnamed_people: 0, admin_keys: 1 }, "Ann and 1 administrator key"],
+    [{ people: [], unnamed_people: 0, admin_keys: 0 }, ""],
+  ];
+  for (const [administrators, sentence] of cases) {
+    expect(administratorsSentence(administrators)).toBe(sentence);
+  }
+});
+
+it("hasAdministrators is true when the gateway names anyone the owner must confirm", () => {
+  expect(hasAdministrators({ people: ["Ann"], unnamed_people: 0, admin_keys: 0 })).toBe(true);
+  expect(hasAdministrators({ people: [], unnamed_people: 0, admin_keys: 1 })).toBe(true);
+  expect(hasAdministrators({ people: [], unnamed_people: 0, admin_keys: 0 })).toBe(false);
+  expect(hasAdministrators(undefined)).toBe(false);
 });
 
 it("readdTrustedAddress posts to the entry's readd route with the same headers, and returns the new entry and the one it replaced", async () => {

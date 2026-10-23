@@ -23,9 +23,9 @@ const ADD_AGAIN_NOTICE =
 const ADDRESS_KEEP_NOTICE =
   "Made before Azizam recorded who made addresses. Keep it, or it stops working at the next ownership update.";
 // Administrators on record could also have made the binding, so keeping it asks the owner first.
-const ADMINISTRATORS = ["Alex", "unnamed administrator"];
+const ADMINISTRATORS = { people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 };
 const CONFIRM_BODY =
-  "Azizam did not record who made it. Administrators at the time could also have made it: Alex, unnamed administrator. Keep it only if you made it or trust them.";
+  "Azizam did not record who made it. Administrators at the time could also have made it: Simon Agent, 1 person with no name, and 23 administrator keys. Keep it only if you made it or trust them.";
 const ADDRESS = "10.42.7.9";
 
 async function noSideways(page: Page, where: string) {

@@ -92,6 +92,11 @@ def _owner_and_app(g):
 CONFIRM = {"confirm_admins_could_have_made_it": True}
 
 
+def _admins(people=(), unnamed=0, keys=0):
+    """What the gateway says the administrators on record are: named people, unnamed people, administrator keys."""
+    return {"people": list(people), "unnamed_people": unnamed, "admin_keys": keys}
+
+
 def _display_name(g, email, name):
     conn = sqlite3.connect(g.path)
     try:
@@ -225,7 +230,7 @@ def test_a_person_who_held_the_owner_role_before_does_not_block_keeping_but_is_n
 
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Desk Person", "Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Desk Person", "Helper Person"])
     assert _creator_of_key(gateway, key_id) is None
 
     kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
@@ -263,6 +268,42 @@ def test_a_person_cannot_keep_a_key_on_someone_elses_app(gateway):
     assert refused.json()["error"]["code"] == "credential_not_found"
     assert _creator_of_key(gateway, key_id) is None
     assert _audit(gateway, "credential.adopt") == []
+
+
+def _record_sql(monkeypatch) -> list[str]:
+    """Every SQL statement the store runs from now on, as text. The values are not recorded."""
+    statements: list[str] = []
+    connect = admin_store.connect
+
+    def recording_connect(*args, **kwargs):
+        conn = connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(admin_store, "connect", recording_connect)
+    return statements
+
+
+@pytest.mark.parametrize("action", ["adopt", "replace"])
+def test_a_missing_key_and_another_persons_key_take_the_same_lookup_and_get_the_same_answer(gateway, monkeypatch, action):
+    desk = _member(gateway, "desk")
+    app_id = _own_app(desk)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+    other = _member(gateway, "other")
+    statements = _record_sql(monkeypatch)
+
+    foreign = other.post(f"/me/api/credentials/{key_id}/{action}", headers=_headers(other))
+    foreign_lookup = list(statements)
+    statements.clear()
+    missing = other.post(f"/me/api/credentials/cred_does_not_exist/{action}", headers=_headers(other))
+    missing_lookup = list(statements)
+
+    assert foreign.status_code == missing.status_code == 404, foreign.text
+    assert foreign.json() == missing.json()
+    # One ownership-scoped lookup each, the same statements, so the work done does not show whether the key exists.
+    assert foreign_lookup == missing_lookup
+    assert _live_keys_on(gateway, app_id) == [key_id]
 
 
 def test_the_owner_cannot_keep_a_key_on_a_member_app(gateway):
@@ -588,7 +629,7 @@ def test_keeping_a_key_asks_the_owner_to_confirm_the_administrators_on_record(ga
 
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"])
     assert _creator_of_key(gateway, key_id) is None
     assert _audit(gateway, "credential.adopt") == []
 
@@ -604,7 +645,7 @@ def test_confirming_the_administrators_keeps_the_key_and_the_audit_event_names_t
     assert kept.status_code == 200, kept.text
     assert _creator_of_key(gateway, key_id) == owner_id
     (event,) = _audit(gateway, "credential.adopt")
-    assert json.loads(event["metadata_json"])["confirmed_administrators"] == ["Helper Person"]
+    assert json.loads(event["metadata_json"])["confirmed_administrators"] == _admins(["Helper Person"])
 
 
 @pytest.mark.parametrize("body", [{}, {"confirm_admins_could_have_made_it": "true"}, {"confirm_admins_could_have_made_it": False}])
@@ -647,10 +688,10 @@ def test_a_past_administrator_is_named_even_after_the_role_is_revoked(gateway):
 
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"])
 
 
-def test_an_administrator_service_account_is_named_by_its_name(gateway):
+def test_an_administrator_service_account_is_counted_as_an_administrator_key_and_not_named(gateway):
     owner, _owner_id, app_id = _owner_and_app(gateway)
     _display_name(gateway, "helper@example.test", "Helper Person")
     bot = admin_store.create_service_account("CI bot", path=gateway.path)
@@ -661,8 +702,41 @@ def test_an_administrator_service_account_is_named_by_its_name(gateway):
     asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
 
     assert asked.status_code == 409, asked.text
-    assert asked.json()["error"]["administrators"] == ["CI bot", "Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"], keys=1)
+    assert "CI bot" not in asked.text
     assert _creator_of_key(gateway, key_id) is None
+
+
+def test_administrator_keys_are_counted_and_the_message_the_owner_reads_says_how_many(gateway):
+    owner, _owner_id, app_id = _owner_and_app(gateway)
+    _display_name(gateway, "helper@example.test", "Helper Person")
+    for name in ("CI bot", "Nightly sync", "Backup"):
+        bot = admin_store.create_service_account(name, path=gateway.path)
+        admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=bot["id"], path=gateway.path)
+    before_the_cut_over(gateway.path)
+    key_id = _unproven_key(gateway, app_id)
+
+    asked = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner))
+
+    assert asked.status_code == 409, asked.text
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"], keys=3)
+    assert asked.json()["error"]["message"].startswith(
+        "Administrators at the time could also have made this key: Helper Person and 3 administrator keys. ")
+    assert _creator_of_key(gateway, key_id) is None
+
+
+@pytest.mark.parametrize(("administrators", "sentence"), [
+    (_admins(["Simon Agent"], unnamed=1, keys=23), "Simon Agent, 1 person with no name, and 23 administrator keys"),
+    (_admins(unnamed=2), "2 people with no name"),
+    (_admins(keys=1), "1 administrator key"),
+    (_admins(["Ann", "Bob"]), "Ann and Bob"),
+    (_admins(["Ann"], unnamed=1), "Ann and 1 person with no name"),
+    (_admins(["Ann", "Bob"], keys=2), "Ann, Bob, and 2 administrator keys"),
+    (_admins(["Ann"], keys=1), "Ann and 1 administrator key"),
+    (_admins(), ""),
+])
+def test_the_administrators_sentence_names_people_and_counts_the_unnamed_and_the_keys(administrators, sentence):
+    assert admin_store.administrators_sentence(administrators) == sentence
 
 
 def test_a_control_plane_key_that_held_the_owner_role_neither_blocks_nor_is_named(gateway):
@@ -678,7 +752,7 @@ def test_a_control_plane_key_that_held_the_owner_role_neither_blocks_nor_is_name
     # Not a keep_not_provable (it does not block), and not named: only the helper, who is an administrator, is.
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"])
     kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
     assert kept.status_code == 200, kept.text
     assert _creator_of_key(gateway, key_id) == owner_id
@@ -724,7 +798,7 @@ def test_keeping_an_address_asks_the_owner_to_confirm_the_administrators_on_reco
 
     assert asked.status_code == 409, asked.text
     assert asked.json()["error"]["code"] == "keep_needs_confirmation"
-    assert asked.json()["error"]["administrators"] == ["Helper Person"]
+    assert asked.json()["error"]["administrators"] == _admins(["Helper Person"])
     assert _creator_of_address(gateway, entry_id) is None
 
     kept = owner.post(address_keep, headers=_headers(owner), json=CONFIRM)
@@ -801,7 +875,7 @@ def test_the_cut_over_preview_gives_each_binding_its_remedy(gateway):
     (desk,) = [app for app in body["apps"] if app["app_id"] == app_id]
     (key,) = desk["keys"]
 
-    assert (key["action"], key["remedy"], key["administrators"]) == ("revoke", "keep", ["Helper Person"])
+    assert (key["action"], key["remedy"], key["administrators"]) == ("revoke", "keep", _admins(["Helper Person"]))
 
 # --- What the snapshot and the address list tell the person: the remedy each binding needs --------------
 
@@ -1029,5 +1103,5 @@ def test_the_snapshot_and_the_owners_address_list_name_the_administrators_a_keep
     key = next(item for item in _snapshot_app(owner, hall)["credentials"] if item["id"] == key_id)
     entries = {entry["id"]: entry for entry in owner.get(f"/admin/api/apps/{hall}/trusted-addresses").json()["trusted_addresses"]}
 
-    assert (key["cutover"], key["administrators"]) == ("keep", ["unnamed administrator"])
-    assert (entries[entry_id]["cutover"], entries[entry_id]["administrators"]) == ("keep", ["unnamed administrator"])
+    assert (key["cutover"], key["administrators"]) == ("keep", _admins(unnamed=1))
+    assert (entries[entry_id]["cutover"], entries[entry_id]["administrators"]) == ("keep", _admins(unnamed=1))

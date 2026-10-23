@@ -17,6 +17,7 @@ import {
   accountApi,
   type AccountApp,
   type AccountSnapshot,
+  type AdministratorsOnRecord,
 } from "@/lib/account-api";
 
 vi.mock("next/navigation", () => ({
@@ -153,7 +154,7 @@ type Address = {
   created_by: string | null;
   cutover?: "keep" | "readd";
   made_by_name?: string;
-  administrators?: string[];
+  administrators?: AdministratorsOnRecord;
 };
 const unkeptAddress: Address = {
   id: "tad-1",
@@ -596,11 +597,13 @@ it("shows no line once every key and address names its person", async () => {
 });
 
 // Keeping a binding that administrators on record could also have made waits for the owner's confirmation.
-const ADMINISTRATORS = ["Alex", "unnamed administrator"];
+const ADMINISTRATORS: AdministratorsOnRecord = { people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 };
 const keyWithAdmins: Credential = { ...oldKey, administrators: ADMINISTRATORS };
 const addressWithAdmins: Address = { ...unkeptAddress, administrators: ADMINISTRATORS };
-function confirmBody(names: string[]): string {
-  return `Azizam did not record who made it. Administrators at the time could also have made it: ${names.join(", ")}. Keep it only if you made it or trust them.`;
+// The sentence the owner reads for ADMINISTRATORS: the named people, the people with no name, and the keys, counted.
+const NAMED_IN_THE_BODY = "Simon Agent, 1 person with no name, and 23 administrator keys";
+function confirmBody(named: string): string {
+  return `Azizam did not record who made it. Administrators at the time could also have made it: ${named}. Keep it only if you made it or trust them.`;
 }
 
 it("asks the owner to confirm the administrators before keeping a key they could have made", async () => {
@@ -611,7 +614,7 @@ it("asks the owner to confirm the administrators before keeping a key they could
   fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
 
   const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
-  expect(within(dialog).getByText(confirmBody(ADMINISTRATORS))).toBeVisible();
+  expect(within(dialog).getByText(confirmBody(NAMED_IN_THE_BODY))).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Keep key" })).toBeEnabled();
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
   expect(accountApi.keepKey).not.toHaveBeenCalled();
@@ -660,7 +663,7 @@ it("a keep the gateway asks to confirm, on a page that was not up to date, opens
       error: {
         code: "keep_needs_confirmation",
         message: "Administrators at the time could also have made this key.",
-        administrators: ["Sam"],
+        administrators: { people: ["Sam"], unnamed_people: 0, admin_keys: 0 },
       },
     }),
   );
@@ -670,7 +673,7 @@ it("a keep the gateway asks to confirm, on a page that was not up to date, opens
   fireEvent.click(within(keys).getByRole("button", { name: "Keep key Old desk key" }));
 
   const dialog = await screen.findByRole("dialog", { name: "Keep this key?" });
-  expect(within(dialog).getByText(confirmBody(["Sam"]))).toBeVisible();
+  expect(within(dialog).getByText(confirmBody("Sam"))).toBeVisible();
   expect(accountApi.keepKey).toHaveBeenCalledWith("key-old", {});
 });
 
@@ -693,7 +696,7 @@ it("if the administrators changed before the owner confirmed, the dialog names t
   vi.mocked(accountApi.session).mockResolvedValue(snapshotOf([appWith({ credentials: [keyWithAdmins] })]));
   vi.mocked(accountApi.keepKey).mockRejectedValue(
     new ApiError("keep_needs_confirmation", "Administrators at the time could also have made this key.", 409, {
-      error: { code: "keep_needs_confirmation", message: "", administrators: ["Sam"] },
+      error: { code: "keep_needs_confirmation", message: "", administrators: { people: ["Sam"], unnamed_people: 0, admin_keys: 0 } },
     }),
   );
   renderApps();
@@ -706,7 +709,7 @@ it("if the administrators changed before the owner confirmed, the dialog names t
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "The administrators changed. Read them again, then keep it.",
   );
-  expect(within(dialog).getByText(confirmBody(["Sam"]))).toBeVisible();
+  expect(within(dialog).getByText(confirmBody("Sam"))).toBeVisible();
 });
 
 it("asks the owner to confirm the administrators before keeping an address they could have added", async () => {
@@ -721,7 +724,7 @@ it("asks the owner to confirm the administrators before keeping an address they 
   fireEvent.click(await screen.findByRole("button", { name: "Keep address 10.0.0.7" }));
 
   const dialog = await screen.findByRole("dialog", { name: "Keep this address?" });
-  expect(within(dialog).getByText(confirmBody(ADMINISTRATORS))).toBeVisible();
+  expect(within(dialog).getByText(confirmBody(NAMED_IN_THE_BODY))).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Keep address" })).toBeEnabled();
   expect(accountApi.keepTrustedAddress).not.toHaveBeenCalled();
 });
