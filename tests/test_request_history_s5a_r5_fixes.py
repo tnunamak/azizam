@@ -6,14 +6,18 @@ Each test names the round-5 finding it pins (R5-n). The round-4 fixes are in
 from __future__ import annotations
 
 import json
+import unicodedata
 from typing import Any
 
 import pytest
 
 from gateway import request_history
+from tests.test_request_history_s5a_r4_fixes import _fullwidth
 from tests.test_review_retention_s5a_probes import _drive, _kept, member_db  # noqa: F401 - fixture
 
 SECRET = "SYNTHETIC_MARKER"
+#: Format characters (category Cf): a zero-width space, two joiners, a word joiner, a byte order mark and a soft hyphen.
+FORMAT_CHARACTERS = ("\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad")
 
 
 def _nested(depth: int, leaf: Any) -> Any:
@@ -98,7 +102,8 @@ def test_r5_1_f_json_in_a_string_nested_past_the_depth_limit_is_omitted(depth):
 
 
 def test_r5_1_g_json_in_a_string_nested_under_the_limit_is_cleaned_as_json():
-    kept, found = request_history.redact_json(_message("tool", _nested_text(30, f'{{"password": "{SECRET}", "ok": 1}}')))
+    text = _nested_text(30, f'{{"password": "{SECRET}", "ok": 1}}')
+    kept, found = request_history.redact_json(_message("tool", text))
     assert SECRET not in json.dumps(kept)
     assert json.loads(_content_of(kept)) == _nested(30, {"password": "[removed]", "ok": 1})
     assert found == ["credential_field"]
@@ -123,3 +128,49 @@ def test_r5_1_j_a_stored_tool_message_with_json_content_keeps_no_credential(memb
     rows = _kept(media)
     assert len(rows) == 1
     assert SECRET not in rows[0] and r'{\"password\":\"[removed]\"}' in rows[0]
+
+
+# ------------------------------------------------------------------ R5-2: format characters in a credential name
+
+
+def _with_format_character(name: str, char: str) -> str:
+    """``name`` with ``char`` inside it, as a zero-width character can sit between the letters of one word."""
+    middle = len(name) // 2
+    return name[:middle] + char + name[middle:]
+
+
+#: Each credential name, and the place inside its credential word where a format character breaks that word.
+BROKEN_WORD_NAMES = [("password", 4), ("api_key", 2), ("x-api-key", 4), ("client_secret", 8), ("password1", 4)]
+
+
+@pytest.mark.parametrize("char", FORMAT_CHARACTERS)
+@pytest.mark.parametrize(("name", "at"), BROKEN_WORD_NAMES)
+def test_r5_2_a_a_credential_name_with_a_format_character_inside_a_word_is_removed(char, name, at):
+    assert unicodedata.category(char) == "Cf"
+    hidden = name[:at] + char + name[at:]
+    assert request_history.is_credential_name(hidden)
+    kept, found = request_history.redact_json({"outer": {hidden: SECRET}})
+    assert SECRET not in json.dumps(kept)
+    assert kept == {"outer": {hidden: "[removed]"}}
+    assert found == ["credential_field"]
+
+
+def test_r5_2_b_a_zero_width_space_inside_password_is_still_a_credential_name():
+    assert request_history.is_credential_name("pass\u200bword")
+
+
+@pytest.mark.parametrize("char", FORMAT_CHARACTERS)
+def test_r5_2_c_a_format_character_does_not_make_a_non_credential_name_a_credential(char):
+    name = _with_format_character("max_tokens", char)
+    assert not request_history.is_credential_name(name)
+    kept, found = request_history.redact_json({name: 5})
+    assert kept == {name: 5}
+    assert found == []
+
+
+@pytest.mark.parametrize("char", FORMAT_CHARACTERS)
+def test_r5_2_d_a_format_character_in_a_fullwidth_credential_name_is_removed(char):
+    hidden = _with_format_character(_fullwidth("password"), char)
+    assert request_history.is_credential_name(hidden)
+    kept, _ = request_history.redact_json({hidden: SECRET})
+    assert kept == {hidden: "[removed]"}
