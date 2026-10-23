@@ -206,7 +206,6 @@ def test_an_unread_body_whose_forget_never_arrived_is_not_kept(member_db):
     assert _kept(media) == []
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: the header forget is stripped before the other kinds see it")
 def test_the_forget_header_also_forgets_the_conversation(responses_gateway):
     """3.4: the one control covers all four kinds. The header is removed before the route runs, so the Responses
     route never learns of it and stores the conversation that the header asked to forget."""

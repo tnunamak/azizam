@@ -110,12 +110,12 @@ def decide(
     *, person_id: str | None, member: Mapping[str, Any] | None,
     household: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
     responses_store: bool | None = None, now: int | None = None,
-    kind: str = retention.LIBRARY_PROMPT,
+    kind: str = retention.LIBRARY_PROMPT, request_forget: bool = False,
 ) -> Decision:
     """Resolve policy before any payload, media or Responses persistence (``retention.decide``)."""
     return retention.decide(
         kind, person_id=person_id, member=member, household_policy=household,
-        request_body=request_body, responses_store=responses_store, now=now,
+        request_body=request_body, responses_store=responses_store, now=now, request_forget=request_forget,
     )
 
 
@@ -128,9 +128,12 @@ def decide_for_person(
     person_id: str | None, body: Mapping[str, Any] | None, *,
     admin_path: Path | None = None,
     responses_store: bool | None = None,
-    kind: str = retention.LIBRARY_PROMPT,
+    kind: str = retention.LIBRARY_PROMPT, request_forget: bool = False,
 ) -> Decision:
-    """Resolve memory policy for an authenticated person independent of App."""
+    """Resolve memory policy for an authenticated person independent of App.
+
+    ``request_forget`` is the request's ``X-Azizam-Prompts: forget`` header, which the body does not carry.
+    """
     path = admin_path or admin_store.DB_PATH
     try:
         member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
@@ -141,7 +144,7 @@ def decide_for_person(
         return Decision(person_id, False, "storage_unavailable", kind=kind)
     return decide(
         person_id=person_id, member=member, household=household,
-        request_body=body, responses_store=responses_store, kind=kind,
+        request_body=body, responses_store=responses_store, kind=kind, request_forget=request_forget,
     )
 
 

@@ -102,7 +102,7 @@ from gateway import (
 )
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
-from gateway import request_history, request_history_api, request_history_capture
+from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
@@ -13262,6 +13262,7 @@ def _note_media_metadata_body(body: Any) -> Response | None:
         if ctx is not None and isinstance(body, Mapping):
             ctx.prompt_decision = prompt_memory.decide_for_person(
                 ctx.person_id, body, admin_path=ADMIN_STORE.path,
+                request_forget=request_history_slot.prompts_forget(),
             )
             started = _MEDIA_JOB_PROMPT_STARTED_AT.get()
             if started is not None and ctx.prompt_decision.keep:
@@ -21106,7 +21107,8 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
     with _MEDIA_PAYLOAD_LOCK:
         person_id = payload["auth"].get("person_id")
         body = copy.deepcopy(payload["body"])
-        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
+        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path,
+                                                 request_forget=request_history_slot.prompts_forget())
         with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
             # Service/LAN execution spools are temporary operational state. Their
             # prompt is required to resume, so retain it only until terminal state.
@@ -21223,7 +21225,8 @@ def _image_media_job_request_id(
     fallback_request_id: str,
 ) -> tuple[str, str, str]:
     owner = _asset_owner_key(auth_context) or "anonymous"
-    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
+    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path,
+                                             request_forget=request_history_slot.prompts_forget())
     if idempotency_key:
         identity = {"owner": owner, "idempotency_key": idempotency_key}
         if not memory.keep and memory.reason != "no_person":
@@ -27587,6 +27590,7 @@ async def create_response(request: Request):
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
                 kind=retention.CONVERSATION,
+                request_forget=request_history_slot.prompts_forget(),
             )
         except prompt_memory.PromptModeError as exc:
             return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")

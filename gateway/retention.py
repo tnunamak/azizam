@@ -492,19 +492,20 @@ def requested_mode(body: Mapping[str, Any] | None) -> str | None:
 def decide(
     kind: str, *, person_id: str | None, member: Mapping[str, Any] | None,
     household_policy: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
-    responses_store: bool | None = None, now: int | None = None,
+    responses_store: bool | None = None, now: int | None = None, request_forget: bool = False,
 ) -> Decision:
     """Resolve policy before any payload, media or Responses persistence.
 
-    The order is fixed: the kill switch, the request's own forget, no person, the member's switch,
-    then keep with the shorter of the member's period and the household cap.
+    The order is fixed: the kill switch, the request's own forget (in its body, or in the ``X-Azizam-Prompts``
+    header, which ``request_forget`` carries for every kind), no person, the member's switch, then keep with the
+    shorter of the member's period and the household cap.
     """
     contract = bundled()
     mode = requested_mode(request_body)
     policy = {**contract.household_defaults(kind), **(household_policy or {})}
     if policy["never_keep"]:
         return Decision(person_id, False, "server_disabled", kind=kind)
-    if mode == "forget" or responses_store is False:
+    if mode == "forget" or request_forget or responses_store is False:
         return Decision(person_id, False, "request_forget", kind=kind)
     if not person_id:
         return Decision(None, False, "no_person", kind=kind)

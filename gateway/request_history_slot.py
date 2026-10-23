@@ -11,16 +11,18 @@ from contextvars import ContextVar, Token
 
 
 class Slot:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, forget: bool = False) -> None:
         self.path = path
         self.receipt_id: str | None = None
+        #: The request carries ``X-Azizam-Prompts: forget``. The middleware strips the header, so the routes read it here.
+        self.forget = forget
 
 
 _CURRENT: ContextVar[Slot | None] = ContextVar("request_history_slot", default=None)
 
 
-def open_slot(path: str) -> Token:
-    return _CURRENT.set(Slot(path))
+def open_slot(path: str, *, forget: bool = False) -> Token:
+    return _CURRENT.set(Slot(path, forget))
 
 
 def close_slot(token: Token) -> None:
@@ -29,6 +31,12 @@ def close_slot(token: Token) -> None:
 
 def current() -> Slot | None:
     return _CURRENT.get()
+
+
+def prompts_forget() -> bool:
+    """Whether the request in progress asked, in its header, that nothing about it be kept (REQUEST_RETENTION.md 3.4)."""
+    slot = _CURRENT.get()
+    return slot is not None and slot.forget
 
 
 def observe(receipt_id: str | None, path: str | None, parent: str | None) -> None:

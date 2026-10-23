@@ -142,7 +142,7 @@ class RequestHistoryMiddleware:
         reply_state: dict[str, Any] = {"status": None, "headers": {}, "body": request_history.BodyCapture(None, limit=limit)}
         started = int(time.time())
         began = time.monotonic()
-        slot_token = request_history_slot.open_slot(scope["path"])
+        slot_token = request_history_slot.open_slot(scope["path"], forget=header_forget)
         #: ``complete``: the body's last chunk arrived (``more_body`` false). ``disconnected``: the client went away
         #: first, so the body is incomplete whatever it held.
         read = {"complete": False, "disconnected": False}
