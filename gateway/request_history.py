@@ -745,14 +745,18 @@ def get_row(record_id: str, *, path: Path | None = None) -> dict[str, Any] | Non
     return rows[0] if rows else None
 
 
-def parts_json_for(record_ids: list[str], *, path: Path | None = None) -> dict[str, str]:
-    """The stored ``parts_json`` of the named records, in one read. Only a caller that shows a body reads one."""
-    if not record_ids:
-        return {}
-    marks = ",".join("?" for _ in record_ids)
-    rows = _rows(f"SELECT record_id, parts_json FROM kept_requests WHERE kind=? AND record_id IN ({marks})",
-                 (KIND, *record_ids), path=path)
-    return {row["record_id"]: row["parts_json"] for row in rows}
+def chats_for_person(person_id: str, *, after: int, now: int, limit: int, path: Path | None = None) -> list[dict[str, Any]]:
+    """The person's newest kept chat completions, with their kept bodies, in one read.
+
+    Only the chat route is cut in SQL, and only the rows returned are read. A row whose body was not kept has no
+    accepted part, so ``first_user_text`` reads no title from it.
+    """
+    return _rows(
+        "SELECT record_id, request_id, created_at, parts_json FROM kept_requests "
+        "WHERE person_id=? AND kind=? AND created_at>? AND (kept_until IS NULL OR kept_until>?) "
+        "AND json_extract(summary_json, '$.route') LIKE '%/chat/completions' "
+        "ORDER BY created_at DESC, record_id DESC LIMIT ?",
+        (person_id, KIND, after, now, int(limit)), path=path)
 
 
 #: The characters of a chat's first user message that a conversation title keeps.
