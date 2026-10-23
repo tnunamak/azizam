@@ -1997,6 +1997,8 @@ that they pin now passes with its mark removed. The tests the review did not pin
   - **Body forgets (R4-4).** The body's control is read as soon as the body is complete. A forget, or a control that
     cannot be read in full, gives the slot back at once and stops buffering the reply. The receipt still says why
     nothing was kept.
+  - **JSON in any string (R5-1).** A string that starts with `{` or `[` after whitespace, and parses as JSON, is cleaned by the `arguments` path (`_redact_string`) and stored compact, so tool `arguments` are compact too. One that does not parse is cleaned as text, except tool `arguments`, which is still omitted as `unreadable_json`. Past the depth limit it is omitted as `json_depth`.
+  - **Format characters in names (R5-2).** `is_credential_name` drops Unicode format characters (category Cf: a zero-width space, a joiner, a word joiner, a byte order mark, a soft hyphen) before the NFKC match, so `pass`, a zero-width space and `word` match. Names without them match as before.
 
 ## 18. Tim's three decisions
 
