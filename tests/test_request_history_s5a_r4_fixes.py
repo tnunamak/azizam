@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
+from typing import Any
 
 import pytest
 
@@ -78,3 +79,96 @@ def test_r4_1_f_a_quoted_user_info_in_a_message_keeps_no_secret_in_the_row(membe
     rows = _kept(media)
     assert len(rows) == 1
     assert SECRET not in rows[0] and "postgres://[removed]@db/app" in rows[0]
+
+
+# ------------------------------------------------------------------ R4-2: JSON too deep to clean is omitted, not kept
+
+
+def _fullwidth(text: str) -> str:
+    """The text in fullwidth forms, as an operator might type it: ``password`` becomes ``ｐａｓｓｗｏｒｄ``."""
+    return "".join(chr(ord(char) + 0xFEE0) if "!" <= char <= "~" else char for char in text)
+
+
+def _nested(depth: int, leaf: Any) -> Any:
+    """``leaf`` inside ``depth`` lists, built without recursion."""
+    for _ in range(depth):
+        leaf = [leaf]
+    return leaf
+
+
+def _nested_text(depth: int, inner: str) -> str:
+    return "[" * depth + inner + "]" * depth
+
+
+def _tool_call(arguments: str) -> dict:
+    return {"messages": [{"role": "assistant", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "fetch", "arguments": arguments}}]}]}
+
+
+def _arguments_of(kept: dict) -> Any:
+    return kept["messages"][0]["tool_calls"][0]["function"]["arguments"]
+
+
+@pytest.mark.parametrize("depth", [2000, 100_000])
+def test_r4_2_a_tool_arguments_nested_past_the_depth_limit_are_omitted(depth):
+    kept, found = request_history.redact_json(_tool_call(_nested_text(depth, f'{{"password":"{SECRET}"}}')))
+    assert SECRET not in json.dumps(kept)
+    assert _arguments_of(kept) == {"omitted": "json_depth"}
+    assert found == ["json_depth"]
+
+
+@pytest.mark.parametrize("arguments", [
+    f'{{"password": "{SECRET}"',
+    f'{{"password": "{SECRET}", }}',
+    f'  \n[{{"password": "{SECRET}"}}] and then more',
+])
+def test_r4_2_b_tool_arguments_that_look_like_json_but_do_not_parse_are_omitted(arguments):
+    kept, found = request_history.redact_json(_tool_call(arguments))
+    assert SECRET not in json.dumps(kept)
+    assert _arguments_of(kept) == {"omitted": "unreadable_json"}
+    assert found == ["unreadable_json"]
+
+
+def test_r4_2_c_tool_arguments_that_are_plain_text_are_cleaned_as_text():
+    kept, found = request_history.redact_json(_tool_call(f"fetch https://u:{SECRET}@h.test/x now"))
+    assert _arguments_of(kept) == "fetch https://[removed]@h.test/x now"
+    assert found == ["url_parts_removed"]
+
+
+def test_r4_2_d_tool_arguments_nested_under_the_limit_are_cleaned_as_json():
+    kept, found = request_history.redact_json(_tool_call(_nested_text(40, f'{{"password": "{SECRET}", "ok": 1}}')))
+    assert SECRET not in json.dumps(kept)
+    assert json.loads(_arguments_of(kept)) == _nested(40, {"password": "[removed]", "ok": 1})
+    assert found == ["credential_field"]
+
+
+@pytest.mark.parametrize("depth", [200, 2000])
+def test_r4_2_e_a_top_level_body_nested_past_the_depth_limit_is_omitted(depth):
+    kept, found = request_history.redact_json({"input": _nested(depth, {"password": SECRET})})
+    assert SECRET not in json.dumps(kept)
+    assert kept == {"omitted": "json_depth"}
+    assert found == ["json_depth"]
+
+
+def test_r4_2_f_a_body_nested_past_the_depth_limit_keeps_its_row_with_the_body_omitted(member_db):
+    db, media, person = member_db
+    raw = ('{"model":"m","input":' + _nested_text(2000, f'{{"password":"{SECRET}"}}') + "}").encode()
+    _drive(db, media, person, chunks=[raw], content_type="application/json")
+    rows = _kept(media)
+    assert len(rows) == 1
+    assert SECRET not in rows[0] and '"omitted": "json_depth"' in rows[0]
+
+
+@pytest.mark.parametrize("name", [_fullwidth("password"), _fullwidth("api_key"), _fullwidth("x-api-key"),
+                                  _fullwidth("secrets"), _fullwidth("password1")])
+def test_r4_2_g_a_fullwidth_credential_name_is_removed(name):
+    assert request_history.is_credential_name(name)
+    kept, found = request_history.redact_json({"outer": {name: SECRET}})
+    assert kept == {"outer": {name: "[removed]"}}
+    assert found == ["credential_field"]
+
+
+def test_r4_2_h_a_fullwidth_name_that_is_not_a_credential_is_kept():
+    name = _fullwidth("max_tokens")
+    kept, _ = request_history.redact_json({name: 5})
+    assert kept == {name: 5}
