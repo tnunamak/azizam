@@ -1876,22 +1876,18 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
-        # The App answers to the gateway owner (a person) and follows their plan.
-        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="o@example.com", path=self.db)
-        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=self.db)
-        accounts.initialize(self.db)
-        accounts.change_person(owner["id"], "test", path=self.db,
-                               plan_id=store_plan("Everything", path=self.db)["id"])
-        admin_key, _, _ = create_admin_service_account_key(
-            "real-owner",
-            path=self.db,
-        )
-        response = self.client.post(
-            "/setup/claim",
-            data={"admin_key": admin_key},
+        # The owner signs in as a person, so the first App is theirs and follows their plan (owner visibility step 2).
+        signed_in = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(signed_in.status_code, 303, signed_in.text)
+        owner = admin_store.list_users(path=self.db)[0]
 
         async def fake_status(_config):
             return {"backends": [{"name": "loopback", "status": "up"}]}
@@ -1925,7 +1921,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer", created.text)
             self.assertIn("setup-copy-btn", created.text)
 
-            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "service"]
+            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "personal"]
             self.assertEqual(len(apps), 1)
             self.assertEqual(apps[0]["owner_user_id"], owner["id"])
             self.assertEqual(apps[0]["access_plan"], "person")

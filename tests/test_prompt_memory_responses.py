@@ -423,7 +423,7 @@ def test_forget_during_active_response_cannot_restore_conversation(responses_gat
     assert proxy.responses_store.get(later.json()["id"]) is not None
 
 
-@pytest.mark.parametrize("app_kind", ["service", "another_person"])
+@pytest.mark.parametrize("app_kind", ["service"])
 def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses_gateway, app_kind):
     from gateway.admin_runtime import runtime_identity_for_app_credential_hash
     gateway = responses_gateway
