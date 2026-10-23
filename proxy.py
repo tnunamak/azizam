@@ -14243,10 +14243,27 @@ async def _security_headers_middleware(request: Request, call_next):
     return response
 
 
+async def _maker_browser_session_request(request: Request) -> bool:
+    """Whether a maker's request history call comes from the person's own browser session, with no App key.
+
+    The maker's kept requests are also the person's own in the browser (REQUEST_RETENTION.md 10). Such a call carries
+    the session cookie and no Authorization header, so the key layer does not gate it; the router reads the session
+    and checks the user-action header and CSRF token on every write.
+    """
+    path = request.url.path
+    if path != "/gateway/v1/requests" and not path.startswith("/gateway/v1/requests/"):
+        return False
+    if request.headers.get("authorization"):
+        return False
+    return await asyncio.to_thread(_oidc_session_from_request, request) is not None
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
     if request.url.path.startswith(("/gateway/v1", "/native/")):
+        if await _maker_browser_session_request(request):
+            return await call_next(request)
         refusal = await _authenticate_mounted_route(request)
         if refusal is not None:
             return refusal

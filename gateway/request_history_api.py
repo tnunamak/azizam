@@ -80,10 +80,21 @@ def create_request_history_router(
     router = APIRouter(tags=["requests"])
 
     def _viewer(request: Request) -> content_access.Viewer | JSONResponse:
+        """The caller's view of the maker's rows: a delegated credential's own view, or the browser session's person."""
         auth = request.scope.get("auth_context")
-        if getattr(getattr(auth, "identity", None), "auth_kind", None) is None:
-            return _error(401, "unauthorized", "An App key or an MCP grant is required.", kind="authentication_error")
-        return content_access.viewer_from_auth(auth, owner_keys=())
+        if getattr(getattr(auth, "identity", None), "auth_kind", None) is not None:
+            return content_access.viewer_from_auth(auth, owner_keys=())
+        session = session_provider(request)
+        if session is None:
+            return _error(401, "unauthorized", "An App key, an MCP grant or a sign-in is required.",
+                          kind="authentication_error")
+        return content_access.Viewer(person_id=str(session.subject), auth_kind="session")
+
+    def _session_write_refusal(request: Request, viewer: content_access.Viewer) -> JSONResponse | None:
+        """A write from a browser session needs the user-action header and CSRF token, as every session write does."""
+        if viewer.auth_kind != "session" or mutation_validator is None:
+            return None
+        return mutation_validator(request, session_provider(request))
 
     @router.get("/gateway/v1/requests")
     def list_requests(request: Request, limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
@@ -151,6 +162,9 @@ def create_request_history_router(
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
             return viewer
+        refusal = _session_write_refusal(request, viewer)
+        if refusal is not None:
+            return refusal
         row = _readable(viewer, record_id)
         if row is None:
             return _not_found()
@@ -165,6 +179,9 @@ def create_request_history_router(
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
             return viewer
+        refusal = _session_write_refusal(request, viewer)
+        if refusal is not None:
+            return refusal
         if not viewer.person_id:
             return {"deleted": 0}
         if isinstance(content_access.decide(viewer, content_access.RequestHistoryRecord(person_id=viewer.person_id),
