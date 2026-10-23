@@ -21,6 +21,9 @@ import sqlite3
 import uuid
 
 RECEIPT = "ownership-version-1"
+# Committed with a fresh database's schema and removed by install, so a start that dies before the guards exist
+# installs them on the next start instead of running as an existing database.
+PENDING_INSTALL = "binding-guards-pending"
 PENDING_NOTICE = (
     "[admin_store] App-binding cut-over is pending: existing App keys and trusted addresses are not checked "
     "until it is applied. To preview it, copy admin.db and run: "
@@ -88,6 +91,13 @@ def recorded(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name = ?", (RECEIPT,)).fetchone() is not None
 
 
+def install_pending(conn: sqlite3.Connection) -> bool:
+    """True when a fresh database's schema is committed and its guards are not installed yet."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration_steps'").fetchone() is None:
+        return False
+    return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name = ?", (PENDING_INSTALL,)).fetchone() is not None
+
+
 def verify(conn: sqlite3.Connection) -> list[str]:
     """Names of the guards whose stored SQL is not this release's SQL (empty when all match)."""
     stored = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").fetchall())
@@ -105,6 +115,7 @@ def install(conn: sqlite3.Connection) -> None:
             conn.execute(f"DROP TRIGGER IF EXISTS {name}")
             conn.execute(sql)
         conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (RECEIPT,))
+        conn.execute("DELETE FROM schema_migration_steps WHERE name = ?", (PENDING_INSTALL,))
         mismatched = verify(conn)
         if mismatched:
             raise GuardError(f"binding guards were not installed as released: {', '.join(mismatched)}")

@@ -538,6 +538,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     # Both branches allocated schema 11 independently. A named receipt makes each
     # migration run once even on a database already stamped 11 by either branch.
     conn.execute("CREATE TABLE IF NOT EXISTS schema_migration_steps (name TEXT PRIMARY KEY)")
+    if fresh:
+        # Committed with the schema below, so a start that dies before the guards are installed installs them next time.
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (app_binding_guard.PENDING_INSTALL,))
     for name in ("secret-references-v11", "hop-timeout-v11"):
         if row is not None and int(row[0]) >= _SECRET_REFS_VERSION and conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
             continue
@@ -567,7 +570,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
     # Until the ownership cut-over is applied, live App keys keep the person the audit log proves for them.
     # Afterwards the guards hold creators fixed, so the back-fill never runs again (gateway/app_binding_guard.py).
-    if not fresh and not app_binding_guard.recorded(conn):
+    if not fresh and not app_binding_guard.recorded(conn) and not app_binding_guard.install_pending(conn):
         _backfill_credential_creators(conn)
     current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if int(current[0]) == _PRE_ACCESS_PLANS_VERSION:
@@ -578,7 +581,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_ACCESS_PLAN_DDL)
     # A fresh or cut-over database keeps the release's guards in place on every start. Any other database
     # runs in pre-cut-over mode: it starts, and the notice says what the cut-over would do.
-    if fresh or app_binding_guard.recorded(conn):
+    if fresh or app_binding_guard.recorded(conn) or app_binding_guard.install_pending(conn):
         app_binding_guard.install(conn)
     else:
         print(app_binding_guard.PENDING_NOTICE, flush=True)
