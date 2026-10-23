@@ -62,7 +62,7 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
     const chosen = dialog.getByRole("radio", {
       name: new RegExp(selection.label),
     });
-    expect(await chosen.isChecked()).toBe(false);
+    await expect(chosen).not.toBeChecked();
     await dialog.getByText(selection.label, { exact: true }).click();
     await expect(chosen).toBeChecked();
     await expect(page.getByText("We couldn't save your avatar")).toHaveCount(0);
