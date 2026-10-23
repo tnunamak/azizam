@@ -6,10 +6,12 @@ read. A sample is taken at once when the gateway starts, then every minute, and 
 """
 import asyncio
 import subprocess
+import unittest
 
 import pytest
 
 import status_endpoint
+import test_status_build as _base
 from gateway import lifecycle_drivers
 
 CONFIG = {
@@ -93,11 +95,16 @@ def test_the_sampler_samples_once_a_minute_and_joins_at_shutdown(monkeypatch, sp
     assert spawns == []
 
 
-def test_the_status_build_leaves_the_backend_samples_to_the_sampler(monkeypatch, spawns):
-    written: list[object] = []
-    monkeypatch.setattr(status_endpoint, "_record_backend_health_samples", written.append)
+class StatusBuildLeavesBackendSamplesToTheSampler(unittest.IsolatedAsyncioTestCase):
+    """The build reads the sampler's samples and writes none. Its section isolation comes from the build tests."""
 
-    payload = asyncio.run(asyncio.wait_for(status_endpoint.build_status_payload({"backends": {}}), timeout=60))
+    setUp = _base.StatusBuildTests.setUp
+    isolate_sections = _base.StatusBuildTests.isolate_sections
 
-    assert payload["generated_at"]
-    assert written == [], "a build wrote backend samples too, so they would come at uneven times"
+    async def test_the_status_build_does_not_write_backend_samples(self):
+        self.isolate_sections()
+
+        payload = await status_endpoint.build_status_payload({})
+
+        self.assertTrue(payload["generated_at"])
+        status_endpoint._record_backend_health_samples.assert_not_called()
