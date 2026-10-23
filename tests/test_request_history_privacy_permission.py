@@ -65,7 +65,7 @@ def test_an_owner_role_does_not_let_someone_set_another_persons_key_permission(g
     other = admin_store.upsert_oidc_user("https://id.example/realms/home", "other",
                                          email="other@example.test", path=gateway.path)
     app = admin_store.create_app("Other person's App", kind="personal", owner_user_id=other["id"],
-                                 access_plan=None, path=gateway.path)
+                                 access_plan="person", path=gateway.path)
     key = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key("not-a-real-secret"),
         prefix="opk_test", created_by=other["id"], path=gateway.path,
@@ -83,7 +83,7 @@ def test_stale_browser_sign_in_cannot_change_an_app_keys_privacy_permission(gate
     assert response.status_code == 302
     owner_id = gateway.user(OWNER)["id"]
     app = admin_store.create_app("Stale sign-in App", kind="personal", owner_user_id=owner_id,
-                                 access_plan=None, path=gateway.path)
+                                 access_plan="person", path=gateway.path)
     key = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key("stale-key-value"),
         prefix="opk_test", created_by=owner_id, path=gateway.path,
@@ -101,7 +101,7 @@ def test_existing_app_keys_gain_a_privacy_permission_column_defaulted_off(tmp_pa
     admin_store.init_db(db)
     person = admin_store.upsert_oidc_user("https://idp.test", "old-key", path=db)
     app = admin_store.create_app("Old App", kind="personal", owner_user_id=person["id"],
-                                 access_plan=None, path=db)
+                                 access_plan="person", path=db)
     key = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key("old-key-value"),
         prefix="opk_test", created_by=person["id"], path=db,
@@ -141,7 +141,7 @@ def test_mcp_connection_permission_is_session_only_and_is_returned_by_connection
     updates = []
 
     def set_permission(grant_id, *, person_id, enabled, session):
-        assert session.subject == person_id
+        assert session.user_id == person_id
         with sqlite3.connect(world.db) as conn:
             changed = conn.execute(
                 "UPDATE mcp_oauth_grants SET privacy_permission=? WHERE id=? AND person_id=? AND revoked_at IS NULL",

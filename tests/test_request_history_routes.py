@@ -139,6 +139,7 @@ def test_an_expired_row_is_never_shown_even_before_maintenance_deletes_it(gatewa
 def test_the_owner_and_an_unauthenticated_caller_see_no_one_elses_history(gateway, monkeypatch):
     _store(gateway, _record(gateway["maker"]))
     monkeypatch.setitem(gateway_support._APP_KEY, "key", "")  # the client sends no default key
+    assert _call("GET", "/gateway/v1/requests", gateway["other"].key).json()["requests"] == []
     assert _call("GET", "/gateway/v1/requests", None).status_code == 401
 
 
@@ -159,8 +160,6 @@ def test_a_delegated_credential_can_read_its_persons_retention_but_needs_permiss
     assert changed.status_code == 200, changed.text
     assert changed.json()["keep"] is False
     assert _call("GET", "/gateway/v1/me/retention", gateway["maker"].key).json()["keep"] is False
-    assert _call("GET", "/gateway/v1/requests", gateway["other"].key).json()["requests"] == []
-    assert _call("GET", "/gateway/v1/requests", None).status_code == 401
 
 
 # ----------------------------------------------------------------------- delete
