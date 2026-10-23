@@ -226,6 +226,7 @@ from gateway.models_catalog import (
     HealthProbeNoResponse,
     HealthProbeRefused,
     HealthProbeTimedOut,
+    connect_failure_kind,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -16404,7 +16405,11 @@ async def _models_catalog_health_evidence(
         except httpx.TimeoutException as exc:
             raise HealthProbeTimedOut() from exc
         except httpx.ConnectError as exc:
-            raise HealthProbeRefused() from exc
+            # Only a refused connection says nothing listens. A name that does not resolve or a
+            # failed TLS handshake propagates as an ordinary failure: the probe reports it as unavailable.
+            if connect_failure_kind(exc) == "refused":
+                raise HealthProbeRefused() from exc
+            raise
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()

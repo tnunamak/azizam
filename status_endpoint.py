@@ -39,7 +39,7 @@ import yaml
 from gateway import lifecycle_drivers
 from gateway import http_tls
 from gateway.http_tls import tls_context
-from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
+from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
@@ -213,6 +213,15 @@ _ROLE_ORDER = {"required": 0, "optional": 1, "standby": 2}
 _VALID_ROLES = {"required", "optional", "standby"}
 
 
+# What the grid says about a failed connection. Only "refused" means nothing listens on the port.
+_CONNECT_FAILURE_TEXT = {
+    "refused": "connect refused",
+    "dns": "DNS lookup failed",
+    "tls": "TLS handshake failed",
+    "other": "connection failed",
+}
+
+
 async def _probe(
     client: httpx.AsyncClient,
     key: str,
@@ -275,11 +284,13 @@ async def _probe(
             "latency_ms": dt,
             "last_error": f"HTTP {r.status_code}",
         }
-    except httpx.ConnectError:
-        if starts_on_demand(service or {}):
+    except httpx.ConnectError as exc:
+        kind = connect_failure_kind(exc)
+        if kind == "refused" and starts_on_demand(service or {}):
             return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process",
                     "starts_on_demand": True}
-        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
+        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": _CONNECT_FAILURE_TEXT[kind],
+                "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
     except Exception as e:  # noqa: BLE001

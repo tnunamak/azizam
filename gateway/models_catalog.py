@@ -12,6 +12,8 @@ import asyncio
 from urllib.parse import quote
 import copy
 import json
+import socket
+import ssl
 import statistics
 import inspect
 from pathlib import Path
@@ -986,6 +988,28 @@ class HealthProbeTimedOut(Exception):
 
 class HealthProbeRefused(Exception):
     """Nothing listens on the health endpoint: stopped, or not started yet."""
+
+
+def connect_failure_kind(error: BaseException) -> str:
+    """Name why a connection failed: ``refused``, ``dns``, ``tls`` or ``other``.
+
+    httpx reports every failure to connect as a ConnectError and keeps the socket or TLS
+    error it wrapped as the cause. Only a refused connection means nothing listens on the
+    port. A name that does not resolve or a broken TLS handshake is another fault, so it
+    must not be read as a stopped engine.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, ConnectionRefusedError):
+            return "refused"
+        if isinstance(cause, socket.gaierror):
+            return "dns"
+        if isinstance(cause, ssl.SSLError):
+            return "tls"
+        cause = cause.__cause__ or cause.__context__
+    return "other"
 
 
 # Latest successful health check per service in this process. Lost on
