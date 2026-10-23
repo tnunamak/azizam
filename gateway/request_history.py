@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import sqlite3
+import unicodedata
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -31,6 +32,9 @@ KIND = retention.REQUEST_HISTORY
 REMOVED = "[removed]"
 #: A base64 string longer than this is media, not text (section 3.5, rule 5).
 MEDIA_STRING_LIMIT = 64 * 1024
+#: How deeply JSON may nest before the secret floor omits it: a whole body, or one tool call's ``arguments`` string. No
+#: request the routes accept nests this deep, and the limit keeps the cleaner's recursion far from Python's own limit.
+JSON_DEPTH_LIMIT = 64
 #: Request headers kept by name. Nothing that carries a credential is on this list (rule 2).
 REQUEST_HEADERS = frozenset({"content-type", "accept", "x-azizam-prompts"})
 #: Reply headers kept by name.
@@ -104,8 +108,9 @@ def _forms(word: str) -> set[str]:
 
 
 def is_credential_name(name: str) -> bool:
-    """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept."""
-    words = [_forms(part) for part in segments(name)]
+    """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept. The name is
+    NFKC-normalised first, so a fullwidth ``ｐａｓｓｗｏｒｄ`` reads as ``password``."""
+    words = [_forms(part) for part in segments(unicodedata.normalize("NFKC", str(name)))]
     if any(_CREDENTIAL_SEGMENTS & forms for forms in words):
         return True
     return any((first, second) in _CREDENTIAL_PAIRS
@@ -201,40 +206,66 @@ def _scrub_urls_in_text(value: str, found: set[str]) -> str:
     return _URL_IN_TEXT.sub(scrub, value)
 
 
-def _redact_arguments(text: str, found: set[str]) -> Any:
-    """A tool call's ``arguments`` is a JSON string. Its JSON is cleaned like any JSON; text that is not JSON is cleaned as text."""
+class _TooDeep(Exception):
+    """JSON nests past JSON_DEPTH_LIMIT. Raised deep in the cleaner, and caught where the JSON that holds it is omitted."""
+
+
+def _redact_arguments(text: str, found: set[str], depth: int) -> Any:
+    """A tool call's ``arguments`` is a JSON string. Text that is not JSON is cleaned as text. A string that looks like
+    JSON (its first mark is ``{`` or ``[``) is cleaned as JSON, or omitted when it does not parse or nests too deep."""
+    if not text.lstrip().startswith(("{", "[")):
+        return _redact_text(text, found)
     try:
         parsed = json.loads(text)
-    except (ValueError, RecursionError):
-        return _redact_text(text, found)
-    if not isinstance(parsed, (dict, list)):
-        return _redact_text(text, found)
-    return json.dumps(_redact(parsed, found), ensure_ascii=False)
+    except RecursionError:
+        found.add("json_depth")
+        return {"omitted": "json_depth"}
+    except ValueError:
+        found.add("unreadable_json")
+        return {"omitted": "unreadable_json"}
+    omissions: set[str] = set()
+    try:
+        cleaned = _redact(parsed, omissions, depth)
+    except (_TooDeep, RecursionError):
+        found.add("json_depth")
+        return {"omitted": "json_depth"}
+    found.update(omissions)
+    return json.dumps(cleaned, ensure_ascii=False)
 
 
-def _redact(value: Any, found: set[str]) -> Any:
+def _redact(value: Any, found: set[str], depth: int = 1) -> Any:
+    """The secret floor, applied to a parsed value. ``depth`` is the nesting level of ``value``: a container past
+    JSON_DEPTH_LIMIT raises ``_TooDeep``, which omits the JSON that holds it."""
     if isinstance(value, Mapping):
+        if depth > JSON_DEPTH_LIMIT:
+            raise _TooDeep
         result: dict[str, Any] = {}
         for key, item in value.items():
             if is_credential_name(str(key)):
                 result[key] = REMOVED
                 found.add("credential_field")
             elif key == "arguments" and isinstance(item, str):
-                result[key] = _redact_arguments(item, found)
+                result[key] = _redact_arguments(item, found, depth + 1)
             else:
-                result[key] = _redact(item, found)
+                result[key] = _redact(item, found, depth + 1)
         return result
     if isinstance(value, list):
-        return [_redact(item, found) for item in value]
+        if depth > JSON_DEPTH_LIMIT:
+            raise _TooDeep
+        return [_redact(item, found, depth + 1) for item in value]
     if isinstance(value, str):
         return _redact_text(value, found)
     return value
 
 
 def redact_json(value: Any) -> tuple[Any, list[str]]:
-    """Apply the secret floor to a parsed body. Returns the kept value and the omissions it made."""
+    """Apply the secret floor to a parsed body. Returns the kept value and the omissions it made. A body nested past
+    JSON_DEPTH_LIMIT is omitted whole, so the record keeps a marker in its place."""
     found: set[str] = set()
-    return _redact(value, found), sorted(found)
+    try:
+        return _redact(value, found), sorted(found)
+    except (_TooDeep, RecursionError):
+        return {"omitted": "json_depth"}, ["json_depth"]
 
 
 # ------------------------------------------------------------------ one body, as it streams
