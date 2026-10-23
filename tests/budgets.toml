@@ -308,7 +308,8 @@
 # and the per-email limit staying at 10 (tests/test_accounts.py, tests/test_remembered_people.py).
 # Ceiling 16989 -> 16999, remeasured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-23).
 # Train r103 step 5 (account chooser): 17171 + 11 (16999 - 16988) = 17182, provisional until the final hermetic collection.
-pytest = 17182
+# Train r103: collect-only measured 17185.
+pytest = 17185
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
