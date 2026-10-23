@@ -276,9 +276,9 @@ IMAGE_REQUEST = {"model": "krea2-turbo", "prompt": SENTENCE, "size": "8x6", "res
 
 
 @pytest.fixture
-def image_gateway(fake_upstreams, monkeypatch, tmp_path, isolated_receipts):
-    """The gateway with a member's key, a ComfyUI fake that returns one PNG, and every store under tmp_path."""
-    assert receipt_store.DB_PATH == isolated_receipts
+def image_gateway(fake_upstreams, monkeypatch, tmp_path):
+    """The gateway with a member key, a ComfyUI fake, and hermetically isolated stores."""
+    receipt_store.init_db()
     db = use_admin_db(monkeypatch, tmp_path)
     person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
     _mint_member_key(db, person_id)
