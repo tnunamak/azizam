@@ -441,7 +441,7 @@ def test_modern_unknown_method_is_404_with_32601(env):
 
 def test_modern_results_carry_result_type_and_cache_hints(env):
     result = rpc(env, "tools/list", modern=True).json()["result"]
-    assert result["resultType"] == "complete" and result["cacheScope"] == "public"
+    assert result["resultType"] == "complete" and result["cacheScope"] == "private"
 
 
 def test_unknown_tool_is_a_protocol_error(env):
