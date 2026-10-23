@@ -10,7 +10,9 @@ gateway stopped.
 ``apply`` changes the database once, and only when every one of these holds:
 
 * the cut-over is not applied yet, and the database has run this release's migrations;
-* the gateway is not running: it holds its private directory lock for its whole life (gateway/private_tmp.py);
+* no gateway is running: each holds the database's lifetime lock beside admin.db (gateway/gateway_lifetime.py)
+  for its whole life, and apply takes that lock exclusively; where its private directory is visible here, the
+  gateway's private directory lock (gateway/private_tmp.py) is checked too;
 * no other process has the database open: apply holds the store lock (gateway/sqlite_startup.py) while it
   works, so a gateway that starts meanwhile waits for it;
 * an accepted preview matches the database's digest now, checked again inside the write transaction;
@@ -31,9 +33,9 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
-from gateway import admin_store, app_binding_guard, app_binding_preview, private_tmp, sqlite_startup
+from gateway import admin_store, app_binding_guard, app_binding_preview, gateway_lifetime, private_tmp, sqlite_startup
 
 ACCEPTANCES = "app_binding_cutover_acceptances"
 BACKUP_PREFIX = "pre-ownership-cutover-"
@@ -82,24 +84,28 @@ def apply(admin_db: Path) -> list[str]:
     path = _existing(admin_db)
     store_lock = _hold_store_lock(path)
     try:
-        _refuse_while_gateway_runs(private_tmp.configured_dir(path))
-        conn = _connect(path)
+        lifetime_lock = _hold_lifetime_lock_exclusively(path)  # a gateway that starts meanwhile waits for apply
         try:
-            _require_not_applied(conn)
-            _require_migrated(conn)
-            _decide(conn)  # refuse before any copy is made
-            backup = _backup(conn, path)
-            conn.execute("BEGIN IMMEDIATE")
+            _refuse_while_gateway_runs(private_tmp.configured_dir(path))
+            conn = _connect(path)
             try:
-                body, digest = _decide(conn)  # the same test again, now that no other writer can change the database
-                revoked, removed = _change(conn, body, digest)
-                conn.execute("COMMIT")
-            except BaseException:
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
-                raise
+                _require_not_applied(conn)
+                _require_migrated(conn)
+                _decide(conn)  # refuse before any copy is made
+                backup = _backup(conn, path)
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    body, digest = _decide(conn)  # the same test again, now that no other writer can change the database
+                    revoked, removed = _change(conn, body, digest)
+                    conn.execute("COMMIT")
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+            finally:
+                conn.close()
         finally:
-            conn.close()
+            lifetime_lock.close()
     finally:
         store_lock.close()
     return _report(backup, revoked, removed)
@@ -161,6 +167,18 @@ def _hold_store_lock(path: Path):
     except BlockingIOError:
         handle.close()
         raise CutoverError("another process has the database open (the gateway or a tool). Stop it, then apply again") from None
+    return handle
+
+
+def _hold_lifetime_lock_exclusively(path: Path) -> IO[bytes]:
+    """The lifetime lock every running gateway holds shared. Apply refuses when it cannot take it exclusively."""
+    handle = gateway_lifetime.open_lock_file(path)
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise CutoverError("the gateway is running against this database (it holds the database's lifetime lock). "
+                           "Stop it, then apply again") from None
     return handle
 
 

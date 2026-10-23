@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -31546,6 +31546,8 @@ if __name__ == "__main__":
 
     # Request scratch for this process and its children uses the private directory (REQUEST_RETENTION.md 5.1).
     private_tmp.activate()
+    # The App-binding cut-over refuses to run while this gateway holds the database's lifetime lock (owner visibility step 2).
+    gateway_lifetime.hold(ADMIN_STORE.path)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
