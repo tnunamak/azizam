@@ -29,7 +29,7 @@ from typing import Any
 
 from starlette.responses import JSONResponse
 
-from gateway import admin_store, receipt_store, request_history, request_history_slot, retention
+from gateway import receipt_store, request_history, request_history_slot, retention
 from gateway.extensions import ExtensionError, multipart_extensions
 
 log = logging.getLogger("gateway.request_history")
@@ -148,8 +148,7 @@ def _form_forget(fields: Mapping[str, Any], files: set[str]) -> bool:
 
 def _household_policy(admin_path: Path | None) -> dict[str, Any]:
     """The household's values for this group: the kill switch, and the group's default and cap."""
-    row = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path or admin_store.DB_PATH)
-    return retention.household_view(row.get("value") if row else None, GROUP)
+    return request_history.household_policy(admin_path)
 
 
 def _origin_id(identity: Any) -> str | None:

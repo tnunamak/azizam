@@ -148,3 +148,14 @@ def test_the_dismissal_runs_the_same_write_checks_as_a_choice(h):
     assert response.json()["error"]["code"] == "user_action_header_required"
     h.refuse = None
     assert h.client.get("/me/api/retention").json()["notice_due"] is True
+
+
+def test_the_choice_says_when_the_owner_has_turned_history_off_for_everyone(h):
+    """The household kill switch is off for everyone, whatever a member chose. The member's own choice is unchanged."""
+    ann = h.person("ann")
+    h.sign_in(ann)
+    assert h.client.get("/me/api/retention").json()["household_off"] is False
+    admin_store.put_operator_setting("retention", {"never_keep": True}, path=h.admin)
+    body = h.client.get("/me/api/retention").json()
+    assert body["household_off"] is True
+    assert body["keep"] is True

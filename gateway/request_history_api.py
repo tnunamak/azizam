@@ -257,12 +257,16 @@ def create_request_history_router(
     def _choice(person_id: str) -> dict[str, Any]:
         member = retention.member_choice(admin_path(), person_id, GROUP) or {}
         defaults = retention.bundled().member_defaults(retention.REQUEST_HISTORY)
+        # The same policy ``decide`` reads first: when the owner's kill switch is on, nothing is kept for anyone.
+        household = {**retention.household_defaults(retention.REQUEST_HISTORY),
+                     **request_history.household_policy(admin_path())}
         return {
             "keep": bool(member.get("remember", defaults["remember"])),
             "retention": member.get("retention", defaults["retention"]),
             "parts": member.get("parts", list(retention.bundled().parts(retention.REQUEST_HISTORY))),
             "choices": list(retention.bundled().data["groups"][GROUP]["choices"]),
             "allowed_parts": list(retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["parts"]["allowed"]),
+            "household_off": bool(household["never_keep"]),
             "notice_due": request_history.notice_due(person_id, admin_path=admin_path()),
         }
 
