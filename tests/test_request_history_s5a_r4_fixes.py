@@ -9,6 +9,7 @@ import asyncio
 import json
 import queue
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -324,4 +325,65 @@ def test_r4_3_b_thirty_two_requests_cancelled_while_their_bodies_drain_give_back
             await task
 
     asyncio.run(_repeat(cancel_during_drain, MAX_SLOTS))
+    assert _free_slots() == MAX_SLOTS
+
+
+# ------------------------------------------------------------------ R4-4: a body forget gives its slot back at once
+
+FORGET = {"com.azizam.prompts": {"mode": "forget"}}
+FORGET_BODY = json.dumps({"model": "m", "input": "a sentence to forget", "extensions": FORGET}).encode()
+
+
+async def _forgets_in_flight_then_a_kept_request(db: Any, media: Any, person: str) -> None:
+    """Thirty-two body forgets whose routes are still running, then one history-on request while they run."""
+    release = asyncio.Event()
+    everyone_read = asyncio.Event()
+    reads = 0
+
+    async def hold_after_reading(scope, receive, send):
+        nonlocal reads
+        scope["state"][IDENTITY_STATE_KEY] = _identity(person)
+        await _read_body(receive)
+        reads += 1
+        if reads == MAX_SLOTS:
+            everyone_read.set()
+        await release.wait()
+        await JSONResponse({"ok": True})(scope, receive, send)
+
+    holding = RequestHistoryMiddleware(hold_after_reading, admin_path=lambda: db, media_path=lambda: media)
+    keeping = RequestHistoryMiddleware(_answer_after_reading(person), admin_path=lambda: db, media_path=lambda: media)
+    forgets = [asyncio.create_task(holding(_scope(), _one_body(FORGET_BODY), _ignore)) for _ in range(MAX_SLOTS)]
+    await asyncio.wait_for(everyone_read.wait(), 30)
+    await keeping(_scope(), _one_body(KEEP_BODY), _ignore)
+    release.set()
+    await asyncio.gather(*forgets)
+
+
+def test_r4_4_a_thirty_two_body_forgets_in_flight_do_not_hold_the_slots_from_a_kept_request(member_db):
+    db, media, person = member_db
+    asyncio.run(_forgets_in_flight_then_a_kept_request(db, media, person))
+    rows = _kept(media)
+    assert len(rows) == 1
+    assert "a sentence to keep" in rows[0] and "a sentence to forget" not in rows[0]
+    assert _free_slots() == MAX_SLOTS
+
+
+def test_r4_4_b_a_body_forget_stops_its_reply_from_being_buffered(member_db):
+    db, media, person = member_db
+    request_history.set_member_choice(person, keep=True, retention_id="7_days", parts=["accepted", "received"],
+                                      admin_path=db, path=media, now=int(time.time()))
+    owner = RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
+    capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: _identity(person)},
+                                               headers={"content-type": "application/json"}, header_forget=False,
+                                               limit=1 << 20, route="/v1/responses")
+
+    async def forget_then_reply():
+        await capture.receive_wrapped(_one_body(FORGET_BODY))()
+        await capture.send_wrapped(_ignore)({"type": "http.response.start", "status": 200,
+                                             "headers": [(b"content-type", b"application/json")]})
+        await capture.send_wrapped(_ignore)({"type": "http.response.body", "body": b'{"answer":"x"}',
+                                             "more_body": False})
+
+    asyncio.run(forget_then_reply())
+    assert capture.reply is None
     assert _free_slots() == MAX_SLOTS
