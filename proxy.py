@@ -13097,6 +13097,7 @@ async def _serve(app: FastAPI):
 
     yield
 
+    await _stop_home_refreshes()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
     metadata_migration_task.cancel()
@@ -16489,6 +16490,16 @@ def _cached_health_evidence(service_records: Mapping[str, Any], service_ids: lis
         if hit is not None and now - hit[0] < max_age_s and hit[1] == json.dumps(services.get(service_id), sort_keys=True, default=str):
             served[service_id] = dict(hit[2])
     return served
+
+
+async def _stop_home_refreshes() -> None:
+    """Cancel and join the Home refreshes that outlive their reader, so none probes or writes a cache after shutdown."""
+    global _ENGINE_ROWS_TASK, _HOME_HEALTH_TASK
+    tasks = [task for task in (_ENGINE_ROWS_TASK, _HOME_HEALTH_TASK) if task is not None and not task.done()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _ENGINE_ROWS_TASK = _HOME_HEALTH_TASK = None
 
 
 async def _home_health_evidence(service_records: Mapping[str, Any], *, service_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
