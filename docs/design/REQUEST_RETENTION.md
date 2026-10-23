@@ -1865,6 +1865,48 @@ descriptions; a blob store for request inputs ([research] R6); saved
 templates ([research] R5 option 3); the widening slice Tim chooses
 (section 18).
 
+**Slice 5a as built.** Server side only. The UI, the privacy permission, the MCP tools and the Library cascade are
+slice 5b. These are the readings the build took where the text leaves a form open, or where D50-D52 change the text.
+
+- **Default and upgrade (D50; section 12, item 3).** Request history is a group on by default for a new member
+  (`groups.request_history.default_keep: true`, in the data). An existing member gets a row with keep off at the
+  schema 17 upgrade, as section 12 requires, so nobody already using Azizam starts keeping bodies. The notice that
+  section 12 asks for is UI work.
+- **Keys by group (sections 3.2, 12).** `prompt_memory_preferences` and the two erasure tables gain their group in the
+  key, and the rows that existed become `prompts`. The prompts code paths default to that group, so they behave as
+  before. The slice 1 golden matrix still differs only in its `bogus` period cells.
+- **Capture (sections 3.3, 3.6).** A pure ASGI middleware records each data-plane request once, at its end. It
+  decides then, because the handler sets the caller's identity during authentication. The write goes through
+  `retention.write`, which re-reads the kill switch, the member's choice and the cutoffs under the lock. The receipt's
+  `retention` entry is set after the write. A request that never authenticates writes nothing.
+- **Forget (section 3.4).** Forget in a JSON body, in a multipart form field, or in `X-Azizam-Prompts` keeps nothing.
+  The header is removed before the route runs. A JSON body of known size up to the record limit is read first, so an
+  invalid control gets the existing 400 (`invalid_prompt_mode`) before any route runs. A larger or chunked body is not
+  refused early; it is still never kept. This is a limit on section 3.4's "refused before dispatch".
+- **Unread bodies.** For an authenticated request, the rest of a body the route did not read is drained, for up to 30
+  seconds. A body that never completes is not kept (reason `incomplete`).
+- **Size (sections 3.5, 3.6).** A JSON body or reply over `max_record_bytes` is omitted as `record_size`, not
+  truncated, so a kept record is never partial. Section 3.5 says "up to `max_record_bytes`" for replies; this build
+  omits instead.
+- **`store: false` (section 3.3, step 2).** This ends the conversation only. Request history keeps by its own switch,
+  because section 3.3 lists `store: false` as a forget for `conversation` alone. The Responses test that asserted no
+  prompt bytes anywhere now asserts that the bytes sit in the one `kept_requests` row and nowhere else.
+- **Readers (section 4; D51, D52).** Content access decides. A personal key reads the rows its own App created,
+  without the permission; an MCP grant reads the rows its own connection created; everything else needs the privacy
+  permission, which no key or grant carries yet. **Deleting** needs the permission, because section 10 lists deletes
+  among the controls. A delegated credential therefore gets `403 privacy_permission_required`. D52 says reads are
+  free, and section 10 says controls need the permission; this build reads delete as a control.
+- **Member choice (not in the 5a list).** `GET` and `PUT /me/api/retention` let a member turn history off. They are
+  session only and hidden from the schema, like the other session routes. Without them a default-on group could not be
+  switched off.
+- **Fences and expiry (section 12).** Delete all, and turning history off, write a cutoff and an intent in one
+  transaction, delete the rows, and clear the intent. Maintenance settles an intent that did not finish, deletes
+  expired rows, and covers the household kill switch for this group. A shorter period shortens existing deadlines;
+  a longer one never extends them.
+- **Not built in 5a.** The Library cascade, and the same transaction for media requests (sections 3.1, 3.6, 12); the
+  privacy permission; the MCP tools; the settings UI; the household route for this group; `maker_signed_in`; debug
+  captures. `policy_version` records the bundled file's format version, not the household revision.
+
 ## 18. Tim's three decisions
 
 The design does not depend on any answer. Each answer is a data value plus,
