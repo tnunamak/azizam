@@ -2164,33 +2164,119 @@ class KeepNotProvable(ValueError):
     """A binding nobody else could have made is kept by the owner only. Any other binding is replaced, or added again."""
 
 
-def _owner_only_ever(conn: sqlite3.Connection, person_id: str) -> bool:
-    """True when ``person_id`` holds the owner role now and no other subject ever has.
+class KeepNeedsConfirmation(ValueError):
+    """The owner keeps an unproven binding only after confirming that the administrators on record could have made it."""
 
-    Before the cut-over the owner role could issue a key or an address on any App, and so could a control-plane
-    key that held it. Every holder of the role is therefore a possible maker. Revoked grants stay in the table,
-    so they still count.
+    def __init__(self, administrators: list[str]) -> None:
+        super().__init__("administrators on record could also have made this binding")
+        self.administrators = administrators
+
+
+# What the owner does with one App key or trusted address through the ownership cut-over (D55). ``keep``: the binding is
+# the person's, or can be kept now. ``replace`` (a key) and ``readd`` (an address): nobody can prove it, so it is issued or added again.
+KEEP, REPLACE, READD = "keep", "replace", "readd"
+UNNAMED_ADMINISTRATOR = "unnamed administrator"
+
+
+def _sole_current_owner(conn: sqlite3.Connection, person_id: str) -> bool:
+    """True when ``person_id`` holds the owner role now and no other person does.
+
+    Before the cut-over the owner role could issue a key or an address on any App, so only the sole current holder can
+    stand behind the owner's own binding. A service account with the owner role is the owner's control-plane key and does
+    not count. A revoked grant does not count either: ``keep_administrators`` names its holder instead.
     """
-    holders = {(kind, subject) for kind, subject in conn.execute(
-        "SELECT DISTINCT subject_kind, subject_id FROM admin_role_assignments WHERE role = 'owner'")}
-    if holders != {("user", person_id)}:
-        return False
-    return conn.execute(
+    holders = {row[0] for row in conn.execute(
+        "SELECT DISTINCT subject_id FROM admin_role_assignments "
+        "WHERE role = 'owner' AND subject_kind = 'user' AND revoked_at IS NULL")}
+    return holders == {person_id} and conn.execute(
         "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' AND subject_kind = 'user' AND subject_id = ? "
         "AND scope_app_id IS NULL AND revoked_at IS NULL", (person_id,),
     ).fetchone() is not None
 
 
-def _keep_provable(conn: sqlite3.Connection, person_id: str, recorded: str | None,
-                   creations: list[tuple[str, str | None]]) -> bool:
-    """A binding is kept only when nobody else could have made it.
+def _accountable_person_changed(conn: sqlite3.Connection, app_id: str, person_id: str) -> bool:
+    """True when an audit event shows this App's accountable person changing away from ``person_id``.
 
-    That needs the owner, a creator on record that is unknown or the person, and no audit event that names another maker.
+    An event on the App counts when its metadata names another ``owner_user_id``. The schema-7 migration writes one
+    report that names each App whose accountable person it rewrote.
+    """
+    for (metadata,) in conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE target_kind = 'app' AND target_id = ?", (app_id,),
+    ).fetchall():
+        owner = json.loads(metadata or "{}").get("owner_user_id")
+        if owner is not None and owner != person_id:
+            return True
+    for (metadata,) in conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE action = 'access_plans.migrate' AND target_kind = 'admin_db'",
+    ).fetchall():
+        apps = json.loads(metadata or "{}").get("apps", [])
+        if any(entry.get("id") == app_id and entry.get("accountable") for entry in apps):
+            return True
+    return False
+
+
+def _keep_provable(conn: sqlite3.Connection, person_id: str, app_id: str, recorded: str | None,
+                   creations: list[tuple[str, str | None]]) -> bool:
+    """A binding is kept only when nobody else could have made it (D55 amendment).
+
+    The creator on record is unknown or the person, every audit event that created it names the person, the person is the
+    sole current owner, and the App never answered to anyone else.
     """
     if recorded not in (None, "", person_id):
         return False
-    return _owner_only_ever(conn, person_id) and all(
-        kind == "user" and actor == person_id for kind, actor in creations)
+    if not all(kind == "user" and actor == person_id for kind, actor in creations):
+        return False
+    return _sole_current_owner(conn, person_id) and not _accountable_person_changed(conn, app_id, person_id)
+
+
+def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> list[str]:
+    """Display names of everyone who held the admin, superadmin or owner role at any time, other than ``person_id``.
+
+    Each could have issued a key or an address on any App before the cut-over, so the owner confirms them before keeping
+    an unproven binding. A service account that held admin or superadmin is named by its name. A service account that
+    held only the owner role is the owner's control-plane key and is not named. An email address is never shown as a
+    name (as ``owner_display_name`` does), so a person without a display name is listed as unnamed.
+    """
+    names = []
+    for kind, subject_id in conn.execute(
+        "SELECT subject_kind, subject_id FROM admin_role_assignments "
+        "WHERE role IN ('owner', 'admin', 'superadmin') AND (subject_kind = 'user' OR role <> 'owner') "
+        "AND NOT (subject_kind = 'user' AND subject_id = ?) GROUP BY subject_kind, subject_id", (person_id,),
+    ).fetchall():
+        table, column = ("users", "display_name") if kind == "user" else ("service_accounts", "name")
+        row = conn.execute(f"SELECT {column} FROM {table} WHERE id = ?", (subject_id,)).fetchone()
+        name = ((row[0] or "").strip() if row else "")
+        names.append(name if name and "@" not in name else UNNAMED_ADMINISTRATOR)
+    return sorted(names, key=str.casefold)
+
+
+def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapping[str, Any],
+                           app_id: str, person_id: str) -> dict[str, Any]:
+    """The remedy for one App key (``kind="key"``) or trusted address (``kind="address"``) through the ownership cut-over.
+
+    Returns ``{"remedy": "keep" | "replace" | "readd", "administrators": [...]}``. The remedy is ``keep`` when the binding
+    already names ``person_id`` as its creator, or can be kept now. Otherwise a key is ``replace`` and an address is
+    ``readd``. ``administrators`` is not empty only when keeping an unproven binding needs the owner's confirmation.
+    The keep route, the cut-over preview and the session snapshot's ``cutover`` field all ask this one function.
+    ``binding`` needs ``id`` and ``created_by``.
+    """
+    owner = conn.execute("SELECT owner_user_id FROM apps WHERE id = ?", (app_id,)).fetchone()
+    answers = (owner is not None and owner[0] == person_id
+               and conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone() is None)
+    if answers and binding["created_by"] == person_id:
+        return {"remedy": KEEP, "administrators": []}
+    creations = _key_creations(conn, binding["id"]) if kind == "key" else _address_creations(conn, app_id, binding["id"])
+    if not (answers and _keep_provable(conn, person_id, app_id, binding["created_by"], creations)):
+        return {"remedy": REPLACE if kind == "key" else READD, "administrators": []}
+    return {"remedy": KEEP, "administrators": keep_administrators(conn, person_id=person_id)}
+
+
+def _keep_decision(remedy: Mapping[str, Any], *, confirmed: bool) -> None:
+    """Refuse a keep that the remedy does not allow, or that needs the owner's confirmation first."""
+    if remedy["remedy"] != KEEP:
+        raise KeepNotProvable("this binding cannot be kept")
+    if remedy["administrators"] and not confirmed:
+        raise KeepNeedsConfirmation(list(remedy["administrators"]))
 
 
 def _key_creations(conn: sqlite3.Connection, cred_id: str) -> list[tuple[str, str | None]]:
@@ -2215,14 +2301,15 @@ def _address_creations(conn: sqlite3.Connection, app_id: str, entry_id: str) -> 
 
 
 def adopt_app_credential(
-    cred_id: str, *, app_id: str, person_id: str, session: session_guard.BrowserSession | None = None,
-    now: int | None = None, path: Path = DB_PATH,
+    cred_id: str, *, app_id: str, person_id: str, confirmed_administrators: bool = False,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Make ``person_id`` the creator of a live key on ``app_id`` (owner visibility §3.5: keeping an unproven key).
 
-    Only a key nobody else could have made is kept (``KeepNotProvable`` otherwise; the owner keeps, nobody else).
-    The sign-in is checked and the audit row is written in the same transaction as the change, so a sign-out
-    that lands first changes nothing. A key that already names the person is returned as it is and writes
+    Only a key nobody else could have made is kept (``KeepNotProvable`` otherwise). When administrators on record could
+    also have made it, the keep needs ``confirmed_administrators`` (``KeepNeedsConfirmation`` otherwise), and the audit
+    event names them. The sign-in is checked and the audit row is written in the same transaction as the change, so a
+    sign-out that lands first changes nothing. A key that already names the person is returned as it is and writes
     nothing. None when no live App key with that id is on the App.
     """
     ts = _now() if now is None else int(now)
@@ -2239,14 +2326,18 @@ def adopt_app_credential(
         if row["created_by"] == person_id:
             conn.rollback()
             return _credential_row_to_dict(row)
-        if not _keep_provable(conn, person_id, row["created_by"], _key_creations(conn, cred_id)):
+        remedy = binding_cutover_remedy(conn, kind="key", binding=row, app_id=app_id, person_id=person_id)
+        try:
+            _keep_decision(remedy, confirmed=confirmed_administrators)
+        except (KeepNotProvable, KeepNeedsConfirmation):
             conn.rollback()
-            raise KeepNotProvable("this key cannot be kept")
+            raise
         conn.execute("UPDATE credentials SET created_by = ? WHERE id = ?", (person_id, cred_id))
         _record_audit_in_transaction(
             conn, "credential.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
             target_kind="credential", target_id=cred_id,
-            metadata={"app_id": app_id, "prefix": row["prefix"], "previous_created_by": row["created_by"]},
+            metadata={"app_id": app_id, "prefix": row["prefix"], "previous_created_by": row["created_by"],
+                      "confirmed_administrators": remedy["administrators"]},
             now=ts,
         )
         conn.commit()
@@ -2255,14 +2346,15 @@ def adopt_app_credential(
 
 
 def adopt_trusted_address(
-    app_id: str, entry_id: str, *, person_id: str, session: session_guard.BrowserSession | None = None,
-    now: int | None = None, path: Path = DB_PATH,
+    app_id: str, entry_id: str, *, person_id: str, confirmed_administrators: bool = False,
+    session: session_guard.BrowserSession | None = None, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Make ``person_id`` the creator of one trusted address on ``app_id`` (owner visibility §3.5).
 
-    Same rules as ``adopt_app_credential``: only an address nobody else could have added is kept
-    (``KeepNotProvable`` otherwise), one transaction with the audit row, nothing written when the
-    address already names the person, None when the App has no such address.
+    Same rules as ``adopt_app_credential``: only an address nobody else could have added is kept (``KeepNotProvable``),
+    an address that administrators on record could have added needs their confirmation (``KeepNeedsConfirmation``),
+    one transaction with the audit row, nothing written when the address already names the person, None when the App
+    has no such address.
     """
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
@@ -2277,14 +2369,18 @@ def adopt_trusted_address(
         if row["created_by"] == person_id:
             conn.rollback()
             return _row_to_dict(row)
-        if not _keep_provable(conn, person_id, row["created_by"], _address_creations(conn, app_id, entry_id)):
+        remedy = binding_cutover_remedy(conn, kind="address", binding=row, app_id=app_id, person_id=person_id)
+        try:
+            _keep_decision(remedy, confirmed=confirmed_administrators)
+        except (KeepNotProvable, KeepNeedsConfirmation):
             conn.rollback()
-            raise KeepNotProvable("this address cannot be kept")
+            raise
         conn.execute("UPDATE app_trusted_addresses SET created_by = ? WHERE id = ?", (person_id, entry_id))
         _record_audit_in_transaction(
             conn, "app.trusted_address.adopt", actor_kind="user", actor_id=person_id, actor_label=None,
             target_kind="app", target_id=app_id,
-            metadata={"address": row["address"], "entry_id": entry_id, "previous_created_by": row["created_by"]},
+            metadata={"address": row["address"], "entry_id": entry_id, "previous_created_by": row["created_by"],
+                      "confirmed_administrators": remedy["administrators"]},
             now=ts,
         )
         conn.commit()

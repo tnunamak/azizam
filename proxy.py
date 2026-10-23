@@ -15619,8 +15619,13 @@ def _require_user_session(request: Request):
 def _user_action_response_error(exc: UserPortalError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
+        content={"error": {"code": exc.code, "message": exc.message, **exc.details}},
     )
+
+
+def _confirms_administrators(body: Any) -> bool:
+    """The owner's confirmation that the administrators on record could have made the binding: a JSON ``true``, nothing else."""
+    return isinstance(body, Mapping) and body.get("confirm_admins_could_have_made_it") is True
 
 
 def _require_user_action_header(request: Request, session) -> JSONResponse | None:
@@ -16746,7 +16751,13 @@ async def user_portal_adopt_key(credential_id: str, request: Request):
     if header_error is not None:
         return header_error
     try:
-        credential = adopt_user_app_key(session, credential_id, path=ADMIN_STORE.path)
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        credential = adopt_user_app_key(
+            session, credential_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(
@@ -16767,7 +16778,13 @@ async def user_portal_adopt_trusted_address(app_id: str, entry_id: str, request:
     if header_error is not None:
         return header_error
     try:
-        record = adopt_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = adopt_user_trusted_address(
+            session, app_id, entry_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(

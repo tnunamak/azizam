@@ -100,11 +100,12 @@ def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
 class UserPortalError(ValueError):
     """Raised when a user-plane account action is not allowed."""
 
-    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+    def __init__(self, code: str, message: str, *, status_code: int = 400, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.details = dict(details or {})  # extra fields for the error body, such as the administrators to confirm
 
 
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -545,19 +546,23 @@ def add_user_trusted_address(
     return record
 
 
-def _require_own_app(app: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, Any]:
-    """The App the signed-in person answers for, or the refusal to keep one of its bindings (owner visibility §3.5)."""
-    if app is None:
-        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
-    if app.get("owner_user_id") != str(user["id"]):
-        raise UserPortalError(
-            "not_your_app",
-            "Only the person this App answers for can keep one of its keys or trusted addresses.",
-            status_code=403,
-        )
-    if app.get("disabled_at"):
-        raise UserPortalError("app_disabled", "App is disabled", status_code=403)
-    return app
+def _own_credential(credential_id: str, user: Mapping[str, Any], *, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The live App key the signed-in person answers for, and its App (owner visibility §3.5).
+
+    Every other key answers as a missing one does: another person's key, a key on a session App, or a key whose App is
+    gone. The App's own refusal (disabled) comes only once the App is known to be the person's.
+    """
+    credential = admin_store.get_credential(credential_id, path=path)
+    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
+        raise _credential_not_found()
+    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+    try:
+        app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    except UserPortalError as exc:
+        if exc.code == "app_not_found":
+            raise _credential_not_found() from None
+        raise
+    return credential, app
 
 
 KEEP_KEY_REFUSED = (
@@ -569,28 +574,41 @@ KEEP_ADDRESS_REFUSED = (
     "POST /me/api/apps/{app_id}/trusted-addresses, then delete this one with "
     "DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}."
 )
+KEEP_NEEDS_CONFIRMATION = (
+    "Administrators at the time could also have made this {what}: {names}. Confirm that and keep it again with "
+    "the body {{\"confirm_admins_could_have_made_it\": true}}."
+)
+
+
+def _keep_needs_confirmation(exc: admin_store.KeepNeedsConfirmation, what: str) -> UserPortalError:
+    return UserPortalError(
+        "keep_needs_confirmation",
+        KEEP_NEEDS_CONFIRMATION.format(what=what, names=", ".join(exc.administrators)),
+        status_code=409,
+        details={"administrators": list(exc.administrators)},
+    )
 
 
 def adopt_user_app_key(
     session: AdminSession,
     credential_id: str,
     *,
+    confirmed_administrators: bool = False,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Keep an App key on an App the signed-in person answers for: they become its recorded creator.
 
-    Only the owner keeps, and only a key nobody else could have made (owner visibility §3.5). Any other key is
-    refused with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``).
+    Only the owner keeps, and only a key nobody else could have made (owner visibility §3.5). Any other key is refused
+    with ``keep_not_provable``, and the person replaces it instead (``replace_user_app_key``). When an administrator on
+    record could also have made it, the keep needs ``confirmed_administrators``, otherwise ``keep_needs_confirmation``
+    names them.
     """
     user = _user_from_session(session, path=path)
-    credential = admin_store.get_credential(credential_id, path=path)
-    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
-        raise _credential_not_found()
-    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    _, app = _own_credential(credential_id, user, path=path)
     try:
         record = admin_store.adopt_app_credential(
-            credential_id, app_id=app_id, person_id=str(user["id"]),
+            credential_id, app_id=str(app["id"]), person_id=str(user["id"]),
+            confirmed_administrators=confirmed_administrators,
             session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
         )
     except session_guard.SessionEnded as exc:
@@ -598,6 +616,8 @@ def adopt_user_app_key(
     except admin_store.KeepNotProvable:
         raise UserPortalError("keep_not_provable", KEEP_KEY_REFUSED.format(credential_id=credential_id),
                               status_code=409) from None
+    except admin_store.KeepNeedsConfirmation as exc:
+        raise _keep_needs_confirmation(exc, "key") from None
     if record is None:  # revoked since the check above
         raise _credential_not_found()
     out = _sanitize_credential(record)
@@ -617,11 +637,8 @@ def replace_user_app_key(
     way a key from the Apps page is made (no expiry). The secret is returned once, with the replaced id.
     """
     user = _user_from_session(session, path=path)
-    credential = admin_store.get_credential(credential_id, path=path)
-    if credential is None or credential.get("subject_kind") != "app" or not _credential_active(credential):
-        raise _credential_not_found()
-    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    app = _require_own_app(admin_store.get_app(app_id, path=path), user)
+    credential, app = _own_credential(credential_id, user, path=path)
+    app_id = str(app["id"])
     api_key = generate_app_api_key()
     try:
         record = admin_store.replace_app_credential(
@@ -645,18 +662,20 @@ def adopt_user_trusted_address(
     app_id: str,
     entry_id: str,
     *,
+    confirmed_administrators: bool = False,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Keep a trusted address on an App the signed-in person answers for: they become its recorded creator.
 
     Only the owner keeps, and only an address nobody else could have added. Any other address is refused with
-    ``keep_not_provable``: the person adds it again and then removes this entry.
+    ``keep_not_provable``: the person adds it again and then removes this entry. Another person's App is not found
+    (404), as it is for adding an address to it.
     """
     user = _user_from_session(session, path=path)
-    _require_own_app(admin_store.get_app(app_id, path=path), user)
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
     try:
         record = admin_store.adopt_trusted_address(
-            app_id, entry_id, person_id=str(user["id"]),
+            app_id, entry_id, person_id=str(user["id"]), confirmed_administrators=confirmed_administrators,
             session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
         )
     except session_guard.SessionEnded as exc:
@@ -664,6 +683,8 @@ def adopt_user_trusted_address(
     except admin_store.KeepNotProvable:
         raise UserPortalError("keep_not_provable", KEEP_ADDRESS_REFUSED.format(app_id=app_id, entry_id=entry_id),
                               status_code=409) from None
+    except admin_store.KeepNeedsConfirmation as exc:
+        raise _keep_needs_confirmation(exc, "address") from None
     if record is None:
         raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
     return record

@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from gateway import app_binding_guard
+from gateway import admin_store, app_binding_guard
 
 # Schema 7 is the access-plan migration; a database below it has not reached the App rows this reads.
 ACCESS_PLANS_SCHEMA = 7
@@ -111,6 +111,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
                     "id": k["id"], "prefix": k["prefix"], "display_name": k["display_name"],
                     "created_by": k["created_by"], "last_used_at": k["last_used_at"],
                     "proven": k in keep_keys, "action": "keep" if k in keep_keys else "revoke",
+                    **admin_store.binding_cutover_remedy(conn, kind="key", binding=k, app_id=app["id"], person_id=owner),
                 }
                 for k in app_keys
             ],
@@ -119,6 +120,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
                     "id": a["id"], "address": a["address"], "created_by": a["created_by"],
                     "proven": a in keep_addresses, "action": "keep" if a in keep_addresses else "remove",
                     "use_history": UNAVAILABLE,
+                    **admin_store.binding_cutover_remedy(conn, kind="address", binding=a, app_id=app["id"], person_id=owner),
                 }
                 for a in app_addresses
             ],
@@ -147,6 +149,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
                 {
                     "id": k["id"], "prefix": k["prefix"], "display_name": k["display_name"],
                     "created_by": k["created_by"], "last_used_at": k["last_used_at"], "proven": False, "action": "revoke",
+                    **admin_store.binding_cutover_remedy(conn, kind="key", binding=k, app_id=app_id, person_id=None),
                 }
                 for k in orphan_keys if _key_app_id(k) == app_id
             ],
@@ -154,6 +157,7 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
                 {
                     "id": a["id"], "address": a["address"], "created_by": a["created_by"],
                     "proven": False, "action": "remove", "use_history": UNAVAILABLE,
+                    **admin_store.binding_cutover_remedy(conn, kind="address", binding=a, app_id=app_id, person_id=None),
                 }
                 for a in orphan_addresses if a["app_id"] == app_id
             ],
@@ -227,11 +231,13 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
         for key in app["keys"]:
             lines.append(f"  key {key['prefix']} created_by={_show(key['created_by'])} "
                          f"proven={'yes' if key['proven'] else 'no'} last_used={key['last_used_at'] or 'never'} "
-                         f"-> {key['action']}")
+                         f"-> {key['action']} (remedy: {key['remedy']})")
+            lines += _confirmation_lines(key)
         for entry in app["trusted_addresses"]:
             lines.append(f"  address {entry['address']} created_by={_show(entry['created_by'])} "
                          f"proven={'yes' if entry['proven'] else 'no'} use_history={entry['use_history']} "
-                         f"-> {entry['action']}")
+                         f"-> {entry['action']} (remedy: {entry['remedy']})")
+            lines += _confirmation_lines(entry)
         if not app["keys"] and not app["trusted_addresses"]:
             lines.append("  no keys or trusted addresses")
         for reason in app["blocks_apply"]:
@@ -245,6 +251,14 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
     ]
     lines += [f"not evaluated: {note}" for note in body["not_evaluated"]]
     return "\n".join(lines)
+
+
+def _confirmation_lines(binding: dict[str, Any]) -> list[str]:
+    """Keeping an unproven binding needs the owner to confirm these administrators (D55 amendment)."""
+    if not binding["administrators"]:
+        return []
+    return [f"    keep needs the owner's confirmation: administrators at the time could also have made it: "
+            f"{', '.join(binding['administrators'])}"]
 
 
 def _show(value: Any) -> str:
