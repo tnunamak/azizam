@@ -7,6 +7,7 @@ reads as slow, and a lifecycle check that does not finish reads as unknown. The 
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
