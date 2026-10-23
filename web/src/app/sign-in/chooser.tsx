@@ -8,6 +8,7 @@ import {
   type AvatarSelection,
   type GeneratedAvatarVariant,
 } from "@/components/product/person-avatar";
+import { cn } from "@/lib/cn";
 import type { RememberedPerson } from "@/lib/remembered-people";
 import type { LeftPerson, Status } from "./sign-in-status";
 
@@ -24,32 +25,41 @@ function secondLine(person: RememberedPerson, provider: string): string {
     .join(" · ");
 }
 
-/** The status line above a screen: what just happened, with the one offer that goes with it (Forget). */
+/**
+ * The status line above a screen (DESIGN.md 4.5; the mockup's `.status`): what just happened, in a success-tint box,
+ * with the one offer that goes with it. The offer sits on a line of its own, left-aligned, and is a 44 px target.
+ */
 export function StatusLine({
   status,
   onForget,
+  className,
 }: {
   status: Status;
-  onForget: (person: LeftPerson) => void;
+  onForget?: (person: LeftPerson) => void;
+  /** The space below the box. The list leaves 24 px; forget mode's reserved space already provides its own. */
+  className?: string;
 }) {
   return (
-    <div role="status" className="text-body mb-6 flex items-start gap-2">
+    <div
+      role="status"
+      className={cn(
+        "bg-success-tint rounded-control text-body mb-6 flex items-start gap-2.5 px-3.5 py-3",
+        className,
+      )}
+    >
       <CircleCheck aria-hidden className="text-success mt-0.5 size-5 shrink-0" />
-      <p>
-        {status.text}
-        {status.forget && (
-          <>
-            {" "}
-            <button
-              type="button"
-              className="text-link min-h-11 underline underline-offset-4"
-              onClick={() => onForget(status.forget!)}
-            >
-              Forget {status.forget.name} on this browser
-            </button>
-          </>
+      <div className="min-w-0 flex-1">
+        <p>{status.text}</p>
+        {status.forget && onForget && (
+          <button
+            type="button"
+            className="text-link flex w-fit min-h-11 items-center text-left underline underline-offset-4"
+            onClick={() => onForget(status.forget!)}
+          >
+            Forget {status.forget.name} on this browser
+          </button>
         )}
-      </p>
+      </div>
     </div>
   );
 }
@@ -194,8 +204,8 @@ export function Chooser({
 type ForgetListProps = {
   people: RememberedPerson[];
   providerName: string;
-  /** The line that reports the last forget, or null. The space for it is always there. */
-  notice: string | null;
+  /** The box that reports the last forget, or null. The space for it is always there. */
+  notice: Status | null;
   error: string | null;
   onForget: (person: RememberedPerson) => void;
   onDone: () => void;
@@ -275,9 +285,16 @@ export function ForgetList({ people, providerName, notice, error, onForget, onDo
           );
         })}
       </ul>
-      <p role="status" className="text-body mt-4 min-h-6">
-        {notice ?? ""}
-      </p>
+      {/* The space is there before any forget, so the rows above and Done never move under the pointer. */}
+      <div className="mt-4 min-h-[52px]">
+        {notice ? (
+          <StatusLine status={notice} className="mb-0" />
+        ) : (
+          <div aria-hidden className="invisible bg-success-tint rounded-control text-body px-3.5 py-3">
+            &nbsp;
+          </div>
+        )}
+      </div>
       <div className="mt-2">
         <Button ref={doneRef} className="min-h-11" onClick={onDone}>
           Done
