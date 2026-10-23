@@ -188,3 +188,16 @@ def test_there_is_no_way_to_keep_a_copy() -> None:
     text = (PERF / "serve.py").read_text(encoding="utf-8")
     assert "--state" not in text and "--reuse" not in text and "--prepare-only" not in text
     assert "scratch_owner.sweep" in text and "rmtree(state" in text
+
+
+def test_a_member_home_over_its_request_budget_is_a_violation() -> None:
+    report = _home()
+    report["who"] = "member"
+    report["profiles"]["desktop"]["cold"]["member_api_requests"] = BUDGETS["home"]["member_api_requests"] + 1
+    assert [v["metric"] for v in check.home_violations(report, BUDGETS["home"])] == ["member_api_requests"]
+
+
+def test_an_owner_home_is_not_judged_on_member_requests() -> None:
+    report = _home()
+    report["who"] = "owner"
+    assert check.home_violations(report, BUDGETS["home"]) == []

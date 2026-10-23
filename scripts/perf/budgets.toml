@@ -43,3 +43,6 @@ mobile_warm_ms = 1200
 js_wire_kb = 300          # first-load JavaScript on the wire, cold
 js_requests = 40
 uncompressed_js = 0       # scripts over 20 KB served without gzip or brotli
+# A member's cold Home, counted by home_bench.mjs (every /me/api and /gateway/v1 call one load makes: session,
+# home, the first media page and the shell's jobs watch). Measured 2026-10-23 at 4; DESIGN.md section 6 allows 4.
+member_api_requests = 4
