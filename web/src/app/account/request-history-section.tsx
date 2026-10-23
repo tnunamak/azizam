@@ -77,6 +77,10 @@ export function RequestHistorySection() {
 
   const current: RequestHistoryChoice = data;
   const busy = save.isPending;
+  // The owner's switch comes first, as History reads it: when it is off for everyone, nothing new is kept whatever the
+  // person chose, so the controls show that and offer no way to turn it on.
+  const householdOff = current.household_off === true;
+  const keeps = !householdOff && current.keep;
   const repliesOffered = current.allowed_parts.includes("received");
   const keepsReplies = current.parts.includes("received");
 
@@ -108,15 +112,17 @@ export function RequestHistorySection() {
           label="Keep request history"
           htmlFor="request-history-keep"
           description={
-            data.keep
-              ? "Azizam keeps what your apps send so you can look back at it."
-              : "Nothing your apps send is kept."
+            householdOff
+              ? "History is off on this gateway. Nothing new is kept."
+              : keeps
+                ? "Azizam keeps what your apps send so you can look back at it."
+                : "Nothing your apps send is kept."
           }
           control={
             <Switch
               id="request-history-keep"
-              checked={data.keep}
-              disabled={busy}
+              checked={keeps}
+              disabled={busy || householdOff}
               onCheckedChange={(next) => {
                 if (next) void put({ keep: true }).catch(() => {});
                 else setPending({ kind: "off" });
@@ -129,15 +135,17 @@ export function RequestHistorySection() {
             label="Also keep replies"
             htmlFor="request-history-replies"
             description={
-              data.keep
-                ? "Keeps what came back, not only what was sent."
-                : "Turn on request history to change this."
+              householdOff
+                ? "The owner has turned request history off for everyone."
+                : keeps
+                  ? "Keeps what came back, not only what was sent."
+                  : "Turn on request history to change this."
             }
             control={
               <Switch
                 id="request-history-replies"
                 checked={keepsReplies}
-                disabled={busy || !data.keep}
+                disabled={busy || !keeps}
                 onCheckedChange={(next) => {
                   void put({ replies: next }).catch(() => {});
                 }}
@@ -150,14 +158,16 @@ export function RequestHistorySection() {
           // One line on a phone too: the label truncates before the control wraps under it.
           className="max-sm:flex-nowrap"
           description={
-            data.keep
-              ? "Older requests are deleted."
-              : "Turn on request history to change this."
+            householdOff
+              ? "The owner has turned request history off for everyone."
+              : keeps
+                ? "Older requests are deleted."
+                : "Turn on request history to change this."
           }
           control={
             <Select
               value={data.retention}
-              disabled={busy || !data.keep}
+              disabled={busy || !keeps}
               onValueChange={(value) => choosePeriod(value)}
             >
               <SelectTrigger
