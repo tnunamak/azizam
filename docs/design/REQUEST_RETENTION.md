@@ -339,11 +339,12 @@ I10):
 3. **Outbound credentials are never in a part.** `sent` is captured before
    `runtime_secrets` attaches stored credentials (D26, D38, D42: a request is
    built once and credentials are attached at the moment of use).
-4. **URLs inside a body keep scheme, host and path.** User info and query
-   values are replaced by `[removed]`, and query names are kept. The
-   authority ends at the first `/`, `?` or `#`, and only an `@` in it starts
-   user info. A URL that cannot be split that way is replaced whole by
-   `[url removed]` (round 6, R6-1). A signed
+4. **URLs inside a body keep scheme, host, port and path.** A URL runs from
+   its scheme to the next space or the next scheme. One with an `@` or `%40`
+   anywhere, or one that cannot be split into a scheme and a host, is replaced
+   whole by `[url removed]`. Otherwise the query and fragment are replaced by
+   `?[removed]` and `#[removed]`, query names included, and a path segment
+   named as a credential is replaced by `[removed]` (round 7, R7-1). A signed
    URL is a bearer credential ([research] R6; `PROMPT_MEMORY.md` "OpenAI
    image URLs are bearer capabilities"). The record marks this, so Run
    again knows the record is incomplete.
@@ -1924,8 +1925,7 @@ that they pin now passes with its mark removed. The tests the review did not pin
   `secrets`, `password1`, `apiKeys` and `access_tokens` are credential names too, and a credential name removes its
   whole value, however deep. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. A URL is
   any `scheme://`, in any letter case (`postgres://`, `wss://`, `HTTPS://`), as a whole value or inside a longer string.
-  Each one is scrubbed with the whole-URL helper, and the punctuation after it is kept. A query item with no `=` is
-  removed whole, since it may be a token written as a bare key. A tool call's
+  Each one is cleaned by the URL rule of round 7 (R7-1, below). A tool call's
   `arguments` string is parsed and its JSON is cleaned like any JSON. Text that is not JSON is cleaned as text. Two
   other name checks exist and were left alone: `redaction.is_forbidden_key` is an exact-key set for receipts and media
   jobs, and `legacy_credential_rules` tokenizes command-line flags. Neither splits request-history names.
@@ -1988,7 +1988,7 @@ that they pin now passes with its mark removed. The tests the review did not pin
 - **Rollback (review item 11).** Schema 17 is not rollback-safe. Take a backup of `admin.db` and `media_jobs.db` before
   deploy.
 - **Round 4 fixes, as built (R4-1 to R4-4).** The probes are in `tests/test_request_history_s5a_r4_fixes.py`.
-  - **User info and query values (R4-1, superseded by R6-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
+  - **User info and query values (R4-1, superseded by R6-1 and R7-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
     user info does not end it. The user info of a URL ends at its last `@`: everything from the scheme to that `@` is
     removed. So a `/`, `?` or `#` in a password is not read as the start of the path. A URL whose path or query holds an
     `@` loses its host too, because a parser cannot tell that case from a password. A closing quote or `>` after a URL
@@ -2011,6 +2011,14 @@ that they pin now passes with its mark removed. The tests the review did not pin
   - **JSON held in a string literal (R6-2).** A string whose content is a JSON string literal that holds JSON, or another literal, is decoded and cleaned at every wrapper level, and stored as a literal again. A literal around plain text is cleaned as text, as before, and so is a literal around bracketed prose that does not parse. The nested JSON of a record shares one `WorkBudget` between its request body and its reply: decoded text up to `max_record_bytes` (1 MiB), and up to `JSON_NODE_LIMIT` (200,000) values visited. A string spends it when it parses as JSON and is cleaned further (an object, an array, or a literal around one), so plain text costs nothing. A string past the budget is omitted as `{"omitted": "json_budget"}`, and a string past `JSON_DEPTH_LIMIT` is omitted as before. The node limit bounds the work of a body of many small JSON strings, and the micro-benchmark `test_r6_2_j` asserts that counter for a one-mebibyte body, not a time.
   - **Body whole before the caller is known (R6-3).** A body that completes before the route authenticates has its controls read at the first decision, before a slot is taken and before any reply is buffered. A forget takes no slot, and its reply is not held until the write. Before, the controls were read only when the body completed after the decision, so a forget held its slot until the write.
   - **Default-ignorable characters in names (R6-4).** `is_credential_name` drops every Default_Ignorable_Code_Point before the NFKC match: the format characters (category Cf) and the ranges U+034F, U+115F to U+1160, U+17B4 to U+17B5, U+180B to U+180F, U+2065, U+3164, U+FE00 to U+FE0F, U+FFA0, U+FFF0 to U+FFF8 and U+E0000 to U+E0FFF. U+2065 and U+FFF0 to U+FFF8 are unassigned, and the property covers them, so they are dropped too. So `pass` followed by U+034F and `word` matches as `password`.
+  - **Round 7 fixes, as built (R7-1 to R7-3).** The probes are in `tests/test_request_history_s5a_r7_fixes.py`. Round 7 replaces the URL rule of rounds 4 and 6, so the round-4, round-6, review and redaction tests that pinned the old output now pin the new one. The pytest count went from 16498 to 16538 collected.
+    - **One URL rule (R7-1), in plain words.** A URL starts at a scheme: a letter, then letters, digits, `+`, `.` or `-`, then `://`. It runs to the next space or the next scheme, so `a://x,b://y` is two URLs. A quote, a bracket or an angle bracket does not end it. If it holds `@` or `%40` anywhere, the whole URL becomes `[url removed]`, and that takes the user name, the password and any `@` in the path with it. If it cannot be split into a scheme and a non-empty ASCII host (a port that is not a number up to 65535, an IPv6 bracket that is not closed, no host, a non-ASCII host), the whole URL becomes `[url removed]`. Otherwise the scheme, host, port and path are kept. A path segment whose name is a credential name (rule 8) becomes `[removed]`. A query becomes `?[removed]`, with every name and value gone, and a fragment becomes `#[removed]`. The same rule applies to a URL that is a whole value and to a URL in a longer string. This resolves both residuals in the R6-1 bullet: an `@` anywhere now removes the URL.
+    - **It over-redacts by design.** Every query goes, names included, so `?page=2` becomes `?[removed]`. Punctuation written straight after a URL with a query goes with the query: `see https://h.test/a?x=1, then` keeps `see https://h.test/a?[removed] then`. A quote or bracket written straight after such a URL goes too. A URL with no host, such as `file:///etc/x`, is removed.
+    - **What the rule does not catch.** A secret in a path segment that is not a credential name is kept, such as a bot token in a path or a signed path. Rule 6 forbids a value detector, so no check reads the shape of a path segment. A space inside the user info still ends the URL, so `postgres://u:a b@h` keeps `b@h` as text. The owner decides whether to tighten the path rule, end URLs at punctuation, or accept these two residuals.
+    - **Why quotes and brackets do not end a URL.** The brief's rule ended a URL at a quote, `<` or `>`. Then `https://h.test/a?token=abc"SECRET&x=1` kept `SECRET` as text after the quote, and `postgres://user:'SECRET'@db/app` kept it too. Ending the URL there is the leak, so these characters are part of the URL.
+    - **Linear scan (R7-1).** The old scan searched for a scheme at every letter, so a long run of letters cost time in proportion to its square: 80 KB took about four seconds. The new scan finds each `://` and walks back over its scheme characters, so each character is read once.
+    - **JSON literals cleaned as decoded text (R7-2).** A string literal around plain text had its encoded text cleaned. A URL with escaped slashes (`\u002f`) has no `://` in its encoded text, so it was kept. Now the decoded text is cleaned and the result is stored as a literal again. A decoded `data:` URL is omitted as media.
+    - **Budget checked before a parse (R7-3).** A string is checked against the record's byte budget before it is parsed. A string too long for what is left is omitted as `{"omitted": "json_budget"}` and is never parsed. The budget is spent only when a string parses as JSON, so plain text still costs nothing. Known effect: a plain-text string that starts with a bracket or a quote, and is longer than what is left, is omitted rather than kept as text.
 
 ## 18. Tim's three decisions
 
