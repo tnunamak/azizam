@@ -340,15 +340,19 @@ I10):
    `runtime_secrets` attaches stored credentials (D26, D38, D42: a request is
    built once and credentials are attached at the moment of use).
 4. **URLs inside a body keep scheme, host and port, and most of the path.** A
-   URL runs from its scheme to the next space or the next scheme. One with an
-   `@` or `%40` anywhere, or one that cannot be split into a scheme and a host,
-   is replaced whole by `[url removed]`. Otherwise the query and fragment are
+   URL runs from its scheme to the end of its token: the next space, or a scheme
+   that follows a delimiter (round 9, R9-1). One with an `@` or `%40` anywhere,
+   one that cannot be split into a scheme and a host, or one whose token holds a
+   `://` that does not start it, is replaced whole by `[url removed]`. Otherwise
+   the query and fragment are
    replaced by `?[removed]` and `#[removed]`, query names included, and a path
    segment named as a credential is replaced by `[removed]` (round 7, R7-1). A
    path segment is also replaced when it holds a colon, or when it is 20 or
    more characters from `[A-Za-z0-9_-]` and holds a letter and a digit (round 8,
-   R8-1). That is a shape check on URL path segments, not a secret detector, so
-   rule 6 still holds for bodies and other text. A signed URL is a bearer
+   R8-1). Round 9 reads the segment after percent-decoding, with its trailing
+   prose punctuation set aside and kept (R9-2, R9-3). That is a shape check on
+   URL path segments, not a secret detector, so rule 6 still holds for bodies and
+   other text. A signed URL is a bearer
    credential ([research] R6; `PROMPT_MEMORY.md` "OpenAI image URLs are bearer
    capabilities"). The record marks this, so Run again knows the record is
    incomplete.
@@ -2027,6 +2031,12 @@ that they pin now passes with its mark removed. The tests the review did not pin
     - **Token-shaped path segments (R8-1), in plain words.** A path segment is replaced with `[removed]` when it holds a colon, or when it is 20 or more characters from `[A-Za-z0-9_-]` and holds a letter and a digit. So `/bot123456789:<35 characters>/getMe` becomes `/[removed]/getMe`, and a 32-character webhook token is replaced. A UUID is replaced, and so are most hashes, which hold both letters and digits. A colon also matches a model and method path, such as `gemini-1.5-pro:generateContent`. This over-redacts some IDs on purpose. A segment with any other character, such as a dot, is not a token, however long it is. Short slugs such as `v1` and `chat-completions`, and numeric IDs such as `12345`, are kept.
     - **What round 8 does not catch.** A colon written as `%3A` is not read as a colon. A token with a dot in it, such as a JSON Web Token (three dot-separated parts), is not matched. The rule applies to URL path segments only. A query, a body or text outside a URL is not checked for tokens, so rule 6 still holds for them.
     - **Accepted residuals from round 7.** Round 8 does not change these three, which were accepted. A space inside the user info still ends the URL, so `postgres://u:a b@h` keeps `b@h` as text. Every query name is removed with its value, so `?page=2` becomes `?[removed]`. Punctuation written straight after a URL with a query is removed with the query, so `see https://h.test/a?x=1, then` keeps `see https://h.test/a?[removed] then`.
+  - **Round 9 fixes, as built (R9-1 to R9-3).** The probes are in `tests/test_request_history_s5a_r9_fixes.py`. Two round-7 tests changed with R9-1 and were updated in place: `test_r7_1_l` (a URL with a URL in its query is now replaced whole) and `test_r7_1_n` (many `://` in one token are one replacement). The pytest count went from 16553 to 16607 collected. The token rule is in `_url_runs` and `_run_urls`, and the segment rule is in `_scrub_segment`.
+    - **Token boundary (R9-1), in plain words.** A scheme begins a new token only at the start of the text, after whitespace, or after one of `, ; ( ) [ ] { } < > " '` and backtick. A `://` that does not begin a token is not read as a scheme, so a query, fragment or path value written before it is not kept as one. A token that holds a `://` that does not begin it is replaced whole by `[url removed]`. A token whose only `://` does not begin it is replaced too, because it cannot be split into a scheme and a host (R7-1). So `https://a.test?token=<secret>://b.test` and `token=<secret>://b.test` both become `[url removed]`. Two URLs joined by a delimiter, such as `https://a.test/x,https://b.test/y`, are still two URLs.
+    - **Trailing prose punctuation (R9-2).** Before the token check, a path segment has its trailing closing quote, closing bracket, closing paren, period, comma, semicolon, `!` or `?` set aside. If the rest is a token, it becomes `[removed]` and the punctuation is kept, so `/<token>.` becomes `/[removed].`. A `?` starts the query, so it is never part of a segment, and it is not kept when the query is empty. The `@` and `%40` check on the whole URL still runs first.
+    - **Percent-decoding (R9-3).** The colon and token checks read each path segment after `urllib.parse.unquote`, so `%3A` counts as a colon and a fully encoded token is removed. A segment that is kept is kept as written, still encoded. The credential-name check reads the raw segment, as before.
+    - **What round 9 does not catch.** (1) A secret written straight after a delimiter is read as a scheme, because a delimiter starts a token. `https://a.test/x,<20-character secret>://b.test` keeps the secret, in lower case, as the scheme. Treating a token-shaped scheme (the R8-1 shape) as a value would close this. (2) A segment that decodes to hold a `/`, such as `/<token>%2Fmore`, is checked as one string, so the token is kept. (3) The credential-name check does not decode, so `pass%77ord` is not read as `password`. (4) `*`, `~` and `_` are not prose punctuation here, so `/<token>*` keeps the token.
+    - **Consequences to review.** A URL wrapped in markdown emphasis, such as `*https://a.test/x*`, is replaced whole. A `://` with no scheme in prose, such as `Use :// here`, becomes `Use [url removed] here`. A URL with another URL in its query, such as an OAuth `redirect_uri`, loses its host as well as the URL it carries.
 
 ## 18. Tim's three decisions
 
