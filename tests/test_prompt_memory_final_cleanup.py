@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from tests.support.app_keys import accountable_person, before_the_cut_over
 import json
 import sqlite3
 import time
@@ -45,6 +46,7 @@ def household(tmp_path, monkeypatch, isolated_receipts):
 @pytest.mark.parametrize('minter', ['owner', 'robin', 'automation'])
 def test_upgrade_backfills_legacy_creator_from_creation_audit(household, action, target_kind, minter):
     hh = household
+    before_the_cut_over(hh.admin)
     key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
         hash='sha256:legacy', prefix='test', path=hh.admin)
     actor = getattr(hh, minter)['id'] if minter != 'automation' else 'svc_automation'
@@ -61,6 +63,7 @@ def test_upgrade_backfills_legacy_creator_from_creation_audit(household, action,
 
 def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys):
     hh = household
+    before_the_cut_over(hh.admin)
     for suffix, creator in [('unknown', None), ('known', hh.robin['id'])]:
         key = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
             hash=f'sha256:{suffix}', prefix='test', created_by=creator, path=hh.admin)
@@ -172,6 +175,7 @@ def test_disable_retains_prompt_and_chat_then_remove_erases_both(household):
 
 def test_creator_backfill_uses_short_transactions(household):
     hh = household
+    before_the_cut_over(hh.admin)
     with sqlite3.connect(hh.admin) as conn:
         conn.executemany(
             "INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,created_at) "
@@ -237,7 +241,7 @@ def test_explicit_prompt_deadline_still_expires_prompts(household):
 def test_delete_scrubs_legacy_credential_scoped_video_job(household):
     hh = household
     credential = admin_store.create_credential_hash(subject_kind='app', subject_id=hh.app['id'],
-        hash='sha256:old-key', prefix='test', path=hh.admin)
+        hash='sha256:old-key', prefix='test', path=hh.admin, created_by=accountable_person(hh.admin, hh.app['id']))
     job = media_jobs.create(media_jobs.MediaJob(intent='video.generate', owner_key_hash=credential['hash'],
         metadata={'request_hash': 'legacy-video-body-hash'}, created_at=int(time.time()) - 10), path=hh.jobs)
     proxy._purge_person_prompt_memory(hh.robin['id'])
