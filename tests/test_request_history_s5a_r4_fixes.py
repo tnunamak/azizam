@@ -54,6 +54,8 @@ def test_r4_1_b_user_info_with_a_delimiter_is_removed_from_a_url_that_is_a_whole
     assert kept == {"dsn": "postgres://[removed]@db/app"}
 
 
+# Round 6 (R6-1) replaced the rule this test pinned, which cut user info at the last @ anywhere in the URL. Each of these
+# URLs cannot be split into its parts now, so the whole URL is replaced (see tests/test_request_history_s5a_r6_fixes.py).
 @pytest.mark.parametrize("url", [
     f"postgres://user:pa/{SECRET}@db/app",
     f"postgres://user:12/{SECRET}@db/app",
@@ -61,10 +63,10 @@ def test_r4_1_b_user_info_with_a_delimiter_is_removed_from_a_url_that_is_a_whole
     f"postgres://user:pa#{SECRET}@db/app",
     f"postgres://user:pa@{SECRET}@db/app",
 ])
-def test_r4_1_c_an_ambiguous_user_info_boundary_is_cut_at_the_last_at_sign(url):
+def test_r4_1_c_an_ambiguous_user_info_boundary_removes_the_whole_url(url):
     kept, _ = request_history.redact_json({"dsn": url, "content": f"reach {url} now"})
     assert SECRET not in json.dumps(kept)
-    assert kept == {"dsn": "postgres://[removed]@db/app", "content": "reach postgres://[removed]@db/app now"}
+    assert kept == {"dsn": "[url removed]", "content": "reach [url removed] now"}
 
 
 @pytest.mark.parametrize("delimiter", QUERY_DELIMITERS)

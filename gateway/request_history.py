@@ -20,7 +20,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import parse_qsl
 
 from python_multipart.multipart import MultipartParser, parse_options_header
 
@@ -54,8 +54,15 @@ _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
 _URL_START = re.compile(_URL_SCHEME)
 _URL_IN_TEXT = re.compile(_URL_SCHEME + r"\S+")
-#: Closing marks that are not part of a URL in prose. A quote cannot be user info, which ends at the last ``@``.
+#: Closing marks that are not part of a URL in prose.
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\">"
+#: What an authority may hold: the RFC 3986 characters, and the quote a pasted user info may carry (R4-1). A backslash,
+#: a brace, a space or a non-ASCII letter makes the start of the host unclear, so it is not on this list.
+_AUTHORITY = re.compile(r"""[A-Za-z0-9\-._~%!$&'()*+,;=:@\[\]"]*""")
+#: The host and port after the user info. A host is a bracketed IPv6 address or a plain name.
+_HOST_PORT = re.compile(r"(?P<host>\[[0-9A-Za-z:.%\-_]+\]|[A-Za-z0-9\-._~%]*)(?::(?P<port>[0-9]*))?")
+#: What a URL reads as when it cannot be split into its parts. The whole URL is replaced, so no part of it is kept.
+URL_REMOVED = "[url removed]"
 
 _TABLE = """
 CREATE TABLE IF NOT EXISTS kept_requests (
@@ -145,28 +152,36 @@ def _query_without_values(query: str) -> str:
 def _scrub_url(value: str) -> tuple[str, bool] | None:
     """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go.
 
-    User info may hold a sub-delim, a quote, or an unencoded ``/``, ``?``, ``#`` or ``@``, so no parser can say where it
-    ends. It is taken to end at the last ``@`` in the URL, and everything from the scheme to that ``@`` is removed."""
+    The authority ends at the first ``/``, ``?`` or ``#``. Only an ``@`` inside the authority starts user info, and only
+    one may be there, so a query or fragment that holds an ``@`` is cleaned by its own rules and never becomes the host.
+    A URL that cannot be split this way is replaced whole by ``[url removed]``. That covers an authority with a second
+    ``@``, an odd character or a bad port, and a path with an ``@`` in a URL whose authority has none: an unencoded
+    delimiter in a password would put one there, and a path is kept as written."""
     match = _URL_START.match(value)
     if match is None or any(char.isspace() for char in value):
         return None
-    scheme, rest = value[:match.end()], value[match.end():]
-    at = rest.rfind("@")
-    userinfo = f"{REMOVED}@" if at != -1 else ""
-    if at != -1:
-        rest = rest[at + 1:]
-    try:
-        parts = urlsplit(scheme + rest)
-        port = parts.port
-    except ValueError:
-        return REMOVED, True
-    host = parts.hostname or ""
-    if ":" in host:
-        host = f"[{host}]"
+    scheme, rest = value[:match.end() - len("://")].lower(), value[match.end():]
+    ends = [index for index in (rest.find(mark) for mark in "/?#") if index != -1]
+    cut = min(ends, default=len(rest))
+    authority, tail = rest[:cut], rest[cut:]
+    before_fragment, _, fragment = tail.partition("#")
+    path, _, query = before_fragment.partition("?")
+    if not _AUTHORITY.fullmatch(authority) or authority.count("@") > 1:
+        return URL_REMOVED, True
+    if "@" not in authority and "@" in path:
+        return URL_REMOVED, True
+    found_host = _HOST_PORT.fullmatch(authority.rpartition("@")[2])
+    if found_host is None:
+        return URL_REMOVED, True
+    port = found_host.group("port") or ""
+    if len(port) > 5 or (port and int(port) > 65535):
+        return URL_REMOVED, True
+    user_info = f"{REMOVED}@" if "@" in authority else ""
+    host = found_host.group("host").lower()
     netloc = f"{host}:{port}" if port else host
-    query = _query_without_values(parts.query)
-    changed = bool(userinfo or parts.query or parts.fragment)
-    return urlunsplit((parts.scheme, userinfo + netloc, parts.path, query, "")), changed
+    query_text = _query_without_values(query)
+    changed = bool(user_info or query or fragment)
+    return f"{scheme}://{user_info}{netloc}{path}" + (f"?{query_text}" if query_text else ""), changed
 
 
 def _redact_text(value: str, found: set[str]) -> Any:
