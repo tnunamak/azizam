@@ -10,15 +10,18 @@ const shot = (width: number, name: string) =>
   path.resolve(__dirname, "../test-results/screens", `history-5b1-${width}-${name}.png`);
 
 // The Home notice needs a member who predates request history: the row the schema 17 upgrade wrote, with the
-// switch off and no last writer (retention_migration.migrate_group_keys). Make the owner that member.
+// switch off and no last writer (retention_migration.migrate_group_keys), and no answer to the notice yet. Make the
+// owner that member again, so each width starts from the same state.
 function makePredatingMember(baseURL: string) {
   const admin = path.join(fixtureStateDir(Number(new URL(baseURL).port)), "admin.db");
+  const owner = "SELECT id FROM users WHERE email='owner@example.test'";
   execFileSync("sqlite3", [
     "-cmd",
     ".timeout 10000",
     admin,
     "UPDATE prompt_memory_preferences SET remember=0, updated_by=NULL WHERE grp='request_history' " +
-      "AND user_id IN (SELECT id FROM users WHERE email='owner@example.test');",
+      `AND user_id IN (${owner}); ` +
+      `DELETE FROM request_history_notice_seen WHERE person_id IN (${owner});`,
   ]);
 }
 
