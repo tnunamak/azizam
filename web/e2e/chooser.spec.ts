@@ -43,6 +43,41 @@ test("sign out offers Forget for the person who left, and forgetting removes onl
   expect((await (await lea.context.request.get("/me/api/session")).json()).authenticated).toBe(true);
 });
 
+test("a status line is one tinted box, and its Forget offer sits on its own line, left-aligned and 44 px tall", async ({
+  isolated,
+}) => {
+  const { page, leaName, robinName } = await twoPeopleOnOneBrowser(isolated);
+
+  // After a sign-out: the box, its spacing, and the offer on a line of its own under the sentence.
+  const status = page.getByRole("status");
+  await expect(status).toContainText("You’re signed out.");
+  const sentence = status.locator("p").first();
+  const offer = status.getByRole("button", { name: `Forget ${leaName} on this browser` });
+  await expect(offer).toBeVisible();
+  const boxStyle = await status.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { background: computed.backgroundColor, padding: computed.padding, marginBottom: computed.marginBottom };
+  });
+  expect(boxStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+  expect(boxStyle.padding).toBe("12px 14px");
+  expect(boxStyle.marginBottom).toBe("24px");
+  const sentenceBox = await sentence.boundingBox();
+  const offerBox = await offer.boundingBox();
+  expect(offerBox!.y).toBeGreaterThanOrEqual(sentenceBox!.y + sentenceBox!.height);
+  expect(Math.round(offerBox!.x)).toBe(Math.round(sentenceBox!.x));
+  expect(offerBox!.height).toBeGreaterThanOrEqual(44);
+  expect(await offer.evaluate((element) => getComputedStyle(element).textAlign)).toBe("left");
+
+  // Forget mode reports a forget in the same box, in the space that is there before any forget.
+  await page.getByRole("button", { name: "Forget someone on this browser" }).click();
+  await page.getByRole("button", { name: `Forget ${robinName} on this browser` }).click();
+  const forgotten = page.getByRole("status");
+  await expect(forgotten).toContainText(`${robinName} is forgotten on this browser.`);
+  expect(await forgotten.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+});
+
 test("forget mode: rows are not buttons, and focus moves to the next Forget, then Done", async ({ isolated }) => {
   const { page, leaName, robinName } = await twoPeopleOnOneBrowser(isolated);
 
