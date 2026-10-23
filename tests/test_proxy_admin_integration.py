@@ -1963,6 +1963,29 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertNotIn(api_key, refreshed.text)
             self.assertIn("Active runtime keys: 1", refreshed.text)
 
+    def test_setup_first_app_refuses_a_control_plane_key_and_writes_nothing(self) -> None:
+        # Owner visibility step 2: an App key is issued through the signed-in person it answers for.
+        # A control-plane admin key holds no person, so the first-App form refuses it before any write.
+        admin_key, _, _ = create_admin_service_account_key("real-owner", path=self.db)
+        claimed = self.client.post("/setup/claim", data={"admin_key": admin_key}, follow_redirects=False)
+        self.assertEqual(claimed.status_code, 303, claimed.text)
+        setup = self.client.get("/setup/console")
+        self.assertEqual(setup.status_code, 200, setup.text)
+        match = re.search(r'name="csrf_token" value="([^"]+)"', setup.text)
+        self.assertIsNotNone(match, setup.text)
+        apps_before = admin_store.list_apps(path=self.db)
+        credentials_before = admin_store.list_credentials(path=self.db)
+
+        refused = self.client.post(
+            "/setup/first-app",
+            data={"csrf_token": match.group(1), "app_name": "first-app", "key_label": "Laptop"},
+        )
+
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertNotRegex(refused.text, r"opk_[A-Za-z0-9_-]+")
+        self.assertEqual(admin_store.list_apps(path=self.db), apps_before)
+        self.assertEqual(admin_store.list_credentials(path=self.db), credentials_before)
+
     def test_setup_first_app_rejects_stale_csrf(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "real-owner",
