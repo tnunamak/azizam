@@ -227,7 +227,8 @@
 # forgotten single sign-on tile (the unknown-tile case changed in place), +5 for the remembered-list read cap (default,
 # gateway setting, invalid settings). collect-only 16067 -> 16077.
 # Owner visibility step 2 (App-binding authority, guards, preview, /me trusted addresses): collect-only 16077 -> 16119.
-pytest = 16119
+# Step 2 finished (pre-cut-over mode and its back-fill tests, accept and apply, /me keep routes, the e2e owner seed): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16174.
+pytest = 16174
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
