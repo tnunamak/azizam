@@ -116,6 +116,11 @@ export function capabilityMeta(key: string | null | undefined): CapabilityMeta {
   );
 }
 
+/** The label for a kind this UI names, or null for one it does not (so a caller can use the gateway's title). */
+export function knownCapabilityLabel(key: string | null | undefined): string | null {
+  return capabilityMetaMap[String(key ?? "")]?.label ?? null;
+}
+
 /**
  * Every titled region: `text-heading`, 12 above its content, an optional
  * count and one action at 32 (Button's default size).

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -9,6 +10,8 @@ export interface SegmentOption<T extends string> {
   count?: number | null;
   /** A lucide icon drawn before the label, in the label's colour. */
   icon?: LucideIcon;
+  /** A short state word drawn after the label (for example a capability that is down). */
+  badge?: ReactNode;
 }
 
 /**
@@ -60,6 +63,7 @@ export function Segmented<T extends string>({
               />
             ) : null}
             {option.label}
+            {option.badge ? <span className="text-badge font-medium">{option.badge}</span> : null}
             {typeof option.count === "number" ? (
               <span className="figures text-muted-foreground text-badge font-normal">
                 {option.count}
