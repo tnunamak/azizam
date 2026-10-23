@@ -17,7 +17,7 @@ import proxy
 import status_endpoint
 
 INTERVAL = status_endpoint.SNAPSHOT_INTERVAL_S
-WINDOW = status_endpoint.SNAPSHOT_IDLE_WINDOW_S
+WINDOW = 300.0  # the idle window the owner asked for: five minutes, asserted below
 CONFIG = {"backends": {}}
 
 
@@ -66,6 +66,11 @@ async def until(condition, limit=100_000):
             return
         await asyncio.sleep(0)
     raise AssertionError("the condition never held")
+
+
+def test_the_refresh_interval_is_fifteen_seconds_and_the_idle_window_five_minutes():
+    assert status_endpoint.SNAPSHOT_INTERVAL_S == 15.0
+    assert status_endpoint.SNAPSHOT_IDLE_WINDOW_S == WINDOW
 
 
 def test_a_reader_is_answered_at_once_while_the_first_build_is_still_running(snapshot_state):
