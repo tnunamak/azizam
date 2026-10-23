@@ -5,10 +5,13 @@ these tests cover what the probes do not.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from urllib.parse import urlencode
 
-from tests.test_review_retention_s5a_probes import SENTENCE, _drive, _kept, member_db  # noqa: F401 - fixture
+from gateway import request_history_capture
+from gateway.request_history_capture import IDENTITY_STATE_KEY
+from tests.test_review_retention_s5a_probes import SENTENCE, _drive, _identity, _kept, member_db  # noqa: F401 - fixture
 
 FORGET = {"com.azizam.prompts": {"mode": "forget"}}
 FORGET_FIELD = "extensions[com.azizam.prompts][mode]"
@@ -68,3 +71,60 @@ def test_r2_1_control_a_text_plain_json_body_without_a_forget_is_kept_with_its_b
     _drive(db, media, person, chunks=[raw], content_type="text/plain")
     rows = _kept(media)
     assert len(rows) == 1 and SENTENCE not in rows[0] and "unsupported_container" in rows[0]
+
+
+# ------------------------------------------------------------------ R2-4: a slot is held only by a request that keeps
+
+
+def _free_slots() -> int:
+    """How many capture admission slots are free now. Takes each one and gives it back."""
+    taken = 0
+    while request_history_capture._PENDING.acquire(blocking=False):
+        taken += 1
+    for _ in range(taken):
+        request_history_capture._PENDING.release()
+    return taken
+
+
+def test_r2_4_a_kept_request_gives_its_slot_back_once_its_write_is_done(member_db):
+    db, media, person = member_db
+    _drive(db, media, person, chunks=[b'{"model":"m","input":"x"}'], content_type="application/json")
+    assert len(_kept(media)) == 1
+    assert _free_slots() == request_history_capture.MAX_PENDING_CAPTURES
+
+
+def test_r2_4_b_a_decision_that_cannot_be_read_takes_no_slot(member_db, monkeypatch):
+    db, media, person = member_db
+
+    def unreadable(self, identity, *, forget, now):
+        raise RuntimeError("the decision could not be read")
+
+    monkeypatch.setattr(request_history_capture.RequestHistoryMiddleware, "decide", unreadable)
+    _drive(db, media, person, chunks=[b'{"model":"m","input":"x"}'], content_type="application/json")
+    assert _kept(media) == []
+    assert _free_slots() == request_history_capture.MAX_PENDING_CAPTURES
+
+
+def test_r2_4_c_two_tasks_that_ask_for_the_decision_make_one_and_take_one_slot(member_db, monkeypatch):
+    db, media, person = member_db
+    made: list[int] = []
+    real_decide = request_history_capture.RequestHistoryMiddleware.decide
+
+    def counting(self, identity, *, forget, now):
+        made.append(1)
+        return real_decide(self, identity, forget=forget, now=now)
+
+    monkeypatch.setattr(request_history_capture.RequestHistoryMiddleware, "decide", counting)
+    owner = request_history_capture.RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
+    capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: _identity(person)}, headers={},
+                                               header_forget=False, limit=1 << 20, route="/v1/responses")
+
+    async def ask_twice():
+        await asyncio.gather(capture.decide_once(), capture.decide_once())
+
+    asyncio.run(ask_twice())
+    try:
+        assert len(made) == 1 and capture.admitted
+        assert _free_slots() == request_history_capture.MAX_PENDING_CAPTURES - 1
+    finally:
+        request_history_capture._PENDING.release()

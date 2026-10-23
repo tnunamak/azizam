@@ -180,8 +180,6 @@ def _off_member(db, media) -> str:
     return off
 
 
-@pytest.mark.xfail(strict=True, reason="R2-4: admission is taken at request start, before the decision, and held "
-                                       "for the whole request, so requests that keep nothing use up the limit")
 def test_requests_that_keep_nothing_do_not_use_up_the_capture_limit(member_db):
     """32 long requests (a stream, a long generation) from a member whose history is off hold every admission slot.
     A request from a member whose history is on, in that window, is not kept (receipt: storage_unavailable)."""

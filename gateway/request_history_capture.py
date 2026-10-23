@@ -54,8 +54,9 @@ IDENTITY_STATE_KEY = "request_history_identity"
 BODY_DRAIN_SECONDS = 30.0
 #: The one thread that writes request history, so a write never waits behind the shared pool's work (3.6).
 WRITER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="request-history")
-#: Captures in flight at once. Each holds its body in memory until its write is done. A request beyond this limit is
-#: not captured, and its receipt says storage_unavailable.
+#: Captures that keep a body and are not yet written, at once. Each holds its body in memory until its write is done. A
+#: request takes a slot only when its decision says keep. A request beyond this limit is not captured, and its receipt
+#: says storage_unavailable.
 MAX_PENDING_CAPTURES = 32
 _PENDING = threading.BoundedSemaphore(MAX_PENDING_CAPTURES)
 
@@ -225,7 +226,9 @@ class RequestHistoryMiddleware:
             await self.app(scope, receive_capture, capture.send_wrapped(send))
         finally:
             # Only an authenticated request can produce a record, so an unauthenticated one is never read on.
-            if _identity(state) is not None and capture.wants_body and not (capture.complete or capture.disconnected):
+            if _identity(state) is not None:
+                await capture.decide_once()
+            if capture.wants_body and not (capture.complete or capture.disconnected):
                 await _drain(capture, receive_capture)
             slot = request_history_slot.current()
             receipt_id = slot.receipt_id if slot is not None else None
@@ -255,36 +258,47 @@ class _Capture:
         self.disconnected = False
         #: Every body chunk reached the body capture. False once the early decision said not to keep it.
         self._fed = True
-        #: Whether this capture holds a slot in the writer's admission limit (released when its write is done).
-        self.admitted = _PENDING.acquire(blocking=False)
+        #: Whether this capture holds a slot in the writer's admission limit. A slot is taken only when the decision says
+        #: keep, and it is released when the write is done, so a request that keeps nothing never holds one.
+        self.admitted = False
         self._decision: retention.Decision | None = None
+        self._deciding = asyncio.Lock()
 
     @property
     def wants_body(self) -> bool:
-        return self.admitted and (self._decision is None or self._decision.keep)
+        """Whether the body is read to its end: the decision keeps it, and this capture holds a slot for the write."""
+        return self._decision is not None and self._decision.keep and self.admitted
 
-    async def _decision_once(self) -> retention.Decision | None:
+    async def decide_once(self) -> retention.Decision | None:
         """The early decision, made once the caller is known. None until then. A decision that cannot be read keeps
-        nothing: capture must never change what the caller receives."""
+        nothing: capture must never change what the caller receives. A decision that keeps takes a slot, and a request
+        that finds none is not captured (its receipt says storage_unavailable)."""
         if self._decision is None:
             identity = _identity(self._state)
             if identity is None:
                 return None
-            try:
-                self._decision = await asyncio.to_thread(self._owner.decide, identity, forget=self.header_forget,
-                                                         now=self.started)
-            except Exception:
-                log.warning("request history decision could not be read", exc_info=False)
-                self._decision = retention.Decision(getattr(identity, "person_id", None), False, "storage_unavailable",
-                                                    kind=KIND)
+            # A streamed reply listens for the client's disconnect while the body is read, so two tasks can get here.
+            async with self._deciding:
+                if self._decision is None:
+                    await self._decide(identity)
         return self._decision
+
+    async def _decide(self, identity: Any) -> None:
+        try:
+            decision = await asyncio.to_thread(self._owner.decide, identity, forget=self.header_forget, now=self.started)
+        except Exception:
+            log.warning("request history decision could not be read", exc_info=False)
+            decision = retention.Decision(getattr(identity, "person_id", None), False, "storage_unavailable", kind=KIND)
+        if decision.keep:
+            self.admitted = _PENDING.acquire(blocking=False)
+        self._decision = decision
 
     def receive_wrapped(self, receive: Callable) -> Callable:
         async def wrapped() -> dict:
             message = await receive()
             if message["type"] == "http.request":
-                decision = await self._decision_once() if self.admitted else None
-                if self.admitted and (decision is None or decision.keep):
+                decision = await self.decide_once()
+                if decision is None or (decision.keep and self.admitted):
                     _quietly(self.body.feed, message.get("body", b""))
                 else:
                     self._fed = False
@@ -301,8 +315,8 @@ class _Capture:
                 self.reply_status = int(message["status"])
                 self.reply_headers = _header_map(message.get("headers", []))
                 self.reply = None
-                decision = await self._decision_once() if self.admitted else None
-                if decision is not None and decision.keep and "received" in decision.parts:
+                decision = await self.decide_once()
+                if decision is not None and decision.keep and self.admitted and "received" in decision.parts:
                     self.reply = request_history.BodyCapture(self.reply_headers.get("content-type"), limit=self._limit)
             elif message["type"] == "http.response.body" and self.reply is not None:
                 _quietly(self.reply.feed, message.get("body", b""))
