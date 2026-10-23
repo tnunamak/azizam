@@ -67,7 +67,7 @@ _LETTER = re.compile(r"[A-Za-z]")
 _DIGIT = re.compile(r"[0-9]")
 #: Prose punctuation that may follow a path segment (R9-2). It is set aside before the token check, and kept.
 _PROSE_PUNCTUATION = "\"'`)]}>.,;!?"
-_NON_TOKEN = re.compile(r"[^A-Za-z0-9_-]+")
+_NON_TOKEN = re.compile(r"[/*~+!$&'(),;=]+")  # separators inside a segment; a dot is not one, so a file name stays whole
 _LONGEST_SCHEME = 20  # schemes in use are far shorter; a 20-character one is a value read as a scheme (R10-1)
 #: What a URL reads as when it holds an ``@``, cannot be split into its parts, or holds a ``://`` that starts no token
 #: (R9-1). The whole URL or token is replaced, so no part of it is kept.
@@ -220,8 +220,8 @@ def _scrub_segment(segment: str) -> str:
         return REMOVED
     decoded = unquote(segment)
     core = decoded.rstrip(_PROSE_PUNCTUATION)
-    # Any run of token characters in the segment is read on its own, so a decoded ``/`` or a ``*`` beside a token does
-    # not hide it (R10-2).
+    # Each piece between separators is read on its own, so a decoded ``/`` or a ``*`` beside a token does not hide it
+    # (R10-2). A dot does not separate, so a dotted file name is not a token.
     if ":" in core or any(_is_token_segment(piece) for piece in _NON_TOKEN.split(core)):
         return REMOVED + decoded[len(core):]
     return segment
