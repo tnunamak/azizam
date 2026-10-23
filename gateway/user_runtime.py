@@ -41,6 +41,7 @@ __all__ = [
     "rename_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
+    "set_user_app_key_privacy_permission",
 ]
 
 
@@ -1141,4 +1142,29 @@ def revoke_user_app_key(
     )
     out = _sanitize_credential(after)
     out["active"] = False
+    return out
+
+
+def set_user_app_key_privacy_permission(
+    session: AdminSession,
+    credential_id: str,
+    enabled: bool,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Set request-history access on one live key the signed-in person owns."""
+    user = _user_from_session(session, path=path)
+    if not isinstance(enabled, bool):
+        raise UserPortalError("invalid_privacy_permission", "enabled must be true or false", status_code=400)
+    try:
+        updated = admin_store.set_app_credential_privacy_permission(
+            credential_id, person_id=str(user["id"]), enabled=enabled,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if updated is None:
+        raise _credential_not_found()
+    out = _sanitize_credential(updated)
+    out["active"] = True
     return out

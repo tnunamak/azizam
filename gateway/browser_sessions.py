@@ -9,6 +9,7 @@ session cookie on its own.
 """
 from __future__ import annotations
 
+import sqlite3
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -49,6 +50,21 @@ def issue(claims: Mapping[str, Any], *, role: str, cookie: CookieConfig, path: P
     if register:
         accounts.initialize(path)
         accounts.register_session(str(claims["sub"]), session.session_id, int(session.expires_at), path=path)
+    return session
+
+
+def issue_in(conn: sqlite3.Connection, claims: Mapping[str, Any], *, role: str, cookie: CookieConfig,
+             path: Path, authenticated_at: float | None = None, now: float | None = None) -> AdminSession:
+    """Issue and register a browser session inside the caller's transaction."""
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    session = session_from_claims(
+        claims, role=role, cookie=cookie, now=current,
+        idle_seconds=policy.idle_seconds, absolute_seconds=policy.absolute_seconds,
+    )
+    if authenticated_at is not None:
+        session = replace(session, authenticated_at=min(authenticated_at, session.issued_at))
+    accounts.register_session_in(conn, str(claims["sub"]), session.session_id, int(session.expires_at))
     return session
 
 
@@ -159,6 +175,24 @@ def confirm(session: AdminSession, *, path: Path, now: float | None = None,
     return rotated
 
 
+def confirm_in(conn: sqlite3.Connection, session: AdminSession, *, path: Path, now: float | None = None,
+               authenticated_at: float | None = None) -> AdminSession:
+    """Confirm and rotate a session without committing the caller's transaction."""
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    confirmed = session_policy.confirmed(session, policy, current)
+    if authenticated_at is not None:
+        confirmed = replace(confirmed, authenticated_at=min(authenticated_at, current))
+    verdict = _check_in(conn, session, policy, current)
+    if verdict == accounts.LOST:
+        rotated = _reissue_in(conn, session, confirmed, current)
+    else:
+        rotated = _rotate_in(conn, session, confirmed, current)
+    if rotated is None:
+        raise SessionError("session ended or replaced while confirming")
+    return rotated
+
+
 def policy(path: Path) -> SessionPolicy:
     return session_policy.load_policy(path)
 
@@ -208,6 +242,97 @@ def end_incoming(request: Request, *, cookie: CookieConfig, signing_key: bytes, 
     except SessionError:
         return
     end(session, path=path)
+
+
+def end_incoming_in(conn: sqlite3.Connection, request: Request, *, cookie: CookieConfig,
+                    signing_key: bytes, path: Path) -> None:
+    """End the browser's incoming family inside the caller's sign-in transaction."""
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return
+    try:
+        session = decode_session_cookie(raw, signing_key=signing_key)
+    except SessionError:
+        return
+    try:
+        _check_in(conn, session, session_policy.load_policy(path), time.time())
+    except SessionError:
+        return
+    accounts.revoke_family_in(
+        conn, session.family_id, int(_revoke_until(session)), session_id=session.session_id,
+    )
+
+
+def decode_incoming(request: Request, *, cookie: CookieConfig, signing_key: bytes) -> AdminSession | None:
+    """Decode the re-authentication cookie without writing session-use state."""
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return None
+    try:
+        return decode_session_cookie(raw, signing_key=signing_key)
+    except SessionError:
+        return None
+
+
+def _check_in(conn: sqlite3.Connection, session: AdminSession, policy: SessionPolicy, current: float) -> str:
+    if not session_policy.is_usable(session, policy, current):
+        raise SessionError("session idle or past its lifetime")
+    verdict = accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current, note_use=True,
+    )
+    if verdict == accounts.REUSED:
+        accounts.revoke_family_in(
+            conn, session.family_id, int(_revoke_until(session)), session_id=session.session_id,
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "account.session.reuse_detected", actor_kind="user", actor_id=session.subject,
+            actor_label=session.email, target_kind="user", target_id=session.subject,
+            metadata={"family": session.family_id}, now=int(current),
+        )
+        raise SessionError("a retired session id was shown again: the sign-in is revoked")
+    if verdict == accounts.DENIED:
+        raise SessionError("session revoked or account disabled")
+    return verdict
+
+
+def _rotate_in(conn: sqlite3.Connection, session: AdminSession, renewed: AdminSession, current: float) -> AdminSession | None:
+    if accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current,
+    ) != accounts.LIVE:
+        return None
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (session.subject,)).fetchone() is None:
+        return None
+    rotated = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    accounts._retire_and_register(
+        conn, session.subject, session.session_id, session.family_id, rotated.session_id,
+        int(session.expires_at), int(rotated.expires_at), int(current),
+    )
+    return rotated
+
+
+def _reissue_in(conn: sqlite3.Connection, session: AdminSession, renewed: AdminSession,
+                current: float) -> AdminSession | None:
+    if accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current,
+    ) != accounts.LOST:
+        return None
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (session.subject,)).fetchone() is None:
+        return None
+    for row in conn.execute(
+        "SELECT session_id FROM account_session_lineage WHERE family_id=? AND retired_at IS NULL",
+        (session.family_id,),
+    ).fetchall():
+        conn.execute(
+            "UPDATE account_session_lineage SET retired_at=?, superseded=1 WHERE session_id=?",
+            (int(current), row["session_id"]),
+        )
+        conn.execute("DELETE FROM account_sessions WHERE session_id=?", (row["session_id"],))
+    reissued = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    accounts._retire_and_register(
+        conn, session.subject, session.session_id, session.family_id, reissued.session_id,
+        int(session.expires_at), int(reissued.expires_at), int(current),
+    )
+    return reissued
 
 
 def end_everywhere(session: AdminSession, *, path: Path) -> int:

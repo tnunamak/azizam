@@ -5,10 +5,10 @@ Routes (docs/design/REQUEST_RETENTION.md section 10):
 * ``/gateway/v1/requests``: the maker's kept requests, for a personal App key or an MCP grant (and a browser
   session, where the gateway accepts one). Every row is checked by ``content_access`` before a page is cut, so a
   caller never gets another person's row, and an owner or administrator gets none.
-* ``/me/api/retention``: the member's choice for request history (session only, as the other member settings).
+* ``/me/api/retention``: the member's choice for request history (session only).
+* ``/gateway/v1/me/retention``: the same choice for delegated credentials.
 
-Deleting needs the privacy permission (D52, section 10). No key or grant carries it in this slice, so a delegated
-credential gets 403 ``privacy_permission_required`` and keeps what it has.
+Deleting and delegated writes need the privacy permission (D52, section 10).
 """
 from __future__ import annotations
 
@@ -250,6 +250,30 @@ def create_request_history_router(
             "choices": list(retention.bundled().data["groups"][GROUP]["choices"]),
         }
 
+    def _choice_input(body: Any) -> tuple[bool, str, list[str]] | JSONResponse:
+        if not isinstance(body, dict):
+            return _error(400, "invalid_request", "The body must be a JSON object.")
+        keep, choice, parts = body.get("keep"), body.get("retention"), body.get("parts")
+        if not isinstance(keep, bool):
+            return _error(400, "invalid_retention", "keep must be true or false.")
+        choices = retention.bundled().data["groups"][GROUP]["choices"]
+        if choice not in choices:
+            return _error(400, "invalid_retention", "retention must be one of the offered periods.")
+        allowed = retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["parts"]["allowed"]
+        if (not isinstance(parts, list) or "accepted" not in parts
+                or any(part not in allowed for part in parts) or len(set(parts)) != len(parts)):
+            return _error(400, "invalid_retention", "parts must include accepted and only offered parts.")
+        return keep, choice, parts
+
+    def _save_choice(person_id: str, body: Any) -> dict[str, Any] | JSONResponse:
+        choice_input = _choice_input(body)
+        if isinstance(choice_input, JSONResponse):
+            return choice_input
+        keep, choice, parts = choice_input
+        request_history.set_member_choice(person_id, keep=keep, retention_id=choice, parts=parts,
+                                          admin_path=admin_path(), path=media_path(), now=int(time.time()))
+        return _choice(person_id)
+
     def _session_person(request: Request) -> str | JSONResponse:
         session = session_provider(request)
         if session is None:
@@ -278,20 +302,43 @@ def create_request_history_router(
             body = await request.json()
         except ValueError:
             return _error(400, "invalid_request", "The body must be a JSON object.")
-        if not isinstance(body, dict):
-            return _error(400, "invalid_request", "The body must be a JSON object.")
-        keep, choice, parts = body.get("keep"), body.get("retention"), body.get("parts")
-        if not isinstance(keep, bool):
-            return _error(400, "invalid_retention", "keep must be true or false.")
-        if choice not in retention.bundled().data["groups"][GROUP]["choices"]:
-            return _error(400, "invalid_retention", "retention must be one of the offered periods.")
-        allowed = retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["parts"]["allowed"]
-        if (not isinstance(parts, list) or "accepted" not in parts
-                or any(part not in allowed for part in parts) or len(set(parts)) != len(parts)):
-            return _error(400, "invalid_retention", "parts must include accepted and only offered parts.")
         person = str(session.subject)
-        request_history.set_member_choice(person, keep=keep, retention_id=choice, parts=parts,
-                                          admin_path=admin_path(), path=media_path(), now=int(time.time()))
-        return _choice(person)
+        return _save_choice(person, body)
+
+    def _delegated_viewer(request: Request) -> content_access.Viewer | JSONResponse:
+        auth = request.scope.get("auth_context")
+        if getattr(getattr(auth, "identity", None), "auth_kind", None) is None:
+            return _error(401, "unauthorized", "An App key or an MCP grant is required.",
+                          kind="authentication_error")
+        viewer = content_access.viewer_from_auth(auth, owner_keys=())
+        if viewer.auth_kind not in {"app_key", "mcp_grant"} or not viewer.person_id:
+            return _error(401, "unauthorized", "An App key or an MCP grant is required.",
+                          kind="authentication_error")
+        return viewer
+
+    @router.get("/gateway/v1/me/retention")
+    @_retry_when_busy
+    def get_delegated_retention(request: Request) -> Any:
+        viewer = _delegated_viewer(request)
+        if isinstance(viewer, JSONResponse):
+            return viewer
+        return JSONResponse(_choice(viewer.person_id), headers={"Cache-Control": "no-store"})
+
+    @router.put("/gateway/v1/me/retention")
+    @_retry_when_busy
+    async def put_delegated_retention(request: Request) -> Any:
+        viewer = _delegated_viewer(request)
+        if isinstance(viewer, JSONResponse):
+            return viewer
+        if not viewer.privacy_permission:
+            return _privacy_refused()
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error(400, "invalid_request", "The body must be a JSON object.")
+        result = _save_choice(viewer.person_id, body)
+        if isinstance(result, JSONResponse):
+            return result
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     return router

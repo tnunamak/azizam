@@ -678,6 +678,27 @@ def test_sign_in_handoff_immediately_invalidates_warm_asset_family_memo(media):
     assert anonymous.get(url, headers={"if-none-match": response.headers["etag"]}).status_code == 403
 
 
+@pytest.mark.parametrize(("throttle", "args"), [
+    (accounts.throttle, ("127.0.0.1", "person@example.test")),
+    (accounts.throttle_oidc, ("127.0.0.1",)),
+    (accounts.throttle_remembered, ("127.0.0.1",)),
+], ids=["password", "oidc", "remembered-list"])
+def test_signin_throttle_writes_preserve_warm_asset_family_memo(media, throttle, args):
+    client = owner_client(media)
+    session = cookie_session(client)
+    url = mint(client)
+    assert media.client().get(url).status_code == 200
+
+    memo_key = (str(media.path), session.subject, session.family_id)
+    generation = accounts._asset_family_generation
+    assert memo_key in accounts._asset_families
+
+    throttle(*args, path=media.path)
+
+    assert accounts._asset_family_generation == generation
+    assert memo_key in accounts._asset_families
+
+
 def test_service_account_browser_session_still_carries_a_session_view_id(media):
     """A browser session with no person behind it is still a session. The snapshot names its view id, so a page
     that showed it can tell when that session has ended (web/src/lib/session-end.ts, fail closed)."""

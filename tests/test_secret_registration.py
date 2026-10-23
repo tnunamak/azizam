@@ -50,6 +50,7 @@ NO_REGISTRATION_NEEDED = {
     "proxy.py::_bootstrap_admin_oidc_cfg": "reads the names of the signing-key settings to build the sign-in configuration; the key is never sent or logged",
     "proxy.py::_resolved_admin_oidc_config": "the signing key of the admin session: signs a cookie, never sent to an upstream or logged",
     "proxy.py::admin_oidc_callback": "the signing key of the admin session: signs a cookie, never sent to an upstream or logged",
+    "proxy.py::_complete_oidc_signin": "the signing key of the admin session: verifies the incoming session cookie, never sent to an upstream or logged",
     "proxy.py::_admin_oidc_config_snapshot": "builds the management view of the sign-in settings: says whether a client secret is saved, never its value",
     "gateway/signin_api.py::create_signin_api.build_snapshot": "builds the management view of the sign-in settings: says whether a client secret is saved, never its value",
 }

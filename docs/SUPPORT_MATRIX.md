@@ -52,6 +52,8 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/gateway/v1/extensions` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_extensions` |
 | `POST` | `/gateway/v1/faces/likeness` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/identity_api.py](../gateway/identity_api.py) `likeness_route` |
 | `POST` | `/gateway/v1/images/identity` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/identity_api.py](../gateway/identity_api.py) `identity_route` |
+| `GET` | `/gateway/v1/me/retention` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/request_history_api.py](../gateway/request_history_api.py) `get_delegated_retention` |
+| `PUT` | `/gateway/v1/me/retention` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/request_history_api.py](../gateway/request_history_api.py) `put_delegated_retention` |
 | `GET` | `/gateway/v1/media/jobs` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_media_jobs` |
 | `POST` | `/gateway/v1/media/jobs` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `create_media_job` |
 | `POST` | `/gateway/v1/media/jobs/image-generations` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `gateway_image_generations_media_job` |

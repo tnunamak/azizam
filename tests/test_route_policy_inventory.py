@@ -696,6 +696,7 @@ _METADATA_CONTRACT = {
     ("GET", "/me/api/media"): _OWN_RECORDS,
     ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
     ("GET", "/gateway/v1/requests"): "the caller's own kept requests, scoped by owner and by the App or connection that made them (content_access.visible_maker_rows)",
+    ("GET", "/gateway/v1/me/retention"): "the caller's own request history setting, scoped to its App key or MCP grant",
     ("POST", "/me/api/media/remove-missing"): "removes only the caller's own entries whose files are gone; runs no model",
     ("POST", "/me/api/media/confirm-folder"): "owner only; writes the media folder marker and removes nothing; runs no model",
 }
@@ -726,6 +727,16 @@ def _connection_test_contract(method, template, response, row, gateway):
 
 
 def _metadata_contract(method, template, response, row):
+    if (method, template) == ("PUT", "/gateway/v1/me/retention") and response.status_code == 403:
+        try:
+            code = response.json()["error"]["code"]
+        except (KeyError, TypeError, ValueError):
+            code = None
+        if code == "privacy_permission_required":
+            row["outcome"] = "metadata (contract)"
+            row["rule"] = "retention setting requires privacy permission; no model runs"
+            row["detail"] = ""
+        return
     reason = _METADATA_CONTRACT.get((method, template))
     if reason is None or response.status_code != 200:
         return

@@ -265,7 +265,18 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
-pytest = 16988
+# A4 throttle memo: +3; LTX frame-rate: +1; sign-in write failures: +25 cases.
+# Atomic sign-in failure coverage brings the collection to 16842 (2026-10-23).
+# Sign-in round 2: +16 cases: a session that ends while the person is at the provider still signs them in (+1);
+# invite and first-owner write failures at each account and session step (+13); pins for a failed provider sign-in
+# expiring its binding cookie and for concurrent password sign-ins (+2). collect-only 16842 -> 16858 (2026-10-23).
+# Request retention slice 5b server: +20 collected cases across privacy permission, delegated retention,
+# MCP tools and the expanded request-history access matrix. Hermetic collect-only: 16813 -> 16833 (2026-10-23).
+# Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
+# Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
+# tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
+# Train r102: collect-only measured 17071 (sign-in atomic + follow-ups, request history 5b-2, embeddings and A1111 forget).
+pytest = 17071
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

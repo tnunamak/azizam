@@ -489,6 +489,12 @@ def requested_mode(body: Mapping[str, Any] | None) -> str | None:
     return "forget"
 
 
+def prompt_mode_refusal(exc: PromptModeError) -> dict[str, Any]:
+    """The 400 body every route answers an invalid prompt control with (3.4)."""
+    return {"error": {"message": str(exc), "type": "invalid_request_error", "code": "invalid_prompt_mode",
+                      "param": f"extensions.{NAMESPACE}.mode"}}
+
+
 def decide(
     kind: str, *, person_id: str | None, member: Mapping[str, Any] | None,
     household_policy: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
