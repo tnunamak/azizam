@@ -214,7 +214,7 @@ def test_erasure_cutoff_wins_over_default_remember_for_an_explicit_no_person_sto
     started = int(time.time()) - 5
     with sqlite3.connect(admin_db) as conn:
         retention.ensure_erasure_cutoff_table(conn)
-        conn.execute("INSERT INTO prompt_memory_erasure_cutoffs(person_id,cutoff_at) VALUES('*',?)", (started + 1,))
+        conn.execute("INSERT INTO prompt_memory_erasure_cutoffs(person_id,grp,cutoff_at) VALUES('*','prompts',?)", (started + 1,))
     outcomes = []
     decision = retention.Decision(None, False, "no_person", created_at=started, kind=retention.CONVERSATION)
     assert not retention.write(retention.CONVERSATION, admin_path=admin_db, person_id=None,

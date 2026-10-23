@@ -112,7 +112,8 @@ def _households():
     ] + [{"never_keep": True}, {"default_remember": False}, {"retention_cap": "3_months"}]
 
 
-@pytest.mark.parametrize("kind", retention.KINDS)
+# request_history has no pre-slice-5 reference: the old prompt_memory.decide covers the two prompts kinds only.
+@pytest.mark.parametrize("kind", (retention.LIBRARY_PROMPT, retention.CONVERSATION))
 def test_decide_equals_the_moved_decision_on_every_input(kind):
     """16.1.1: kill switch x forget x store true/false/absent x person x member keep/period x household cap x kind."""
     checked = 0
@@ -397,7 +398,9 @@ def test_the_bundled_file_passes_the_validator():
     assert contract.household_defaults(retention.LIBRARY_PROMPT) == {
         "default_remember": True, "never_keep": False, "retention_cap": "never"}
     assert contract.member_defaults(retention.CONVERSATION) == {"remember": True, "retention": "never"}
-    assert contract.seconds_map() == {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
+    assert contract.seconds_map() == {
+        "never": None, "1_day": 86400, "7_days": 7 * 86400, "30_days": 30 * 86400,
+        "3_months": 90 * 86400, "1_year": 365 * 86400}
 
 
 ILLEGAL = {
@@ -412,7 +415,7 @@ ILLEGAL = {
     "a default cap outside the choices": lambda d: d["groups"]["prompts"].update(default_cap="7_days"),
     "a choice missing from the vocabulary": lambda d: d["groups"]["prompts"].update(choices=["never", "2_weeks"]),
     "widening other than none": lambda d: d.update(widening="members"),
-    "a kind core cannot capture": lambda d: d["kinds"].update(request_history=d["kinds"]["library_prompt"]),
+    "a kind core cannot capture": lambda d: d["kinds"].update(debug_capture=d["kinds"]["library_prompt"]),
     "a core kind with no values": lambda d: d["kinds"].pop("conversation"),
     "a kind in no group": lambda d: d["groups"]["prompts"].update(kinds=["library_prompt"]),
     "an unknown field": lambda d: d.update(surprise=True),
@@ -431,24 +434,24 @@ def test_the_validator_refuses_each_illegal_value(name):
 
 @pytest.mark.parametrize("kind,readers", [("library_prompt", "maker_signed_in"),
                                             ("conversation", "maker_signed_in")])
-def test_unenforced_reader_controls_are_refused_until_slice_5(kind, readers):
+def test_unbuilt_reader_controls_are_refused(kind, readers):
     data = _bundled_data()
     data["kinds"][kind]["readers"] = readers
-    with pytest.raises(retention.RetentionDataError, match="slice 5.*reader"):
+    with pytest.raises(retention.RetentionDataError, match="the gateway enforces only"):
         retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
 
 
-def test_unenforced_conversation_parts_are_refused_until_slice_5():
+def test_a_narrower_parts_default_is_valid_data():
+    """A parts default may be narrower than allowed (request history defaults to accepted only); a default outside allowed is refused."""
     data = _bundled_data()
     data["kinds"]["conversation"]["parts"]["default"] = ["accepted"]
-    with pytest.raises(retention.RetentionDataError, match="slice 5.*parts"):
-        retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    assert retention.parse_contract(data, schema=json.loads(SCHEMA.read_text())).parts(retention.CONVERSATION) == ("accepted",)
 
 
-def test_a_renamed_prompts_group_is_refused_until_slice_5():
+def test_a_renamed_prompts_group_is_refused():
     data = _bundled_data()
     data["groups"]["saved"] = data["groups"].pop("prompts")
-    with pytest.raises(retention.RetentionDataError, match="slice 5.*group"):
+    with pytest.raises(retention.RetentionDataError, match="groups/saved: the gateway has no group of that name"):
         retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
 
 
@@ -544,7 +547,7 @@ def test_an_unsaved_null_cap_cannot_count_as_an_unchanged_legacy_choice():
 def test_bundled_kill_switch_is_refused_until_startup_erasure_exists():
     data = _bundled_data()
     data["household"]["never_keep"] = True
-    with pytest.raises(retention.RetentionDataError, match="slice 5.*never_keep|never_keep.*slice 5"):
+    with pytest.raises(retention.RetentionDataError, match="household/never_keep"):
         retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
 
 

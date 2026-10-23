@@ -55,6 +55,10 @@ ADDED_PATHS: dict[str, str] = {
                               "viewer may see, outside the OpenAPI schema; tests/test_me_avatar.py covers them",
     "/admin/api/apps/{app_id}/keys/{credential_id}": "an administrator or the owner renames an App's key (a label, no "
                                                       "new credential, so no step-up); tests/test_rename_apps_keys.py covers it",
+    "/gateway/v1/requests": "the maker's own kept requests: list, read, delete and delete all (REQUEST_RETENTION.md section 10); "
+                            "a delegated credential without the privacy permission cannot delete; tests/test_request_history_routes.py covers them",
+    "/me/api/retention": "the member's own request history choice, session only (D50: a member can turn history off); "
+                         "tests/test_request_history_member_choice.py covers it",
 }
 
 # Deliberate additions of one method to a path that was already frozen: (method, path template) -> reason. The path
@@ -155,6 +159,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true.
-        assert route_graph.openapi_digest(proxy.app) == "44a85332a83dfc5e37ad8d9bc37fea7a75010c34ed243d334a39c1307c7f2f1a"
+        assert route_graph.openapi_digest(proxy.app) == "2dea1f9845d036064fa011094c92aed8f22c44d4b9037454a68b2f05c921602a"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

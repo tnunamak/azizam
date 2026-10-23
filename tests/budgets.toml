@@ -239,7 +239,31 @@
 # Owner visibility step 2, round 5 (the lifetime hold released when start-up is cancelled, one ownership-scoped key
 # lookup, and the counted administrators with their sentence): +1 lifetime, +2 lookup-shape, +1 key-count message,
 # +8 sentence cases. collect-only 16265 -> 16277, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 16277
+# Slice 5a (request history, server side): tests/test_request_history_*.py (contract, secret floor, storage and
+# upgrade, capture, forget and receipts, reader matrix, maker routes and fences, member choice): collect-only 16077 -> 16231.
+# Slice 5a review fixes: +26 cases in tests/test_review_retention_s5a_probes.py (the reviewer's probes, now on the
+# branch) and +16 in tests/test_request_history_s5a_review.py. collect-only 16231 -> 16273 (2026-10-23).
+# Slice 5a round-2 review fixes: +31 cases in tests/test_review_retention_s5a_r2_probes.py (the round-2 probes; 18 were
+# strict xfails before the fixes, and now are plain) and +18 in tests/test_request_history_s5a_r3_fixes.py. collect-only
+# 16273 -> 16322 (2026-10-23).
+# Slice 5a round-4 review fixes: +72 cases in tests/test_request_history_s5a_r4_fixes.py (the sub-delim and ambiguous
+# user-info cases, the depth limit and fullwidth names, cancelled writes and drains, and body forgets in flight).
+# collect-only 16322 -> 16394 (2026-10-23).
+# Slice 5a round-5 review fixes: +55 cases in tests/test_request_history_s5a_r5_fixes.py (12 for JSON carried in a
+# string value, 43 for format characters in a credential name). collect-only 16394 -> 16449 (2026-10-23).
+# Slice 5a round-6 review fixes: +49 cases in tests/test_request_history_s5a_r6_fixes.py (21 for where the authority
+# ends, 15 for JSON held in string literals and the record's JSON budget, 2 for a body forget that is whole before the
+# caller is known, 11 for default-ignorable characters in names).
+# collect-only 16449 -> 16498 (2026-10-23).
+# Slice 5a round-7 review fixes: +39 cases in tests/test_request_history_s5a_r7_fixes.py (the URL rule, the decoded
+# literal, the budget check before a parse), and one test split in two in tests/test_request_history_redaction.py.
+# collect-only 16498 -> 16538 (2026-10-23).
+# Slice 5a round-8 fixes: +15 cases in tests/test_request_history_s5a_r8_fixes.py (token-shaped URL path segments).
+# collect-only 16538 -> 16553 (2026-10-23).
+# Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
+# punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
+# Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
+pytest = 16813
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

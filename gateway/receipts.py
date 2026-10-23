@@ -92,7 +92,7 @@ REFUSAL_SCOPES = frozenset({"person", "app", "provider", "global"})
 
 # Content retention is a structural receipt fact. Keep this vocabulary closed:
 # the ordinary receipt key-name guard does not inspect scalar values.
-RETENTION_KINDS = frozenset({"library_prompt", "conversation"})
+RETENTION_KINDS = frozenset({"library_prompt", "conversation", "request_history"})
 RETENTION_DECISIONS = frozenset({"kept", "not_kept", "failed"})
 RETENTION_REASONS = frozenset({
     "kept", "server_disabled", "request_forget", "no_person",
@@ -104,6 +104,7 @@ RETENTION_LIMITS = frozenset({"member_choice", "owner_cap", "prior_policy", "unb
 RETENTION_PARTS = {
     "library_prompt": frozenset({"accepted"}),
     "conversation": frozenset({"accepted", "received"}),
+    "request_history": frozenset({"accepted", "received"}),
 }
 _INVALID_STORED_RETENTION_LOCK = threading.Lock()
 _invalid_stored_retention_logged = False

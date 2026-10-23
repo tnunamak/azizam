@@ -29,7 +29,7 @@ the requested audience.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, request_history_slot
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
@@ -327,6 +327,7 @@ def finalize(
             raise ValueError("finish receipt with a terminal status before finalizing")
         receipt.updated_at_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     data = _coerce_to_internal_dict(receipt)
+    request_history_slot.observe(data.get("request_id"), data.get("path"), data.get("parent_request_id"))
     _assert_lifecycle_data(data, terminal=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -439,6 +440,7 @@ def record(
     Uses INSERT OR REPLACE so retries with the same request_id are idempotent.
     """
     data = _coerce_to_internal_dict(receipt)
+    request_history_slot.observe(data.get("request_id"), data.get("path"), data.get("parent_request_id"))
     _assert_safe(data)
     ts = int(created_at if created_at is not None else time.time())
     with _conn(path) as conn:
@@ -465,6 +467,37 @@ def record(
         )
         conn.commit()
     return data["request_id"]
+
+
+def update_retention(request_id: str, entry: Mapping[str, Any], *, path: Path = DB_PATH) -> bool:
+    """Set one content kind's outcome on a stored receipt, after its write has resolved (section 13.3).
+
+    The other kinds' entries stay as they are. The value is checked by the same validator the receipt uses, so the
+    stored entry can only be one the receipt vocabulary allows.
+    """
+    if not request_id:
+        raise ValueError("request_id is required")
+    if not path.exists():
+        return False
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT receipt_json FROM receipts WHERE request_id = ?", (request_id,)).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            conn.rollback()
+            raise ValueError("cannot update malformed stored receipt")
+        kept = [item for item in (data.get("retention") or []) if item.get("kind") != entry.get("kind")]
+        data = {**data, "retention": validate_retention([*kept, dict(entry)])}
+        _assert_safe(data)
+        conn.execute(
+            "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+            (json.dumps(data, ensure_ascii=False, sort_keys=True), request_id),
+        )
+        conn.commit()
+        return True
 
 
 def update_cost(

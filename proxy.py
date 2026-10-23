@@ -102,6 +102,7 @@ from gateway import (
 )
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
+from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
@@ -2348,6 +2349,14 @@ def access_error(code: str) -> Response:
 
 
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
+    """Resolve the caller, and leave the identity in the request state for request-history capture."""
+    result = _authenticate_request(request, request_path)
+    if isinstance(result, AuthContext):
+        setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
+    return result
+
+
+def _authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Resolve the App key of a data-plane request (design §2.5 step 1).
 
     Public paths (health) return an empty context that can run
@@ -13289,6 +13298,7 @@ def _note_media_metadata_body(body: Any) -> Response | None:
         if ctx is not None and isinstance(body, Mapping):
             ctx.prompt_decision = prompt_memory.decide_for_person(
                 ctx.person_id, body, admin_path=ADMIN_STORE.path,
+                request_forget=request_history_slot.prompts_forget(),
             )
             started = _MEDIA_JOB_PROMPT_STARTED_AT.get()
             if started is not None and ctx.prompt_decision.keep:
@@ -14269,10 +14279,30 @@ async def _security_headers_middleware(request: Request, call_next):
     return response
 
 
+async def _maker_browser_session_request(request: Request) -> bool:
+    """Whether a maker's request history call comes from the person's own browser session, with no App key.
+
+    The maker's kept requests are also the person's own in the browser (REQUEST_RETENTION.md 10). Such a call carries
+    the session cookie and no Authorization header, so the key layer does not gate it; the router reads the session
+    and checks the user-action header and CSRF token on every write.
+    """
+    path = request.url.path
+    if path != "/gateway/v1/requests" and not path.startswith("/gateway/v1/requests/"):
+        return False
+    # Any credential the key layer would read, in any form it reads one, keeps the call on that layer: a key
+    # presented with a session cookie is judged as the key, never as the session.
+    if (request.headers.get("authorization") or request.headers.get(_INTERNAL_IDENTITY_HEADER)
+            or _resolve_client_api_key(request)):
+        return False
+    return await asyncio.to_thread(_oidc_session_from_request, request) is not None
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
     if request.url.path.startswith(("/gateway/v1", "/native/")):
+        if await _maker_browser_session_request(request):
+            return await call_next(request)
         refusal = await _authenticate_mounted_route(request)
         if refusal is not None:
             return refusal
@@ -14597,6 +14627,15 @@ app.include_router(
         make_runtime=_SESSION_MAKE_RUNTIME,
         asset_storage_provider=lambda: me_media.create_storage_snapshot_provider(IMAGE_CACHE_DIR)(),
         **_PERSON_LIBRARY,
+    )
+)
+
+app.include_router(
+    request_history_api.create_request_history_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
+        admin_path=lambda: ADMIN_STORE.path,
+        media_path=lambda: media_jobs.DB_PATH,
     )
 )
 
@@ -21090,6 +21129,11 @@ def _maintain_household_prompt_memory() -> None:
     prompt_memory.tighten_retention(household["retention_cap"])
 
 
+def _maintain_request_history() -> None:
+    # Expiry, and the erasure intents of request history. Repeats until each succeeds (REQUEST_RETENTION.md 12).
+    request_history.maintain(admin_path=ADMIN_STORE.path, path=media_jobs.DB_PATH, now=int(time.time()))
+
+
 def _maintain_person_prompt_memory(person_id: str) -> None:
     # The cutoff only rises to when memory went off, read in the same
     # transaction, so prompts saved after switching back on survive.
@@ -21115,7 +21159,7 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
 def _maintain_prompt_memory() -> None:
     # Each step reads its own setting when it runs. A decision read at the
     # start of the pass can be stale by the time a slow step reaches it.
-    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory]
+    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory, _maintain_request_history]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)
@@ -21252,7 +21296,8 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
     with _MEDIA_PAYLOAD_LOCK:
         person_id = payload["auth"].get("person_id")
         body = copy.deepcopy(payload["body"])
-        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
+        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path,
+                                                 request_forget=request_history_slot.prompts_forget())
         with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
             # Service/LAN execution spools are temporary operational state. Their
             # prompt is required to resume, so retain it only until terminal state.
@@ -21369,7 +21414,8 @@ def _image_media_job_request_id(
     fallback_request_id: str,
 ) -> tuple[str, str, str]:
     owner = _asset_owner_key(auth_context) or "anonymous"
-    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
+    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path,
+                                             request_forget=request_history_slot.prompts_forget())
     if idempotency_key:
         identity = {"owner": owner, "idempotency_key": idempotency_key}
         if not memory.keep and memory.reason != "no_person":
@@ -27733,6 +27779,7 @@ async def create_response(request: Request):
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
                 kind=retention.CONVERSATION,
+                request_forget=request_history_slot.prompts_forget(),
             )
         except prompt_memory.PromptModeError as exc:
             return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")
@@ -31539,6 +31586,8 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+app.add_middleware(request_history_capture.RequestHistoryMiddleware,
+                   admin_path=lambda: ADMIN_STORE.path, media_path=lambda: media_jobs.DB_PATH)
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
