@@ -293,6 +293,9 @@ pytest = 16848
 # administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
 # Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
 # administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
+# Home redesign round 2 (on the rebase onto fix/home-speed-and-qd-status): +cases in web/src/app/_home (the facts line's
+# known and unknown parts, the owner's needs and quiet line, the off words in the chooser). Full run on this branch: 212
+# files, 3192 cases, all passed (2026-10-23). The ceiling stays at 3232, the figure recorded above, which is not exceeded.
 vitest = 3232
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
@@ -300,7 +303,10 @@ vitest = 3232
 # playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
 # playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
-playwright = 525
+# Home redesign round 2: +8 cases in e2e/home-redesign.spec.ts (five tiles fill the row at 1440 px; the facts line's
+# cost and wait; the chooser's options at 1440, 768 and 390 px in light and dark, with no overlap). Measured on this
+# branch: playwright.config.ts 521; gate lists 542 (521 + live-data 3 + household 18), 2026-10-23.
+playwright = 542
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

@@ -122,6 +122,60 @@ test("H6 a make in progress is first in Recent, and a finished picture opens Lib
   await expect(finished).toHaveAttribute("href", /\/library\/?\?asset=asset-finished/);
 });
 
+test("H6 five tiles fill the row at 1440 px, with no gap at its end", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const real = await (await member.context.request.get("/me/api/home")).json();
+  const now = Date.now() / 1000;
+  await page.route("**/me/api/home", (route) =>
+    fulfilJson(route, {
+      ...real,
+      receipts: [
+        { request_id: "req-fill", intent: "image.generate", path: "/gateway/v1/media/jobs/image-generations", status: "running", accepted_at_ms: (now - 2) * 1000 },
+      ],
+      recent_chats: [{ request_id: "chat-fill", record_id: "chat-fill-record", created_at: now - 10_800, title: "Plan a two-day coastal trip" }],
+    }),
+  );
+  await page.route("**/me/api/media?limit=8", (route) =>
+    fulfilJson(route, {
+      assets: [1, 2, 3].map((index) => ({ asset_id: `asset-fill-${index}`, kind: "image", prompt: `Garden ${index}`, download_url: "/none.png", created_at: now - 3600 * index })),
+      has_more: false,
+      next_cursor: null,
+    }),
+  );
+  await page.goto("/");
+  const recent = page.getByRole("list", { name: "Recent work" });
+  const tiles = recent.getByRole("listitem");
+  await expect(tiles).toHaveCount(5);
+  const boxes = await tiles.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
+  const list = await recent.boundingBox();
+  expect(new Set(boxes.map((box) => Math.round(box.top))).size).toBe(1);
+  expect(list).not.toBeNull();
+  expect(Math.abs(Math.max(...boxes.map((box) => box.right)) - (list!.x + list!.width))).toBeLessThanOrEqual(2);
+});
+
+test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  const real = await (await member.context.request.get("/me/api/home")).json();
+  const chatRow = real.capabilities.find((row: { icon_key?: string }) => row.icon_key === "chat") ?? real.capabilities[0];
+  // The route reads this at each load, so one page can show each case in turn.
+  let row: Record<string, unknown> = { ...chatRow, cost_hint: { kind: "free", price_usd: null }, typical_seconds: 1 };
+  await page.route("**/me/api/home", (route) => fulfilJson(route, { ...real, capabilities: [row] }));
+  await page.goto("/");
+  await expect(page.getByText("No charge · starts in about 1 s")).toBeVisible();
+  row = { ...chatRow, cost_hint: { kind: "unknown", price_usd: null }, typical_seconds: 1 };
+  await page.reload();
+  // The composer's line is a paragraph; the first-visit list also names a wait, as a span, so the match is scoped.
+  await expect(page.getByRole("paragraph").filter({ hasText: /^Starts in about 1 s$/ })).toBeVisible();
+  row = { ...chatRow, cost_hint: { kind: "unknown", price_usd: null }, typical_seconds: null };
+  await page.reload();
+  await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: /^(No charge|Starts in|About |Paid model)/ })).toHaveCount(0);
+  await expect(page.getByText(/unknown/i)).toHaveCount(0);
+});
+
 test("H7 a failed Recent leaves the composer working, and Try again refetches only Recent", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
@@ -176,6 +230,8 @@ test("H9 the owner's panel holds operations only, each with one link to where it
   await page.goto("/");
   const panel = page.getByRole("region", { name: "Your gateway" });
   await expect(panel).toBeVisible();
+  // The fixture's owner has capabilities that are off, so the panel names one and gives its one action.
+  await expect(panel.getByRole("link", { name: "Open Engines" }).first()).toBeVisible();
   const links = panel.getByRole("link");
   const hrefs = await links.evaluateAll((items) => items.map((item) => item.getAttribute("href") ?? ""));
   for (const href of hrefs) expect(href).toMatch(/^\/(engines|providers|status|people)\b/);
@@ -245,6 +301,32 @@ for (const viewport of LAYOUTS) {
           items.map((item) => Math.round(item.getBoundingClientRect().height)),
         );
         expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
+      }
+    });
+  }
+}
+
+// The owner's fixture has capabilities that are off, so the chooser carries state words on every width.
+for (const viewport of LAYOUTS) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`the chooser's options do not overlap at ${viewport.width} px in ${colorScheme}, and a phone row scrolls with an edge`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await page.goto("/");
+      const group = page.getByRole("group", { name: "What to make" });
+      const options = group.getByRole("button");
+      await expect(options.first()).toBeVisible();
+      await expect(options.nth(1)).toBeVisible();
+      await expect(group.getByRole("button", { name: /Images/ })).toContainText("Off");
+      const boxes = await options.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
+      for (let index = 1; index < boxes.length; index += 1) {
+        // Each option starts where the one before it ends, or later: no two boxes intersect.
+        expect(boxes[index].left).toBeGreaterThanOrEqual(boxes[index - 1].right - 0.5);
+      }
+      const scrolls = await group.evaluate((row) => row.scrollWidth > row.clientWidth + 1);
+      if (viewport.width === 390) {
+        expect(scrolls).toBe(true);
+        await expect(page.locator("[data-slot='chooser-fade']")).toBeVisible();
       }
     });
   }
