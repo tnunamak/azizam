@@ -1912,7 +1912,9 @@ that they pin now passes with its mark removed. The tests the review did not pin
 `tests/test_request_history_s5a_review.py`.
 
 - **Secret floor (rules 4, 8 and 9).** One name tokenizer, `request_history.segments`, splits on `-`, `_`, space, `.`,
-  `[`, `]` and camel case. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. Every URL
+  `[`, `]` and camel case. A word matches as written, and also without a trailing digit run or one trailing `s`, so
+  `secrets`, `password1`, `apiKeys` and `access_tokens` are credential names too, and a credential name removes its
+  whole value, however deep. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. Every URL
   inside a longer string is scrubbed with the whole-URL helper, and the punctuation after it is kept. A tool call's
   `arguments` string is parsed and its JSON is cleaned like any JSON. Text that is not JSON is cleaned as text. Two
   other name checks exist and were left alone: `redaction.is_forbidden_key` is an exact-key set for receipts and media

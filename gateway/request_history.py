@@ -36,8 +36,9 @@ REQUEST_HEADERS = frozenset({"content-type", "accept", "x-azizam-prompts"})
 #: Reply headers kept by name.
 RESPONSE_HEADERS = frozenset({"content-type"})
 
-_CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "credentials", "authorization", "apikey"})
+_CREDENTIAL_SEGMENTS = frozenset({"secret", "password", "passwd", "credential", "authorization", "apikey"})
 _CREDENTIAL_PAIRS = frozenset({("api", "key"), ("access", "token"), ("refresh", "token"), ("id", "token"), ("auth", "token")})
+_TRAILING_DIGITS = re.compile(r"\d+$")
 # One tokenizer for every name the secret floor reads. Brackets split too: a nested form value arrives as
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
@@ -87,12 +88,23 @@ def segments(name: str) -> list[str]:
     return [part.lower() for part in _SEGMENT_BOUNDARY.split(str(name)) if part]
 
 
+def _forms(word: str) -> set[str]:
+    """What a word may mean: as written without its digits, and without one trailing ``s``. ``password1`` and
+    ``secrets`` read as ``password`` and ``secret``; ``access`` reads as itself, as it is a credential word."""
+    stem = _TRAILING_DIGITS.sub("", word)
+    forms = {stem}
+    if len(stem) > 1 and stem.endswith("s"):
+        forms.add(stem[:-1])
+    return forms
+
+
 def is_credential_name(name: str) -> bool:
-    """Rule 8: a credential segment anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept."""
-    parts = segments(name)
-    if _CREDENTIAL_SEGMENTS.intersection(parts):
+    """Rule 8: a credential word anywhere in the name, or a pair such as api_key. ``max_tokens`` is kept."""
+    words = [_forms(part) for part in segments(name)]
+    if any(_CREDENTIAL_SEGMENTS & forms for forms in words):
         return True
-    return any(pair in _CREDENTIAL_PAIRS for pair in zip(parts, parts[1:]))
+    return any((first, second) in _CREDENTIAL_PAIRS
+               for left, right in zip(words, words[1:]) for first in left for second in right)
 
 
 def allowed_request_headers(headers: Mapping[str, str]) -> dict[str, str]:

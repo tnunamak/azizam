@@ -76,7 +76,6 @@ def test_the_unit_capture_keeps_a_text_plain_body_that_carries_a_forget(member_d
 # ------------------------------------------------------------------ the secret floor: names rule 8 means to cover
 
 
-@pytest.mark.xfail(strict=True, reason="R2-2: plural and digit-suffixed credential names escape the tokenizer")
 @pytest.mark.parametrize("name", ["secrets", "client_secrets", "passwords", "password1", "apiKey2", "api_keys",
                                   "apiKeys", "access_tokens"])
 def test_plural_and_numbered_credential_names_are_removed(name):
@@ -84,11 +83,12 @@ def test_plural_and_numbered_credential_names_are_removed(name):
     assert CANARY not in json.dumps(kept)
 
 
-def test_a_secrets_map_keeps_every_value_under_neutral_names():
+def test_a_secrets_map_is_removed_whole_under_its_credential_name():
     """The concrete shape: a provider map under ``secrets``. The values sit under neutral names, so only the parent's
-    name can remove them."""
+    name can remove them, and the whole subtree goes. Was a control that pinned the gap (R2-2)."""
     kept, _ = request_history.redact_json({"secrets": {"openai": CANARY, "anthropic": CANARY}})
-    assert CANARY in json.dumps(kept)
+    assert CANARY not in json.dumps(kept)
+    assert kept == {"secrets": "[removed]"}
 
 
 # ------------------------------------------------------------------ the secret floor: URLs inside text (rule 4)
