@@ -2147,15 +2147,29 @@ def add_trusted_address(
 
 def delete_trusted_address(
     app_id: str, entry_id: str, *, path: Path = DB_PATH,
+    session: session_guard.BrowserSession | None = None, audit: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Remove one entry; the address stops being trusted at once. None if absent."""
+    """Remove one entry; the address stops being trusted at once. None if absent.
+
+    With ``audit`` (``action``, ``actor_kind``, ``actor_id``), the audit event is written in the same transaction as the
+    removal, so a removal never happens without its event. ``session`` is checked in that transaction, as for adds.
+    """
+    ts = _now()
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
         row = conn.execute(
             "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
         ).fetchone()
         if row is None:
+            conn.rollback()
             return None
         conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        if audit is not None:
+            _record_audit_in_transaction(
+                conn, audit["action"], actor_kind=audit["actor_kind"], actor_id=audit["actor_id"], actor_label=None,
+                target_kind="app", target_id=app_id, metadata={"address": row["address"], "entry_id": entry_id}, now=ts,
+            )
         conn.commit()
     return _row_to_dict(row)
 

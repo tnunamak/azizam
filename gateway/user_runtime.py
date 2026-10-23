@@ -699,23 +699,20 @@ def remove_user_trusted_address(
 ) -> dict[str, Any]:
     """Remove one trusted address from an App the signed-in person answers for.
 
-    A removal only narrows access, and it is audited. Another person's App gets the same 404 as adding an
-    address to it (``_app_belongs_to_user``).
+    A removal only narrows access. Its audit event is written in the same transaction as the removal, and the sign-in
+    is checked there too. Another person's App gets the same 404 as adding an address to it (``_app_belongs_to_user``).
     """
     user = _user_from_session(session, path=path)
     _app_belongs_to_user(app_id, str(user["id"]), path=path)
-    removed = admin_store.delete_trusted_address(app_id, entry_id, path=path)
+    try:
+        removed = admin_store.delete_trusted_address(
+            app_id, entry_id, path=path, session=session_guard.BrowserSession.of(session, str(user["id"])),
+            audit={"action": "app.trusted_address.remove", "actor_kind": "user", "actor_id": str(user["id"])},
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
     if removed is None:
         raise UserPortalError("trusted_address_not_found", "Trusted address not found for this App", status_code=404)
-    admin_store.record_audit(
-        "app.trusted_address.remove",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        target_kind="app",
-        target_id=app_id,
-        metadata={"address": removed["address"], "entry_id": entry_id},
-        path=path,
-    )
     return removed
 
 
