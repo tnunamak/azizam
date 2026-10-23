@@ -82,15 +82,28 @@ def _visible_now(row: dict[str, Any], cutoff: int, now: int) -> bool:
 _BATCH = 100
 
 
-def _item(row: dict[str, Any]) -> dict[str, Any]:
+def _item(row: dict[str, Any], app_name: str | None) -> dict[str, Any]:
     import json
 
     return {
         "record_id": row["record_id"], "request_id": row.get("request_id"), "kind": row["kind"],
         "created_at": int(row["created_at"]), "kept_until": row.get("kept_until"),
-        "origin_kind": row.get("origin_kind"), "kept_parts": json.loads(row["parts_kept"]),
+        "origin_kind": row.get("origin_kind"), "app_name": app_name, "kept_parts": json.loads(row["parts_kept"]),
         "summary": json.loads(row["summary_json"]),
     }
+
+
+def _app_names(admin_path: Path, app_ids: set[str | None]) -> dict[str, str]:
+    """The names of the apps a page of the viewer's own rows came through (a row with no app has none)."""
+    ids = sorted(app_id for app_id in app_ids if app_id)
+    if not ids:
+        return {}
+    conn = retention.connect(admin_path, timeout=retention.RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        marks = ",".join("?" * len(ids))
+        return {str(row[0]): str(row[1]) for row in conn.execute(f"SELECT id, name FROM apps WHERE id IN ({marks})", ids)}
+    finally:
+        conn.close()
 
 
 def _cursor(row: dict[str, Any]) -> str:
@@ -166,7 +179,8 @@ def create_request_history_router(
             if len(batch) < _BATCH:
                 break
             before = (int(batch[-1]["created_at"]), str(batch[-1]["record_id"]))
-        return {"requests": [_item(row) for row in page], "next_cursor": next_cursor}
+        names = _app_names(admin_path(), {row.get("app_id") for row in page})
+        return {"requests": [_item(row, names.get(row.get("app_id"))) for row in page], "next_cursor": next_cursor}
 
     def _readable(viewer: content_access.Viewer, record_id: str) -> dict[str, Any] | None:
         row = request_history.get_row(record_id, path=media_path())
