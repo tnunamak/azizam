@@ -11,6 +11,7 @@ A control-plane key or an API key cannot do either. Keeping and replacing ask fo
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 
@@ -271,13 +272,13 @@ def test_a_person_cannot_keep_a_key_on_someone_elses_app(gateway):
 
 
 def _record_sql(monkeypatch) -> list[str]:
-    """Every SQL statement the store runs from now on, as text. The values are not recorded."""
+    """Every SQL statement the store runs from now on, with its values taken out, so two lookups compare by shape."""
     statements: list[str] = []
     connect = admin_store.connect
 
     def recording_connect(*args, **kwargs):
         conn = connect(*args, **kwargs)
-        conn.set_trace_callback(statements.append)
+        conn.set_trace_callback(lambda sql: statements.append(re.sub(r"'(?:[^']|'')*'|\b\d+\b", "?", sql)))
         return conn
 
     monkeypatch.setattr(admin_store, "connect", recording_connect)
