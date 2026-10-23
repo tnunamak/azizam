@@ -16,14 +16,13 @@ import type { CapabilityView } from "@/lib/capability-state";
 const WIDE_SHOWN = 6;
 const OWNER_SHOWN = 4;
 /**
- * From 1024 px the grid has one column per tile, so five or six tiles fill the row with no gap at its
- * end. Fewer than four tiles keep four columns, so one tile does not stretch across the page. From
- * 1280 px the page grid decides instead: six tracks that line up with the composer (GRID).
+ * From 1024 px the grid has one column per tile, so five or six tiles fill Home's column with no gap at
+ * its end. Fewer than four tiles keep four columns, so one tile does not stretch across the page.
  */
 const WIDE_COLUMNS = ["", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-5", "lg:grid-cols-6"];
-/** From 1280 px the tiles sit on the page's twelve-column grid, two columns each (see home-page). */
-const GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 xl:grid-cols-6 xl:gap-x-4";
-const GRID_OWNER = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-4 lg:grid-cols-4 xl:gap-x-4";
+const GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 xl:gap-x-4";
+/** Four tiles beside the owner's panel, the same size as a member's six across the full column. */
+const GRID_OWNER = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-4 xl:gap-x-4";
 const PHONE_BEYOND_FOUR = "max-sm:hidden";
 
 type Making = Extract<RecentItem, { kind: "making" }>;

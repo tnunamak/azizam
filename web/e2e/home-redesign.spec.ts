@@ -126,7 +126,7 @@ test("H6 a make in progress is first in Recent, and a finished picture opens Lib
 test("H6 five tiles fill the row at 1100 px, with no gap at its end", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
-  // Below 1280 px Recent has one column per tile; from 1280 the page grid decides (the next case).
+  // From 1024 px Recent has one column per tile, so five tiles fill the row.
   await page.setViewportSize({ width: 1100, height: 900 });
   const real = await (await member.context.request.get("/me/api/home")).json();
   const now = Date.now() / 1000;
@@ -157,7 +157,7 @@ test("H6 five tiles fill the row at 1100 px, with no gap at its end", async ({ i
   expect(Math.abs(Math.max(...boxes.map((box) => box.right)) - (list!.x + list!.width))).toBeLessThanOrEqual(2);
 });
 
-test("at 1440 px the composer and Recent share one column grid: the composer's edges meet tile edges", async ({ isolated }) => {
+test("at 1440 px the composer and Recent share one column: the composer's edges meet the row's outer tile edges", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -168,9 +168,9 @@ test("at 1440 px the composer and Recent share one column grid: the composer's e
   const boxes = await tiles.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
   const composer = await page.locator("[data-slot='composer']").boundingBox();
   expect(composer).not.toBeNull();
-  // The composer spans the middle eight of twelve columns: from the second tile's left edge to the fifth tile's right edge.
-  expect(Math.abs(composer!.x - boxes[1].left)).toBeLessThanOrEqual(1);
-  expect(Math.abs(composer!.x + composer!.width - boxes[4].right)).toBeLessThanOrEqual(1);
+  // One centred column: the composer runs from the first tile's left edge to the last tile's right edge.
+  expect(Math.abs(composer!.x - boxes[0].left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(composer!.x + composer!.width - boxes[5].right)).toBeLessThanOrEqual(1);
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {

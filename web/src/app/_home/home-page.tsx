@@ -125,7 +125,7 @@ function YourApps({ home }: { home: HomeSnapshot }) {
 
 /**
  * Columns by how many tiles there are, so no row ends with one tile beside empty cells:
- * four sit two by two, under the composer on a wide screen.
+ * four sit two by two.
  */
 const STARTER_COLUMNS = [
   "",
@@ -355,14 +355,9 @@ export default function HomePage() {
   );
 
   return (
-    // From 1280 px the page is one twelve-column grid: the greeting and composer take the middle eight
-    // columns, and Recent's tiles take two columns each, so the composer's edges meet tile edges.
-    // A member's first visit keeps everything in the middle column.
-    <div className="min-w-0 space-y-10 lg:space-y-12 xl:grid xl:grid-cols-12 xl:gap-x-4 xl:gap-y-12 xl:space-y-0">
-      <section
-        aria-labelledby="home-greeting"
-        className="mx-auto w-full max-w-(--content-composer) space-y-6 sm:pt-6 lg:pt-10 xl:col-span-8 xl:col-start-3 xl:max-w-none"
-      >
+    // One centred column: the greeting, the composer and every section below share its two edges.
+    <div className="mx-auto w-full max-w-(--content-home) min-w-0 space-y-10 lg:space-y-12">
+      <section aria-labelledby="home-greeting" className="space-y-6 sm:pt-6 lg:pt-10">
         <header className="space-y-2 text-center">
           <h1 id="home-greeting" className="text-3xl font-semibold tracking-tight text-balance max-sm:text-2xl">
             {greeting}
@@ -377,17 +372,15 @@ export default function HomePage() {
       <div
         className={cn(
           "min-w-0 space-y-10",
-          firstVisit && !isOwner ? "xl:col-span-8 xl:col-start-3" : "xl:col-span-12",
-          isOwner &&
-            "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-x-10 lg:space-y-0 xl:grid-cols-12 xl:gap-x-4",
+          isOwner && "lg:grid lg:grid-cols-[minmax(0,1fr)_18.75rem] lg:items-start lg:gap-x-8 lg:space-y-0",
         )}
       >
         {isOwner ? (
-          <div className="min-w-0 lg:col-start-2 lg:row-start-1 xl:col-span-4 xl:col-start-9">
+          <div className="min-w-0 lg:col-start-2 lg:row-start-1">
             <OwnerPanel needs={needs} working={workingLine(ownerViews)} />
           </div>
         ) : null}
-        <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1 xl:col-span-8">
+        <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
           {firstVisit ? (
             rows.length ? (
               <FirstVisitList rows={rows} onChoose={setKind} />

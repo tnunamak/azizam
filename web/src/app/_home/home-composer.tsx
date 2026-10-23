@@ -372,7 +372,7 @@ function ComposerFrame({ children }: { children: ReactNode }) {
   return (
     <div
       data-slot="composer"
-      className="bg-card border-border dark:border-input/40 hover:border-input focus-within:border-ring! rounded-composer shadow-composer mx-auto w-full max-w-(--content-composer) min-w-0 border transition-colors duration-(--motion-fast)"
+      className="bg-card border-border dark:border-input/40 hover:border-input focus-within:border-ring! rounded-composer shadow-composer w-full min-w-0 border transition-colors duration-(--motion-fast)"
     >
       {children}
     </div>

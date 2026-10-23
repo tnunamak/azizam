@@ -128,7 +128,7 @@
   --page-pad: 2rem;
   --page-top: 2rem;
   --content-read: 720px; /* settings, detail, Status and the Try form */
-  --content-composer: 760px; /* Home's greeting and composer */
+  --content-home: 960px; /* Home's one column: the greeting, the composer and the sections below share its edges */
   --space-section: 2rem; /* between sections, always */
   --space-heading: 0.75rem; /* a section heading to its content */
   --space-title: 1.5rem; /* the page header to the first section */

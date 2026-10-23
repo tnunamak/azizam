@@ -306,7 +306,11 @@ vitest = 3232
 # Home redesign round 2: +8 cases in e2e/home-redesign.spec.ts (five tiles fill the row at 1440 px; the facts line's
 # cost and wait; the chooser's options at 1440, 768 and 390 px in light and dark, with no overlap). Measured on this
 # branch: playwright.config.ts 521; gate lists 542 (521 + live-data 3 + household 18), 2026-10-23.
-playwright = 542
+# Home visual pass: +1 case in e2e/home-redesign.spec.ts (at 1440 px the composer's edges meet the outer tile edges
+# of Recent, so the hero and the sections share one column). Measured on this branch: playwright.config.ts 522; gate
+# lists 543 (522 + live-data 3 + household 18), 2026-10-23. Vitest on this branch: 212 files, 3196 cases; its ceiling
+# stays at 3232, the figure main records, which this branch does not exceed.
+playwright = 543
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
