@@ -2221,7 +2221,8 @@ def _accountable_person_changed(conn: sqlite3.Connection, app_id: str, person_id
         if owner is not None and owner != person_id:
             return True
     for (metadata,) in conn.execute(
-        "SELECT metadata_json FROM audit_events WHERE action = 'access_plans.migrate' AND target_kind = 'admin_db'",
+        "SELECT metadata_json FROM audit_events WHERE target_kind = 'admin_db' AND target_id = 'schema-7' "
+        "AND action = 'access_plans.migrate'",
     ).fetchall():
         apps = json.loads(metadata or "{}").get("apps", [])
         if any(entry.get("id") == app_id and entry.get("accountable") for entry in apps):
