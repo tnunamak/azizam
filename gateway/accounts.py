@@ -16,7 +16,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 
 from gateway import admin_store, request_connections, session_guard, sqlite_startup
 # A module import: admin_runtime imports this module through browser_sessions.
@@ -674,55 +674,78 @@ def revoke_invite(link_id: str, actor: str, *, path: Path, actor_kind: str = "us
         _audit(conn, "account.invite.revoke", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
 
 
-def accept_invite(token: str, email: str, name: str, password: str | None, *, path: Path,
-                  oidc_user_id: str | None = None) -> tuple[dict, dict, dict]:
+class InviteAcceptance(NamedTuple):
+    """An invitation acceptance whose inputs are checked and whose password is hashed, ready to write."""
+
+    token: str
+    email: str
+    name: str
+    verifier: str | None
+    oidc_user_id: str | None
+
+
+def prepare_invite_acceptance(token: str, email: str, name: str, password: str | None, *, path: Path,
+                              oidc_user_id: str | None = None) -> InviteAcceptance:
+    """Check the inputs and hash the password before any write lock is taken; hashing is slow."""
     email = normalize_email(email)
     if not isinstance(name, str) or not name.strip() or len(name) > 120:
         raise AccountError("invalid_name", "Enter your name (up to 120 characters).")
     inspect_invite(token, path=path)
     verifier = hash_password(password) if oidc_user_id is None else None
+    return InviteAcceptance(token, email, name, verifier, oidc_user_id)
+
+
+def accept_invite_in(conn: sqlite3.Connection, acceptance: InviteAcceptance) -> tuple[dict, dict, dict]:
+    """Accept an invitation inside the caller's transaction: the person, their access, a first app and its key."""
+    token, email, name, verifier, oidc_user_id = acceptance
     api_key, ts = admin_runtime.generate_app_api_key(), int(time.time())
+    link = _usable_link(conn, token, "invite", ts)
+    _valid_plan(conn, link["plan_id"])
+    if link["email"] and not hmac.compare_digest(link["email"].encode(), email.encode()):
+        raise AccountError("invite_email_mismatch", "Use the email address on this invitation.", 403)
+    if oidc_user_id:
+        user = conn.execute("SELECT * FROM users WHERE id=? AND issuer!='local'", (oidc_user_id,)).fetchone()
+        if not user or (user["email"] or "").lower() != email:
+            raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
+        state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
+        rule_plan = bool(state and state["plan_id"] and conn.execute(
+            "SELECT 1 FROM signin_rule_plans WHERE user_id=? AND plan_id=?",
+            (oidc_user_id, state["plan_id"])).fetchone())
+        # A plan only a sign-in rule gave does not count: the invitation's plan beats it.
+        if state and ((state["plan_id"] and not rule_plan) or state["removed_at"] is not None):
+            raise AccountError("account_exists", "This account already has an access plan.", 409)
+        user_id = oidc_user_id
+    else:
+        if conn.execute("SELECT 1 FROM users WHERE LOWER(email)=?", (email,)).fetchone():
+            raise AccountError("account_exists", "An account already uses this email. Sign in or ask the owner for help.", 409)
+        user_id = _id("usr")
+        conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
+        conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
+    # The invitation's plan was previewed when it was sent (design §2.12).
+    conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
+                 "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
+    # The invitation's plan beats any sign-in rule from now on.
+    conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
+    app_id, credential_id = _id("app"), _id("cred")
+    conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
+                 (app_id, "personal", "My first app", user_id, ts))
+    conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,display_name,created_at,created_by) "
+                 "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
+    conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
+    _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"plan_id": link["plan_id"], "app_id": app_id, "credential_id": credential_id})
+    _audit(conn, "credential.create", user_id, credential_id, ts,
+           {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
+    user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+    app = dict(conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone())
+    return user, app, {"id": credential_id, "app_id": app_id, "api_key": api_key, "prefix": api_key[:18]}
+
+
+def accept_invite(token: str, email: str, name: str, password: str | None, *, path: Path,
+                  oidc_user_id: str | None = None) -> tuple[dict, dict, dict]:
+    acceptance = prepare_invite_acceptance(token, email, name, password, path=path, oidc_user_id=oidc_user_id)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        link = _usable_link(conn, token, "invite", ts)
-        _valid_plan(conn, link["plan_id"])
-        if link["email"] and not hmac.compare_digest(link["email"].encode(), email.encode()):
-            raise AccountError("invite_email_mismatch", "Use the email address on this invitation.", 403)
-        if oidc_user_id:
-            user = conn.execute("SELECT * FROM users WHERE id=? AND issuer!='local'", (oidc_user_id,)).fetchone()
-            if not user or (user["email"] or "").lower() != email:
-                raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
-            state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
-            rule_plan = bool(state and state["plan_id"] and conn.execute(
-                "SELECT 1 FROM signin_rule_plans WHERE user_id=? AND plan_id=?",
-                (oidc_user_id, state["plan_id"])).fetchone())
-            # A plan only a sign-in rule gave does not count: the invitation's plan beats it.
-            if state and ((state["plan_id"] and not rule_plan) or state["removed_at"] is not None):
-                raise AccountError("account_exists", "This account already has an access plan.", 409)
-            user_id = oidc_user_id
-        else:
-            if conn.execute("SELECT 1 FROM users WHERE LOWER(email)=?", (email,)).fetchone():
-                raise AccountError("account_exists", "An account already uses this email. Sign in or ask the owner for help.", 409)
-            user_id = _id("usr")
-            conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
-            conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
-        # The invitation's plan was previewed when it was sent (design §2.12).
-        conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
-                     "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
-        # The invitation's plan beats any sign-in rule from now on.
-        conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
-        app_id, credential_id = _id("app"), _id("cred")
-        conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
-                     (app_id, "personal", "My first app", user_id, ts))
-        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,display_name,created_at,created_by) "
-                     "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
-        conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
-        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"plan_id": link["plan_id"], "app_id": app_id, "credential_id": credential_id})
-        _audit(conn, "credential.create", user_id, credential_id, ts,
-               {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
-        user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
-        app = dict(conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone())
-    return user, app, {"id": credential_id, "app_id": app_id, "api_key": api_key, "prefix": api_key[:18]}
+        return accept_invite_in(conn, acceptance)
 
 
 def reset_password(token: str, password: str, *, path: Path):

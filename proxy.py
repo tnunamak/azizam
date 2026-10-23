@@ -2034,41 +2034,6 @@ def _provision_existing_user_personal_apps() -> int:
     return created
 
 
-def _ensure_personal_app_for_owner(
-    user: Mapping[str, Any],
-    *,
-    role: str,
-    via: str = "setup_local_owner",
-) -> Mapping[str, Any] | None:
-    """Ensure a just-claimed local owner has a personal App.
-
-    Parity with the OIDC login path, so the user portal can hand the new owner
-    a working key without a separate "create App" step. The App is "Same as
-    its person"; it runs once the owner has an access plan.
-    """
-    user_id = str(user.get("id") or "")
-    if not user_id:
-        return None
-    label = user.get("email") or user.get("display_name") or user_id
-    app = admin_store.ensure_personal_app_for_user(
-        user_id,
-        name=f"{label} personal access",
-        path=ADMIN_STORE.path,
-    )
-    admin_store.record_audit(
-        "app.self_create",
-        actor_kind="user",
-        actor_id=user_id,
-        actor_label=str(user.get("display_name") or user.get("email") or user_id),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"email": user.get("email"), "via": via, "role": role,
-                  "access_plan": app.get("access_plan")},
-        path=ADMIN_STORE.path,
-    )
-    return app
-
-
 AuthIdentity = RuntimeIdentity
 
 
@@ -17635,26 +17600,56 @@ def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
 
 
-async def _issue_browser_admin_session(
+def _complete_setup_local_owner(
     request: Request,
     *,
-    user_id: str,
     email: str,
-    role: str,
+    verifier: str,
     signing_key: bytes,
-    redirect_to: str = "/setup/",
-) -> Response:
+):
+    """Commit the first owner, their plan, their personal App and their session together.
+
+    Returns the session and its cookie, or None when an owner was already claimed. The caller sets the
+    cookie after this returns, so the cookie is set only once the claim has committed.
+    """
+    path = ADMIN_STORE.path
     cookie = _browser_admin_cookie_config()
-    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
-    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
-                            signing_key=signing_key, path=ADMIN_STORE.path)
-    session = await asyncio.to_thread(
-        browser_sessions.issue,
-        {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
-    )
-    response = RedirectResponse(redirect_to, status_code=303)
-    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
-    return response
+    accounts.initialize(path)
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.claim_first_local_owner_in(
+            conn,
+            issuer=_LOCAL_OWNER_ISSUER,
+            subject=email,
+            email=email,
+            display_name=email,
+            verifier=verifier,
+            granted_by="setup-local-owner",
+        )
+        if user is None:
+            return None
+        user_id = str(user["id"])
+        # A fresh gateway has no built-in default plan, so the first owner gets one
+        # ordinary starting plan; without it they would be refused on their own gateway.
+        admin_store.seed_first_owner_plan_in(conn, user_id)
+        # Parity with OIDC login: give the new owner a personal App up front so the
+        # portal can hand them a working key without a separate "create App" step.
+        label = user.get("email") or user.get("display_name") or user_id
+        app = admin_store.ensure_personal_app_for_user_in(conn, user_id, name=f"{label} personal access")
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "setup_local_owner", "role": "owner",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(conn, request, cookie=cookie, signing_key=signing_key, path=path)
+        session = browser_sessions.issue_in(conn, {"sub": user_id, "email": email}, role="owner",
+                                            cookie=cookie, path=path)
+    accounts.invalidate_asset_families()
+    return session, cookie
 
 
 def _complete_setup_local_login(
@@ -17833,35 +17828,19 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.claim_first_local_owner(
-        issuer=_LOCAL_OWNER_ISSUER,
-        subject=email,
-        email=email,
-        display_name=email,
-        verifier=verifier,
-        granted_by="setup-local-owner",
-        path=ADMIN_STORE.path,
-    )
-    if user is None:
-        return RedirectResponse("/setup/", status_code=303)
-    # A fresh gateway has no built-in default plan, so the first owner gets one
-    # ordinary starting plan; without it they would be refused on their own gateway.
-    admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-    # Parity with OIDC login: give the new owner a personal App up front so the
-    # portal can hand them a working key without a separate "create App" step.
-    _ensure_personal_app_for_owner(user, role="owner")
     # Setup is done — hand the new owner to the portal, where their key is
     # auto-minted and revealed once. Landing back on /setup would greet them
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role="owner",
-        signing_key=signing_key,
-        redirect_to="/",
+    claimed = await asyncio.to_thread(
+        _complete_setup_local_owner, request, email=email, verifier=verifier, signing_key=signing_key,
     )
+    if claimed is None:
+        return RedirectResponse("/setup/", status_code=303)
+    session, cookie = claimed
+    response = RedirectResponse("/", status_code=303)
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
+    return response
 
 
 @app.post("/setup/local-login", include_in_schema=False)
@@ -18154,10 +18133,15 @@ def _complete_oidc_signin(
         provider_time = _provider_auth_time(claims)
         authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
         if previous is not None:
-            session = browser_sessions.confirm_in(
-                conn, previous, path=path, authenticated_at=authenticated_at,
-            )
-        else:
+            try:
+                session = browser_sessions.confirm_in(
+                    conn, previous, path=path, authenticated_at=authenticated_at,
+                )
+            except SessionError:
+                # The session ended while the person was at the provider. The provider has just proved who they
+                # are, so they get a new session, as they did before sign-in writes were atomic.
+                previous = None
+        if previous is None:
             if not state.reauth:
                 browser_sessions.end_incoming_in(
                     conn, request, cookie=cfg.cookie, signing_key=cfg.signing_key, path=path,

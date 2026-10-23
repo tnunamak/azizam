@@ -161,17 +161,20 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if origin and urlsplit(origin).netloc != request.url.netloc:
             raise accounts.AccountError("origin_forbidden", "Use the sign-in page on this gateway.", 403)
 
-    def issue(request, user, payload, *, authenticated_at=None):
+    def accept_and_sign_in(request, acceptance, *, authenticated_at=None):
+        """Accept the invitation and sign the person in inside one transaction; the cookie is set after it commits."""
         path = path_provider()
-        names = admin_store.effective_admin_roles("user", user["id"], path=path)
-        role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
         cookie, key = cookie_provider(), signing_key_provider()
-        if not key:
-            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        browser_sessions.end_incoming(request, cookie=cookie, signing_key=key, path=path)
-        session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path,
-                                         authenticated_at=authenticated_at)
-        response = JSONResponse(payload)
+        accounts.initialize(path)
+        with admin_store.transaction(path) as tx:
+            user, app, credential = accounts.accept_invite_in(tx.conn, acceptance)
+            names = admin_store.effective_user_roles_in(tx.conn, user["id"])
+            role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
+            browser_sessions.end_incoming_in(tx.conn, request, cookie=cookie, signing_key=key, path=path)
+            session = browser_sessions.issue_in(tx.conn, {"sub": user["id"], "email": user["email"]}, role=role,
+                                                cookie=cookie, path=path, authenticated_at=authenticated_at)
+        accounts.invalidate_asset_families()
+        response = JSONResponse({"next": "/", "app": app, "credential": credential})
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
         return response
 
@@ -321,10 +324,9 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to accept this invitation.", 403)
         if not signing_key_provider():
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
-                                                       path=path, oidc_user_id=oidc_user_id)
-        return issue(request, user, {"next": "/", "app": app, "credential": credential},
-                     authenticated_at=authenticated_at)
+        acceptance = accounts.prepare_invite_acceptance(body.token, body.email, body.name, body.password,
+                                                        path=path, oidc_user_id=oidc_user_id)
+        return accept_and_sign_in(request, acceptance, authenticated_at=authenticated_at)
 
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):

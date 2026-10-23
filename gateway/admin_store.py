@@ -1292,73 +1292,94 @@ def claim_first_local_owner(
     owns the durable first-owner check and every write that makes the claim
     observable.
     """
+    with transaction(path) as tx:
+        return claim_first_local_owner_in(
+            tx.conn,
+            issuer=issuer,
+            subject=subject,
+            email=email,
+            display_name=display_name,
+            verifier=verifier,
+            granted_by=granted_by,
+            now=now,
+        )
+
+
+def claim_first_local_owner_in(
+    conn: sqlite3.Connection,
+    *,
+    issuer: str,
+    subject: str,
+    email: str,
+    display_name: str,
+    verifier: str,
+    granted_by: str,
+    now: int | None = None,
+) -> dict[str, Any] | None:
+    """The first-owner claim inside the caller's transaction; None, with no write, once an owner exists."""
     if not issuer or not subject:
         raise ValueError("issuer and subject are required")
     if not verifier or not isinstance(verifier, str):
         raise ValueError("verifier is required")
     ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        existing = conn.execute(
-            "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
-        ).fetchone()
-        if existing is not None:
-            conn.rollback()
-            return None
+    existing = conn.execute(
+        "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
+    ).fetchone()
+    if existing is not None:
+        return None
 
-        row = conn.execute(
-            "SELECT id FROM users WHERE issuer = ? AND subject = ?",
-            (issuer, subject),
-        ).fetchone()
-        if row is None:
-            user_id = _gen_id("usr")
-            conn.execute(
-                "INSERT INTO users(id, issuer, subject, email, display_name, "
-                "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_id, issuer, subject, email, display_name, ts, ts),
-            )
-            _insert_prompt_memory_preference(conn, user_id, ts)
-            _insert_account_access(conn, user_id)
-        else:
-            user_id = row["id"]
-            conn.execute(
-                "UPDATE users SET email = COALESCE(?, email), "
-                "display_name = COALESCE(?, display_name), last_login_at = ? "
-                "WHERE id = ?",
-                (email, display_name, ts, user_id),
-            )
-            # A person always has an access row; signing in repairs a missing one.
-            _insert_account_access(conn, user_id)
+    row = conn.execute(
+        "SELECT id FROM users WHERE issuer = ? AND subject = ?",
+        (issuer, subject),
+    ).fetchone()
+    if row is None:
+        user_id = _gen_id("usr")
+        conn.execute(
+            "INSERT INTO users(id, issuer, subject, email, display_name, "
+            "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, issuer, subject, email, display_name, ts, ts),
+        )
+        _insert_prompt_memory_preference(conn, user_id, ts)
+        _insert_account_access(conn, user_id)
+    else:
+        user_id = row["id"]
+        conn.execute(
+            "UPDATE users SET email = COALESCE(?, email), "
+            "display_name = COALESCE(?, display_name), last_login_at = ? "
+            "WHERE id = ?",
+            (email, display_name, ts, user_id),
+        )
+        # A person always has an access row; signing in repairs a missing one.
+        _insert_account_access(conn, user_id)
 
-        conn.execute(
-            "INSERT INTO local_password_credentials"
-            "(user_id, verifier, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET "
-            "verifier = excluded.verifier, updated_at = excluded.updated_at",
-            (user_id, verifier, ts, ts),
-        )
-        conn.execute(
-            "INSERT INTO admin_role_assignments(role, subject_kind, "
-            "subject_id, scope_app_id, granted_at, granted_by) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("owner", "user", user_id, None, ts, granted_by),
-        )
-        _record_audit_in_transaction(
-            conn,
-            "setup.local_owner_create",
-            actor_kind="user",
-            actor_id=user_id,
-            actor_label=display_name or email or user_id,
-            target_kind="user",
-            target_id=user_id,
-            metadata={"email": email, "via": "setup_page"},
-            now=ts,
-        )
-        conn.commit()
-        out = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+    conn.execute(
+        "INSERT INTO local_password_credentials"
+        "(user_id, verifier, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "verifier = excluded.verifier, updated_at = excluded.updated_at",
+        (user_id, verifier, ts, ts),
+    )
+    conn.execute(
+        "INSERT INTO admin_role_assignments(role, subject_kind, "
+        "subject_id, scope_app_id, granted_at, granted_by) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("owner", "user", user_id, None, ts, granted_by),
+    )
+    _record_audit_in_transaction(
+        conn,
+        "setup.local_owner_create",
+        actor_kind="user",
+        actor_id=user_id,
+        actor_label=display_name or email or user_id,
+        target_kind="user",
+        target_id=user_id,
+        metadata={"email": email, "via": "setup_page"},
+        now=ts,
+    )
+    out = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
     return _row_to_dict(out)  # type: ignore[return-value]
 
 
