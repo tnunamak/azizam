@@ -598,6 +598,20 @@ def maintain(*, admin_path: Path, path: Path | None = None, now: int) -> dict[st
         cursor = conn.execute("DELETE FROM kept_requests WHERE kept_until IS NOT NULL AND kept_until<=?", (now,))
         conn.commit()
         expired = cursor.rowcount
+        # Over a person's byte cap, the oldest of that person's records go first (FIFO). The running total is taken from
+        # the stored sizes, newest first, so only persons over the cap are touched.
+        cap = byte_cap()
+        cursor = conn.execute(
+            "DELETE FROM kept_requests WHERE kind=? AND record_id IN ("
+            " SELECT record_id FROM ("
+            "  SELECT record_id, SUM(byte_size) OVER (PARTITION BY person_id ORDER BY created_at DESC, record_id DESC"
+            "   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running"
+            "  FROM kept_requests WHERE kind=? AND person_id IN ("
+            "   SELECT person_id FROM kept_requests WHERE kind=? GROUP BY person_id HAVING SUM(byte_size) > ?))"
+            " WHERE running > ?)",
+            (KIND, KIND, KIND, cap, cap))
+        conn.commit()
+        over_cap = cursor.rowcount
     finally:
         conn.close()
     admin = _admin_connection(admin_path)
@@ -613,4 +627,9 @@ def maintain(*, admin_path: Path, path: Path | None = None, now: int) -> dict[st
     for person_id, cutoff in intents:
         settle_erasure(person_id, int(cutoff), admin_path=admin_path, path=path)
         settled += 1
-    return {"expired": expired, "settled_intents": settled}
+    return {"expired": expired, "over_cap": over_cap, "settled_intents": settled}
+
+
+def byte_cap() -> int:
+    """The stored bytes one person's kept requests may hold: the bundled value (REQUEST_RETENTION.md 12)."""
+    return int(retention.bundled().data["kinds"][KIND]["max_bytes_per_person"])

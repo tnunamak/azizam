@@ -69,7 +69,8 @@
         "purpose": {"type": "string", "minLength": 1},
         "parts": {"$ref": "#/$defs/parts"},
         "readers": {"$ref": "#/$defs/id"},
-        "max_record_bytes": {"type": "integer", "minimum": 1024, "maximum": 67108864}
+        "max_record_bytes": {"type": "integer", "minimum": 1024, "maximum": 67108864},
+        "max_bytes_per_person": {"type": "integer", "minimum": 1048576, "maximum": 17179869184}
       }
     }
   }
