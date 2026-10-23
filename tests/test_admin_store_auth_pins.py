@@ -296,7 +296,7 @@ def test_a_regrant_by_claim_after_a_manual_grant_was_revoked_creates_a_claim_gra
 def test_a_claimed_owner_gets_a_prompt_memory_preference_row(db):
     claimed = store.claim_first_local_owner(issuer="l", subject="a", verifier="v", granted_by="g", email=None,
                                             display_name=None, now=5, path=db)
-    prefs = rows(db, "SELECT user_id, retention, updated_at FROM prompt_memory_preferences")
+    prefs = rows(db, "SELECT user_id, retention, updated_at FROM prompt_memory_preferences WHERE grp='prompts'")
     assert prefs == [{"user_id": claimed["id"], "retention": "never", "updated_at": 5}]
 
 

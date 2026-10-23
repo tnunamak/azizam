@@ -7,12 +7,13 @@ writer. The app key the caller sends is the canary: it must not appear in any fi
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from gateway import media_jobs, receipt_store
+from gateway import admin_store, media_jobs, receipt_store
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 from tests.support import gateway as gateway_support
 from tests.support.gateway import gateway_client, register_litellm, use_admin_db
@@ -24,16 +25,29 @@ import proxy
 SENTENCE = "a sentence the member asked the chat route"
 
 
+def _mint_member_key(db: Path, person_id: str) -> str:
+    """A personal App key minned by its owner: the only kind of key whose requests have a person (section 4)."""
+    from gateway.runtime_auth import hash_api_key
+
+    app = admin_store.create_app("Member app", kind="personal", owner_user_id=person_id, access_plan="person", path=db)
+    key = f"opk_member_{app['id']}"
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"],
+                                       hash=hash_api_key(key), prefix=key[:16], created_by=person_id, path=db)
+    gateway_support._APP_KEY["key"] = key
+    return key
+
+
 @pytest.fixture
 def chat_gateway(fake_upstreams, monkeypatch, tmp_path):
     fake = fake_upstreams.asgi(load_scenario("openai-compatible/chat-text", model="garage-chat", content="ok"),
                                host="litellm.fk.test")
     db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user("https://fixture.test", "fixture-person", path=db)["id"]
+    _mint_member_key(db, person_id)
     media = tmp_path / "media_jobs.db"
     media_jobs.init_db(media)
     monkeypatch.setattr(media_jobs, "DB_PATH", media)
-    monkeypatch.setattr(receipt_store, "DB_PATH", tmp_path / "receipts.db")
-    receipt_store.init_db(tmp_path / "receipts.db")
+    receipt_store.init_db(receipt_store.DB_PATH)
     register_litellm(monkeypatch, db, fake.base_url)
     registry = proxy.ADMIN_STORE.get_service_registry()
     registry["services"].update(_registry("http://garage.fk.test/v1")["services"])
@@ -78,3 +92,21 @@ def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(c
     needle = gateway_support._APP_KEY["key"].encode()
     leaks = [path for path in tmp_path.rglob("*") if path.is_file() and needle in path.read_bytes()]
     assert leaks == []
+
+
+def test_a_member_who_keeps_replies_also_gets_the_status_and_the_reply_body(chat_gateway):
+    """The received part is kept only for a member whose parts include it (section 3.5); default is accepted only."""
+    tmp_path, media, db = chat_gateway
+    conn = sqlite3.connect(db)
+    person = conn.execute("SELECT id FROM users WHERE subject='fixture-person' OR email LIKE 'fixture%' LIMIT 1").fetchone()
+    conn.execute("UPDATE prompt_memory_preferences SET parts_json=? WHERE user_id=? AND grp='request_history'",
+                 ('["accepted", "received"]', person[0]))
+    conn.commit()
+    conn.close()
+    response = _post({"model": "garage-chat", "messages": [{"role": "user", "content": SENTENCE}]})
+    assert response.status_code == 200, response.text
+    row = _kept_rows(media)[-1]
+    parts = json.loads(row["parts_json"])
+    assert set(parts) == {"accepted", "received"}
+    assert parts["received"]["status"] == 200
+    assert "ok" in json.dumps(parts["received"]["body"])

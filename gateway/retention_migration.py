@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 
 from gateway import retention
 
@@ -69,3 +70,63 @@ def migrate(conn: sqlite3.Connection) -> dict[str, object]:
     conn.execute("DELETE FROM operator_settings WHERE key=?", (LEGACY_KEY,))
     return {"moved": LEGACY_KEY, "to": retention.SETTING_KEY,
             "unclassified": len(unclassified)}
+
+
+#: Schema 17: the tables whose rows gain a preference group, and the column that must exist after the rebuild.
+_GROUPED_TABLES = ("prompt_memory_preferences", "prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents")
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def migrate_group_keys(conn: sqlite3.Connection) -> dict[str, int]:
+    """Key member rows and erasure cutoffs by preference group (REQUEST_RETENTION.md sections 3.2 and 12).
+
+    Every existing row becomes a row of group ``prompts``, which is what it always was. Every existing person also
+    gets a ``request_history`` row with the switch off, whatever the household default is: nobody already using
+    Azizam starts keeping request bodies without being told (section 12, item 3). The statements run inside the
+    caller's transaction and use no ``executescript``, which would commit first. Running it again changes nothing.
+    """
+    pending_cutoffs = [table for table in _GROUPED_TABLES[1:]
+                       if _exists(conn, table) and "grp" not in _columns(conn, table)]
+    if "grp" in _columns(conn, "prompt_memory_preferences") and not pending_cutoffs:
+        return {}
+    moved: dict[str, int] = {}
+    history = retention.bundled().member_defaults(retention.REQUEST_HISTORY)
+    now = int(time.time())
+    if "grp" not in _columns(conn, "prompt_memory_preferences"):
+        conn.execute("ALTER TABLE prompt_memory_preferences RENAME TO prompt_memory_preferences_v16")
+        conn.execute(
+            "CREATE TABLE prompt_memory_preferences ("
+            "user_id TEXT NOT NULL, grp TEXT NOT NULL, remember INTEGER NOT NULL, retention TEXT NOT NULL, "
+            "parts_json TEXT, updated_at INTEGER NOT NULL, updated_by TEXT, PRIMARY KEY(user_id, grp), "
+            "FOREIGN KEY(user_id) REFERENCES users(id))")
+        conn.execute(
+            "INSERT INTO prompt_memory_preferences(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+            "SELECT user_id, ?, remember, retention, NULL, updated_at, updated_by FROM prompt_memory_preferences_v16",
+            (retention.GROUP_PROMPTS,))
+        moved["prompts"] = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO prompt_memory_preferences(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+            "SELECT id, ?, 0, ?, NULL, ?, NULL FROM users",
+            (retention.GROUP_REQUEST_HISTORY, history["retention"], now))
+        moved["request_history"] = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute("DROP TABLE prompt_memory_preferences_v16")
+    for table in ("prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents"):
+        if not _exists(conn, table) or "grp" in _columns(conn, table):
+            continue
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_v16")
+        conn.execute(
+            f"CREATE TABLE {table} (person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+            "PRIMARY KEY(person_id, grp))")
+        conn.execute(
+            f"INSERT INTO {table}(person_id, grp, cutoff_at) SELECT person_id, ?, cutoff_at FROM {table}_v16",
+            (retention.GROUP_PROMPTS,))
+        moved[table] = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute(f"DROP TABLE {table}_v16")
+    return moved
+
+
+def _exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None

@@ -55,7 +55,7 @@ def test_unoffered_never_keeps_its_meaning_in_startup_maintenance_and_writes(tmp
     data = _data()
     data["groups"]["prompts"].update(choices=["1_year", "3_months"], default_retention="1_year", default_cap="1_year")
     with sqlite3.connect(admin_path) as conn:
-        conn.execute("UPDATE prompt_memory_preferences SET retention='never' WHERE user_id=?", (person,))
+        conn.execute("UPDATE prompt_memory_preferences SET retention='never' WHERE user_id=? AND grp='prompts'", (person,))
     _use(monkeypatch, data)
     assert retention.effective_period("never", "never") == "never"
     prompt_memory.tighten_contract_periods(admin_path=admin_path, path=media_path)
@@ -81,7 +81,7 @@ def test_a_file_that_offers_only_never_is_valid_until_a_stored_id_is_deleted(tmp
     admin_store.init_db(admin_path)
     person = admin_store.upsert_oidc_user("iss", "only-never", path=admin_path)["id"]
     with sqlite3.connect(admin_path) as conn:
-        conn.execute("UPDATE prompt_memory_preferences SET retention='1_year' WHERE user_id=?", (person,))
+        conn.execute("UPDATE prompt_memory_preferences SET retention='1_year' WHERE user_id=? AND grp='prompts'", (person,))
     prompt_memory.require_resolvable_periods(admin_path=admin_path)  # 1_year is still in the vocabulary
     del data["retention_choices"]["1_year"]
     _use(monkeypatch, data)

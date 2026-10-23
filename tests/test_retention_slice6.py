@@ -110,7 +110,7 @@ def test_admin_store_schema_and_fact_override_are_closed(tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 16
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 17
         assert {row[1] for row in conn.execute("PRAGMA table_info(retention_fact_overrides)")} >= {"target_type", "target_id", "facts_json"}
     admin_store.put_retention_fact_override("provider", "remote", [], updated_by="owner", path=path)
     assert admin_store.retention_fact_overrides(path=path) == {("provider", "remote"): []}

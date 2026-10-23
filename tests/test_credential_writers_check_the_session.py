@@ -395,6 +395,8 @@ REVIEWED_UNGUARDED_TABLES = {
     "operator_settings": "settings; the ones that hold a secret keep it in provider_secrets, and the registry and OIDC writers are guarded",
 }
 NOT_CREDENTIAL_TABLES = {
+    # request history content: written only by the retention writer, under its lock, never by a credential
+    "kept_requests",
     "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
     "audit_events", "media_hidden_assets", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",

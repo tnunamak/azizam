@@ -273,19 +273,33 @@ def public_contract(kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
 # ----------------------------------------------------- the household setting and its view
 
 
-def prompts_view(document: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The prompts group's view of the household setting: only the values it holds, in the screens' names."""
+def group_of_kind(kind: str) -> str:
+    """The preference group a kind's member switch belongs to; core defines the routing (GROUP_KINDS)."""
+    for group, kinds in GROUP_KINDS.items():
+        if kind in kinds:
+            return group
+    raise KeyError(kind)
+
+
+def household_view(document: Mapping[str, Any] | None, group: str = GROUP_PROMPTS) -> dict[str, Any]:
+    """The household values one group reads: the kill switch (every group) and that group's default and cap."""
     document = document if isinstance(document, Mapping) else {}
     view: dict[str, Any] = {}
     if "never_keep" in document:
         view["never_keep"] = document["never_keep"]
-    group = (document.get("groups") or {}).get(GROUP_PROMPTS) if isinstance(document.get("groups"), Mapping) else None
-    if isinstance(group, Mapping):
-        if "default_keep" in group:
-            view["default_remember"] = group["default_keep"]
-        if "retention_cap" in group:
-            view["retention_cap"] = normalize_period(group["retention_cap"], kind=LIBRARY_PROMPT, owner_cap=True)
+    groups = document.get("groups")
+    values = groups.get(group) if isinstance(groups, Mapping) else None
+    if isinstance(values, Mapping):
+        if "default_keep" in values:
+            view["default_remember"] = values["default_keep"]
+        if "retention_cap" in values:
+            view["retention_cap"] = normalize_period(values["retention_cap"], kind=GROUP_KINDS[group][0], owner_cap=True)
     return view
+
+
+def prompts_view(document: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The prompts group's view of the household setting: only the values it holds, in the screens' names."""
+    return household_view(document, GROUP_PROMPTS)
 
 
 def document_from_prompts_view(view: Mapping[str, Any]) -> dict[str, Any]:
@@ -339,6 +353,26 @@ def validate_prompts_view(view: Mapping[str, Any], *, existing_cap: str | None =
 def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
     """The prompts group's household values: the owner's, over the bundled defaults."""
     return {**household_defaults(), **prompts_view(document)}
+
+
+def member_choice(admin_path: Path | None, person_id: str, group: str = GROUP_PROMPTS) -> dict[str, Any] | None:
+    """A member's saved choice for one group, read without changing anything. None when the person has no row."""
+    if admin_path is None:
+        return None
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        row = conn.execute(
+            f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+            (person_id, group),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    choice: dict[str, Any] = {"remember": bool(row[0]), "retention": row[1]}
+    if row[2]:
+        choice["parts"] = json.loads(row[2])
+    return choice
 
 
 def unoffered_household_cap(document: Mapping[str, Any] | None) -> str | None:
@@ -465,7 +499,16 @@ def decide(
                               policy.get("retention_cap", contract.household_defaults(kind)["retention_cap"]), kind)
     seconds = contract.seconds_map()[period]
     expiry = started + seconds if seconds is not None else None
-    return Decision(person_id, True, "remembered", expiry, started, kind, contract.parts(kind))
+    return Decision(person_id, True, "remembered", expiry, started, kind, _parts_for(contract, kind, preference))
+
+
+def _parts_for(contract: Contract, kind: str, preference: Mapping[str, Any]) -> tuple[str, ...]:
+    """The parts a member chose, within what the kind allows; the kind's default when the member chose none."""
+    allowed = contract.data["kinds"][kind]["parts"]["allowed"]
+    chosen = preference.get("parts")
+    if chosen is None:
+        return contract.parts(kind)
+    return tuple(part for part in allowed if part in chosen)
 
 
 def conversation_store(decision: Decision, requested: Any, *, has_scope: bool) -> bool:
@@ -522,21 +565,25 @@ def ensure_erasure_cutoff_table(conn: sqlite3.Connection) -> None:
     ).fetchone() is None:
         conn.execute(
             f"CREATE TABLE {ERASURE_CUTOFF_TABLE} ("
-            "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)"
+            "person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+            "PRIMARY KEY(person_id, grp))"
         )
 
 
 @contextmanager
-def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dict[str, Any]]:
+def guard(admin_path: Path | None, person_id: str | None = None,
+          group: str = GROUP_PROMPTS) -> Iterator[dict[str, Any]]:
     """Hold the admin setting's write lock through a content-bearing write.
 
     A kill-switch update waits for this write, then purges it. A write that
     starts after the update sees the new policy and is refused. The lock works
-    across gateway processes because it is a SQLite transaction.
+    across gateway processes because it is a SQLite transaction. The member row
+    and the erasure cutoffs are the ones of ``group`` (section 3.2).
     """
     contract = bundled()
-    defaults = contract.household_defaults(LIBRARY_PROMPT)
-    member_default = contract.member_defaults(LIBRARY_PROMPT)
+    kind = GROUP_KINDS[group][0]
+    defaults = contract.household_defaults(kind)
+    member_default = contract.member_defaults(kind)
     if admin_path is None:
         yield {**defaults, **member_default}
         return
@@ -545,10 +592,10 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (SETTING_KEY,)).fetchone()
-        household_policy = {**defaults, **(prompts_view(json.loads(row[0])) if row else {})}
+        household_policy = {**defaults, **(household_view(json.loads(row[0]), group) if row else {})}
         ensure_erasure_cutoff_table(conn)
         erased = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'",
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp=?", (group,),
         ).fetchone()
         household_cutoff = int(erased[0]) if erased else 0
         member = None
@@ -556,11 +603,12 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
         forgot_before = household_cutoff
         if person_id:
             erased = conn.execute(
-                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+                f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp=?", (person_id, group),
             ).fetchone()
             forgot_before = max(household_cutoff, int(erased[0]) if erased else 0)
             member = conn.execute(
-                f"SELECT remember, retention FROM {MEMBER_TABLE} WHERE user_id=?", (person_id,),
+                f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                (person_id, group),
             ).fetchone()
             user_exists = conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is not None
             if not user_exists:
@@ -569,13 +617,14 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
                 if member is None:
                     conn.execute(
                         f"INSERT OR IGNORE INTO {MEMBER_TABLE}"
-                        "(user_id, remember, retention, updated_at, updated_by) "
-                        "VALUES (?, ?, ?, ?, NULL)",
-                        (person_id, 1 if household_policy["default_remember"] else 0,
+                        "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+                        "VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+                        (person_id, group, 1 if household_policy["default_remember"] else 0,
                          member_default["retention"], int(time.time())),
                     )
                     member = conn.execute(
-                        f"SELECT remember, retention FROM {MEMBER_TABLE} WHERE user_id=?", (person_id,),
+                        f"SELECT remember, retention, parts_json FROM {MEMBER_TABLE} WHERE user_id=? AND grp=?",
+                        (person_id, group),
                     ).fetchone()
                 account_table = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
@@ -589,6 +638,9 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
                   "remember": bool(member[0]) if member else household_policy["default_remember"],
                   "retention": member[1] if member else member_default["retention"],
                   "forgot_before": forgot_before}
+        if member and member[2]:
+            # A member's chosen parts (request history's "also keep replies"); absent means the kind's default.
+            policy["parts"] = json.loads(member[2])
         policy["remember"] = bool(policy["remember"]) and person_enabled
         yield policy
         conn.commit()
@@ -624,10 +676,11 @@ def _conversation_gate(policy: Mapping[str, Any], decision: Decision, created_at
     )
 
 
-def _library_limit_source(policy: Mapping[str, Any], started: int, prior_deadline: int | None) -> str:
+def _library_limit_source(policy: Mapping[str, Any], started: int, prior_deadline: int | None,
+                          kind: str = LIBRARY_PROMPT) -> str:
     seconds = seconds_map()
-    member = seconds[normalize_period(policy["retention"], kind=LIBRARY_PROMPT, owner_cap=False)]
-    cap = seconds[normalize_period(policy["retention_cap"], kind=LIBRARY_PROMPT, owner_cap=True)]
+    member = seconds[normalize_period(policy["retention"], kind=kind, owner_cap=False)]
+    cap = seconds[normalize_period(policy["retention_cap"], kind=kind, owner_cap=True)]
     current_limit = min((started + duration for duration in (member, cap) if duration is not None), default=None)
     if prior_deadline is not None and (current_limit is None or prior_deadline < current_limit):
         return "prior_policy"
@@ -651,6 +704,34 @@ def _write_denial_reason(
     return "incomplete"
 
 
+def _request_history_outcome(
+    policy: Mapping[str, Any], decision: Decision, started: int, commit: Callable[[int | None], Any],
+) -> WriteOutcome:
+    """The request history gate, read again under the lock: the order of section 3.3, with the state as it is now."""
+    if policy["never_keep"]:
+        return WriteOutcome(False, "server_disabled")
+    if decision.reason == "request_forget":
+        return WriteOutcome(False, "request_forget")
+    if decision.person_id is None:
+        return WriteOutcome(False, "no_person")
+    if not policy["remember"]:
+        return WriteOutcome(False, "member_disabled")
+    forgot_before = int(policy.get("forgot_before") or 0)
+    if started <= forgot_before or int(decision.created_at or 0) <= forgot_before:
+        return WriteOutcome(False, "erasure_cutoff")
+    period = effective_period(policy["retention"], policy["retention_cap"], REQUEST_HISTORY)
+    seconds = seconds_map()[period]
+    limits = [decision.kept_until] if decision.kept_until is not None else []
+    if seconds is not None:
+        limits.append(started + seconds)
+    deadline = min(limits) if limits else None
+    if deadline is not None and deadline <= int(time.time()):
+        return WriteOutcome(False, "expired")
+    commit(deadline)
+    return WriteOutcome(True, "kept", deadline,
+                        _library_limit_source(policy, started, decision.kept_until, REQUEST_HISTORY))
+
+
 def write(
     kind: str, *, admin_path: Path | None, person_id: str | None, created_at: int,
     commit: Callable[[int | None], Any], decision: Decision | None = None, kept_until: int | None = None,
@@ -665,22 +746,27 @@ def write(
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
     outcome: WriteOutcome
-    with guard(admin_path, person_id) as policy:
-        if kind == LIBRARY_PROMPT:
-            allowed, deadline = _library_prompt_gate(policy, created_at, kept_until)
-        else:
+    with guard(admin_path, person_id, group_of_kind(kind)) as policy:
+        if kind == REQUEST_HISTORY:
             if decision is None:
-                raise ValueError("a conversation write needs the decision made for the request")
-            allowed, deadline = _conversation_gate(policy, decision, created_at), None
-        if not allowed:
-            outcome = WriteOutcome(False, _write_denial_reason(policy, created_at, deadline, decision))
+                raise ValueError("a request history write needs the decision made for the request")
+            outcome = _request_history_outcome(policy, decision, created_at, commit)
         else:
-            commit(deadline)
-            outcome = WriteOutcome(
-                True, "kept", deadline,
-                _library_limit_source(policy, created_at, kept_until)
-                if kind == LIBRARY_PROMPT else "unbounded_store",
-            )
+            if kind == LIBRARY_PROMPT:
+                allowed, deadline = _library_prompt_gate(policy, created_at, kept_until)
+            else:
+                if decision is None:
+                    raise ValueError("a conversation write needs the decision made for the request")
+                allowed, deadline = _conversation_gate(policy, decision, created_at), None
+            if not allowed:
+                outcome = WriteOutcome(False, _write_denial_reason(policy, created_at, deadline, decision))
+            else:
+                commit(deadline)
+                outcome = WriteOutcome(
+                    True, "kept", deadline,
+                    _library_limit_source(policy, created_at, kept_until)
+                    if kind == LIBRARY_PROMPT else "unbounded_store",
+                )
     if on_result is not None:
         on_result(outcome)
     return outcome.kept

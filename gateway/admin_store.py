@@ -49,7 +49,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -73,6 +73,9 @@ _RETENTION_KEY_VERSION = 14
 # Schema 15 adds mode-specific long-audio defaults to matching transcription records
 # (gateway.stt_chunking_upgrade; the rules are registry/stt_chunking_upgrades.yml).
 _STT_CHUNKING_VERSION = 15
+# Schema 17 keys member rows and erasure cutoffs by preference group (gateway.retention_migration.migrate_group_keys;
+# REQUEST_RETENTION.md section 12). The layout is what decides whether the rebuild runs, so it is idempotent.
+_RETENTION_GROUPS_VERSION = 17
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -253,11 +256,14 @@ CREATE TABLE IF NOT EXISTS retention_fact_overrides (
 );
 
 CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
-  user_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  grp TEXT NOT NULL,
   remember INTEGER NOT NULL,
   retention TEXT NOT NULL,
+  parts_json TEXT,
   updated_at INTEGER NOT NULL,
   updated_by TEXT,
+  PRIMARY KEY(user_id, grp),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
@@ -493,10 +499,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         (_now(),),
     )
     # Before anything reads the household default below: the setting it reads moves here.
+    from gateway import retention_migration
     if row is not None and int(row[0]) < _RETENTION_KEY_VERSION:
-        from gateway import retention_migration
-
         retention_migration.migrate(conn)
+    # Schema 17: member rows and erasure cutoffs gain their preference group. The layout decides, so this is a no-op
+    # on a database that has it, and it runs before any reader of those tables.
+    retention_migration.migrate_group_keys(conn)
     _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
@@ -698,11 +706,20 @@ def _insert_account_access(conn: sqlite3.Connection, user_id: str) -> None:
 def _insert_prompt_memory_preference(
     conn: sqlite3.Connection, user_id: str, now: int,
 ) -> None:
+    """A new person's rows: the household's prompts default, and request history on by default (D50)."""
     value = _prompt_memory_default(conn)
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
-        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL)",
-        (user_id, 1 if value else 0, retention_contract.member_defaults()["retention"], now),
+        "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+        (user_id, retention_contract.GROUP_PROMPTS, 1 if value else 0,
+         retention_contract.member_defaults()["retention"], now),
+    )
+    history = retention_contract.bundled().member_defaults(retention_contract.REQUEST_HISTORY)
+    conn.execute(
+        "INSERT OR IGNORE INTO prompt_memory_preferences"
+        "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+        (user_id, retention_contract.GROUP_REQUEST_HISTORY, 1 if history["remember"] else 0,
+         history["retention"], now),
     )
 
 
@@ -712,9 +729,10 @@ def _freeze_missing_prompt_memory_preferences(
     ts = _now() if now is None else int(now)
     conn.execute(
         "INSERT OR IGNORE INTO prompt_memory_preferences"
-        "(user_id, remember, retention, updated_at, updated_by) "
-        "SELECT id, ?, ?, ?, NULL FROM users",
-        (1 if remember else 0, retention_contract.member_defaults()["retention"], ts),
+        "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+        "SELECT id, ?, ?, ?, NULL, ?, NULL FROM users",
+        (retention_contract.GROUP_PROMPTS, 1 if remember else 0,
+         retention_contract.member_defaults()["retention"], ts),
     )
 
 
@@ -3712,14 +3730,15 @@ def get_operator_setting_in(conn: sqlite3.Connection, key: str) -> dict[str, Any
 def get_prompt_memory_preference(
     user_id: str,
     *,
+    group: str = retention_contract.GROUP_PROMPTS,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     if not user_id:
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT * FROM prompt_memory_preferences WHERE user_id = ?",
-            (user_id,),
+            "SELECT * FROM prompt_memory_preferences WHERE user_id = ? AND grp = ?",
+            (user_id, group),
         ).fetchone()
     if row is None:
         return None
@@ -3733,13 +3752,14 @@ def get_prompt_memory_preference(
 def ensure_prompt_memory_preference(
     user_id: str,
     *,
+    group: str = retention_contract.GROUP_PROMPTS,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Persist the household default for a person who has no saved choice."""
     if not user_id:
         raise ValueError("user_id is required")
-    existing = get_prompt_memory_preference(user_id, path=path)
+    existing = get_prompt_memory_preference(user_id, group=group, path=path)
     if existing is not None:
         return existing
     ts = _now() if now is None else int(now)
@@ -3749,7 +3769,7 @@ def ensure_prompt_memory_preference(
         _insert_prompt_memory_preference(conn, user_id, ts)
         conn.commit()
         row = conn.execute(
-            "SELECT * FROM prompt_memory_preferences WHERE user_id = ?", (user_id,),
+            "SELECT * FROM prompt_memory_preferences WHERE user_id = ? AND grp = ?", (user_id, group),
         ).fetchone()
     data = _row_to_dict(row)
     if data is None:
@@ -3758,18 +3778,27 @@ def ensure_prompt_memory_preference(
     return data
 
 
-def _record_prompt_erasure(conn: sqlite3.Connection, person_id: str, cutoff: int) -> None:
-    """Persist retry intent and the late-write fence in the setting transaction."""
+def _record_prompt_erasure(
+    conn: sqlite3.Connection, person_id: str, cutoff: int, groups: tuple[str, ...] | None = None,
+) -> None:
+    """Persist retry intent and the late-write fence in the setting transaction.
+
+    ``groups`` names the preference groups the erasure covers. None means every group: removing a person and the
+    household kill switch cover every kind (REQUEST_RETENTION.md section 12).
+    """
     conn.execute("CREATE TABLE IF NOT EXISTS prompt_memory_erasure_cutoffs ("
-                 "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)")
+                 "person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+                 "PRIMARY KEY(person_id, grp))")
     conn.execute("CREATE TABLE IF NOT EXISTS prompt_memory_erasure_intents ("
-                 "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)")
-    for table in ("prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents"):
-        conn.execute(
-            f"INSERT INTO {table}(person_id,cutoff_at) VALUES(?,?) "
-            "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
-            (person_id, cutoff),
-        )
+                 "person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+                 "PRIMARY KEY(person_id, grp))")
+    for group in groups or tuple(retention_contract.GROUP_KINDS):
+        for table in ("prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents"):
+            conn.execute(
+                f"INSERT INTO {table}(person_id,grp,cutoff_at) VALUES(?,?,?) "
+                "ON CONFLICT(person_id,grp) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+                (person_id, group, cutoff),
+            )
 
 
 def put_prompt_memory_preference(
@@ -3780,33 +3809,36 @@ def put_prompt_memory_preference(
     updated_by: str | None = None,
     validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
+    group: str = retention_contract.GROUP_PROMPTS,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     if not user_id:
         raise ValueError("user_id is required")
-    choices = retention_contract.bundled().choices(retention_contract.LIBRARY_PROMPT)
+    choices = retention_contract.bundled().data["groups"][group]["choices"]
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         current = conn.execute(
-            "SELECT retention FROM prompt_memory_preferences WHERE user_id=?", (user_id,)
+            "SELECT retention FROM prompt_memory_preferences WHERE user_id=? AND grp=?", (user_id, group)
         ).fetchone()
         if retention not in choices and (current is None or retention != current[0]):
             raise ValueError("retention must be one of " + ", ".join(choices))
         if validate_in_transaction is not None:
             validate_in_transaction(conn)
         if not remember:
-            _record_prompt_erasure(conn, user_id, ts)
+            _record_prompt_erasure(conn, user_id, ts, groups=(group,))
         conn.execute(
             "INSERT INTO prompt_memory_preferences"
-            "(user_id, remember, retention, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET "
+            "(user_id, grp, remember, retention, parts_json, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?) "
+            "ON CONFLICT(user_id, grp) DO UPDATE SET "
             "remember=excluded.remember, retention=excluded.retention, "
             "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
-            (user_id, 1 if remember else 0, retention, ts, updated_by),
+            (user_id, group, 1 if remember else 0, retention, ts, updated_by),
         )
-        row = conn.execute("SELECT * FROM prompt_memory_preferences WHERE user_id=?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM prompt_memory_preferences WHERE user_id=? AND grp=?", (user_id, group)
+        ).fetchone()
         conn.commit()
     # Return this write's timestamp even if a later request changes the setting.
     record = _row_to_dict(row)

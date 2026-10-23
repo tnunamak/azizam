@@ -102,6 +102,7 @@ from gateway import (
 )
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
+from gateway import request_history_capture
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
@@ -2342,6 +2343,14 @@ def access_error(code: str) -> Response:
 
 
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
+    """Resolve the caller, and leave the identity in the request state for request-history capture."""
+    result = _authenticate_request(request, request_path)
+    if isinstance(result, AuthContext):
+        setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
+    return result
+
+
+def _authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Resolve the App key of a data-plane request (design §2.5 step 1).
 
     Public paths (health) return an empty context that can run
@@ -31370,6 +31379,8 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+app.add_middleware(request_history_capture.RequestHistoryMiddleware,
+                   admin_path=lambda: ADMIN_STORE.path, media_path=lambda: media_jobs.DB_PATH)
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)

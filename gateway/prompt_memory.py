@@ -302,7 +302,7 @@ def require_resolvable_periods(*, admin_path: Path) -> None:
     try:
         conn = connect_readonly(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
         try:
-            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences")}
+            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences WHERE grp='prompts'")}
             row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)).fetchone()
         finally:
             conn.close()
@@ -350,7 +350,7 @@ def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> i
                 cap = stored_cap
             except (TypeError, ValueError):
                 logging.getLogger(__name__).warning("invalid stored retention setting; using bundled defaults")
-        members = dict(admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences"))
+        members = dict(admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences WHERE grp='prompts'"))
 
         media_conn = _connect(path)
         try:
@@ -463,7 +463,7 @@ def mark_person_erasure(
         conn.execute("BEGIN IMMEDIATE")
         admin_store._record_prompt_erasure(conn, person_id, current)
         cutoff = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'", (person_id,),
         ).fetchone()[0]
         conn.commit()
         return int(cutoff)
@@ -478,12 +478,12 @@ def _recorded_erasure_cutoff(conn: sqlite3.Connection, person_id: str) -> int:
     changes = [0]
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                     (ERASURE_CUTOFF_TABLE,)).fetchone():
-        row = conn.execute(f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?",
+        row = conn.execute(f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'",
                            (person_id,)).fetchone()
         if row:
             changes.append(int(row[0]))
     preference = conn.execute(
-        "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
+        "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=? AND grp='prompts'", (person_id,),
     ).fetchone()
     if preference is not None and not preference[0]:
         changes.append(int(preference[1] or 0))
@@ -525,14 +525,14 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
         conn.execute("BEGIN IMMEDIATE")
         retention.ensure_erasure_cutoff_table(conn)
         row = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'", (person_id,),
         ).fetchone()
         current = int(row[0]) if row else 0
         cutoff = _recorded_erasure_cutoff(conn, person_id)
         if cutoff > current:
             conn.execute(
-                f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,cutoff_at) VALUES(?,?) "
-                "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+                f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,grp,cutoff_at) VALUES(?,'prompts',?) "
+                "ON CONFLICT(person_id,grp) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
                 (person_id, cutoff),
             )
         conn.commit()
@@ -553,7 +553,7 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,),
         ).fetchone()
         row = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'"
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp='prompts'"
         ).fetchone() if table_exists else None
         setting = conn.execute(
             "SELECT value_json, updated_at FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)
@@ -570,7 +570,7 @@ def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             return False
         return conn.execute(
-            "SELECT 1 FROM prompt_memory_erasure_intents WHERE person_id IN (?, '*')", (person_id,),
+            "SELECT 1 FROM prompt_memory_erasure_intents WHERE person_id IN (?, '*') AND grp='prompts'", (person_id,),
         ).fetchone() is not None
     finally:
         conn.close()
@@ -581,7 +581,7 @@ def complete_erasure(person_id: str, cutoff: int, *, admin_path: Path) -> None:
     conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
-            conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=?",
+            conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=? AND grp='prompts'",
                          (person_id, int(cutoff)))
             conn.commit()
     finally:

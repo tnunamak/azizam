@@ -83,8 +83,8 @@ def test_upgrade_moves_member_rows_and_cutoffs_to_the_prompts_group_and_adds_req
     ).fetchall()
     # 12.3: existing members see nothing new kept, whatever the household default is.
     assert [tuple(row) for row in history] == sorted([(alice, 0, "7_days"), (bob, 0, "7_days")])
-    cutoffs = conn.execute("SELECT person_id, grp, cutoff_at FROM prompt_memory_erasure_cutoffs ORDER BY person_id").fetchall()
-    assert [tuple(row) for row in cutoffs] == [(alice, "prompts", 100), ("*", "prompts", 200)]
+    cutoffs = conn.execute("SELECT person_id, grp, cutoff_at FROM prompt_memory_erasure_cutoffs").fetchall()
+    assert sorted(tuple(row) for row in cutoffs) == sorted([(alice, "prompts", 100), ("*", "prompts", 200)])
     intents = conn.execute("SELECT person_id, grp, cutoff_at FROM prompt_memory_erasure_intents").fetchall()
     assert [tuple(row) for row in intents] == [(bob, "prompts", 150)]
     conn.close()

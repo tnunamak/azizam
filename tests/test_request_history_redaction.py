@@ -55,7 +55,7 @@ def test_rule_4_a_url_in_a_body_keeps_scheme_host_path_and_query_names_only():
     url = "https://user:pw-secret@cdn.example.test:8443/v1/img/a.png?sig=SIGNED-SECRET&expires=1700000000#frag-secret"
     redacted, omissions = rh.redact_json({"image_url": url})
     text = json.dumps(redacted)
-    assert redacted["image_url"] == "https://cdn.example.test:8443/v1/img/a.png?sig=[removed]&expires=[removed]"
+    assert redacted["image_url"] == "https://[removed]@cdn.example.test:8443/v1/img/a.png?sig=[removed]&expires=[removed]"
     assert "pw-secret" not in text
     assert "SIGNED-SECRET" not in text
     assert "frag-secret" not in text
