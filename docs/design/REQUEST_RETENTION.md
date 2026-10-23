@@ -1980,6 +1980,23 @@ that they pin now passes with its mark removed. The tests the review did not pin
   2026-10-20, says it reads its own App's rows without one. The build follows D52.
 - **Rollback (review item 11).** Schema 17 is not rollback-safe. Take a backup of `admin.db` and `media_jobs.db` before
   deploy.
+- **Round 4 fixes, as built (R4-1 to R4-4).** The probes are in `tests/test_request_history_s5a_r4_fixes.py`.
+  - **User info and query values (R4-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
+    user info does not end it. The user info of a URL ends at its last `@`: everything from the scheme to that `@` is
+    removed. So a `/`, `?` or `#` in a password is not read as the start of the path. A URL whose path or query holds an
+    `@` loses its host too, because a parser cannot tell that case from a password. A closing quote or `>` after a URL
+    is not part of it.
+  - **Depth and unreadable JSON (R4-2).** JSON nested past `JSON_DEPTH_LIMIT` (64) is omitted. A tool call's
+    `arguments` string is replaced by `{"omitted": "json_depth"}`. A body nested that deep is replaced whole. An
+    `arguments` string that starts with `{` or `[` but does not parse is replaced by `{"omitted": "unreadable_json"}`.
+    A body that the JSON parser cannot read at all still leaves no row, as before. A credential name is NFKC-normalised
+    before it is checked.
+  - **Cancelled requests (R4-3).** The write is shielded, so cancelling the request does not cancel a queued write. The
+    write gives the capture's slot back when it is done. A request cancelled before its decision is recorded as
+    `incomplete`.
+  - **Body forgets (R4-4).** The body's control is read as soon as the body is complete. A forget, or a control that
+    cannot be read in full, gives the slot back at once and stops buffering the reply. The receipt still says why
+    nothing was kept.
 
 ## 18. Tim's three decisions
 
