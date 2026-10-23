@@ -85,7 +85,7 @@ it("a sign-out that gets no answer leaves the failure screen; Try again reads a 
     headers: { "x-azizam-csrf": "fixture-csrf-3", accept: "application/json" },
     signal: expect.any(AbortSignal),
   });
-  expect(replace).toHaveBeenCalledWith("/sign-in/");
+  expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
 });
 
 it("uses the admin session's token when the member snapshot has none", async () => {
@@ -98,7 +98,7 @@ it("uses the admin session's token when the member snapshot has none", async () 
   });
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
-  await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/"));
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out"));
   expect(fetch).toHaveBeenCalledWith("/logout", {
     method: "POST",
     credentials: "same-origin",

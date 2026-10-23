@@ -302,7 +302,13 @@
 # Library cascade r3 adds four regression cases (a distinct request after a Library delete, a late write for the deleted
 # request, another member, a staged prompt's origin): collect-only 16822 -> 16826 (2026-10-23).
 # Train r103 step 4 (Library cascade): 17158 + 13 (16826 - 16813) = 17171, provisional until the final hermetic collection.
-pytest = 17171
+# Switcher chooser (W4 and W5, without A2): +1 case, the sign-in options report fresh_sign_in as false
+# (tests/test_accounts.py). Ceiling 16988 -> 16989 (2026-10-23).
+# Sign-in attempt limit (AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW): +10 cases for the default, an override, invalid values
+# and the per-email limit staying at 10 (tests/test_accounts.py, tests/test_remembered_people.py).
+# Ceiling 16989 -> 16999, remeasured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-23).
+# Train r103 step 5 (account chooser): 17171 + 11 (16999 - 16988) = 17182, provisional until the final hermetic collection.
+pytest = 17182
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -337,7 +343,11 @@ pytest = 17171
 # Slice 5b1 round 3: +1 case in src/app/account/request-history.spec.tsx (the owner's switch off for everyone).
 # vitest list measured 3328 (2026-10-23).
 # Train r103 step 3 (retention slice 5b1): 3266 + 96 (3328 - 3232) = 3362, provisional until the final vitest list.
-vitest = 3362
+# Switcher chooser (W4 and W5, without A2, plus the round trip): the chooser, its status lines, the sign-out screen
+# (inert until fresh sign-in is reported), the stale-name notice, the Settings choice, and the session-end and switch
+# expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
+# Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
+vitest = 3451
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -353,7 +363,11 @@ vitest = 3362
 # count moved from 504 to 506 when measured again. Round 2 adds no Playwright case. Gate lists: 506 + live-data 3 +
 # household 18 = 527 (2026-10-23).
 # Train r103 step 3 (retention slice 5b1): 535 + 2 (527 - 525) = 537, provisional until the final Playwright lists.
-playwright = 537
+# Switcher chooser (W4 and W5, without A2, plus the round trip): playwright.config.ts 504 -> 533 (+29: chooser 8,
+# chooser-states 6 and 2 in the global-state project, signin-shell 10, invite-signin 1, chooser-round-trip 2).
+# Gate lists 554 (533 + live-data 3 + household 18), measured 2026-10-23.
+# Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
+playwright = 566
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

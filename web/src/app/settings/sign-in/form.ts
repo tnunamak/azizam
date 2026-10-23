@@ -32,6 +32,7 @@ export function formFromSnapshot(s: SignInSnapshot): Form {
       fallback: s.rules.fallback,
       rules: s.rules.rules.map((r) => ({ ...r, values: [...r.values] })),
     },
+    memory: s.memory ?? "remember",
   };
 }
 
@@ -61,6 +62,7 @@ export function formSig(f: Form): string {
       .map((r) => [r.id, r.field, r.values, r.admit || r.admin, r.admin, r.plan]),
     f.provider.name.trim(),
     connectionSig(f.provider),
+    f.memory ?? "remember",
   ]);
 }
 
