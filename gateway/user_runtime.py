@@ -468,8 +468,10 @@ def get_user_receipt(
     if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found
 
+    # The maker of a request is the person who owns its App. Only that person sees the full request-history entry.
     found = receipt_store.get_with_created_at(
         request_id, audience="client", viewer_person_id=str(user["id"]),
+        maker_person_id=str(user["id"]) if receipt_app_id in owned_app_ids else None,
         path=receipts_path,
     )
     if found is None:

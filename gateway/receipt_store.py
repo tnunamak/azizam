@@ -374,13 +374,12 @@ def finalize(
 
 def _filter_for_audience(
     data: Mapping[str, Any], audience: str, *,
-    viewer_person_id: str | None = None,
+    viewer_person_id: str | None = None, maker_person_id: str | None = None,
 ) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
-    retention_detail = audience == "internal" or bool(
-        viewer_person_id and data.get("maker_person_id") == viewer_person_id
-    )
+    maker = maker_person_id or data.get("maker_person_id")
+    retention_detail = audience == "internal" or bool(viewer_person_id and maker == viewer_person_id)
     return serialize_receipt_for_audience(
         _with_source(data), audience, from_store=True, retention_detail=retention_detail,
     )
@@ -612,6 +611,7 @@ def get_with_created_at(
     *,
     audience: str = "internal",
     viewer_person_id: str | None = None,
+    maker_person_id: str | None = None,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
@@ -629,7 +629,7 @@ def get_with_created_at(
         return None
     out = _filter_for_audience(
         _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience,
-        viewer_person_id=viewer_person_id,
+        viewer_person_id=viewer_person_id, maker_person_id=maker_person_id,
     )
     out.setdefault("_stored_at", int(row[1]))
     return out, row[1]
