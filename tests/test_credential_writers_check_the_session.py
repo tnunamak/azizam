@@ -16,7 +16,7 @@ Three kinds of test keep it that way:
 from __future__ import annotations
 
 import ast
-from tests.support.app_keys import accountable_person
+from tests.support.app_keys import accountable_person, unguarded
 import re
 import sqlite3
 import time
@@ -554,8 +554,10 @@ def world(tmp_path):
             return conn.execute("SELECT COUNT(*) FROM credentials WHERE hash LIKE 'rep%'").fetchone()[0]
 
     def make_readd(session):
-        # An unproven address is seeded directly; the write is the re-add, which makes the person its creator.
+        # The legacy address is written the way a database holds it before the cut-over: guards off, no creator.
+        # The write under test is the re-add, which makes the person its creator.
         state["n"] += 1
+        unguarded(db)
         entry = f"tad_legacy{state['n']}"
         with closing(sqlite3.connect(db)) as conn:
             conn.execute("INSERT INTO app_trusted_addresses(id, app_id, address, created_at, created_by) "
