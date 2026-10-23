@@ -17036,7 +17036,9 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
                 remembered_people.device_token(request, secure=_browser_admin_cookie_config().secure), tile,
                 path=ADMIN_STORE.path, signing_key=_browser_admin_session_signing_key())
             if person is None:
-                raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
+                # A tile this browser no longer holds goes back to the sign-in page; a JSON error would show as raw text.
+                return RedirectResponse("/sign-in/?error=tile_unknown", status_code=302,
+                                        headers={"cache-control": "no-store"})
             tile_person_id = person["person_id"]
         return begin_browser_login(
             cfg, ADMIN_OIDC_STATES, return_to=return_to,

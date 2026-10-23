@@ -255,7 +255,9 @@ device. The server keeps the rows, and the page gets a tile for each name.
   email in any URL. The callback accepts only a fresh sign-in by the person the
   tile named; any other sign-in is refused with `error=provider` and writes
   nothing. `remember=1` or `remember=0` on the same request has the same meaning
-  as on the password form.
+  as on the password form. A tile this device does not hold, including one
+  forgotten here, redirects (302) to `/sign-in/?error=tile_unknown` and asks the
+  provider nothing.
 - The owner sets "On shared computers" in `GET` and `PUT /admin/api/signin`, as
   `memory`: `remember` (the default) or `nobody`. Choosing `nobody` deletes every
   device's names at once and stops new ones. The owner's routes never show a tile
