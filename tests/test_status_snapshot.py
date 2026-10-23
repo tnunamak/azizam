@@ -144,3 +144,25 @@ def test_a_failed_build_keeps_the_last_snapshot_and_logs_only_the_error_type(mon
     assert status_endpoint._SNAPSHOT["payload"]["generated_at"] == 7
     assert "OSError" in caplog.text
     assert "secret-path" not in caplog.text, "the message can carry a path or a secret; only the type is logged"
+
+
+def test_the_app_starts_the_snapshot_at_startup_and_joins_it_at_shutdown(monkeypatch, snapshot_state):
+    """The lifespan starts the background build before it serves, and at shutdown cancels it and waits for it to end."""
+    from fastapi.testclient import TestClient
+
+    built: list[int] = []
+
+    async def build():
+        built.append(1)
+        return {"generated_at": 1}
+
+    monkeypatch.setattr(proxy, "_build_status_snapshot", build)
+    with TestClient(proxy.app):
+        deadline = time.monotonic() + 10  # a hang guard, not a bound
+        while not built and time.monotonic() < deadline:
+            time.sleep(0.01)
+        task = status_endpoint._SNAPSHOT_TASK
+        assert built and task is not None and not task.done()
+
+    assert task.done(), "shutdown returned before the snapshot build ended"
+    assert status_endpoint._SNAPSHOT_TASK is None

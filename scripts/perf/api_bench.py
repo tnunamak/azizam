@@ -140,15 +140,12 @@ def fill(template: str, pool: dict[str, str]) -> str | None:
     return None if missing else path
 
 
-# Home's first read after the status cache (12 s) expires. Waiting past the 60 s that Home may serve
-# engine rows stale (proxy._ENGINE_ROWS_MAX_STALE_S) makes each sample a cold read. A shorter wait would
-# be served the old rows while the refresh runs, and its counts would depend on how far the refresh got.
-# The row takes its limits from budgets.toml [api.routes].
+# Home and the owner's status page read the status snapshot, which a background build refreshes every
+# status_endpoint.SNAPSHOT_INTERVAL_S. A read after idle must meet the defaults in budgets.toml like any other.
+# The waits are the ones this harness used before the snapshot, so a before and after run share the same idle time.
 COLD_HOME_ROUTE = "/me/api/home (after idle)"
 COLD_HOME_WAIT_S = 61
 COLD_STATUS_ROUTE = "/admin/api/status (after idle)"
-# The status page keeps a stale answer for 60 s past its 12 s TTL and rebuilds in the background, so
-# a read is cold only after that stale window.
 COLD_STATUS_WAIT_S = 62
 COLD_REPEATS = 3
 
