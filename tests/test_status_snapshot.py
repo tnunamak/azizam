@@ -441,6 +441,55 @@ def test_a_backend_section_that_timed_out_is_not_trusted_however_fresh_the_build
     assert display["backends"][0]["live_status"] == "up", "the status page still shows the row, with its age"
 
 
+def test_the_summary_a_build_stores_does_not_count_an_old_backend_row_as_up(clock, snapshot_state, monkeypatch):
+    """A build stores an availability summary, which Home and the admin status read. It is built from the build's own
+    rows. When the backend section timed out, those rows are an old answer, and the summary must not count them. A
+    fresh answer in the next build still reaches the summary."""
+    from types import SimpleNamespace
+
+    reached: list[list[dict]] = []
+
+    def capture_rows(records, status_payload=None, health_evidence=None):
+        reached.append(list(status_payload["backends"]))
+        return {}
+
+    async def no_health(*_args, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(status_endpoint, "_SECTION_LAST", {})
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {}})
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda _context: [])
+    monkeypatch.setattr(proxy, "litellm_runtime_from_registry",
+                        lambda _records, env=None: SimpleNamespace(enabled=False, service_id=None))
+    monkeypatch.setattr(proxy, "_models_catalog_health_evidence", no_health)
+    monkeypatch.setattr(proxy, "_runtime_availability_evidence", capture_rows)
+    monkeypatch.setattr(proxy.service_registry, "runtime_backends", lambda _records: {"chat": {"key": "chat"}})
+
+    async def answers_up():
+        return [{"service_id": "chat", "key": "chat", "live_status": "up", "status": "up", "source": "http"}]
+
+    async def never_answers():
+        await asyncio.Event().wait()
+
+    async def scenario():
+        errors: dict[str, str] = {}
+        stale: list[str] = []
+        await status_endpoint.gather_sections({"backends": answers_up()}, errors=errors, stale=stale, budgets={"backends": 1.0})
+        clock.now += 3_600
+        values = await status_endpoint.gather_sections(
+            {"backends": never_answers()}, errors=errors, stale=stale, budgets={"backends": 0.01})
+        assert stale == ["backends"], "the backend section should have timed out"
+        await proxy._with_availability({"generated_at": int(clock.now), "backends": values["backends"]})
+        await status_endpoint.gather_sections({"backends": answers_up()}, errors=errors, stale=stale, budgets={"backends": 1.0})
+        await proxy._with_availability({"generated_at": int(clock.now), "backends": await answers_up()})
+
+    run(scenario())
+
+    assert len(reached) == 2, "the summary was not built for both builds"
+    assert [row for row in reached[0] if row["live_status"] == "up"] == [], "an old backend row reached the summary as up"
+    assert [row["service_id"] for row in reached[1] if row["live_status"] == "up"] == ["chat"], "a fresh answer should reach the summary"
+
+
 def test_the_lifespan_opens_the_snapshot_and_its_sampler_before_serving_and_joins_both_after():
     """Checked on the source, not by running the lifespan: its startup probes ComfyUI, which the hermetic sandbox
     refuses. The order is what matters: each opens before the app serves, and shutdown joins it."""
