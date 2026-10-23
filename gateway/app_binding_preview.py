@@ -90,10 +90,12 @@ def build(conn: sqlite3.Connection, *, as_of: int) -> dict[str, Any]:
         loses_all = had_bindings and survivors == 0
         recent_key_use = any(k["last_used_at"] is not None and k["last_used_at"] >= recent_from for k in app_keys)
         blocks = []
-        if loses_all and recent_key_use:
-            blocks.append("used in the last 30 days and would keep no binding: a replacement or an explicit owner stop is required")
-        if loses_all and app_addresses:
-            blocks.append("trusted-address use history is unavailable on admin.db: cannot show these addresses unused")
+        # A disabled App is already stopped: the owner's disabling is the explicit stop, so it never blocks.
+        if loses_all and app["disabled_at"] is None:
+            if recent_key_use:
+                blocks.append("used in the last 30 days and would keep no binding: a replacement or an explicit owner stop is required")
+            if app_addresses:
+                blocks.append("trusted-address use history is unavailable on admin.db: cannot show these addresses unused")
         previewed.append({
             "app_id": app["id"],
             "name": app["name"],
