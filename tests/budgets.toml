@@ -275,7 +275,8 @@
 # Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
 # Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
 # tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
-pytest = 16988
+# Train r102: collect-only measured 17071 (sign-in atomic + follow-ups, request history 5b-2, embeddings and A1111 forget).
+pytest = 17071
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
