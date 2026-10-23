@@ -9,15 +9,16 @@ from typing import Any
 
 from gateway import receipt_store
 from gateway.content_access import ContentOrigin, JobRecord, Own, ReceiptRecord, Viewer, decide
-from gateway.content_makers import Apps, job_receipt_ids, row_makers
+from gateway.content_makers import Apps, row_makers
 
 
 def _creating_receipt(job: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    ids = job_receipt_ids(job)
-    if not ids:
-        return None
-    receipts = receipt_store.get_many(ids, audience="internal")
-    return next((receipts[key] for key in ids if key in receipts), None)
+    """The receipt the job was created under, by its durable creating link only.
+
+    A parent or request id is client-supplied or reused, so it proves nothing about who owns the job.
+    """
+    creating = str(job.get("creating_receipt_id") or "")
+    return receipt_store.get(creating, audience="internal") if creating else None
 
 
 def owns_record(kind: str, record: Mapping[str, Any], *, viewer: Viewer, apps: Apps) -> bool:
