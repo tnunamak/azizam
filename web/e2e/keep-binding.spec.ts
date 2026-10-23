@@ -26,7 +26,8 @@ const ADDRESS_KEEP_NOTICE =
 const ADMINISTRATORS = { people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 };
 const CONFIRM_BODY =
   "Azizam did not record who made it. Administrators at the time could also have made it: Simon Agent, 1 person with no name, and 23 administrator keys. Keep it only if you made it or trust them.";
-const ADDRESS = "10.42.7.9";
+// Each address test and viewport takes its own address, so tests running side by side on the shared App never collide.
+const addressFor = (test: number, width: number) => `10.42.${test}.${width < 600 ? 2 : 1}`;
 
 async function noSideways(page: Page, where: string) {
   const { scrollWidth, clientWidth } = await page.evaluate(() => ({
@@ -172,6 +173,7 @@ for (const viewport of viewports) {
   });
 
   test(`add an address again, from the Apps page (${viewport.label})`, async ({ page, request }) => {
+    const ADDRESS = addressFor(8, viewport.width);
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     // The owner's own App takes a real address made by the owner. The browser's copy says another person made it,
     // so the gateway would remove it and the owner adds it again. The address is removed when the test ends.
@@ -317,6 +319,7 @@ for (const viewport of viewports) {
   });
 
   test(`keep an address the owner confirms first, from the Apps page (${viewport.label})`, async ({ page, request }) => {
+    const ADDRESS = addressFor(7, viewport.width);
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     // The owner's own App takes an address the owner made. The browser's copy says no one recorded its maker, so the
     // keep waits for the owner to confirm the administrators. The address is removed when the test ends.
