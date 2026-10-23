@@ -2220,15 +2220,14 @@ class KeepNotProvable(ValueError):
 class KeepNeedsConfirmation(ValueError):
     """The owner keeps an unproven binding only after confirming that the administrators on record could have made it."""
 
-    def __init__(self, administrators: list[str]) -> None:
+    def __init__(self, administrators: Mapping[str, Any]) -> None:
         super().__init__("administrators on record could also have made this binding")
-        self.administrators = administrators
+        self.administrators = dict(administrators)
 
 
 # What the owner does with one App key or trusted address through the ownership cut-over (D55). ``keep``: the binding is
 # the person's, or can be kept now. ``replace`` (a key) and ``readd`` (an address): nobody can prove it, so it is issued or added again.
 KEEP, REPLACE, READD = "keep", "replace", "readd"
-UNNAMED_ADMINISTRATOR = "unnamed administrator"
 
 
 def _sole_current_owner(conn: sqlite3.Connection, person_id: str) -> bool:
@@ -2269,36 +2268,70 @@ def _accountable_person_changed(conn: sqlite3.Connection, app_id: str, person_id
     return False
 
 
-def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> list[str]:
-    """Display names of everyone who held the admin, superadmin or owner role at any time, other than ``person_id``.
+def keep_administrators(conn: sqlite3.Connection, *, person_id: str) -> dict[str, Any]:
+    """Who held the admin, superadmin or owner role at any time, other than ``person_id``, for the owner to confirm.
 
     Each could have issued a key or an address on any App before the cut-over, so the owner confirms them before keeping
-    an unproven binding. A service account that held admin or superadmin is named by its name. A service account that
-    held only the owner role is the owner's control-plane key and is not named. An email address is never shown as a
-    name (as ``owner_display_name`` does), so a person without a display name is listed as unnamed.
+    an unproven binding. ``people`` holds each person's display name, sorted. A person with no display name, or one whose
+    name is an email address (as ``owner_display_name`` does), counts in ``unnamed_people``. ``admin_keys`` counts the
+    control-plane keys (service accounts) that held the admin or superadmin role, one each, and names none of them. A
+    service account that held only the owner role is the owner's control-plane key and is not counted.
     """
-    names = []
+    people: list[str] = []
+    unnamed_people = 0
+    admin_keys = 0
     for kind, subject_id in conn.execute(
         "SELECT subject_kind, subject_id FROM admin_role_assignments "
         "WHERE role IN ('owner', 'admin', 'superadmin') AND (subject_kind = 'user' OR role <> 'owner') "
         "AND NOT (subject_kind = 'user' AND subject_id = ?) GROUP BY subject_kind, subject_id", (person_id,),
     ).fetchall():
-        if kind == "user":
-            row = conn.execute("SELECT display_name FROM users WHERE id = ?", (subject_id,)).fetchone()
-        else:
-            row = conn.execute("SELECT name FROM service_accounts WHERE id = ?", (subject_id,)).fetchone()
+        if kind != "user":
+            admin_keys += 1
+            continue
+        row = conn.execute("SELECT display_name FROM users WHERE id = ?", (subject_id,)).fetchone()
         name = ((row[0] or "").strip() if row else "")
-        names.append(name if name and "@" not in name else UNNAMED_ADMINISTRATOR)
-    return sorted(names, key=str.casefold)
+        if name and "@" not in name:
+            people.append(name)
+        else:
+            unnamed_people += 1
+    return {"people": sorted(people, key=str.casefold), "unnamed_people": unnamed_people, "admin_keys": admin_keys}
+
+
+def _no_administrators() -> dict[str, Any]:
+    return {"people": [], "unnamed_people": 0, "admin_keys": 0}
+
+
+def administrators_to_confirm(administrators: Mapping[str, Any]) -> bool:
+    """True when the owner has someone to confirm before keeping an unproven binding."""
+    return bool(administrators["people"] or administrators["unnamed_people"] or administrators["admin_keys"])
+
+
+def administrators_sentence(administrators: Mapping[str, Any]) -> str:
+    """The administrators on record, in one line the owner reads.
+
+    Each person is named. The people with no name and the administrator keys follow as counts, and an empty part is left
+    out: "Simon Agent, 1 person with no name, and 23 administrator keys". The gateway and the web render it the same way.
+    """
+    items = list(administrators["people"])
+    unnamed = administrators["unnamed_people"]
+    if unnamed:
+        items.append(f"{unnamed} {'person' if unnamed == 1 else 'people'} with no name")
+    keys = administrators["admin_keys"]
+    if keys:
+        items.append(f"{keys} administrator {'key' if keys == 1 else 'keys'}")
+    if len(items) <= 2:
+        return " and ".join(items)
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapping[str, Any],
                            app_id: str, person_id: str) -> dict[str, Any]:
     """The remedy for one App key (``kind="key"``) or trusted address (``kind="address"``) through the ownership cut-over.
 
-    Returns ``{"remedy": "keep" | "replace" | "readd", "administrators": [...]}``. The remedy is ``keep`` when the binding
+    Returns ``{"remedy": "keep" | "replace" | "readd", "administrators": {...}}``. The remedy is ``keep`` when the binding
     already names ``person_id`` as its creator, or can be kept now. Otherwise a key is ``replace`` and an address is
-    ``readd``. ``administrators`` is not empty only when keeping an unproven binding needs the owner's confirmation.
+    ``readd``. ``administrators`` (see ``keep_administrators``) is empty unless keeping an unproven binding needs the
+    owner's confirmation.
     The keep route, the cut-over preview, and the snapshot and address lists (through ``cutover_for_bindings``) all ask
     this one function.
     ``binding`` needs ``id`` and ``created_by``.
@@ -2307,7 +2340,7 @@ def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapp
     answers = (owner is not None and owner[0] == person_id
                and conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone() is None)
     if answers and binding["created_by"] == person_id:
-        return {"remedy": KEEP, "administrators": []}
+        return {"remedy": KEEP, "administrators": _no_administrators()}
     creations = _key_creations(conn, binding["id"]) if kind == "key" else _address_creations(conn, app_id, binding["id"])
     # The amended keep rule (D55): the recorded creator is unknown or the person, every audit event that made the
     # binding names the person, the person is the sole current owner, and the App never answered to anyone else.
@@ -2317,7 +2350,7 @@ def binding_cutover_remedy(conn: sqlite3.Connection, *, kind: str, binding: Mapp
         and _sole_current_owner(conn, person_id) and not _accountable_person_changed(conn, app_id, person_id)
     )
     if not proven:
-        return {"remedy": REPLACE if kind == "key" else READD, "administrators": []}
+        return {"remedy": REPLACE if kind == "key" else READD, "administrators": _no_administrators()}
     return {"remedy": KEEP, "administrators": keep_administrators(conn, person_id=person_id)}
 
 
@@ -2325,8 +2358,8 @@ def _keep_decision(remedy: Mapping[str, Any], *, confirmed: bool) -> None:
     """Refuse a keep that the remedy does not allow, or that needs the owner's confirmation first."""
     if remedy["remedy"] != KEEP:
         raise KeepNotProvable("this binding cannot be kept")
-    if remedy["administrators"] and not confirmed:
-        raise KeepNeedsConfirmation(list(remedy["administrators"]))
+    if administrators_to_confirm(remedy["administrators"]) and not confirmed:
+        raise KeepNeedsConfirmation(remedy["administrators"])
 
 
 def _key_creations(conn: sqlite3.Connection, cred_id: str) -> list[tuple[str, str | None]]:
@@ -4291,6 +4324,8 @@ __all__ = [
     "READD",
     "binding_cutover_remedy",
     "keep_administrators",
+    "administrators_to_confirm",
+    "administrators_sentence",
     "replace_app_credential",
     "cutover_for_bindings",
     "APP_KINDS",

@@ -621,9 +621,9 @@ KEEP_NEEDS_CONFIRMATION = (
 def _keep_needs_confirmation(exc: admin_store.KeepNeedsConfirmation, what: str) -> UserPortalError:
     return UserPortalError(
         "keep_needs_confirmation",
-        KEEP_NEEDS_CONFIRMATION.format(what=what, names=", ".join(exc.administrators)),
+        KEEP_NEEDS_CONFIRMATION.format(what=what, names=admin_store.administrators_sentence(exc.administrators)),
         status_code=409,
-        details={"administrators": list(exc.administrators)},
+        details={"administrators": dict(exc.administrators)},
     )
 
 

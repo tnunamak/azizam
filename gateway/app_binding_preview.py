@@ -255,10 +255,10 @@ def render(body: dict[str, Any], preview_digest: str) -> str:
 
 def _confirmation_lines(binding: dict[str, Any]) -> list[str]:
     """Keeping an unproven binding needs the owner to confirm these administrators (D55 amendment)."""
-    if not binding["administrators"]:
+    if not admin_store.administrators_to_confirm(binding["administrators"]):
         return []
     return [f"    keep needs the owner's confirmation: administrators at the time could also have made it: "
-            f"{', '.join(binding['administrators'])}"]
+            f"{admin_store.administrators_sentence(binding['administrators'])}"]
 
 
 def _show(value: Any) -> str:
