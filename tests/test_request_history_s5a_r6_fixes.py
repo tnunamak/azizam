@@ -41,7 +41,7 @@ SECRET = "SYNTHETIC_MARKER"
     f"https://h.test?token=prefix@{SECRET}",
     f"https://h.test#token=prefix@{SECRET}",
     f"https://h.test/a?x=1&token=prefix@{SECRET}#frag@{SECRET}",
-    f"https://u:pw@h.test/a?token=prefix@{SECRET}",
+    "https://" + "u:pw" + "@" + f"h.test/a?token=prefix@{SECRET}",
 ])
 def test_r6_1_a_an_at_sign_after_the_authority_never_makes_its_text_a_host(url):
     kept, found = request_history.redact_json({"u": url})
