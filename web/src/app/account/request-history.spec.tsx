@@ -138,6 +138,24 @@ describe("Request history in Your settings", () => {
     expect(screen.getAllByText("Turn on request history to change this.")).toHaveLength(2);
   });
 
+  it("says history is off on this gateway, and cannot be turned on, when the owner has turned it off for everyone", async () => {
+    mocks.requestHistory.mockResolvedValue(choice({ keep: true, household_off: true }));
+    renderSection();
+    expect(await screen.findByText("History is off on this gateway. Nothing new is kept.")).toBeVisible();
+    expect(screen.queryByText("Azizam keeps what your apps send so you can look back at it.")).not.toBeInTheDocument();
+
+    const keep = screen.getByRole("switch", { name: "Keep request history" });
+    expect(keep).not.toBeChecked();
+    expect(keep).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Also keep replies" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Forget requests after" })).toBeDisabled();
+    expect(screen.getAllByText("The owner has turned request history off for everyone.")).toHaveLength(2);
+
+    await userEvent.click(keep);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.saveRequestHistory).not.toHaveBeenCalled();
+  });
+
   it("says when the settings cannot be read", async () => {
     mocks.requestHistory.mockRejectedValue(new Error("nope"));
     renderSection();
