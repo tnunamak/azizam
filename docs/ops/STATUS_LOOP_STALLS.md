@@ -50,7 +50,8 @@ The `/health` row shows no difference at idle: its SQLite read takes about 1 ms.
 loop removes a block that every request makes, but this probe cannot show a difference at idle.
 
 The snapshot row is the background build's own cost, measured in-process against a seeded admin
-database. It runs every 15 s, whether or not anyone reads it.
+database. It runs every 15 s while something reads the snapshot, and not at all after the five-minute idle
+window. The figure above is from before that change.
 
 ### The cold reads, against the ordinary budget
 
@@ -83,32 +84,74 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
    `stt_measurement.Measurements._prepare`, and `proxy._run_workflow_drift_once`. Exit codes,
    timeouts, kills and the log lines are unchanged.
 3. **`/health` reads the app credential count on a worker thread** (`proxy.health`).
-4. **The status page and Home read one background snapshot** (`status_endpoint.py`). One full build
-   runs every `SNAPSHOT_INTERVAL_S` (15 s), with each section on its own budget. Each reader gets the
-   latest snapshot and never probes. `snapshot.section_age_s` gives the age of each section, and
-   `snapshot.age_s` gives the age of the whole build. Before the first build finishes, readers get a
-   `checking` answer at once. A failed build keeps the last snapshot and logs the error type only.
-   `/admin/api/status`, `/me/api/home`, `/v1/status` and the owner's HTML status page all read it.
-   `_engine_rows_payload`, the Home refresh tasks and their cache are removed.
-5. **Shutdown cancels and joins the build.** The lifespan calls `status_endpoint.stop_snapshot()` where
-   it used to call `_stop_home_refreshes()`.
+4. **The status page and Home read one snapshot, refreshed only while it is read** (`status_endpoint.py`).
+   A read keeps the snapshot wanted for `SNAPSHOT_IDLE_WINDOW_S` (300 s). While it is wanted, one full build
+   runs every `SNAPSHOT_INTERVAL_S` (15 s), with each section on its own budget. When the window passes with
+   no read, the refresher stops. The next read starts it again and gets the stored snapshot at once, with its
+   age. Before the first build finishes, that read gets a `checking` answer. `snapshot.section_age_s` gives
+   the age of each section, and `snapshot.age_s` gives the age of the whole build. A failed build keeps the
+   last snapshot and logs the error type only. `/admin/api/status`, `/me/api/home`, `/v1/status` and the
+   owner's HTML status page all read it. `_engine_rows_payload`, the Home refresh tasks and their cache are
+   removed.
+5. **Availability trusts the snapshot only while it is fresh.** `latest_payload()` returns `{}` when the
+   snapshot is older than `SNAPSHOT_FRESH_S` (60 s). The capability and model-catalog answers then probe the
+   services they need, with the same 12 s row cache as before. Without this rule, the first read after a long
+   idle would trust rows that were hours old.
+   **Shutdown cancels and joins both background tasks.** The lifespan calls `status_endpoint.stop_snapshot()`
+   where it used to call `_stop_home_refreshes()`, and `stop_backend_samples()` after it. After
+   `stop_snapshot()`, no read starts a refresher.
 6. **Earlier round, kept:** the systemd probes run in one batch per scope, each status section has a
    budget, `_backend_grid` gives each engine its own deadline, and a refused connection is classified
    only on `ECONNREFUSED`. The lifecycle batch is shielded, so one row that hits its deadline does not
    cancel the batch the other rows wait for.
+7. **Backend history has its own light sampler** (`start_backend_samples()`). It probes each HTTP health URL
+   once at startup and then every `BACKEND_SAMPLE_INTERVAL_S` (60 s), and writes the four `service_*` samples
+   from those rows. It asks no lifecycle driver and starts no process. The snapshot build no longer writes
+   samples, so the samples come at a fixed interval and not at the times a build happens to run.
 
 ## Costs and limits
 
-- **The background build runs whether or not anyone reads.** About 0.6 s of work every 15 s, and
-  a loop lag of 14.5 ms (median of worst) and 35 ms (worst) during it. Watch the `[loop]` rows. If the
-  cost matters, lengthen the interval when no one has read for several minutes.
-- **A reader that arrives before the first build sees `checking`.** The first build starts at startup and
-  took about 0.6 s of work in the fixture, so this lasts about that long after a restart.
+- **An idle gateway starts no snapshot build.** The refresher stops after the window. The build costs about
+  0.6 s of work each time it runs, and a loop lag of 14.5 ms (median of worst) and 35 ms (worst) during it.
+  Watch the `[loop]` rows.
+- **The first read after idle is stale.** It gets the stored snapshot with its age, and the next read, one
+  interval later, gets a fresh one. A read after a restart gets `checking` until the first build finishes.
+- **A read after idle starts a background build.** The build's process starts happen after the read has
+  returned. If one starts while a request is in flight, the perf harness counts it against that request
+  (`x-perf-subproc`).
+- **The backend sampler runs all the time.** It makes one HTTP GET per backend with a health URL each minute,
+  and it starts no process. A backend with a lifecycle driver and no health URL has no sample now. Its recorded
+  uptime was always zero before this change, because a lifecycle state alone never reads as up.
+- **The sampler's HTTP-only probe changes one stored value.** A stopped systemd unit reads as down (0) rather
+  than stopped (0). Uptime and the status series are the same. Only the error kind differs, and nothing in the
+  gateway reads that value.
+- **The metrics sampler still runs on its own clock.** It samples the GPU, RAM, disk, Xid and queue series
+  every 10 s and every 60 s. Its GPU probe starts `nvidia-smi` on every 10 s tick, and its kernel-journal read
+  starts `journalctl` on every tick unless a commit is pending. Neither is part of the idle window, so the
+  gateway still starts processes while idle. The snapshot does not.
 - **Data can be up to one interval plus one build old.** The page shows each section's age, so a reader
   can see it.
 - **`run()` does not kill its child when the caller is cancelled**, as asyncio's subprocess did not.
   Only `start()` kills, and only for a spawn that was still starting.
 - **Not changed:** the engine grid's own deadlines and classification, and the health evidence cache.
+
+## What depends on periodic samples
+
+The brief asked what needs samples when nobody reads. The status-sample writer is
+`_record_backend_health_samples`. It ran once per build, so the build wrote the backend samples. The other
+time series are written by `metrics_sampler.py`, which is not part of the snapshot.
+
+| Consumer | Needs samples with no reader? | How it is handled |
+|---|---|---|
+| Backend uptime (24 h and 7 d), backend latency, the 24 h status strip and each row's `history` block (`_metrics_section`) | Yes. An outage at night must count in the 24 h uptime. | The backend sampler, once a minute, HTTP only |
+| `service_error_kind` | Not read anywhere in the gateway. Written by the sampler and by `scripts/ui/household_seed.py`. | Written as before |
+| GPU, RAM, disk, Xid, queue, slots, per-service RSS and VRAM (`metrics_sampler.py`) | Yes | Unchanged. The sampler runs on its own clock, every 10 s and every 60 s |
+| Loop-lag watchdog (`gateway/loop_watchdog.py`) | No. It watches the event loop, not the snapshot. | Unchanged |
+| Alerting | No alerting code in this repo reads the snapshot or the samples. External alerting (Grafana, ntfy) is not in this repo, and I did not check it. | Unchanged. Check the external rules before relying on this change |
+
+The sampler's probe is HTTP only, so it does not record the lifecycle states. Those states are the only
+difference between its samples and the build's. A stopped systemd unit reads as down (0) rather than
+stopped (0), and a backend with no health URL has no sample.
 
 ## Where the checks are
 
@@ -116,10 +159,14 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
   child), and one test per site, and `/health`. Each test records every `subprocess.Popen` call and
   fails if one ran on the loop thread. The hermetic sandbox refuses `os.kill` and host-control command
   names, so the kill tests record the signal and use stand-ins.
-- `tests/test_status_snapshot.py`: a reader is answered at once while the first build is blocked; a
-  reader never starts a probe; each section reports its age; the build repeats on the schedule;
-  shutdown cancels a running build and waits for it; a failed build keeps the last snapshot and logs
-  only its type; the lifespan starts the build and joins it at shutdown.
+- `tests/test_status_snapshot.py`, on a fake clock: no build runs without a reader; a read starts the
+  refresher and returns before the build runs; the refresher builds each interval and stops after the idle
+  window; a read inside the window keeps it going; a read after the stop gets the stale snapshot and its age
+  at once; concurrent reads start one refresher; an idle gateway starts no status process; shutdown cancels
+  and joins; a snapshot older than the freshness bound is not trusted for availability; the lifespan opens
+  the snapshot and the sampler before serving and joins both after.
+- `tests/test_backend_health_sampler.py`: the sampler probes the HTTP health URLs and starts no process; it
+  samples once at startup and then once a minute, and joins at shutdown; the status build writes no samples.
 - `tests/test_status_probes_off_loop.py`: no probe starts on the loop; one systemctl call per scope;
   sections run together; a section past its budget is stale and does not hold the others; a
   shielded lifecycle batch survives one row's deadline.
