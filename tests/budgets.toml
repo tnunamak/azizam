@@ -226,7 +226,15 @@
 # A3 follow-ups in tests/test_remembered_people.py: +4 cases for the "you" mark on the signed-in person's entry, +1 for a
 # forgotten single sign-on tile (the unknown-tile case changed in place), +5 for the remembered-list read cap (default,
 # gateway setting, invalid settings). collect-only 16067 -> 16077.
-pytest = 16077
+# Slice A2 (fresh sign-in on every sign-in from the sign-in page, D54): +3 net in tests/test_session_lifecycle.py
+# (three missing-or-old sign-in-time cases and one any-person case; the old ordinary-login case folds into them),
+# +4 in tests/test_signin_test_flow.py (three provider-test answers and the saved answer), +2 sign-out cases in
+# tests/test_exposure_oidc_security.py. --collect-only -q measured 16065.
+# A2 review round 2 (L1 iat bound, L2 tile fresh, L3 sign-out throttle, L4 https-only sign-out, L5 claims request, F1
+# refusal link): +14 pytest cases: 5 in tests/test_session_lifecycle.py, 4 in tests/test_exposure_oidc_security.py,
+# 4 in tests/test_oidc_authorization_security.py, 1 in tests/test_remembered_people.py. --collect-only -q measured 16079.
+# Train r95 rebuilt on r98: 16077 + A2 23 = 16100.
+pytest = 16100
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -239,8 +247,12 @@ pytest = 16077
 # W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
 # confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
 # playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
-vitest = 3188
-playwright = 515
+# A2 review round 2 (F1): +5 vitest cases in web/src/app/sign-in/page.spec.tsx. Full vitest list --json measured 3108.
+# A2 review round 2 (F1): +3 Playwright cases (signin-shell.spec.ts 2, invite-signin.spec.ts 1). Listed 484 + 3 + 18 = 505
+# across the three gate configs (base 502).
+# Train r95 rebuilt on r98: vitest 3188 + A2 5 = 3193; Playwright 515 + A2 3 = 518.
+vitest = 3193
+playwright = 518
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

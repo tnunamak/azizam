@@ -26,6 +26,9 @@ baseline's paths and its own. Only these differences are allowed:
 * GET and PUT /admin/api/settings/sessions (the owner's session settings), POST /auth/api/reauth and
   POST /auth/api/sign-out-everywhere are new (tests/test_session_lifecycle.py and
   tests/test_session_settings_api.py cover them); every other method falls to the catch-all as before;
+* GET /login/provider-sign-out is new (the sign-out redirect at the provider, A2;
+  tests/test_exposure_oidc_security.py covers it); HEAD answers 405 and every other
+  method falls to the catch-all, as /login does;
 * POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
   PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
   leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
@@ -88,6 +91,7 @@ ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere"}
+PROVIDER_SIGN_OUT_PATH = "/login/provider-sign-out"
 REMEMBERED_PATH = "/auth/api/remembered"
 LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
@@ -163,6 +167,8 @@ def _deliberate(key: str) -> str | None:
         return "sessions"
     if path == REMEMBERED_PATH or path.startswith(REMEMBERED_PATH + "/"):
         return "remembered"  # the sign-in list and its forget route (gateway/accounts_api.py)
+    if path == PROVIDER_SIGN_OUT_PATH:
+        return "provider_sign_out"  # the sign-out redirect at the provider (proxy.py provider_sign_out)
     if re.fullmatch(r"/admin/api/operator/services/[^/]+/secret-entries", path) or path.startswith(LEFT_OUT_PATHS):
         return "secret_entries"  # decisions D27 and D22: the secret commands, and the records the registry leaves out
     if ui_routes.classify(path) is not None:
@@ -269,6 +275,13 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new session settings, step-up and sign-out-everywhere routes
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
+        if kind == "provider_sign_out":
+            # As /login: GET is the route, HEAD says 405 for it, and every other method falls to the catch-all.
+            expected = {"GET": "/login/provider-sign-out provider_sign_out",
+                        "HEAD": "405 allow=GET via /login/provider-sign-out provider_sign_out"}.get(
+                            _method_of(key), "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
         if kind == "retention_ledger" and key not in old:
             continue  # new offline ledger and fact editor routes
         if kind == "secret_entries" and key not in old:
@@ -314,7 +327,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered", "provider_sign_out"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue

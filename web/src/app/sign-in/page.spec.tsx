@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -336,6 +342,84 @@ it("says a provider that reports no sign-in time cannot confirm a risky action, 
   expect(alert).toHaveTextContent("doesn’t tell Azizam when you signed in");
   expect(alert).toHaveTextContent("Confirm with your Azizam password");
   expect(alert).not.toHaveTextContent("Single sign-on didn’t finish");
+});
+
+it("says a provider did not ask for a password just now, and links to the sign-out when the provider has one", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1",
+  );
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Azizam couldn’t confirm that Keycloak just asked for your password.",
+  );
+  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
+  expect(
+    within(alert).getByRole("link", { name: "Sign out of Keycloak" }),
+  ).toHaveAttribute("href", "/login/provider-sign-out");
+});
+
+it("gives the same message without a link when the provider publishes no sign-out address", async () => {
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
+  expect(within(alert).queryByRole("link")).toBeNull();
+});
+
+it("names the provider generically when the label is the default one", async () => {
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
+  options.oidc = true;
+  options.oidc_label = "your identity provider";
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Azizam couldn’t confirm that your sign-in provider just asked for your password. Sign out of your sign-in provider, then try again.",
+  );
+});
+
+it("shows a refused first-owner sign-in on the setup page of a new gateway, where the setup link is", async () => {
+  ownerExists = false;
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=not_fresh&return_to=%2Fsetup%2F&provider_sign_out=1",
+  );
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  expect(
+    await screen.findByRole("heading", { name: "Set up Azizam" }),
+  ).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Azizam couldn’t confirm that Keycloak just asked for your password.",
+  );
+  expect(
+    screen.getByRole("link", { name: "Set up your gateway" }),
+  ).toHaveAttribute("href", "/setup/");
+});
+
+it("shows a refused invitation sign-in with the same message, and the retry goes back to the invitation", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=not_fresh&return_to=%2Finvite%2F&provider_sign_out=1",
+  );
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  options.oidc_url = "/login?return_to=%2Finvite%2F";
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Azizam couldn’t confirm that Keycloak just asked for your password.",
+  );
+  expect(
+    screen.getByRole("link", { name: "Continue with Keycloak" }),
+  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F");
 });
 
 it("renders provider text through React escaping", async () => {

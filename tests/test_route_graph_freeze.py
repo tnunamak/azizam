@@ -39,6 +39,8 @@ ADDED_PATHS: dict[str, str] = {
     "/auth/api/sign-out-everywhere": "ends all of a person's sessions; tests/test_session_lifecycle.py covers it",
     "/auth/api/remembered": "the names a browser keeps for its sign-in list (GET) and the forget route (DELETE "
                             "/auth/api/remembered/{tile}); tests/test_remembered_people.py covers them",
+    "/login/provider-sign-out": "sign out at the sign-in provider (A2): a browser redirect outside the OpenAPI schema; "
+                                "tests/test_exposure_oidc_security.py covers it",
     "/admin/api/operator/service-registry/excluded": "fix or remove a record the registry leaves out (decision D22); "
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
