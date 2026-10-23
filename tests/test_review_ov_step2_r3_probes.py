@@ -75,7 +75,7 @@ def test_the_owner_cannot_keep_an_unaudited_key_while_an_administrator_has_ever_
                                        "holds no lifetime lock, so apply's exclusive lock succeeds while it serves")
 def test_a_gateway_serving_requests_through_its_asgi_app_holds_the_lifetime_lock(gateway):
     owner, _owner_id, _plan, _admin = owner_and_admin(gateway)
-    assert owner.get("/me/api/apps").status_code == 200  # the app is serving against this database
+    assert _own_app(owner) in {row["id"] for row in gateway.rows("SELECT id FROM apps")}  # serving against this database
 
     with pytest.raises(app_binding_cutover.CutoverError):
         app_binding_cutover._hold_lifetime_lock_exclusively(gateway.path).close()
