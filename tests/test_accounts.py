@@ -1,6 +1,7 @@
 """Hermetic account lifecycle tests using temporary SQLite and ASGI clients."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import logging
 from tests.support.app_keys import accountable_person
 import sqlite3
 import threading
@@ -199,6 +200,27 @@ def test_throttle_persists_ip_bucket_across_email_addresses(account_db):
     for index in range(60):
         accounts.throttle("same-ip", f"member-{index}@example.test", path=path, now=1000)
     expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
+
+
+def test_the_gateway_setting_raises_the_per_address_limit_and_keeps_the_per_email_limit(account_db, monkeypatch):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", "2000")
+    for index in range(10):
+        accounts.throttle(f"ip-{index}", "member@example.test", path=path, now=1000)
+    expect_error("login_rate_limited", lambda: accounts.throttle("new-ip", "member@example.test", path=path, now=1001))
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many", "1.5"])
+def test_an_invalid_login_attempt_setting_logs_one_line_and_keeps_sixty(account_db, monkeypatch, caplog, setting):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", setting)
+    monkeypatch.setattr(accounts, "_invalid_login_attempts_logged", False)
+    with caplog.at_level(logging.WARNING, logger="gateway.accounts"):
+        for index in range(60):
+            accounts.throttle("same-ip", f"member-{index}@example.test", path=path, now=1000)
+        expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
+    warnings = [record for record in caplog.records if "AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW" in record.getMessage()]
+    assert [record.levelno for record in warnings] == [logging.WARNING]
 
 
 def test_plan_change_applies_to_every_app_that_uses_the_persons_plan(account_db, fast_password_work):

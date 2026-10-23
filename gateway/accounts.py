@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import sqlite3
@@ -21,7 +22,7 @@ from typing import Any, Callable, Iterator
 from gateway import admin_store, request_connections, session_guard, sqlite_startup
 # A module import: admin_runtime imports this module through browser_sessions.
 from gateway import admin_runtime
-from gateway.compat import positive_int_env
+from gateway.compat import get_env, positive_int_env
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
 
@@ -485,13 +486,44 @@ def register_session(user_id: str, session_id: str, expires_at: int, *, path: Pa
         conn.execute("INSERT INTO account_sessions VALUES(?,?,?)", (session_id, user_id, expires_at))
 
 
+_LOGIN_ATTEMPTS_DEFAULT = 60
+_invalid_login_attempts_logged = False
+_invalid_login_attempts_lock = threading.Lock()
+
+
+def login_attempts_per_window() -> int:
+    """Password sign-ins one address may attempt in 15 minutes.
+
+    AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW sets the 60. The UI test gateways raise it, since their browsers share one address.
+    An invalid setting keeps the 60 and logs one line per process. The 10 attempts per email do not change.
+    """
+    global _invalid_login_attempts_logged
+    setting = get_env("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW")
+    if setting is None:
+        return _LOGIN_ATTEMPTS_DEFAULT
+    try:
+        value = int(setting)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    with _invalid_login_attempts_lock:
+        if not _invalid_login_attempts_logged:
+            logging.getLogger(__name__).warning(
+                "AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW is not a positive whole number; keeping %d attempts per 15 minutes",
+                _LOGIN_ATTEMPTS_DEFAULT)
+            _invalid_login_attempts_logged = True
+    return _LOGIN_ATTEMPTS_DEFAULT
+
+
 def throttle(ip: str, email: str, *, path: Path, now: int | None = None):
     ts = int(time.time()) if now is None else now
     exceeded = False
+    ip_attempts = login_attempts_per_window()
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE started_at<=?", (ts - 900,))
-        for label, value, maximum in (("ip", ip, 60), ("email", email.strip().lower(), 10)):
+        for label, value, maximum in (("ip", ip, ip_attempts), ("email", email.strip().lower(), 10)):
             bucket = hashlib.sha256(f"{label}:{value}".encode()).hexdigest()
             conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) "
                          "DO UPDATE SET attempts=attempts+1", (bucket, ts))
