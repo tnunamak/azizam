@@ -223,6 +223,9 @@ class BodyCapture:
         self._memo: tuple[Any, list[str]] | None = None
         #: The body's own control values, before redaction: the parsed JSON object, or a multipart form's text fields.
         self.control_source: dict[str, Any] | None = None
+        #: Multipart field names sent as files. A control field sent as a file is not a readable control.
+        self.control_files: set[str] = set()
+        self._readable = True
         if self.media_type == "application/json":
             self._mode = "json"
         elif self.media_type == "multipart/form-data" and _boundary(content_type):
@@ -248,18 +251,28 @@ class BodyCapture:
             self._memo = self._read()
         return self._memo
 
+    def control_readable(self) -> bool:
+        """Whether the body's own control could be read in full. A JSON or multipart body that was cut short, or
+        did not parse, could hold a control the gateway never saw. A body in another container carries no control
+        but the header, and the header is read, so it is readable."""
+        self.result()
+        return self._readable
+
     def _read(self) -> tuple[Any, list[str]]:
         if self._mode == "json" and not self._overflow:
             try:
                 parsed = json.loads(bytes(self._buffer))
             except (ValueError, RecursionError):
                 parsed = None
+                self._readable = self.total == 0
             if isinstance(parsed, dict):
                 self.control_source = parsed
                 return redact_json(parsed)
         elif self._mode == "json":
+            self._readable = False
             return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
         elif self._mode == "multipart" and self._overflow:
+            self._readable = False
             return {"omitted": "record_size", "bytes": self.total}, ["record_size"]
         elif self._mode == "multipart" and not self._failed and self._parser is not None:
             try:
@@ -270,6 +283,9 @@ class BodyCapture:
                 return {"fields": fields, "files": self._files}, found
             except Exception:
                 pass
+            self._readable = False
+        elif self._mode == "multipart":
+            self._readable = False
         return {"omitted": "unsupported_container", "media_type": self.media_type or "unknown",
                 "bytes": self.total}, ["unsupported_container"]
 
@@ -317,6 +333,7 @@ class BodyCapture:
                 self._files.append({"field": part["name"],
                                     "media_type": part["media_type"] or "application/octet-stream",
                                     "bytes": part["bytes"]})
+                self.control_files.add(part["name"])
             else:
                 self._fields[part["name"]] = bytes(part["value"])
 

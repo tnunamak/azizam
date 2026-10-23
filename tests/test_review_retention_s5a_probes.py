@@ -172,7 +172,6 @@ def test_whole_url_and_header_and_query_rules_hold():
 # ------------------------------------------------------------------ 3. forget
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: the JSON-string extensions form field is not read")
 def test_forget_in_the_json_string_extensions_form_field_keeps_nothing(member_db):
     """The workflow and identity routes accept the forget control as a JSON-string ``extensions`` form field
     (proxy.py:24085 ``multipart_extensions(form.get("extensions"))``; gateway/identity_api.py:393). The capture
@@ -194,7 +193,6 @@ def test_positive_control_the_bracket_form_forget_keeps_nothing(member_db):
     assert len(_kept(media)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: http.disconnect is counted as a complete body")
 def test_an_unread_body_whose_forget_never_arrived_is_not_kept(member_db):
     """The route answers 413 after reading the first chunk. Under uvicorn the capture's 30 s drain then gets
     ``http.disconnect`` at once, and ``receive_wrapper`` marks the body complete. The fields seen so far are kept,
@@ -318,7 +316,6 @@ def test_existing_members_start_off_and_new_members_on(tmp_path, monkeypatch):
     assert choice is None or choice["remember"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="review finding: an over-limit body's forget is never read, so a row is kept")
 def test_a_json_body_over_the_record_limit_that_forgets_leaves_no_row(member_db):
     """The body is omitted as record_size, so no words are kept, but the control in it is never parsed: the request
     the caller sent incognito still gets a kept row (route, status, time) and a receipt that says kept."""
