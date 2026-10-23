@@ -288,6 +288,7 @@ def test_home_health_evidence_is_served_from_the_cache_while_a_probe_runs(monkey
                             {"chat": _health_entry(_registry()["services"]["chat"], age_s=30.0, evidence=stored)})
 
         evidence = await asyncio.wait_for(proxy._home_health_evidence(_registry(), service_ids=["chat"]), timeout=1.0)
+        await asyncio.sleep(0)  # the refresh task starts on the next turn of the loop
 
         assert evidence == {"chat": stored}
         assert calls == [["chat"]]
