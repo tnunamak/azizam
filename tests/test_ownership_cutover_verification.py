@@ -604,7 +604,6 @@ def test_signin_save_adopts_control_plane_key_for_the_owner(portal, monkeypatch,
 
 
 @pytest.mark.parametrize("interruption", ["exception", "sigkill"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="_backup publishes the restore filename before copying finishes (app_binding_cutover.py:201).")
 def test_interrupted_backup_does_not_publish_an_incomplete_backup(disk_legacy, interruption):
     accept(disk_legacy)
     before = snapshot(disk_legacy)

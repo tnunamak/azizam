@@ -197,13 +197,32 @@ def _refuse_while_gateway_runs(directory: Path) -> None:
 
 
 def _backup(conn: sqlite3.Connection, path: Path) -> Path:
+    """Copy the database to a private staging file, check it, then publish it under the restore name in one rename.
+    An interrupted copy leaves only the staging file, never an incomplete file under the name an operator restores."""
     target = path.with_name(f"{path.name}.{BACKUP_PREFIX}{int(time.time())}")
-    os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))  # private from the first byte
-    copy = sqlite3.connect(target)
+    if target.exists():
+        raise CutoverError(f"{target.name} already exists; wait a second and apply again")
+    staging = target.with_name(f"{target.name}.partial")
+    staging.unlink(missing_ok=True)
+    os.close(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))  # private from the first byte
+    copy = sqlite3.connect(staging)
     try:
         conn.backup(copy)
+        if copy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise CutoverError(f"the backup in {staging.name} failed its integrity check; nothing was changed")
     finally:
         copy.close()
+    fd = os.open(staging, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(staging, target)
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
     return target
 
 
