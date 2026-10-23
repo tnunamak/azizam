@@ -265,7 +265,8 @@
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
 # Request retention slice 5b server: +20 collected cases across privacy permission, delegated retention,
 # MCP tools and the expanded request-history access matrix. Hermetic collect-only: 16813 -> 16833 (2026-10-23).
-pytest = 16833
+# Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
+pytest = 16834
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
