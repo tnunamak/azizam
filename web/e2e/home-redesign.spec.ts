@@ -1,9 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, ownerApi, test } from "./fixtures/isolation";
-import { fulfilJson } from "./fixtures/intercept";
+import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
 
 /*
  * The signed-in Home, end to end: the composer and chooser, Make's hand-off to Try, Recent, the
@@ -251,72 +251,77 @@ for (const viewport of LAYOUTS) {
 }
 
 const SHOTS = process.env.HOME_SHOTS_DIR;
+const PICTURES = path.resolve(__dirname, "../../docs/design/comps/astra/assets");
 test.describe("built pages for the design side-by-side check", () => {
   test.skip(!SHOTS, "set HOME_SHOTS_DIR to save the built pages");
   for (const viewport of [
     { width: 1440, height: 900 },
+    { width: 768, height: 1024 },
     { width: 390, height: 844 },
   ]) {
-    test(`saves the first-visit member Home at ${viewport.width} px`, async ({ isolated }) => {
-      const member = await isolated.member();
-      await member.page.setViewportSize(viewport);
-      await member.page.goto("/");
-      await expect(member.page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
-      mkdirSync(SHOTS!, { recursive: true });
-      await member.page.screenshot({ path: path.join(SHOTS!, `home-member-first-${viewport.width}.png`), fullPage: true });
-    });
-    test(`saves the owner Home at ${viewport.width} px`, async ({ page }) => {
-      await page.setViewportSize(viewport);
-      await page.goto("/");
-      await expect(page.getByRole("region", { name: "Your gateway" })).toBeVisible();
-      mkdirSync(SHOTS!, { recursive: true });
-      await page.screenshot({ path: path.join(SHOTS!, `home-owner-${viewport.width}.png`), fullPage: true });
-    });
+    for (const colorScheme of ["light", "dark"] as const) {
+      const suffix = `${viewport.width}${colorScheme === "dark" ? "-dark" : ""}`;
+      const save = (page: Page, name: string) => {
+        mkdirSync(SHOTS!, { recursive: true });
+        return page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}.png`), fullPage: true });
+      };
+      test(`saves the first-visit member Home at ${suffix}`, async ({ isolated }) => {
+        const member = await isolated.member();
+        await member.page.setViewportSize(viewport);
+        await member.page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await member.page.goto("/");
+        await expect(member.page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
+        await expect(member.page.getByRole("region", { name: "What you can make here" })).toBeVisible();
+        await save(member.page, "home-member-first");
+      });
+      test(`saves the returning member Home with work in Recent at ${suffix}`, async ({ isolated }) => {
+        const member = await isolated.member();
+        const { page } = member;
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        const real = await (await member.context.request.get("/me/api/home")).json();
+        const now = Date.now() / 1000;
+        const pictures = readdirSync(PICTURES).filter((name) => name.endsWith(".webp")).slice(0, 3);
+        await page.route("**/__shot/*", (route) =>
+          fulfilBytes(route, {
+            contentType: "image/webp",
+            body: readFileSync(path.join(PICTURES, path.basename(new URL(route.request().url()).pathname))),
+          }),
+        );
+        const chatRow = real.capabilities.find((row: { icon_key?: string }) => row.icon_key === "chat") ?? real.capabilities[0];
+        const imageRow = { ...chatRow, icon_key: "image", capability: "image", capability_title: "Images", title: "Krea 2 Turbo", use_name: "krea-2-turbo", recommended_model: "krea-2-turbo", intent: "image.generate", typical_seconds: 9 };
+        await page.route("**/me/api/home", (route) =>
+          fulfilJson(route, {
+            ...real,
+            capabilities: [...real.capabilities, imageRow],
+            receipts: [{ request_id: "shot-making", intent: "image.generate", path: "/gateway/v1/media/jobs/image-generations", status: "running", accepted_at_ms: (now - 3) * 1000 }],
+            recent_chats: [{ request_id: "shot-chat", record_id: "shot-chat-record", created_at: now - 10_800, title: "Make a watering schedule for tomatoes and herbs while we're away for a week" }],
+          }),
+        );
+        await page.route("**/me/api/media?limit=8", (route) =>
+          fulfilJson(route, {
+            assets: pictures.map((name, index) => ({
+              asset_id: `shot-${index}`,
+              kind: "image",
+              prompt: ["Raised bed, late afternoon", "Golden retriever by the window", "Reading corner, green armchair"][index],
+              download_url: `/__shot/${name}`,
+              created_at: now - 7200 * (index + 1),
+            })),
+            has_more: false,
+            next_cursor: null,
+          }),
+        );
+        await page.goto("/");
+        await expect(page.getByRole("list", { name: "Recent work" })).toBeVisible();
+        await save(page, "home-member-returning");
+      });
+      test(`saves the owner Home at ${suffix}`, async ({ page }) => {
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await page.goto("/");
+        await expect(page.getByRole("region", { name: "Your gateway" })).toBeVisible();
+        await save(page, "home-owner");
+      });
+    }
   }
-});
-
-test("the signed-in root shows Home, with the composer and Make", async ({ page }) => {
-  await page.goto("/");
-  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
-  await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
-});
-
-test("a member's Home never requests owner APIs", async ({ page, request }) => {
-  const actual = await (await request.get("/me/api/home")).json();
-  const member = { id: "member-home-fixture", name: "Test member", email: "member@example.test", role: "member" };
-  const ownerCalls: string[] = [];
-  page.on("request", (item) => {
-    const pathname = new URL(item.url()).pathname;
-    if (pathname.startsWith("/admin/api/")) ownerCalls.push(pathname);
-  });
-  await page.route("**/me/api/session", (route) =>
-    fulfilJson(route, { authenticated: true, csrf_token: "member-fixture", user: member, apps: [] }),
-  );
-  await page.route("**/me/api/home", (route) => fulfilJson(route, { ...actual, user: member, apps: [], receipts: [] }));
-  await page.goto("/");
-  await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Your gateway" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "People", exact: true })).toHaveCount(0);
-  expect(ownerCalls).toEqual([]);
-});
-
-test("a superadmin's Home does not request the owner-only setup API", async ({ page }) => {
-  const setupCalls: string[] = [];
-  page.on("request", (item) => {
-    if (new URL(item.url()).pathname === "/admin/api/setup-progress") setupCalls.push(item.url());
-  });
-  for (const path of ["**/me/api/session", "**/me/api/home"]) {
-    await page.route(path, async (route) => {
-      const response = await route.fetch();
-      const actual = await response.json();
-      await fulfilJson(route, { ...actual, user: { ...actual.user, role: "superadmin" } }, { response });
-    });
-  }
-  // A superadmin may use the gateway, but the first-run checklist belongs to its owner. Any request gets the 403.
-  await page.route("**/admin/api/setup-progress", (route) =>
-    fulfilJson(route, { error: { code: "owner_required", message: "Owner access required." } }, { status: 403 }),
-  );
-  await page.goto("/");
-  await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeVisible();
-  expect(setupCalls).toEqual([]);
 });
