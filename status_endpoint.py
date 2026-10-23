@@ -4380,6 +4380,17 @@ async def stop_snapshot() -> None:
     await asyncio.gather(task, return_exceptions=True)
 
 
+def _backends_answered_recently(section_at: Mapping[str, float], now: float) -> bool:
+    """Whether the backend section's last answer is recent enough for its rows to count as evidence of now."""
+    answered = section_at.get("backends")
+    return answered is not None and now - answered <= SNAPSHOT_FRESH_S
+
+
+def backend_rows_are_fresh() -> bool:
+    """Whether the backend rows of the build in progress come from an answer within SNAPSHOT_FRESH_S."""
+    return _backends_answered_recently(_SECTION_AT, _now())
+
+
 def latest_payload() -> Mapping[str, Any]:
     """The latest snapshot's payload for an availability answer, or {} when its backend rows are not fresh enough.
 
@@ -4389,10 +4400,7 @@ def latest_payload() -> Mapping[str, Any]:
     The caller then probes the services it needs. The read keeps the snapshot wanted, as any read does.
     """
     _note_read()
-    if not _SNAPSHOT:
-        return {}
-    answered = _SNAPSHOT["section_at"].get("backends")
-    if answered is None or _now() - answered > SNAPSHOT_FRESH_S:
+    if not _SNAPSHOT or not _backends_answered_recently(_SNAPSHOT["section_at"], _now()):
         return {}
     return _SNAPSHOT["payload"]
 

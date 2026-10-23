@@ -14045,8 +14045,11 @@ async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
         # for evidence; the engine grid itself is unchanged.
+        # A section that times out keeps its last rows, so this build can carry rows from an old answer. Availability does
+        # not count those as evidence of now: without a recent answer, a service has no row here and reads as unknown.
+        build_rows = payload if status_endpoint.backend_rows_are_fresh() else {**payload, "backends": []}
         service_rows = await _status_payload_with_service_rows(
-            payload, _workflow_availability_services(service_records),
+            build_rows, _workflow_availability_services(service_records),
             _composed_dependency_service_ids(no_auth_capabilities),
         )
         availability_evidence = await asyncio.to_thread(
