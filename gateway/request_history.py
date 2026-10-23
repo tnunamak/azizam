@@ -238,7 +238,11 @@ class BodyCapture:
             self._mode = "json"
         elif self.media_type == "multipart/form-data" and _boundary(content_type):
             self._mode = "multipart"
-            self._parser = MultipartParser(_boundary(content_type), callbacks=self._callbacks())
+            try:
+                self._parser = MultipartParser(_boundary(content_type), callbacks=self._callbacks())
+            except Exception:
+                # A form the parser cannot start is a form whose controls cannot be read.
+                self._failed = True
 
     def feed(self, chunk: bytes) -> None:
         self.total += len(chunk)

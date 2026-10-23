@@ -258,13 +258,19 @@ class _Capture:
         return self.admitted and (self._decision is None or self._decision.keep)
 
     async def _decision_once(self) -> retention.Decision | None:
-        """The early decision, made once the caller is known. None until then."""
+        """The early decision, made once the caller is known. None until then. A decision that cannot be read keeps
+        nothing: capture must never change what the caller receives."""
         if self._decision is None:
             identity = _identity(self._state)
             if identity is None:
                 return None
-            self._decision = await asyncio.to_thread(self._owner.decide, identity, forget=self.header_forget,
-                                                     now=self.started)
+            try:
+                self._decision = await asyncio.to_thread(self._owner.decide, identity, forget=self.header_forget,
+                                                         now=self.started)
+            except Exception:
+                log.warning("request history decision could not be read", exc_info=False)
+                self._decision = retention.Decision(getattr(identity, "person_id", None), False, "storage_unavailable",
+                                                    kind=KIND)
         return self._decision
 
     def receive_wrapped(self, receive: Callable) -> Callable:

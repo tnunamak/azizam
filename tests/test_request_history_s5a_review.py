@@ -14,7 +14,7 @@ import time
 import pytest
 
 import proxy
-from gateway import admin_store, receipt_store, request_history, request_history_capture
+from gateway import receipt_store, request_history, request_history_capture, retention
 from gateway.admin_oidc import AdminSession
 from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
 from starlette.responses import JSONResponse
@@ -263,3 +263,17 @@ def test_tool_call_arguments_that_are_not_json_are_cleaned_as_text():
         {"id": "c1", "type": "function", "function": {"name": "fetch", "arguments": args}}]}]}
     kept, _ = request_history.redact_json(body)
     assert CANARY not in json.dumps(kept)
+
+
+def test_a_decision_that_cannot_be_read_keeps_nothing_and_the_route_still_answers(member_db, monkeypatch):
+    """Capture never changes what the caller receives: an unreadable member choice keeps nothing, and the reply
+    the route sent still goes out."""
+    db, media, person = member_db
+
+    def unreadable(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(retention, "member_choice", unreadable)
+    sent = _drive(db, media, person, chunks=[b'{"model":"m","input":"x"}'], content_type="application/json")
+    assert _kept(media) == []
+    assert sent[0]["status"] == 413
