@@ -1,7 +1,8 @@
 """Round-2 review probes for retention slice 5a (feat/retention-s5a at 05fef5d).
 
-Each ``xfail(strict=True)`` test is a review finding: it fails on the reviewed head, and the strict mark makes it pass
-loudly once the finding is fixed, so the fixer removes the mark. Unmarked tests pin a claim the review proved holds.
+Each test named for a finding was a ``xfail(strict=True)`` on the reviewed head, and failed there with the mark removed.
+The fixes removed the marks, so each now passes as a plain assertion. Unmarked tests pin a claim the review proved holds.
+Two controls pinned the gap the fixes close, and now assert the fixed behavior (see their docstrings).
 """
 from __future__ import annotations
 
