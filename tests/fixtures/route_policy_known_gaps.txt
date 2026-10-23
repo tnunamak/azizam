@@ -75,6 +75,7 @@ POST /internal/litellm/local/{backend}/v1/chat/completions 401 # not exercised: 
 GET /gateway/v1/providers/{provider} 404                       # not exercised: was: HTTP status in DENIED
 DELETE /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/receipts 200                                   # listing filters each row by maker (D51); no refusal to prove
 OPTIONS /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
 PATCH /gateway/v1/providers/{provider}/{native_path:path} 404  # not exercised: was: HTTP status in DENIED
 POST /gateway/v1/providers/{provider}/{native_path:path} 404   # not exercised: was: HTTP status in DENIED
