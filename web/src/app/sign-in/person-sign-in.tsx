@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft } from "lucide-react";
+import { Check, ChevronLeft, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import { PRODUCT_NAME } from "@/lib/product";
 import type { RememberedPerson } from "@/lib/remembered-people";
 import { PersonAvatar, generatedAvatarPalettes } from "@/components/product/person-avatar";
 import { authFetch, continueTo, type SignInOptions } from "./auth-api";
+import { notFreshFor } from "./sign-in-status";
 
 export type ProviderError = "provider" | "no_sign_in_time" | "not_fresh" | null;
 
@@ -42,45 +43,66 @@ export function providerNameFor(label: string | undefined): string {
     : "your sign-in provider";
 }
 
-// A refused sign-in: the provider did not ask for a password just now, so no one is signed in. The way out is to sign
-// out at the provider. The link appears only when the gateway says the provider publishes a sign-out address.
-export function NotFreshNotice({
+/**
+ * A refused sign-in (S8 and S8b, DESIGN.md section 6): the provider did not ask for a password just now, so no one is
+ * signed in, and the way out is at the provider. The sign-out link appears only when the gateway says the provider
+ * publishes a sign-out address. Back leaves the screen for the sign-in page.
+ */
+export function NotFreshScreen({
   provider,
   signOut,
+  signInAgain,
+  onBack,
 }: {
   provider: string;
   signOut: boolean;
+  /** The single sign-on start, offered when there is no sign-out address (S8b). */
+  signInAgain: string;
+  onBack: () => void;
 }) {
+  const copy = notFreshFor(provider, signOut);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
   return (
-    <p role="alert" className="text-body mb-6">
-      Azizam couldn’t confirm that {provider} just asked for your password.{" "}
-      {signOut ? (
-        <>
-          <a
-            className="text-link underline underline-offset-4"
-            href="/login/provider-sign-out"
-          >
-            Sign out of {provider}
-          </a>
-          , then try again.
-        </>
-      ) : (
-        <>Sign out of {provider}, then try again.</>
-      )}
-    </p>
+    <>
+      <CircleAlert aria-hidden className="text-warning mb-3 size-5" />
+      <h1
+        ref={headingRef}
+        tabIndex={-1}
+        id="sign-in-title"
+        className="text-title font-semibold tracking-tight outline-none"
+      >
+        {copy.title}
+      </h1>
+      <div className="mt-2 space-y-2">
+        {copy.body.map((line) => (
+          <p key={line} className="text-body text-muted-foreground">
+            {line}
+          </p>
+        ))}
+      </div>
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        {signOut ? (
+          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+            <a href="/login/provider-sign-out">Sign out of {provider}</a>
+          </Button>
+        ) : (
+          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+            <a href={signInAgain}>Sign in again</a>
+          </Button>
+        )}
+        <Button className="min-h-11 w-full sm:w-auto" variant="ghost" onClick={onBack}>
+          Back
+        </Button>
+      </div>
+    </>
   );
 }
 
 /** The provider's own refusals, shown above whichever way to sign in the page offers. */
-export function ProviderNotices({
-  error,
-  signOut,
-  providerName,
-}: {
-  error: ProviderError;
-  signOut: boolean;
-  providerName: string;
-}) {
+export function ProviderNotices({ error }: { error: ProviderError }) {
   if (error === "provider") {
     return (
       <p role="alert" className="text-body mb-6">
@@ -98,14 +120,11 @@ export function ProviderNotices({
       </p>
     );
   }
-  if (error === "not_fresh") {
-    return <NotFreshNotice provider={providerName} signOut={signOut} />;
-  }
   return null;
 }
 
 /** The provider's sign-in address with the name box's answer: remember=1 keeps the name, remember=0 does not. */
-function withRemember(url: string, remember: boolean): string {
+export function withRemember(url: string, remember: boolean): string {
   return `${url}${url.includes("?") ? "&" : "?"}remember=${remember ? 1 : 0}`;
 }
 
@@ -121,8 +140,6 @@ export function PlainSignIn({
   fromList,
   onBack,
   providerError,
-  providerSignOut,
-  providerName,
 }: {
   data: SignInOptions | undefined;
   reset: string;
@@ -133,8 +150,6 @@ export function PlainSignIn({
   fromList: boolean;
   onBack: () => void;
   providerError: ProviderError;
-  providerSignOut: boolean;
-  providerName: string;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -236,11 +251,7 @@ export function PlainSignIn({
         </div>
       )}
       <div className="mt-8">
-        <ProviderNotices
-          error={providerError}
-          signOut={providerSignOut}
-          providerName={providerName}
-        />
+        <ProviderNotices error={providerError} />
         {hasProvider && (
           <Button
             className="h-auto min-h-11 w-full py-2 whitespace-normal!"

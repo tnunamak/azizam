@@ -35,6 +35,8 @@ export interface PassedTest {
   /** Seconds since epoch. */
   at: number;
   noGroups: boolean;
+  /** The test's sign-in came back fresh: the provider asked for a password just now. */
+  freshLogin: boolean;
 }
 
 interface Run {
@@ -92,6 +94,7 @@ export function useSignInTest() {
           signature: current.signature,
           at: status.tested_at,
           noGroups: status.warnings.includes("no_groups"),
+          freshLogin: status.fresh_login_supported,
         });
         setResult({ kind: "pass", testId: current.id ?? "", status });
       } else {

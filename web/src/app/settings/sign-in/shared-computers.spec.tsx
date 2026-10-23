@@ -27,8 +27,8 @@ import {
   liveSnapshot,
   mocked,
   mountSignIn,
-  settle,
   text,
+  until,
 } from "./test-support";
 
 afterEach(() => {
@@ -56,7 +56,7 @@ describe("On shared computers (S12)", () => {
     const block = screen.getByRole("region", { name: "On shared computers" });
     await user.click(within(block).getByRole("radio", { name: "Remember nobody" }));
     expect(within(block).getByText("Saving forgets every name on every browser.")).toBeInTheDocument();
-    await settle();
+    await until(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(mocked.save).toHaveBeenCalledTimes(1);
     expect(mocked.save.mock.calls[0][1].proposal.memory).toBe("nobody");
@@ -66,7 +66,8 @@ describe("On shared computers (S12)", () => {
 
 describe("the provider's test result on the Ways to sign in row (W5)", () => {
   it("reads On · asks for a password every time when the last test found a fresh sign-in", async () => {
-    await mountSignIn(liveSnapshot());
+    const snapshot = liveSnapshot();
+    await mountSignIn({ ...snapshot, provider: { ...snapshot.provider, fresh_login_supported: true } });
     expect(document.querySelector("#sign-in-provider-status")).toHaveTextContent(
       "On · asks for a password every time",
     );

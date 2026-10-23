@@ -8,7 +8,7 @@
 // nobody needs the owner's "On shared computers" choice, which the fixture gateway does not let a test set; W5
 // adds that choice to Settings and its capture belongs with it.
 import type { Page } from "@playwright/test";
-import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { expect, GLOBAL_STATE_TAG, ownerApi, test } from "./fixtures/isolation";
 import { CHOOSER_HEADING, twoPeopleOnOneBrowser } from "./chooser-journey";
 
 // The chooser's reads of the remembered list share one budget with every other test on the same gateway: 60 reads a
@@ -122,9 +122,14 @@ for (const viewport of WIDTHS) {
       await capture(page, name, "password-too-many");
 
       // Léa's name is removed on the gateway while this page still shows it: the next sign-in finds no such name.
-      await page.goto("/sign-in/");
-      await expect(page.getByRole("button", { name: leaName, exact: true })).toBeVisible();
-      const leaTile = await tileOf(page, leaName);
+      // The gateway answers 60 list reads a minute per address, shared by every test on this server, and a refused read
+      // shows the plain form. So read again until the minute turns.
+      let leaTile = "";
+      await expect(async () => {
+        await page.goto("/sign-in/");
+        await expect(page.getByRole("button", { name: leaName, exact: true })).toBeVisible({ timeout: 4_000 });
+        leaTile = await tileOf(page, leaName);
+      }).toPass({ timeout: 90_000, intervals: [5_000] });
       expect((await page.request.delete(`/auth/api/remembered/${encodeURIComponent(leaTile)}`)).ok()).toBe(true);
       await page.getByRole("button", { name: leaName, exact: true }).click();
       await page.getByLabel(`Password for ${leaName}`).fill(lea.password);
@@ -137,8 +142,21 @@ for (const viewport of WIDTHS) {
     // shows the plain form. Tagged global-state: the choice is owner-wide, and the fixture restores it after the test.
     test(`the owner remembers nobody on Settings, and the chooser then shows the plain form`, {
       tag: GLOBAL_STATE_TAG,
-    }, async ({ page: owner, isolated }) => {
+    }, async ({ page: owner, request, baseURL, isolated }) => {
       test.setTimeout(240_000);
+      // A provider that is on, set the way signin-rules sets it: the page is then the live one, and Save changes a saved
+      // sign-in. On an install with no provider on, every save asks for a provider test first (the page's turn-on rule).
+      const api = await ownerApi(request);
+      await api.send("PUT", "/fixture/operator-settings/oidc_provider_config", {
+        enabled: true,
+        issuer: "https://id.example.test/realms/e2e",
+        client_id: "azizam-e2e",
+        client_secret: "e2e-secret",
+        redirect_uri: `${new URL(baseURL!).origin}/admin/oidc/callback`,
+        scopes: ["openid", "email", "profile"],
+      });
+      await api.send("PUT", "/fixture/operator-settings/sign_in", { mode: "both" });
+
       const { page: device } = await twoPeopleOnOneBrowser(isolated);
       await device.goto("/sign-in/");
       await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toBeVisible();

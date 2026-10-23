@@ -124,7 +124,6 @@ export function liveSnapshot(over: Partial<SignInSnapshot> = {}): SignInSnapshot
       host: "id.vivid.fish",
       effective_name: "Keycloak",
       tested_at: Math.floor(Date.now() / 1000) - 3 * 3600,
-      fresh_login_supported: true,
     },
     rules: { fallback: "closed", rules: [{ ...trusted }] },
     rule_matches: {

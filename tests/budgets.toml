@@ -247,8 +247,14 @@ pytest = 16087
 # form), web/src/lib/remembered-people.spec.ts and session-end.leaver.spec.ts; the W1 sign-out expectations keep their
 # count. Full vitest run measured 3242 (3172 + 70). Playwright +14: e2e/chooser.spec.ts 8 and e2e/chooser-states.spec.ts
 # 6 (two widths of three journeys). playwright.config.ts 505, live-data 3, household 18: 526 listed.
-vitest = 3242
-playwright = 526
+# W5 (SSO states and the owner setting): +9 vitest cases: the sign-out screen in web/src/app/sign-in/page.spec.tsx
+# (one test replaced by six) and chooser.spec.tsx (one replaced), sign-in-status.spec.ts 2, settings copy.spec.ts 2 and
+# the new settings/sign-in/shared-computers.spec.tsx 4. Playwright +8 in the main config: e2e/signin-shell.spec.ts +6
+# (the sign-out screen at two widths: with and without the provider's sign-out, Back, and the first-owner case, in place
+# of two inline-alert cases) and e2e/chooser-states.spec.ts +2 (the owner's remember-nobody at two widths, global-state).
+# Full vitest run measured 3251 (3242 + 9). playwright.config.ts 513, live-data 3, household 18: 534 listed.
+vitest = 3251
+playwright = 534
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

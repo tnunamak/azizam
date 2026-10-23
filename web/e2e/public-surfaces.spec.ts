@@ -88,6 +88,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
     email: "unknown@example.test",
     password: "Invalid browser test password",
     return_to: "/",
+    remember: true,
   });
   await expect(page).toHaveURL(/\/sign-in\/$/);
   await expect(

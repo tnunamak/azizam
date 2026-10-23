@@ -152,12 +152,19 @@ export function providerStatus(a: {
   testedAt: number | null;
   liveBefore: boolean;
   hasConnection: boolean;
+  /** What the last passed test found: true when the provider asked for a password just now. Null when none covers this connection. */
+  freshLogin: boolean | null;
 }): Status {
   if (a.formOn)
     return a.tested || a.liveUnchanged
       ? {
           tone: "ok",
-          text: a.testedAt ? `On, tested ${formatWhen(a.testedAt)}` : "On",
+          text:
+            a.freshLogin === true
+              ? ASKS_EVERY_TIME
+              : a.testedAt
+                ? `On, tested ${formatWhen(a.testedAt)}`
+                : "On",
         }
       : { tone: "warn", text: "Changed, not tested" };
   if (a.liveBefore || (a.savedTested && !a.tested))
@@ -166,6 +173,27 @@ export function providerStatus(a: {
   if (a.hasConnection) return { tone: "off", text: "Off, not tested" };
   return { tone: "warn", text: "Needs setup" };
 }
+
+/** "On shared computers" (S12, DESIGN.md section 8): what the sign-in page remembers on a browser that people share. */
+export const SHARED_COMPUTERS = {
+  heading: "On shared computers",
+  help: "What the sign-in page shows on a browser that people share.",
+  remember: {
+    label: "Remember who signed in",
+    help: "The sign-in page lists people who signed in on that browser, by name. Each person can be forgotten there.",
+  },
+  nobody: {
+    label: "Remember nobody",
+    help: "For public and school computers. The sign-in page shows no names.",
+    forgets: "Saving forgets every name on every browser.",
+  },
+};
+
+/** The provider row's result when the last passed test found that the provider asks for a password every time. */
+export const ASKS_EVERY_TIME = "On · asks for a password every time";
+/** The warning under the row when the last passed test found it does not (S12t). A sentence start, so the name is "Your provider" when none is set. */
+export const noFreshWarning = (p: ProviderLabel) =>
+  `${subject(p)} doesn’t ask for a password every time. People on shared computers will need to sign out of ${mid(p)} between people.`;
 
 export const lockedReasonPassword = (p: ProviderLabel) =>
   `Stays on until ${mid(p)} is on, so you can still sign in.`;

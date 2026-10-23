@@ -16,15 +16,17 @@ import {
 import { Chooser, ForgetList, StatusLine } from "./chooser";
 import {
   GoneNotice,
-  NotFreshNotice,
+  NotFreshScreen,
   PersonPassword,
   PlainSignIn,
   ProviderNotices,
   providerNameFor,
+  withRemember,
   type ProviderError,
 } from "./person-sign-in";
 import {
   afterFrom,
+  notFreshTitle,
   orderPeople,
   returnToFor,
   statusFor,
@@ -145,9 +147,11 @@ export default function SignInPage() {
     queryKey: ["auth", "setup"],
     queryFn: () => authFetch<{ owner_exists: boolean }>("/setup/api/state"),
   });
+  // The sign-out screen for a refused sign-in (S8) shows no names, so it does not read the list.
+  const listNeeded = arrival !== null && arrival.providerError !== "not_fresh";
   const remembered = useQuery({
     queryKey: ["auth", "remembered"],
-    enabled: arrival !== null,
+    enabled: listNeeded,
     queryFn: rememberedList,
   });
 
@@ -157,7 +161,8 @@ export default function SignInPage() {
     void remembered.refetch();
   };
 
-  const loading = arrival === null || options.isPending || setup.isPending || remembered.isPending;
+  const loading =
+    arrival === null || options.isPending || setup.isPending || (listNeeded && remembered.isPending);
   const unavailable = options.isError || setup.isError;
   // A list that cannot be read is said so (S4e). Any other refusal of the list falls back to the plain form.
   const listUnreachable = remembered.isError && isNetworkFailure(remembered.error);
@@ -197,7 +202,9 @@ export default function SignInPage() {
   const title =
     loading || unavailable || listUnreachable
       ? "Sign in · Azizam"
-      : titleFor(current, { reset: Boolean(reset), firstRun }, nameOf);
+      : arrival?.providerError === "not_fresh"
+        ? `${notFreshTitle(providerName)} · Azizam`
+        : titleFor(current, { reset: Boolean(reset), firstRun }, nameOf);
   useEffect(() => {
     document.title = title;
   }, [title]);
@@ -249,6 +256,16 @@ export default function SignInPage() {
     setView({ kind: "gone", tile });
   }
 
+  // Back leaves the sign-out screen for the sign-in page. The address forgets the refusal too, so a reload does not
+  // bring the screen back.
+  function leaveNotFresh() {
+    setArrival((before) => (before ? { ...before, providerError: null, providerSignOut: false } : before));
+    const url = new URL(window.location.href);
+    url.searchParams.delete("error");
+    url.searchParams.delete("provider_sign_out");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
   const card = (content: ReactNode) => (
     <section aria-labelledby="sign-in-title" className="mx-auto w-full max-w-md py-6 sm:py-12">
       <div className="bg-card rounded-panel border p-6 sm:p-8">{content}</div>
@@ -290,6 +307,17 @@ export default function SignInPage() {
     );
   }
 
+  if (arrival.providerError === "not_fresh") {
+    return card(
+      <NotFreshScreen
+        provider={providerName}
+        signOut={arrival.providerSignOut}
+        signInAgain={options.data ? withRemember(options.data.oidc_url, rememberOn) : "/sign-in/"}
+        onBack={leaveNotFresh}
+      />,
+    );
+  }
+
   if (firstRun) {
     return card(
       <>
@@ -297,9 +325,6 @@ export default function SignInPage() {
           {heading}
         </h1>
         <div className="mt-8 space-y-6">
-          {arrival.providerError === "not_fresh" && (
-            <NotFreshNotice provider={providerName} signOut={arrival.providerSignOut} />
-          )}
           <p className="text-muted-foreground text-body">
             Create the first owner account to get started. If you were
             invited, ask your host to finish setup.
@@ -324,8 +349,6 @@ export default function SignInPage() {
         setView(null);
       }}
       providerError={arrival.providerError}
-      providerSignOut={arrival.providerSignOut}
-      providerName={providerName}
     />
   );
   const statusLine = status && (
@@ -352,11 +375,7 @@ export default function SignInPage() {
                   {actionError}
                 </p>
               )}
-              <ProviderNotices
-                error={arrival.providerError}
-                signOut={arrival.providerSignOut}
-                providerName={providerName}
-              />
+              <ProviderNotices error={arrival.providerError} />
             </>
           }
           onChoose={chooseRow}
