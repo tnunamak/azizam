@@ -12,6 +12,9 @@ credential gets 403 ``privacy_permission_required`` and keeps what it has.
 """
 from __future__ import annotations
 
+import functools
+import inspect
+import sqlite3
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -30,6 +33,40 @@ MAX_LIMIT = 100
 
 def _error(status: int, code: str, message: str, *, kind: str = "invalid_request_error") -> JSONResponse:
     return JSONResponse({"error": {"message": message, "type": kind, "code": code}}, status_code=status)
+
+
+def _retry_required() -> JSONResponse:
+    """A read or write the store's lock would not admit. Nothing was half done, so the same request can be sent again."""
+    return JSONResponse(
+        {"error": {"message": "The store is busy. Try the request again.", "type": "server_error",
+                   "code": "retry_required"}},
+        status_code=503, headers={"Retry-After": "1", "Cache-Control": "no-store"})
+
+
+def _retry_when_busy(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Map a store lock that stays busy to 503 retry_required, so a busy store is never a 500 (REQUEST_RETENTION.md 12)."""
+    if inspect.iscoroutinefunction(handler):
+        @functools.wraps(handler)
+        async def wrapped_async(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await handler(*args, **kwargs)
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) and "busy" not in str(exc):
+                    raise
+                return _retry_required()
+
+        return wrapped_async
+
+    @functools.wraps(handler)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return handler(*args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) and "busy" not in str(exc):
+                raise
+            return _retry_required()
+
+    return wrapped
 
 
 def _not_found() -> JSONResponse:
@@ -97,6 +134,7 @@ def create_request_history_router(
         return mutation_validator(request, session_provider(request))
 
     @router.get("/gateway/v1/requests")
+    @_retry_when_busy
     def list_requests(request: Request, limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
                       cursor: str | None = Query(None)) -> Any:
         viewer = _viewer(request)
@@ -141,6 +179,7 @@ def create_request_history_router(
         return row if isinstance(access, content_access.Own) else None
 
     @router.get("/gateway/v1/requests/{record_id}")
+    @_retry_when_busy
     def read_request(record_id: str, request: Request) -> Any:
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
@@ -158,6 +197,7 @@ def create_request_history_router(
                 "summary": content.summary}
 
     @router.delete("/gateway/v1/requests/{record_id}")
+    @_retry_when_busy
     def delete_request(record_id: str, request: Request) -> Any:
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
@@ -175,6 +215,7 @@ def create_request_history_router(
         return Response(status_code=204)
 
     @router.delete("/gateway/v1/requests")
+    @_retry_when_busy
     def delete_all_requests(request: Request) -> Any:
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
@@ -187,9 +228,12 @@ def create_request_history_router(
         if isinstance(content_access.decide(viewer, content_access.RequestHistoryRecord(person_id=viewer.person_id),
                                             "delete"), content_access.Deny):
             return _privacy_refused()
-        deleted = request_history.delete_all_for_person(viewer.person_id, admin_path=admin_path(),
-                                                        path=media_path(), now=int(time.time()))
-        return {"deleted": deleted}
+        result = request_history.delete_all_for_person(viewer.person_id, admin_path=admin_path(),
+                                                       path=media_path(), now=int(time.time()))
+        if result["pending"]:
+            # The records are hidden now, and maintenance deletes them (REQUEST_RETENTION.md 12).
+            return JSONResponse({"deleted": 0, "pending": True}, status_code=202, headers={"Cache-Control": "no-store"})
+        return {"deleted": result["deleted"]}
 
     def _privacy_refused() -> JSONResponse:
         return _error(403, "privacy_permission_required",
@@ -213,6 +257,7 @@ def create_request_history_router(
         return str(session.subject)
 
     @router.get("/me/api/retention", include_in_schema=False)
+    @_retry_when_busy
     def get_my_retention(request: Request) -> Any:
         person = _session_person(request)
         if isinstance(person, JSONResponse):
@@ -220,6 +265,7 @@ def create_request_history_router(
         return _choice(person)
 
     @router.put("/me/api/retention", include_in_schema=False)
+    @_retry_when_busy
     async def put_my_retention(request: Request) -> Any:
         session = session_provider(request)
         if session is None:

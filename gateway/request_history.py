@@ -11,6 +11,7 @@ as omitted. Only the request headers and reply headers named below are kept.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -24,6 +25,7 @@ from python_multipart.multipart import MultipartParser, parse_options_header
 
 from gateway import retention
 
+log = logging.getLogger("gateway.request_history")
 KIND = retention.REQUEST_HISTORY
 #: What a credential-named field, or a removed URL part, reads as in a kept record.
 REMOVED = "[removed]"
@@ -542,8 +544,13 @@ def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path 
     return deleted
 
 
-def delete_all_for_person(person_id: str, *, admin_path: Path, path: Path | None = None, now: int) -> int:
-    """Delete everything a person kept, and fence the group: a request that started before now cannot write after it."""
+def delete_all_for_person(person_id: str, *, admin_path: Path, path: Path | None = None, now: int) -> dict[str, Any]:
+    """Delete everything a person kept, and fence the group: a request that started before now cannot write after it.
+
+    The fence is written first. If it cannot be written (the store is busy), nothing is erased and the error is raised.
+    Once it is written the records are hidden, so a row delete that then cannot run is left to maintenance: the result
+    says ``pending``.
+    """
     from gateway import admin_store, retention
 
     admin = _admin_connection(admin_path)
@@ -553,7 +560,11 @@ def delete_all_for_person(person_id: str, *, admin_path: Path, path: Path | None
         admin.commit()
     finally:
         admin.close()
-    return settle_erasure(person_id, now, admin_path=admin_path, path=path)
+    try:
+        return {"deleted": settle_erasure(person_id, now, admin_path=admin_path, path=path), "pending": False}
+    except sqlite3.OperationalError:
+        log.warning("request history erasure settles at maintenance: the rows could not be deleted now", exc_info=False)
+        return {"deleted": 0, "pending": True}
 
 
 def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: list[str], admin_path: Path,
@@ -565,7 +576,12 @@ def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: l
         person_id, remember=keep, retention=retention_id, updated_by=person_id, now=now,
         group=retention.GROUP_REQUEST_HISTORY, parts=parts, path=admin_path)
     if not keep:
-        settle_erasure(person_id, int(record["updated_at"]), admin_path=admin_path, path=path)
+        try:
+            settle_erasure(person_id, int(record["updated_at"]), admin_path=admin_path, path=path)
+        except sqlite3.OperationalError:
+            # The choice and its erasure intent are saved, and the intent holds until maintenance deletes the rows.
+            log.warning("request history erasure settles at maintenance: the rows could not be deleted now",
+                        exc_info=False)
     else:
         # The period now in force shortens the person's existing deadlines; it never lengthens them (section 12).
         cap = retention.bundled().household_defaults(retention.REQUEST_HISTORY)["retention_cap"]
