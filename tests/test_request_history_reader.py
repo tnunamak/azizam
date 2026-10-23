@@ -54,7 +54,7 @@ EXPECTED_READ = {
     ("maker app key, same App", "app_key"): True,
     ("maker app key, same App", "session"): False,
     ("maker app key, same App", "mcp_grant"): False,
-    ("maker app key, other key of same App", "app_key"): False,
+    ("maker app key, other key of same App", "app_key"): True,
     ("maker app key, other key of same App", "session"): False,
     ("maker app key, other key of same App", "mcp_grant"): False,
     ("maker app key, another App", "app_key"): False,
@@ -140,3 +140,13 @@ def test_the_list_keeps_only_the_viewers_rows_and_is_filtered_before_any_page_is
     visible = ca.visible_maker_rows(VIEWERS["maker session"], rows)
     assert [row["record_id"] for row in visible] == ["kr_0", "kr_2", "kr_4"]
     assert ca.visible_maker_rows(VIEWERS["owner's session"], rows) == []
+
+
+def test_a_sibling_or_replacement_app_key_can_read_and_list_the_apps_history():
+    viewer = VIEWERS["maker app key, other key of same App"]
+    old_key_row = _row(origin_id="cred_replaced")
+
+    content = ca.maker_content(viewer, old_key_row)
+
+    assert content.record_id == old_key_row["record_id"]
+    assert ca.visible_maker_rows(viewer, [old_key_row]) == [old_key_row]
