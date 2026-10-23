@@ -12,8 +12,7 @@ spawn during its first import. That is another path.
 
 Production runs uvicorn's default loop, which is uvloop (0.21.0 in the venv). On uvloop,
 `asyncio.create_subprocess_exec` starts the child through libuv. The cost grows with resident
-memory, as a fork's does, and the loop thread is blocked for all of it. The measurements below show
-the scaling.
+memory, as a fork's does, and the loop thread is blocked for all of it.
 
 Measured on this host, with a bare process and a `/usr/bin/true` child (median of 15 spawns):
 
@@ -23,75 +22,121 @@ Measured on this host, with a bare process and a `/usr/bin/true` child (median o
 | 600 MB | 32.5 ms | 33.6 ms |
 | 2 GB | 92.6 ms | 97 ms |
 
-The same spawn made by the stdlib `subprocess` module uses a vfork, which copies no page tables.
-Run in a worker thread, the systemctl call took about 5 ms, and the loop lag was at most 3.7 ms at
-600 MB and 2.1 ms at 2 GB. The worker thread keeps the fork away from the loop, and the stdlib spawn
-is cheap at any size.
+The stdlib `subprocess` module uses a vfork, which copies no page tables. Run in a worker thread,
+the spawn keeps the fork away from the loop.
 
-Each systemd engine costs one spawn per status build, and one per Home read after the 12 s cache.
-This host has 13 such engines. Under host memory or I/O pressure, the same spawn takes far longer.
-The six journal events of 1.3 to 1.9 s are that: the same path, slowed by the host. I could not
-reproduce the host pressure on demand. The stack and the scaling with resident memory do reproduce.
+## Measured after the change
 
-## Fixture evidence
+Two measurements, both run on this host (1-minute load 23 to 26 on 24 cores).
 
-The perf fixture ran uvicorn's default loop with a 512 MB ballast, so resident memory was 683 MB
-(production: 613 MB). Each cold read was measured with a `/health` probe running alongside it.
-The stall is the probe's largest latency during the read, less the idle median. Two runs, each with
-two rounds, before and after in turn, at host load 23 to 65:
+### Each spawn site, and the status build
 
-| Cold read (four reads each, two rounds in two runs) | Spawns, before → after | Wall, median, before → after | Loop stall, median, before → after |
+`scripts/perf/spawn_lag.py` runs each site under uvloop at 600 MB of touched memory (resident
+622 to 769 MB). Each site is the real gateway function with a stand-in binary on PATH, so the spawn
+is real. "Loop lag" is the largest wake-up delay of a 2 ms probe during one call, median of 8 calls.
+
+| Site | Loop lag before | Loop lag after | Call before | Call after |
+|---|---|---|---|---|
+| `_run_systemctl` (swap path) | 37.5 ms | 1.0 ms | 38.2 ms | 1.6 ms |
+| `speech_stream.transcode_pcm_stream` (ffmpeg per reply) | 37.5 ms | 1.0 ms | 41.0 ms | 4.9 ms |
+| `stt_chunking.run_media_command` (per STT chunk) | 39.5 ms | 1.0 ms | 41.9 ms | 1.6 ms |
+| `stt_measurement._prepare` (sample process) | 39.5 ms | 1.0 ms | 42.9 ms | 4.7 ms |
+| `proxy._run_workflow_drift_once` (drift refresh) | 37.0 ms | 1.0 ms | 46.2 ms | 10.1 ms |
+| `/health` (credential count read) | 1.0 ms | 1.0 ms | 1.2 ms | 1.4 ms |
+| Status snapshot build (new; background) | not measured | 14.5 ms (worst 35 ms) | not measured | 591 ms |
+
+"Before" is commit `a4415f3ae`, the parent of the spawn change. "After" is the branch head.
+The `/health` row shows no difference at idle: its SQLite read takes about 1 ms. Moving it off the
+loop removes a block that every request makes, but this probe cannot show a difference at idle.
+
+The snapshot row is the background build's own cost, measured in-process against a seeded admin
+database. It runs every 15 s, whether or not anyone reads it.
+
+### The cold reads, against the ordinary budget
+
+`scripts/perf/api_bench.py` runs each cold row three times after an idle wait, with a `/health` probe
+beside it. Both gateways were served from the same seeded data and measured in the same window. "Before" is
+commit `16155ad39`, the commit before the snapshot change (the spawn change is in it). "After" is the
+branch head. The rows are judged against the defaults in
+`scripts/perf/budgets.toml` `[api]`: p95 100 ms, 100 statements, 20 connections, 0 processes. The loop
+limit is `[loop] max_stall_ms = 100`. p95 is the slowest of the three reads, as `api_bench` computes it.
+
+| Row | Before (p95, statements, connections, processes, stall) | After | Limit |
 |---|---|---|---|
-| Home, `/me/api/home` | 13–15 → 1 | 1.37 s → 0.13 s | 1.08 s → 21 ms |
-| Owner status, `/admin/api/status` | 38–41 → 26–29 | 2.79 s → 0.73 s | 0.92 s → 64 ms |
+| `/me/api/home (after idle)` | 150.7 ms, 84, 10, 1, 54.4 ms | 74.2 ms, 57, 5, 0, 34.3 ms | 100 ms, 100, 20, 0, 100 ms |
+| `/admin/api/status (after idle)` | 960.5 ms, 717, 71, 26, 158.9 ms | 15.7 ms, 27, 3, 0, 1.5 ms | 100 ms, 100, 20, 0, 100 ms |
 
-Per read, the stall was 0.52 to 1.20 s for Home and 0.58 to 1.08 s for status before, and 18 to 22 ms
-and 35 to 86 ms after. The "after" status reads spawn 26 to 29 processes: one systemctl call plus the
-section probes, which run in worker threads as before. One status read in the second run spawned 29
-processes, three more than the others. I did not trace them.
-
-The loop watchdog (30 ms threshold) logged 9 and 16 stalls before, up to 1.09 s. After the change
-it logged 3 and 5, none over 0.11 s. The before stalls show the same frames as the journal. The
-largest events after the change (0.10 s and 0.11 s) were in `/health`'s own SQLite open, which runs
-on the loop (see below), not in the status build.
-The idle `/health` maximum during these runs was 71 to 286 ms, so stalls under about 100 ms are
-inside the host's noise.
+Before, the owner status row broke every limit and Home broke two (p95 and processes). After, both
+rows meet every limit. The exceptions that `[api.routes]` carried for these two rows are gone, and
+the table is empty. `test_perf_harness.py` fails if a route is added to it.
 
 ## Change
 
-1. Systemd probes run on a two-thread pool with the stdlib spawn (`lifecycle_drivers._PROBE_POOL`).
-   The loop no longer forks for them.
-2. One `systemctl is-active -- <units>` call answers every systemd engine in a scope. It used to
-   be one call per engine. The grid and Home share it.
-3. The status sections run at once on a six-thread pool (`status_endpoint._SECTION_POOL`). Each has
-   a budget: 3 s, and 6 s for backends. A section past its budget shows its last answer, is named
-   in `stale_sections`, and gets `errors[name] = "stale: …"`. The pool keeps a status build from
-   taking every worker that requests use for SQLite and file work.
-4. `_status_payload_with_availability` logs one line with the exception type when it fails. The
-   message is not logged, because it can carry a path or a secret.
+1. **Child processes start off the loop** (`gateway/off_loop_spawn.py`). `start()` runs
+   `subprocess.Popen` on a small worker pool. The child's pipes stay on the loop, as asyncio's own
+   pipe transports do, so streaming order is unchanged. One daemon thread per child waits for its exit,
+   as the stdlib's `ThreadedChildWatcher` does. `run()` is `subprocess.run` on a daemon thread, so a
+   run still going at shutdown does not hold the process open. A `start()` cancelled while its spawn
+   is still running kills the child that spawn makes.
+2. **The five spawn sites use the helper:** `SystemdDriver._run_systemctl` (swap path),
+   `speech_stream.transcode_pcm_stream`, `stt_chunking.run_media_command`,
+   `stt_measurement.Measurements._prepare`, and `proxy._run_workflow_drift_once`. Exit codes,
+   timeouts, kills and the log lines are unchanged.
+3. **`/health` reads the app credential count on a worker thread** (`proxy.health`).
+4. **The status page and Home read one background snapshot** (`status_endpoint.py`). One full build
+   runs every `SNAPSHOT_INTERVAL_S` (15 s), with each section on its own budget. Each reader gets the
+   latest snapshot and never probes. `snapshot.section_age_s` gives the age of each section, and
+   `snapshot.age_s` gives the age of the whole build. Before the first build finishes, readers get a
+   `checking` answer at once. A failed build keeps the last snapshot and logs the error type only.
+   `/admin/api/status`, `/me/api/home`, `/v1/status` and the owner's HTML status page all read it.
+   `_engine_rows_payload`, the Home refresh tasks and their cache are removed.
+5. **Shutdown cancels and joins the build.** The lifespan calls `status_endpoint.stop_snapshot()` where
+   it used to call `_stop_home_refreshes()`.
+6. **Earlier round, kept:** the systemd probes run in one batch per scope, each status section has a
+   budget, `_backend_grid` gives each engine its own deadline, and a refused connection is classified
+   only on `ECONNREFUSED`. The lifecycle batch is shielded, so one row that hits its deadline does not
+   cancel the batch the other rows wait for.
 
-Not chosen: D-Bus. No D-Bus client is a dependency here, and adding one is outside this change.
-Not chosen: a helper process. A worker thread with the vfork spawn already keeps the loop clear.
+## Costs and limits
 
-## Left as is, same shape
-
-- `SystemdDriver._run_systemctl` (`gateway/lifecycle_drivers.py`): start, stop and daemon-reload on
-  the swap path. Rare, but each call is a fork on the loop.
-- `gateway/stt_chunking.py` (a child process per STT chunk), `gateway/speech_stream.py` (ffmpeg for
-  each streamed speech reply), `gateway/stt_measurement.py`, and `proxy.py` near line 12792 (the
-  workflow drift refresh, a background task). Each is `asyncio.create_subprocess_exec` on the loop, so
-  each one pays the spawn cost on the loop thread.
-- `/health` opens a SQLite connection on the loop for each request (`proxy.py` `health` →
-  `active_app_credential_count`). In the fixture this showed as 30 to 110 ms loop events under host
-  noise. Moving it to a thread is a separate change.
+- **The background build runs whether or not anyone reads.** About 0.6 s of work every 15 s, and
+  a loop lag of 14.5 ms (median of worst) and 35 ms (worst) during it. Watch the `[loop]` rows. If the
+  cost matters, lengthen the interval when no one has read for several minutes.
+- **A reader that arrives before the first build sees `checking`.** The first build starts at startup and
+  took about 0.6 s of work in the fixture, so this lasts about that long after a restart.
+- **Data can be up to one interval plus one build old.** The page shows each section's age, so a reader
+  can see it.
+- **`run()` does not kill its child when the caller is cancelled**, as asyncio's subprocess did not.
+  Only `start()` kills, and only for a spawn that was still starting.
+- **Not changed:** the engine grid's own deadlines and classification, and the health evidence cache.
 
 ## Where the checks are
 
-- `tests/test_status_probes_off_loop.py`: no probe starts on the loop thread; one systemctl call
-  per scope; independent sections run at the same time; a section past its budget is stale and does
-  not hold the others; a stale section shows its last answer; the availability failure is logged
-  with its type only.
-- `scripts/perf/api_bench.py`: each cold Home and cold status read reports its loop stall.
-  `scripts/perf/check.py` judges it against `[loop] max_stall_ms` in `scripts/perf/budgets.toml`.
-- `scripts/perf/gateway_main.py`: the fixture runs uvicorn's default loop, as production does, and
-  counts asyncio spawns, which uvloop does not report to the audit hook.
+- `tests/test_spawns_off_loop.py`: the helper (threads, pipes, timeouts, a cancelled start kills its
+  child), and one test per site, and `/health`. Each test records every `subprocess.Popen` call and
+  fails if one ran on the loop thread. The hermetic sandbox refuses `os.kill` and host-control command
+  names, so the kill tests record the signal and use stand-ins.
+- `tests/test_status_snapshot.py`: a reader is answered at once while the first build is blocked; a
+  reader never starts a probe; each section reports its age; the build repeats on the schedule;
+  shutdown cancels a running build and waits for it; a failed build keeps the last snapshot and logs
+  only its type; the lifespan starts the build and joins it at shutdown.
+- `tests/test_status_probes_off_loop.py`: no probe starts on the loop; one systemctl call per scope;
+  sections run together; a section past its budget is stale and does not hold the others; a
+  shielded lifecycle batch survives one row's deadline.
+- `tests/test_home_engine_rows.py`: the grid's per-engine deadlines.
+- `tests/test_status_build.py`: the builder keeps the loop responsive (blocking sections, disk
+  pressure stat, detached config).
+- `tests/test_perf_harness.py`: the budget table has no route exceptions.
+- `scripts/perf/spawn_lag.py`: the loop-lag probe above.
+
+## Reproduce the measurements
+
+1. Run `scripts/perf/spawn_lag.py --repo <checkout> --out lag.json --admin-seed <seeded admin.db>`
+   under the hermetic venv. Use `--sites` to run one site.
+2. For the cold rows, seed a fixture with `scripts/ui/live_data_seed.py --state-root <dir> --port
+   <port>`. The seed script takes ports 18000 to 18998 only. Copy its `admin.db`, `receipts.db` and
+   `media_jobs.db` into `<src>/data/`, and copy `proxy_config.yml` into `<src>`.
+3. Start `scripts/perf/serve.py --port <port> --source <src>` from the checkout you measure. Pass
+   `--source` every time: its default is the live checkout. Check the listener's PID with `ss -ltnp`
+   against the ready line's `gateway_pid`. Serve the fake engine on `port+1` too, so leave that port
+   free. Stop each server by SIGTERM to its `serve_pid`, then check the ports are closed.
