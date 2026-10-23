@@ -34,7 +34,6 @@ import {
   listFacts,
   orderChooser,
   recentItems,
-  workingSentence,
 } from "./home-model";
 
 const homeKey = ["account", "home"];
@@ -254,8 +253,12 @@ export default function HomePage() {
     isOwner &&
     registry != null &&
     !Object.values(registry.services).some((service) => service.source !== "builtin" && service.enabled);
-  const needs = gatewayNeeds({ engineFault, providerFault, noEngine });
-  const working = workingSentence(model.views.filter((view) => !appPlumbingCapabilities.has(view.key)));
+  const needs = gatewayNeeds({
+    engineFault,
+    providerFault,
+    noEngine,
+    capabilities: model.views.filter((view) => !appPlumbingCapabilities.has(view.key)),
+  });
   const warning = refusal ? (refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "" : null;
 
   if (homeError) {
@@ -337,7 +340,7 @@ export default function HomePage() {
       >
         {isOwner ? (
           <div className="min-w-0 lg:col-start-2 lg:row-start-1">
-            <OwnerPanel needs={needs} working={working} checkedAt={model.verdict.checkedAt ?? null} />
+            <OwnerPanel needs={needs} />
           </div>
         ) : null}
         <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">

@@ -12,19 +12,24 @@ import { MediaTile } from "./home-media-tile";
 import { makingProgress, makingRisk, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
 import type { CapabilityView } from "@/lib/capability-state";
 
-/** Six tiles on a wide screen and four on a phone. Beside the owner's panel, four at every width from large up. */
-const TILE_BEYOND_FOUR = "max-sm:hidden";
-const OWNER_TILE_BEYOND_FOUR = "max-sm:hidden lg:hidden";
+/** Six tiles on a wide screen and four beside the owner's panel. A phone shows the first four. */
+const WIDE_SHOWN = 6;
+const OWNER_SHOWN = 4;
+/**
+ * On a wide screen the grid has one column per tile, so five or six tiles fill the row with no gap
+ * at its end. Fewer than four tiles keep four columns, so one tile does not stretch across the page.
+ */
+const WIDE_COLUMNS = ["", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-4", "lg:grid-cols-5", "lg:grid-cols-6"];
 const GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3";
-const GRID_WIDE = "lg:grid-cols-6";
-const GRID_OWNER = "lg:grid-cols-4";
+const GRID_OWNER = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-4 lg:grid-cols-4";
+const PHONE_BEYOND_FOUR = "max-sm:hidden";
 
 type Making = Extract<RecentItem, { kind: "making" }>;
 
 /** Skeletons at the size of the tiles, so the page does not move when they fill. */
 export function RecentLoading() {
   return (
-    <div role="status" aria-label="Loading recent work" aria-busy="true" className={cn(GRID, GRID_WIDE)}>
+    <div role="status" aria-label="Loading recent work" aria-busy="true" className={cn(GRID, WIDE_COLUMNS[WIDE_SHOWN])}>
       {[0, 1, 2, 3, 4, 5].map((item) => (
         <div key={item} className={cn(item >= 4 && "max-sm:hidden")}>
           <Skeleton className="rounded-media aspect-square w-full motion-reduce:animate-none" />
@@ -96,8 +101,8 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
 
 /**
  * The person's recent work: makes still running, then finished pictures, audio and video, then
- * conversations, newest first. Six tiles on a wide screen, four on a phone (and beside the owner's
- * panel). A failed media read says so here and leaves the composer working.
+ * conversations, newest first. Six tiles on a wide screen, four beside the owner's panel and on a
+ * phone. A failed media read says so here and leaves the composer working.
  */
 export function Recent({
   items,
@@ -117,7 +122,7 @@ export function Recent({
   onRetry: () => void;
   retrying: boolean;
 }) {
-  const tileClass = owner ? OWNER_TILE_BEYOND_FOUR : TILE_BEYOND_FOUR;
+  const shown = items.slice(0, owner ? OWNER_SHOWN : WIDE_SHOWN);
   return (
     <section aria-labelledby="recent-heading">
       <SectionHeading
@@ -155,9 +160,9 @@ export function Recent({
               </Button>
             </div>
           ) : null}
-          <ul aria-label="Recent work" className={cn(GRID, owner ? GRID_OWNER : GRID_WIDE)}>
-            {items.map((item, index) => {
-              const className = index >= 4 ? tileClass : undefined;
+          <ul aria-label="Recent work" className={owner ? GRID_OWNER : cn(GRID, WIDE_COLUMNS[shown.length])}>
+            {shown.map((item, index) => {
+              const className = index >= 4 ? PHONE_BEYOND_FOUR : undefined;
               if (item.kind === "making")
                 return (
                   <MakingTileView key={item.key} item={item} now={now} risk={makingRisk(item, views)} className={className} />

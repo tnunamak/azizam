@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
@@ -17,13 +25,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Segmented, type SegmentOption } from "@/components/product/segmented";
-import { StateBadge } from "@/components/product/status-ui";
 import { productApi, type ModelsCatalog } from "@/lib/product-api";
 import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
-import type { CapabilityView } from "@/lib/capability-state";
+import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
 import type { HomeCapability } from "./home-api";
 import { storeHomeHandoff } from "./handoff";
 import {
+  capabilityIs,
   capabilityLabel,
   kindOf,
   makeVerb,
@@ -64,24 +72,56 @@ function stateNotice(
   const who = ownerName ?? "the gateway owner";
   if (owner) {
     if (view.state === "blocked")
-      return { text: `${label} is not in your access plan.`, action: { label: "Open People", href: "/people?tab=plans" } };
+      return { text: `${capabilityIs(label, "not in your access plan")}.`, action: { label: "Open People", href: "/people?tab=plans" } };
     return {
-      text: `${label} is ${view.word.toLowerCase()}. ${view.detail ?? "Check it in Engines."}`,
+      text: `${capabilityIs(label, view.word.toLowerCase())}. ${view.detail ?? "Check it in Engines."}`,
       action: { label: "Open Engines", href: "/engines/" },
     };
   }
   if (view.state === "blocked")
-    return { text: `${label} is not in your access plan. Ask ${who} to change it.`, action: null };
+    return { text: `${capabilityIs(label, "not in your access plan")}. Ask ${who} to change it.`, action: null };
   if (view.state === "down")
-    return { text: `${label} is down. Ask ${who} to look at it.`, action: null };
-  return { text: `${label} is turned off. Ask ${who} to turn it back on.`, action: null };
+    return { text: `${capabilityIs(label, "down")}. Ask ${who} to look at it.`, action: null };
+  return { text: `${capabilityIs(label, "turned off")}. Ask ${who} to turn it back on.`, action: null };
+}
+
+/** Whether a row scrolls sideways and has more out of view on its right; the edge fade shows only then. */
+function useMoreToRight(ref: RefObject<HTMLElement | null>, count: number): boolean {
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const row = ref.current;
+    if (!row) return;
+    const check = () => setMore(row.scrollWidth - row.clientWidth - row.scrollLeft > 1);
+    check();
+    row.addEventListener("scroll", check, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(check);
+    observer?.observe(row);
+    return () => {
+      row.removeEventListener("scroll", check);
+      observer?.disconnect();
+    };
+  }, [ref, count]);
+  return more;
+}
+
+/** A capability that is not working: its word in muted type, with a small dot. It never boxes in the name. */
+function StateNote({ state, word }: { state: CapabilityStateKey; word: string }) {
+  return (
+    <span className="text-muted-foreground inline-flex items-center gap-1.5 font-normal">
+      <span
+        aria-hidden="true"
+        className={cn("size-1.5 shrink-0 rounded-full", state === "down" ? "bg-destructive" : "bg-muted-foreground/60")}
+      />
+      {word}
+    </span>
+  );
 }
 
 export function ChooserSkeleton() {
   return (
-    <div role="status" aria-label="Loading what you can make" aria-busy="true" className="flex gap-1">
+    <div role="status" aria-label="Loading what you can make" aria-busy="true" className="flex min-w-0 gap-1 overflow-hidden">
       {[0, 1, 2, 3, 4].map((item) => (
-        <Skeleton key={item} className="rounded-control h-8 w-24 motion-reduce:animate-none" />
+        <Skeleton key={item} className="rounded-control h-8 w-24 shrink-0 motion-reduce:animate-none" />
       ))}
     </div>
   );
@@ -155,13 +195,13 @@ export function HomeComposer({
     return {
       value: kindOf(row),
       label: capabilityLabel(row),
-      badge: state && !USABLE.has(state.state) ? (
-        <StateBadge state={state.state} word={state.word} className="ml-1" />
-      ) : null,
+      badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} /> : null,
     };
   });
   const shown = options.slice(0, CHOOSER_SHOWN);
   const more = options.slice(CHOOSER_SHOWN);
+  const chooserRef = useRef<HTMLDivElement>(null);
+  const moreToRight = useMoreToRight(chooserRef, shown.length);
 
   function startWork(event?: FormEvent) {
     event?.preventDefault();
@@ -196,13 +236,24 @@ export function HomeComposer({
           <ChooserSkeleton />
         ) : (
           <>
-            <Segmented<string>
-              label="What to make"
-              value={kind}
-              options={shown}
-              onChange={onKindChange}
-              className="min-w-0"
-            />
+            {/* On a phone the row scrolls inside itself; the fade on its trailing edge says there is more. */}
+            <div className="relative flex min-w-0">
+              <Segmented<string>
+                ref={chooserRef}
+                label="What to make"
+                value={kind}
+                options={shown}
+                onChange={onKindChange}
+                scroll
+              />
+              {moreToRight ? (
+                <span
+                  aria-hidden="true"
+                  data-slot="chooser-fade"
+                  className="from-background pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l to-transparent"
+                />
+              ) : null}
+            </div>
             {more.length ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

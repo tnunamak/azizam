@@ -3,29 +3,20 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RelativeTime } from "@/components/product/relative-time";
 import type { GatewayNeed } from "./home-model";
 
 /** How many "Needs you" items show before the rest collapse into a link to Status. */
 const SHOWN = 2;
+const QUIET = "Everything is working";
 
 /**
- * The owner's gateway panel: what needs the owner, one action each, and one sentence for what
- * works. Operational facts only; it never shows anyone's prompts, titles, pictures or names beside
- * content. On a phone it is one row that opens Status.
+ * The owner's gateway panel: what needs the owner, one action each. When nothing does, one quiet
+ * line and the link to Status. Operational facts only; it never shows anyone's prompts, titles,
+ * pictures or names beside content. On a phone it is one row that opens Status.
  */
-export function OwnerPanel({
-  needs,
-  working,
-  checkedAt,
-}: {
-  needs: GatewayNeed[];
-  working: string | null;
-  checkedAt: number | null;
-}) {
+export function OwnerPanel({ needs }: { needs: GatewayNeed[] }) {
   const shown = needs.slice(0, SHOWN);
   const more = needs.length - shown.length;
-  const phoneFact = needs[0]?.fact ?? working;
   return (
     <section aria-labelledby="gateway-heading" className="bg-card rounded-control border p-4">
       <h2 id="gateway-heading" className="text-heading max-lg:sr-only">
@@ -36,7 +27,7 @@ export function OwnerPanel({
         href="/status/"
         className="text-meta mt-1 flex min-h-11 items-center justify-between gap-2 lg:hidden"
       >
-        <span className="min-w-0">{phoneFact ?? "Open Status to see how things are."}</span>
+        <span className="min-w-0">{needs[0]?.fact ?? QUIET}</span>
         <span className="text-link inline-flex shrink-0 items-center font-medium">
           Open Status
           <ChevronRight aria-hidden="true" className="size-4" />
@@ -56,24 +47,23 @@ export function OwnerPanel({
               </li>
             ))}
           </ul>
-        ) : null}
+        ) : (
+          <p className="text-meta mt-3 flex items-center justify-between gap-2">
+            <span>{QUIET}</span>
+            <Link
+              prefetch={false}
+              href="/status/"
+              className="text-link inline-flex shrink-0 items-center font-medium underline-offset-4 hover:underline"
+            >
+              Open Status
+            </Link>
+          </p>
+        )}
         {more > 0 ? (
           <Link prefetch={false} href="/status/" className="text-link text-meta mt-2 inline-flex items-center font-medium underline-offset-4 hover:underline">
             +{more} more in Status
           </Link>
         ) : null}
-        {working ? <p className="text-meta mt-3">{working}</p> : null}
-        <p className="text-muted-foreground text-badge mt-3">
-          {checkedAt != null ? (
-            <>
-              Checked <RelativeTime ts={checkedAt} fallback="" />
-              {" · "}
-            </>
-          ) : null}
-          <Link prefetch={false} href="/status/" className="text-link font-medium underline underline-offset-4">
-            Open Status
-          </Link>
-        </p>
       </div>
     </section>
   );

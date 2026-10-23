@@ -172,6 +172,18 @@ describe("H3 a capability that is down explains itself where the choice is made"
   });
 });
 
+describe("H2 an off capability keeps its name and shows its state in the chooser", () => {
+  it("writes the state word beside the name, and leaves a working option without one", async () => {
+    stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    const video = within(group).getByRole("button", { name: /Video/ });
+    expect(video).toHaveTextContent("Video");
+    expect(within(video).getByText("Off")).toBeVisible();
+    expect(within(within(group).getByRole("button", { name: /Chat/ })).queryByText("Off")).toBeNull();
+  });
+});
+
 describe("H4 the facts line says what a run costs and how long it takes", () => {
   it("reads a local model as no charge with its time", async () => {
     stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("image", { typical_seconds: 9 })] }), "/me/api/media": () => ({ assets: [] }) });
@@ -334,9 +346,29 @@ describe("H9 the owner panel holds operations, never content", () => {
     expect(panel.textContent).not.toContain("Secret family photo");
   });
 
-  it("says one working line when nothing needs the owner", async () => {
+  it("names a capability that is off, with one action, and lists nothing that works", async () => {
     stubFetch({
       "/me/api/home": () => homePayload({ user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" } }),
+      "/me/api/media": () => ({ assets: [] }),
+      "/admin/api/status": () => ({ status: { current_health: { observation_available: true, services: [] }, backends: [] } }),
+      "/admin/api/operator/service-registry": () => ({ services: { "local-chat": { id: "local-chat", source: "local", enabled: true, config: {} } } }),
+      "/admin/api/providers": () => [],
+      "/admin/api/activity/requests": () => ({ requests: [] }),
+    });
+    renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
+    const panel = await screen.findByRole("region", { name: "Your gateway" });
+    await waitFor(() => expect(within(panel).getAllByText("Video is off. Turned off by the owner.")[0]).toBeVisible());
+    expect(within(panel).getAllByRole("link", { name: "Open Engines" })).toHaveLength(1);
+    expect(panel.textContent).not.toMatch(/Chat|Images|Everything is working/);
+  });
+
+  it("says everything is working, with the Status link, when nothing needs the owner", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" },
+          capabilities: [capability("image"), capability("chat")],
+        }),
       "/me/api/media": () => ({ assets: [] }),
       "/admin/api/status": () => ({ status: { current_health: { observation_available: true, services: [] }, backends: [] } }),
       "/admin/api/operator/service-registry": () => ({ services: { "gateway-core": { id: "gateway-core", source: "builtin", enabled: true, config: {} }, "local-chat": { id: "local-chat", source: "local", enabled: true, config: {} } } }),
@@ -345,9 +377,11 @@ describe("H9 the owner panel holds operations, never content", () => {
     });
     renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
     const panel = await screen.findByRole("region", { name: "Your gateway" });
-    // The phone row and the desktop block both say it; either is the one working line.
-    await waitFor(() => expect(within(panel).getAllByText(/are working\.|is working\./)[0]).toBeVisible());
+    // The phone row and the desktop block both say it; either is the one quiet line.
+    await waitFor(() => expect(within(panel).getAllByText("Everything is working")[0]).toBeVisible());
+    expect(within(panel).getAllByRole("link", { name: /Open Status/ })[0].getAttribute("href")).toMatch(/^\/status\/?$/);
     expect(within(panel).queryAllByRole("link", { name: "Open Engines" })).toHaveLength(0);
+    expect(panel.textContent).not.toMatch(/Chat|Images/);
   });
 });
 

@@ -4,7 +4,7 @@ import {
   requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
-import { capabilityMeta, knownCapabilityLabel } from "@/components/product/readiness";
+import { knownCapabilityLabel } from "@/components/product/readiness";
 import { appPlumbingCapabilities } from "@/lib/terms";
 import type { HomeCapability, HomeChat, HomeCreation, HomeReceipt } from "./home-api";
 
@@ -251,15 +251,26 @@ export interface GatewayNeed {
   action: { label: string; href: string };
 }
 
+/** "Video is down", "Images are off": a capability's label with the verb its name takes, then the phrase. */
+export function capabilityIs(label: string, phrase: string): string {
+  return `${label} ${/s$/i.test(label) ? "are" : "is"} ${phrase}`;
+}
+
+/** The capability states the owner must act on. Off is the owner's own choice, but it still has a next step. */
+const STATES_THE_OWNER_FIXES = new Set(["down", "off", "degraded"]);
+
 /**
  * What the owner must act on, one item each with one action. Only operational facts: an engine
- * or provider that is failing, or no engine yet. Never content. (A missing access plan is the
- * notice where the composer would be, not an item here.)
+ * or provider that is failing, no engine yet, or a capability that is down, off or degraded.
+ * Never content. Working capabilities are not listed. (A missing access plan is the notice where
+ * the composer would be, not an item here.)
  */
 export function gatewayNeeds(input: {
   engineFault: string | null;
   providerFault: string | null;
   noEngine: boolean;
+  /** The owner's capability views; the ones in a state the owner fixes become items. */
+  capabilities: CapabilityView[];
 }): GatewayNeed[] {
   const needs: GatewayNeed[] = [];
   if (input.engineFault)
@@ -272,22 +283,16 @@ export function gatewayNeeds(input: {
       fact: "Add an engine to turn something on.",
       action: { label: "Open Engines", href: "/engines/" },
     });
+  for (const view of input.capabilities) {
+    if (!STATES_THE_OWNER_FIXES.has(view.state)) continue;
+    // A cause is added only when the view has one.
+    needs.push({
+      key: `capability:${view.key}`,
+      fact: [`${capabilityIs(view.label, view.word.toLowerCase())}.`, view.detail].filter(Boolean).join(" "),
+      action: { label: "Open Engines", href: "/engines/" },
+    });
+  }
   return needs;
-}
-
-function joinNames(names: string[]): string {
-  if (names.length < 2) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-}
-
-/** One sentence naming what works, for the owner's panel. Null when nothing does. */
-export function workingSentence(views: CapabilityView[]): string | null {
-  const names = views
-    .filter((view) => view.state === "ready")
-    .map((view) => capabilityMeta(view.key).label);
-  if (!names.length) return null;
-  const verb = names.length > 1 ? "are working" : "is working";
-  return `${joinNames(names)} ${verb}.`;
 }
 
 /** Greeting from the time of day; a first-time member is welcomed instead. */

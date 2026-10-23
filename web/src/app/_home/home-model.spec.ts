@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HomeCapability, HomeChat, HomeCreation, HomeReceipt } from "./home-api";
 import {
+  capabilityIs,
   chooserRows,
   firstNameOf,
   formatWait,
@@ -14,8 +15,8 @@ import {
   promptPlaceholder,
   recentItems,
   runFacts,
-  workingSentence,
 } from "./home-model";
+import type { CapabilityView } from "@/lib/capability-state";
 
 /** A capability row as `/me/api/home` sends it; only the fields Home reads are set. */
 function row(overrides: Partial<HomeCapability> & { icon_key: string }): HomeCapability {
@@ -125,9 +126,16 @@ describe("H6 Recent is the person's own work, makes first", () => {
   });
 });
 
+/** A capability view as the owner's panel reads it; only the fields the needs read are set. */
+function view(key: string, label: string, state: CapabilityView["state"], word: string, detail: string | null = null): CapabilityView {
+  return { key, label, state, word, tone: "ok", detail, checkedAt: null, usedAt: null, failing: [] };
+}
+
+const NO_FAULTS = { engineFault: null, providerFault: null, noEngine: false, capabilities: [] };
+
 describe("H9 the owner's panel names operational facts only", () => {
   it("gives each need one action, and only the needs that exist", () => {
-    const needs = gatewayNeeds({ engineFault: "Video studio stopped answering.", providerFault: null, noEngine: false });
+    const needs = gatewayNeeds({ ...NO_FAULTS, engineFault: "Video studio stopped answering." });
     expect(needs).toEqual([
       {
         key: "engine",
@@ -135,20 +143,55 @@ describe("H9 the owner's panel names operational facts only", () => {
         action: { label: "Open Engines", href: "/engines/" },
       },
     ]);
-    expect(gatewayNeeds({ engineFault: null, providerFault: null, noEngine: false })).toEqual([]);
+    expect(gatewayNeeds(NO_FAULTS)).toEqual([]);
   });
 
   it("sends a gateway with no engine to Engines", () => {
-    const [need] = gatewayNeeds({ engineFault: null, providerFault: null, noEngine: true });
+    const [need] = gatewayNeeds({ ...NO_FAULTS, noEngine: true });
     expect(need.action.href).toBe("/engines/");
   });
 
-  it("says what works in one sentence", () => {
-    const view = (key: string, state: string) => ({ key, label: key, state }) as never;
-    expect(workingSentence([view("chat", "ready"), view("image", "ready"), view("speech", "ready")])).toBe(
-      "Chat, Images and Voice are working.",
-    );
-    expect(workingSentence([view("video", "off")])).toBeNull();
+  it("names a capability that is down, off or degraded, with its action", () => {
+    const needs = gatewayNeeds({
+      ...NO_FAULTS,
+      capabilities: [
+        view("chat", "Chat", "ready", "Ready"),
+        view("video", "Video", "down", "Down", "Engine can’t take requests right now."),
+        view("image", "Images", "off", "Off", "Not set up yet."),
+        view("speech", "Voice", "degraded", "Degraded"),
+      ],
+    });
+    expect(needs).toEqual([
+      {
+        key: "capability:video",
+        fact: "Video is down. Engine can’t take requests right now.",
+        action: { label: "Open Engines", href: "/engines/" },
+      },
+      {
+        key: "capability:image",
+        fact: "Images are off. Not set up yet.",
+        action: { label: "Open Engines", href: "/engines/" },
+      },
+      {
+        key: "capability:speech",
+        fact: "Voice is degraded.",
+        action: { label: "Open Engines", href: "/engines/" },
+      },
+    ]);
+  });
+
+  it("takes a plural verb for a plural label", () => {
+    expect(capabilityIs("Images", "off")).toBe("Images are off");
+    expect(capabilityIs("Sound effects", "down")).toBe("Sound effects are down");
+    expect(capabilityIs("Video", "down")).toBe("Video is down");
+  });
+
+  it("never lists a capability that works, or one whose state is unknown", () => {
+    const needs = gatewayNeeds({
+      ...NO_FAULTS,
+      capabilities: [view("chat", "Chat", "ready", "Ready"), view("speech", "Voice", "unknown", "Unknown")],
+    });
+    expect(needs).toEqual([]);
   });
 });
 
@@ -170,6 +213,34 @@ describe("H13 no model or engine names in the Home code", () => {
   it("gives placeholders by kind, with a plain default", () => {
     expect(promptPlaceholder("image")).toBe("Describe the picture you want");
     expect(promptPlaceholder("made-up-kind")).toBe("Describe what you want");
+  });
+});
+
+describe("H4 the facts line shows only the parts that are known", () => {
+  const unknownCost = { kind: "unknown", price_usd: null } as const;
+
+  it("says no charge when only the cost is known", () => {
+    expect(runFacts(row({ icon_key: "image", typical_seconds: null, cost_hint: { kind: "free", price_usd: null } }))).toBe(
+      "No charge",
+    );
+  });
+
+  it("says the wait when only the wait is known", () => {
+    expect(runFacts(row({ icon_key: "image", typical_seconds: 9, cost_hint: unknownCost }))).toBe("About 9 s");
+  });
+
+  it("says a chat starts in its wait when only that is known", () => {
+    expect(runFacts(row({ icon_key: "chat", typical_seconds: 1, cost_hint: unknownCost }))).toBe("Starts in about 1 s");
+  });
+
+  it("is empty when neither is known, so the composer shows no line", () => {
+    expect(runFacts(row({ icon_key: "image", typical_seconds: null, cost_hint: unknownCost }))).toBe("");
+  });
+
+  it("names a paid model without an amount the data does not give", () => {
+    expect(runFacts(row({ icon_key: "image", typical_seconds: null, cost_hint: { kind: "paid", price_usd: null } }))).toBe(
+      "Paid model",
+    );
   });
 });
 
