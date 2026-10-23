@@ -59,6 +59,7 @@ from gateway.compat import get_env
 from gateway import log_scrub, runtime_secrets
 
 import asyncio
+import concurrent.futures
 import contextlib
 import os
 import subprocess
@@ -66,7 +67,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVar, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence, TypeVar, runtime_checkable
 
 _T = TypeVar("_T")
 
@@ -1016,6 +1017,44 @@ def register_params_provider(name: str, fn: Callable[[Mapping[str, Any]], dict])
 
 
 # ---------------------------------------------------------------------------
+# systemd probes off the event loop
+# ---------------------------------------------------------------------------
+
+# Probes run on these worker threads, with the stdlib spawn (a vfork, which copies no page tables).
+# A spawn on the loop thread is different: uvloop forks the whole gateway there, which takes about
+# 0.05 ms per MB of resident memory, and the loop is blocked for all of it.
+_PROBE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="systemd-probe")
+_PROBE_TIMEOUT_S = 5.0
+
+_SYSTEMD_PROCESS_STATE = {
+    "active": ProcessState.RUNNING,
+    "activating": ProcessState.STARTING,
+    "deactivating": ProcessState.DRAINING,
+    "failed": ProcessState.FAILED,
+    "inactive": ProcessState.STOPPED,
+}
+
+
+def _run_probe(argv: list[str]) -> bytes | None:
+    """Run one systemctl command and return its stdout, or None when it cannot run or hangs."""
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=_PROBE_TIMEOUT_S, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _unit_states(scope_flag: list[str], units: list[str]) -> dict[str, str]:
+    """`systemctl is-active` for several units in one call. It prints one state per unit, in order."""
+    out = _run_probe(["systemctl", *scope_flag, "is-active", "--", *units]) or b""
+    states = out.decode(errors="ignore").split()
+    return dict(zip(units, (state.lower() for state in states))) if len(states) == len(units) else {}
+
+
+def _process_state(systemd_state: str | None) -> str:
+    return _SYSTEMD_PROCESS_STATE.get(systemd_state or "", ProcessState.UNMANAGED)
+
+
+# ---------------------------------------------------------------------------
 # SystemdDriver — dropin-env-restart swap strategy
 # ---------------------------------------------------------------------------
 
@@ -1087,46 +1126,30 @@ class SystemdDriver:
             pass
 
     async def status(self, svc: Mapping[str, Any]) -> str:
-        dc = self._driver_config(svc)
-        unit = dc.get("unit", "")
-        if not unit:
-            return ProcessState.UNMANAGED
-        cmd = ["systemctl"] + self._scope_flag(dc) + ["is-active", unit]
-        proc = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=self._SYSTEMCTL_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.communicate()
-                return ProcessState.UNMANAGED
-            except asyncio.CancelledError:
-                proc.kill()
-                await proc.communicate()
-                raise
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return ProcessState.UNMANAGED
-        state = stdout.decode(errors="ignore").strip().lower()
-        if state == "active":
-            return ProcessState.RUNNING
-        if state == "activating":
-            return ProcessState.STARTING
-        if state == "deactivating":
-            return ProcessState.DRAINING
-        if state == "failed":
-            return ProcessState.FAILED
-        if state == "inactive":
-            return ProcessState.STOPPED
-        if state == "unknown":
-            return ProcessState.UNMANAGED
-        return ProcessState.UNMANAGED
+        return (await self.statuses([svc]))[0]
+
+    @classmethod
+    async def statuses(cls, services: Sequence[Mapping[str, Any]]) -> list[str]:
+        """The process state of each service, in order. Units in one scope share one `systemctl` call."""
+        wanted = []  # (scope flag, unit) per service; the unit is "" when the service names none
+        for svc in services:
+            dc = cls._driver_config(svc)
+            wanted.append((tuple(cls._scope_flag(dc)), str(dc.get("unit", "") or "")))
+        units_by_scope: dict[tuple[str, ...], list[str]] = {}
+        for scope, unit in wanted:
+            if unit and unit not in units_by_scope.setdefault(scope, []):
+                units_by_scope[scope].append(unit)
+        loop = asyncio.get_running_loop()
+        # A cancelled caller leaves its probe to finish on the worker; the probe has its own timeout.
+        answers = await asyncio.gather(*(
+            loop.run_in_executor(_PROBE_POOL, _unit_states, list(scope), units)
+            for scope, units in units_by_scope.items()
+        ))
+        found = dict(zip(units_by_scope, answers))
+        return [
+            _process_state(found[scope].get(unit)) if unit else ProcessState.UNMANAGED
+            for scope, unit in wanted
+        ]
 
     async def health(self, svc: Mapping[str, Any]) -> str:
         dc = self._driver_config(svc)

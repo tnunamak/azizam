@@ -14098,7 +14098,10 @@ async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str
             ),
             "_availability_evidence": availability_evidence,
         }
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # The page still renders without the availability evidence. Log the type only: the message
+        # can carry a path or a secret.
+        print(f"[proxy] status availability skipped: {type(exc).__name__}", flush=True)
         return payload
 
 
