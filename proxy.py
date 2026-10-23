@@ -17657,6 +17657,50 @@ async def _issue_browser_admin_session(
     return response
 
 
+def _complete_setup_local_login(
+    request: Request,
+    user: Mapping[str, Any],
+    *,
+    email: str,
+    built_in: bool,
+    signing_key: bytes,
+):
+    """Commit the setup recovery login and its replacement session together."""
+    path = ADMIN_STORE.path
+    user_id = str(user["id"])
+    cookie = _browser_admin_cookie_config()
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        role_names = admin_store.effective_user_roles_in(conn, user_id)
+        if not built_in and "owner" not in role_names:
+            return None, "builtin_disabled"
+        if "owner" in role_names:
+            role = "owner"
+        elif role_names & {"admin", "superadmin"}:
+            role = "admin"
+        else:
+            return None, "admin_role_required"
+
+        accounts.clear_signin_refusal_in(conn, user_id)
+        admin_store._record_audit_in_transaction(
+            conn, "setup.local_owner_login",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="user", target_id=user_id,
+            metadata={"email": email, "via": "setup_page"},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(
+            conn, request, cookie=cookie, signing_key=signing_key, path=path,
+        )
+        session = browser_sessions.issue_in(
+            conn, {"sub": user_id, "email": email},
+            role=role, cookie=cookie, path=path,
+        )
+    accounts.invalidate_asset_families()
+    return session, None
+
+
 def _origin_header_allowed_for_request(request: Request) -> bool:
     # A same-origin attacker hostname can rebind to a private address. Setup
     # accepts literal host addresses, localhost, or the configured public host.
@@ -17881,17 +17925,14 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=401,
         )
-    role_names = admin_store.effective_admin_roles(
-        "user", str(user["id"]), path=ADMIN_STORE.path,
+    session, signin_error = await asyncio.to_thread(
+        _complete_setup_local_login, request, user, email=email,
+        built_in=built_in, signing_key=signing_key,
     )
-    if not built_in and "owner" not in role_names:
+    if signin_error == "builtin_disabled":
         # Only the owner's password works while built-in sign-in is off.
         return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
-    if "owner" in role_names:
-        role = "owner"
-    elif "admin" in role_names or "superadmin" in role_names:
-        role = "admin"
-    else:
+    if signin_error == "admin_role_required":
         return await _setup_page_response(
             request,
             login_error=(
@@ -17901,27 +17942,16 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=403,
         )
-    accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-    admin_store.record_audit(
-        "setup.local_owner_login",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role=role,
-        signing_key=signing_key,
-        redirect_to=_safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+    response = RedirectResponse(
+        _safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+        status_code=303,
     )
+    browser_sessions.set_cookie(
+        response, session, cookie=_browser_admin_cookie_config(), signing_key=signing_key,
+    )
+    return response
 
 
 @app.post("/setup/first-app", include_in_schema=False)

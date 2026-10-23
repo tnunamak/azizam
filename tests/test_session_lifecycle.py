@@ -914,15 +914,15 @@ def _sign_in_through_the_provider(g, client, watch):
 
 @pytest.mark.parametrize(("sign_in", "write_names"), [
     (_claim_with_an_admin_key, ["end_incoming", "issue"]),
-    (_sign_in_as_a_local_owner, ["end_incoming", "issue"]),
+    (_sign_in_as_a_local_owner, ["end_incoming_in", "issue_in"]),
     (_sign_in_through_the_provider, ["end_incoming_in", "issue_in"]),
 ], ids=["setup claim", "local login", "provider callback"])
 def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatch, sign_in, write_names):
     """Session issue and incoming-family writes must leave the event loop.
 
     An fsync on the loop stalls every request behind it, so the two writes run in a thread, in
-    this order: end the incoming session, then issue the new one. OIDC uses the transaction-aware
-    variants so both writes share the sign-in transaction.
+    this order: end the incoming session, then issue the new one. Local password and OIDC sign-ins
+    use the transaction-aware variants so both writes share the sign-in transaction.
     """
     from gateway import browser_sessions
     real = {name: getattr(browser_sessions, name) for name in (
