@@ -4,9 +4,9 @@ docs/design/REQUEST_RETENTION.md sections 3.5 (parts and the secret floor), 3.6 
 This module holds the kind's rules and its store. It decides nothing about policy: ``retention`` does that, and
 the capture layer (``request_history_capture``) calls it once per request.
 
-The secret floor is code, not data: a credential-named field is removed at any depth, a URL keeps only its scheme,
-host, path and query names, a large media string is not copied, and a body the gateway does not parse is recorded
-as omitted. Only the request headers and reply headers named below are kept.
+The secret floor is code, not data: a credential-named field is removed at any depth, a URL keeps its scheme, host, port
+and path (its query and fragment become markers), a large media string is not copied, and a body the gateway does not
+parse is recorded as omitted. Only the request headers and reply headers named below are kept.
 """
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ import json
 import logging
 import re
 import sqlite3
+import string
 import unicodedata
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 
 from python_multipart.multipart import MultipartParser, parse_options_header
 
@@ -51,20 +52,12 @@ _TRAILING_DIGITS = re.compile(r"\d+$")
 # ``headers[Authorization]`` (the OpenAI SDK flattens it), and ``extensions[ns][name]`` is the gateway's own form.
 _SEGMENT_BOUNDARY = re.compile(r"[-_\s.\[\]]+|(?<=[a-z0-9])(?=[A-Z])")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
-#: Any URL scheme, in any case: ``https``, ``postgres``, ``wss``, ``HTTPS``. A URL inside a longer string runs to the
-#: next whitespace. Its user info may hold a quote or a sub-delim (``'`` is one), so no quote ends it. Punctuation that
-#: closes a sentence is not part of it.
-_URL_SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]*://"
-_URL_START = re.compile(_URL_SCHEME)
-_URL_IN_TEXT = re.compile(_URL_SCHEME + r"\S+")
-#: Closing marks that are not part of a URL in prose.
-_URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\">"
-#: What an authority may hold: the RFC 3986 characters, and the quote a pasted user info may carry (R4-1). A backslash,
-#: a brace, a space or a non-ASCII letter makes the start of the host unclear, so it is not on this list.
-_AUTHORITY = re.compile(r"""[A-Za-z0-9\-._~%!$&'()*+,;=:@\[\]"]*""")
-#: The host and port after the user info. A host is a bracketed IPv6 address or a plain name.
-_HOST_PORT = re.compile(r"(?P<host>\[[0-9A-Za-z:.%\-_]+\]|[A-Za-z0-9\-._~%]*)(?::(?P<port>[0-9]*))?")
-#: What a URL reads as when it cannot be split into its parts. The whole URL is replaced, so no part of it is kept.
+#: What a URL scheme may hold after its first letter: letters, digits, ``+``, ``.`` and ``-`` (RFC 3986).
+_SCHEME_CHARACTERS = frozenset(string.ascii_letters + string.digits + "+.-")
+_SCHEME_LETTER = re.compile(r"[A-Za-z]")
+_WHITESPACE = re.compile(r"\s")
+#: What a URL reads as when it holds an ``@`` or cannot be split into its parts. The whole URL is replaced, so no part of
+#: it is kept.
 URL_REMOVED = "[url removed]"
 
 _TABLE = """
@@ -153,52 +146,50 @@ def allowed_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {name.lower(): value for name, value in headers.items() if name.lower() in RESPONSE_HEADERS}
 
 
-def _query_without_values(query: str) -> str:
-    """Rule 4: query names are kept and values removed. An item with no ``=`` has no value, so its text is the only thing
-    it carries, and it may be a token written as a bare key. It is removed."""
-    items: list[str] = []
-    for item in query.split("&"):
-        if "=" not in item:
-            if item:
-                items.append(REMOVED)
-            continue
-        items.extend(f"{name}={REMOVED}" for name, _ in parse_qsl(item, keep_blank_values=True))
-    return "&".join(items)
+def _url_runs(text: str) -> list[tuple[int, int]]:
+    """Each URL in ``text``, as (start, end). A URL starts at a scheme (a letter, scheme characters, then ``://``) and runs
+    to the next whitespace or the next scheme, so ``https://a.test/x,https://b.test/y`` is two URLs. Each scheme is found
+    by walking back from its ``://``, so each character is read once: a long run of letters costs time in proportion to
+    its length."""
+    schemes: list[int] = []
+    separator = text.find("://")
+    while separator != -1:
+        begin = separator
+        while begin > 0 and text[begin - 1] in _SCHEME_CHARACTERS:
+            begin -= 1
+        letter = _SCHEME_LETTER.search(text, begin, separator)
+        if letter is not None:
+            schemes.append(letter.start())
+        separator = text.find("://", separator + 3)
+    runs = []
+    for start, limit in zip(schemes, [*schemes[1:], len(text)]):
+        space = _WHITESPACE.search(text, start, limit)
+        runs.append((start, space.start() if space else limit))
+    return runs
 
 
-def _scrub_url(value: str) -> tuple[str, bool] | None:
-    """Rule 4: scheme, host, port and path stay; user info and query values become [removed]; fragments go.
-
-    The authority ends at the first ``/``, ``?`` or ``#``. Only an ``@`` inside the authority starts user info, and only
-    one may be there, so a query or fragment that holds an ``@`` is cleaned by its own rules and never becomes the host.
-    A URL that cannot be split this way is replaced whole by ``[url removed]``. That covers an authority with a second
-    ``@``, an odd character or a bad port, and a path with an ``@`` in a URL whose authority has none: an unencoded
-    delimiter in a password would put one there, and a path is kept as written."""
-    match = _URL_START.match(value)
-    if match is None or any(char.isspace() for char in value):
-        return None
-    scheme, rest = value[:match.end() - len("://")].lower(), value[match.end():]
-    ends = [index for index in (rest.find(mark) for mark in "/?#") if index != -1]
-    cut = min(ends, default=len(rest))
-    authority, tail = rest[:cut], rest[cut:]
-    before_fragment, _, fragment = tail.partition("#")
-    path, _, query = before_fragment.partition("?")
-    if not _AUTHORITY.fullmatch(authority) or authority.count("@") > 1:
+def _scrub_url(url: str) -> tuple[str, bool]:
+    """Rule 4 for one URL (R7-1). An ``@`` or ``%40`` anywhere replaces the whole URL, as does one that cannot be split
+    into a scheme and a non-empty ASCII host. Otherwise the scheme, host, port and path are kept, a path segment that is
+    a credential name becomes ``[removed]``, and a query or fragment becomes ``?[removed]`` or ``#[removed]``. The second
+    value says whether any part was removed."""
+    if "@" in url or "%40" in url:
         return URL_REMOVED, True
-    if "@" not in authority and "@" in path:
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # raises ValueError for a port that is not a number from 0 to 65535
+    except ValueError:
         return URL_REMOVED, True
-    found_host = _HOST_PORT.fullmatch(authority.rpartition("@")[2])
-    if found_host is None:
+    if not parts.scheme or not parts.hostname or not parts.hostname.isascii():
         return URL_REMOVED, True
-    port = found_host.group("port") or ""
-    if len(port) > 5 or (port and int(port) > 65535):
-        return URL_REMOVED, True
-    user_info = f"{REMOVED}@" if "@" in authority else ""
-    host = found_host.group("host").lower()
-    netloc = f"{host}:{port}" if port else host
-    query_text = _query_without_values(query)
-    changed = bool(user_info or query or fragment)
-    return f"{scheme}://{user_info}{netloc}{path}" + (f"?{query_text}" if query_text else ""), changed
+    segments = parts.path.split("/")
+    kept = [REMOVED if is_credential_name(segment) else segment for segment in segments]
+    text = f"{parts.scheme}://{parts.netloc}{'/'.join(kept)}"
+    if parts.query:
+        text += f"?{REMOVED}"
+    if parts.fragment:
+        text += f"#{REMOVED}"
+    return text, kept != segments or bool(parts.query or parts.fragment)
 
 
 def _redact_text(value: str, found: set[str]) -> Any:
@@ -214,31 +205,22 @@ def _redact_text(value: str, found: set[str]) -> Any:
     if len(value) > MEDIA_STRING_LIMIT and _BASE64.fullmatch(value):
         found.add("media")
         return {"omitted": "media", "media_type": "unknown", "bytes": len(value) * 3 // 4}
-    scrubbed = _scrub_url(value)
-    if scrubbed is not None:
-        text, changed = scrubbed
+    return _scrub_urls(value, found)
+
+
+def _scrub_urls(text: str, found: set[str]) -> str:
+    """Rule 4 for every URL in a value or in a longer string, such as a pasted signed link. Each URL is cleaned by
+    ``_scrub_url``, and the text between URLs is kept as it is."""
+    pieces: list[str] = []
+    end = 0
+    for start, stop in _url_runs(text):
+        cleaned, changed = _scrub_url(text[start:stop])
         if changed:
             found.add("url_parts_removed")
-        return text
-    if _URL_IN_TEXT.search(value):
-        return _scrub_urls_in_text(value, found)
-    return value
-
-
-def _scrub_urls_in_text(value: str, found: set[str]) -> str:
-    """Rule 4 for a URL inside a longer string, such as a pasted signed link: each URL found is scrubbed as a whole."""
-    def scrub(match: re.Match[str]) -> str:
-        url = match.group(0)
-        core = url.rstrip(_URL_TRAILING_PUNCTUATION)
-        scrubbed = _scrub_url(core)
-        if scrubbed is None:
-            return url
-        text, changed = scrubbed
-        if changed:
-            found.add("url_parts_removed")
-        return text + url[len(core):]
-
-    return _URL_IN_TEXT.sub(scrub, value)
+        pieces.append(text[end:start] + cleaned)
+        end = stop
+    pieces.append(text[end:])
+    return "".join(pieces)
 
 
 class _TooDeep(Exception):
@@ -254,13 +236,18 @@ class WorkBudget:
     """The work one record may spend on JSON held inside strings (R6-2): the text it decodes, in bytes, and the values
     it visits. One budget is shared by every body of a record, so the total stays bounded however many wrappers the
     record holds. A string spends it when it parses as a JSON object, array or literal that is cleaned further. A
-    literal around plain text is cleaned as text and costs nothing here."""
+    literal around plain text is cleaned as text and costs nothing here. Before a string is parsed it must fit in what is
+    left (R7-3), so one too long to fit is omitted unparsed, even when it would have been plain text."""
 
     def __init__(self, *, max_bytes: int, max_nodes: int = JSON_NODE_LIMIT) -> None:
         self.max_bytes = max_bytes
         self.max_nodes = max_nodes
         self.decoded_bytes = 0
         self.nodes = 0
+
+    def fits(self, text: str) -> bool:
+        """Whether ``text`` can be decoded within the byte limit. Nothing is spent."""
+        return self.decoded_bytes + len(text.encode("utf-8", "surrogatepass")) <= self.max_bytes
 
     def decode(self, text: str) -> None:
         size = len(text.encode("utf-8", "surrogatepass"))
@@ -278,13 +265,16 @@ def _redact_string(text: str, found: set[str], depth: int, budget: WorkBudget, *
     """A string whose first mark, after whitespace, is ``{``, ``[`` or ``"`` is read as JSON, and the value it holds is
     cleaned and stored compact. A JSON string literal whose content is JSON, or another literal, is cleaned as that
     content and stored as a literal again, so a value wrapped in several levels of encoding is cleaned at every level
-    (R6-2). A literal around plain text is cleaned as text, as before. A string that does not parse is cleaned as text,
-    since prose may start with a bracket or a quote. A tool call's ``arguments`` is always JSON, so one that does not
-    parse is omitted. A string nested past JSON_DEPTH_LIMIT is omitted, and so is one whose JSON would spend more than
-    the record's budget."""
+    (R6-2). A literal around plain text has its decoded text cleaned as text, and is stored as a literal again (R7-2).
+    A string that does not parse is cleaned as text, since prose may start with a bracket or a quote. A tool call's
+    ``arguments`` is always JSON, so one that does not parse is omitted. A string nested past JSON_DEPTH_LIMIT is
+    omitted, and so is one the record's budget cannot hold, which is checked before the string is parsed (R7-3)."""
     stripped = text.lstrip()
     if not stripped.startswith(("{", "[", '"')):
         return _redact_text(text, found)
+    if not budget.fits(text):
+        found.add("json_budget")
+        return {"omitted": "json_budget"}
     try:
         parsed = json.loads(text)
     except RecursionError:
@@ -297,15 +287,12 @@ def _redact_string(text: str, found: set[str], depth: int, budget: WorkBudget, *
         return _redact_text(text, found)
     if isinstance(parsed, str):
         if not parsed.lstrip().startswith(("{", "[", '"')):
-            return _redact_text(text, found)
+            cleaned = _redact_text(parsed, found)
+            return json.dumps(cleaned, ensure_ascii=False) if isinstance(cleaned, str) else cleaned
         if depth > JSON_DEPTH_LIMIT:
             found.add("json_depth")
             return {"omitted": "json_depth"}
-        try:
-            budget.decode(text)
-        except _OverBudget:
-            found.add("json_budget")
-            return {"omitted": "json_budget"}
+        budget.decode(text)  # fits was checked before the parse, so this only spends the length
         inner = _redact_string(parsed, found, depth + 1, budget, tool_arguments=tool_arguments)
         return json.dumps(inner, ensure_ascii=False) if isinstance(inner, str) else inner
     omissions: set[str] = set()
