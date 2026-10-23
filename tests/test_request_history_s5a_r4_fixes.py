@@ -186,9 +186,9 @@ def test_r4_2_h_a_fullwidth_name_that_is_not_a_credential_is_kept():
 # ------------------------------------------------------------------ R4-3: a cancelled request gives its slot back
 
 
-def _scope(path: str = "/v1/responses") -> dict:
-    return {"type": "http", "method": "POST", "path": path, "headers": [(b"content-type", b"application/json")],
-            "query_string": b"", "state": {}}
+def _scope() -> dict:
+    return {"type": "http", "method": "POST", "path": "/v1/responses",
+            "headers": [(b"content-type", b"application/json")], "query_string": b"", "state": {}}
 
 
 def _one_body(raw: bytes) -> Callable:
@@ -216,13 +216,11 @@ async def _read_body(receive: Callable) -> None:
             return
 
 
-def _answer_after_reading(person: str, *, hold: asyncio.Event | None = None) -> Callable:
-    """A route that authenticates, reads its whole body, waits for ``hold`` if one is given, then answers."""
+def _answer_after_reading(person: str) -> Callable:
+    """A route that authenticates, reads its whole body, then answers."""
     async def route(scope, receive, send):
         scope["state"][IDENTITY_STATE_KEY] = _identity(person)
         await _read_body(receive)
-        if hold is not None:
-            await hold.wait()
         await JSONResponse({"ok": True})(scope, receive, send)
 
     return route
@@ -284,7 +282,7 @@ def test_r4_3_a_thirty_two_requests_cancelled_while_their_writes_are_queued_give
 
     async def cancel_once():
         task = asyncio.create_task(middleware(_scope(), _one_body(KEEP_BODY), _ignore))
-        await asyncio.to_thread(pool.queued.get)   # the request has reached its write, which waits for the one thread
+        await asyncio.to_thread(pool.queued.get)   # the request has reached its write, queued behind the held thread
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -292,7 +290,7 @@ def test_r4_3_a_thirty_two_requests_cancelled_while_their_writes_are_queued_give
     async def scenario():
         await _repeat(cancel_once, MAX_SLOTS)
         gate.set()
-        await asyncio.to_thread(pool.shutdown, True)   # the queued writes run now, as they do once the thread is free
+        await asyncio.to_thread(pool.shutdown, True)   # the queued writes run now that the thread is free
 
     asyncio.run(scenario())
     assert _free_slots() == MAX_SLOTS
