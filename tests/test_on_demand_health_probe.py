@@ -75,6 +75,22 @@ def test_starting_or_overloaded_engine_is_degraded(code):
     assert evidence["status"] == "degraded"
 
 
+def test_a_probe_that_never_answers_is_degraded_at_the_deadline(monkeypatch):
+    from gateway import models_catalog
+
+    monkeypatch.setattr(models_catalog, "HEALTH_PROBE_DEADLINE_S", 0.05)
+
+    async def never_answers(url: str):
+        await asyncio.Event().wait()
+
+    evidence = asyncio.run(probe_service_health(
+        _registry("on_demand"), get_json=never_answers, service_ids=["decisions-quality"], endpoint_for=lambda service: ENDPOINT,
+    ))["decisions-quality"]
+
+    assert evidence["status"] == "degraded"
+    assert evidence["available"] is None
+
+
 def test_server_error_is_still_unavailable():
     evidence = _probe(_registry("on_demand"), error=HealthProbeNoResponse(status_code=500))
 

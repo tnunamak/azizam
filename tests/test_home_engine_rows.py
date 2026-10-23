@@ -14,6 +14,7 @@ probe also has a deadline, so a probe that keeps its connection busy cannot stal
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -262,3 +263,75 @@ def test_the_grid_deadline_reports_a_lifecycle_check_that_does_not_finish_as_unk
     (row,) = asyncio.run(status_endpoint._backend_grid(config, deadline_s=0.1))
 
     assert (row["status"], row["last_error"]) == ("unknown", "status check did not finish")
+
+
+def _health_entry(service: dict, *, age_s: float, evidence: dict) -> tuple:
+    """A health evidence cache entry, as the catalog probe writes it."""
+    return (time.monotonic() - age_s, json.dumps(service, sort_keys=True, default=str), evidence)
+
+
+def test_home_health_evidence_is_served_from_the_cache_while_a_probe_runs(monkeypatch):
+    stored = {"available": True, "status": "ready"}
+
+    async def scenario():
+        release = asyncio.Event()
+        calls: list[list[str]] = []
+
+        async def probe(service_records, *, service_ids):
+            calls.append(list(service_ids))
+            await release.wait()  # slow until the read has returned
+            return {}
+
+        monkeypatch.setattr(proxy, "_models_catalog_health_evidence", probe)
+        monkeypatch.setattr(proxy, "_HOME_HEALTH_TASK", None)
+        monkeypatch.setattr(proxy, "_HEALTH_EVIDENCE_CACHE",
+                            {"chat": _health_entry(_registry()["services"]["chat"], age_s=30.0, evidence=stored)})
+
+        evidence = await asyncio.wait_for(proxy._home_health_evidence(_registry(), service_ids=["chat"]), timeout=1.0)
+
+        assert evidence == {"chat": stored}
+        assert calls == [["chat"]]
+        release.set()
+        await asyncio.wait_for(proxy._HOME_HEALTH_TASK, timeout=1.0)
+
+    asyncio.run(scenario())
+
+
+def test_home_health_evidence_with_nothing_cached_waits_only_the_first_wait(monkeypatch):
+    async def scenario():
+        release = asyncio.Event()
+
+        async def probe(service_records, *, service_ids):
+            await release.wait()
+            return {}
+
+        monkeypatch.setattr(proxy, "_models_catalog_health_evidence", probe)
+        monkeypatch.setattr(proxy, "_HOME_HEALTH_TASK", None)
+        monkeypatch.setattr(proxy, "_HEALTH_EVIDENCE_CACHE", {})
+
+        started = time.monotonic()
+        evidence = await asyncio.wait_for(proxy._home_health_evidence(_registry(), service_ids=["chat"]), timeout=2.0)
+
+        assert evidence == {}
+        assert time.monotonic() - started < 1.0
+        release.set()
+        await asyncio.wait_for(proxy._HOME_HEALTH_TASK, timeout=1.0)
+
+    asyncio.run(scenario())
+
+
+def test_home_health_evidence_that_is_fresh_starts_no_probe(monkeypatch):
+    stored = {"available": True, "status": "ready"}
+
+    async def probe(service_records, *, service_ids):
+        raise AssertionError("fresh evidence needs no probe")
+
+    monkeypatch.setattr(proxy, "_models_catalog_health_evidence", probe)
+    monkeypatch.setattr(proxy, "_HOME_HEALTH_TASK", None)
+    monkeypatch.setattr(proxy, "_HEALTH_EVIDENCE_CACHE",
+                        {"chat": _health_entry(_registry()["services"]["chat"], age_s=1.0, evidence=stored)})
+
+    evidence = asyncio.run(proxy._home_health_evidence(_registry(), service_ids=["chat"]))
+
+    assert evidence == {"chat": stored}
+    assert proxy._HOME_HEALTH_TASK is None

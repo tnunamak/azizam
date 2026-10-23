@@ -990,6 +990,11 @@ class HealthProbeRefused(Exception):
     """Nothing listens on the health endpoint: stopped, or not started yet."""
 
 
+# An answer that has not come by this deadline is slow, not down. The read timeout alone does not bound a
+# body that keeps trickling in, so a probe is cut off here.
+HEALTH_PROBE_DEADLINE_S = 2.0
+
+
 def connect_failure_kind(error: BaseException) -> str:
     """Name why a connection failed: ``refused``, ``dns``, ``tls`` or ``other``.
 
@@ -1052,13 +1057,13 @@ async def probe_service_health(
             times["last_success_at_s"] = _HEALTH_LAST_SUCCESS_S[service_id]
         missing_route = starting = slow = refused = False
         try:
-            payload = await get_json(endpoint)
+            payload = await asyncio.wait_for(get_json(endpoint), timeout=HEALTH_PROBE_DEADLINE_S)
         except HealthProbeNoResponse as exc:
             missing_route = exc.status_code in {404, 405}
             # 502-504 from an engine that answers: a model is still loading, or it is overloaded.
             starting = exc.status_code in {502, 503, 504}
             payload = None
-        except HealthProbeTimedOut:
+        except (HealthProbeTimedOut, TimeoutError):
             slow = True
             payload = None
         except HealthProbeRefused:

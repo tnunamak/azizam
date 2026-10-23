@@ -14008,7 +14008,7 @@ def _start_engine_rows_refresh() -> asyncio.Task:
     global _ENGINE_ROWS_TASK
     if _ENGINE_ROWS_TASK is None or _ENGINE_ROWS_TASK.done():
         _ENGINE_ROWS_TASK = asyncio.get_running_loop().create_task(_refresh_engine_rows())
-        _ENGINE_ROWS_TASK.add_done_callback(_log_engine_rows_failure)
+        _ENGINE_ROWS_TASK.add_done_callback(lambda task: _log_home_probe_failure("engine rows", task))
     return _ENGINE_ROWS_TASK
 
 
@@ -14019,10 +14019,10 @@ async def _refresh_engine_rows() -> dict[str, Any]:
     return payload
 
 
-def _log_engine_rows_failure(task: asyncio.Task) -> None:
-    # A refresh that no reader awaits still reports its failure.
+def _log_home_probe_failure(name: str, task: asyncio.Task) -> None:
+    # A probe that no reader awaits still reports its failure.
     if not task.cancelled() and task.exception() is not None:
-        logging.getLogger(__name__).error("Home's engine rows refresh failed", exc_info=task.exception())
+        logging.getLogger(__name__).error("Home's %s refresh failed", name, exc_info=task.exception())
 
 
 async def _engine_rows_payload() -> dict[str, Any]:
@@ -14066,7 +14066,9 @@ async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str
         service_records, no_auth_capabilities = await asyncio.to_thread(
             lambda: (ADMIN_STORE.get_service_registry(), _gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)))
         execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
-        health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
+        # Home reads the cached evidence and waits at most for the first wait; the full status page probes.
+        health_probe = _models_catalog_health_evidence if full else _home_health_evidence
+        health_evidence = await health_probe(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
         # for evidence; the engine grid itself is unchanged.
         service_rows = await _status_payload_with_service_rows(
@@ -16468,6 +16470,45 @@ async def _models_catalog_health_evidence(
             _HEALTH_EVIDENCE_CACHE[service_id] = (now, fingerprint(service_id), dict(evidence))
         kept.update(probed)
     return kept
+
+
+# Home reads the health evidence the catalog probe keeps. A refresh that is still running is not waited for
+# past the first wait, so one slow health endpoint cannot hold up a Home read.
+_HOME_HEALTH_TASK: asyncio.Task | None = None
+
+
+def _cached_health_evidence(service_records: Mapping[str, Any], service_ids: list[str], max_age_s: float) -> dict[str, dict[str, Any]]:
+    """The cached evidence of the services that are young enough and still match their record."""
+    services = service_records.get("services") if isinstance(service_records, Mapping) else None
+    services = services if isinstance(services, Mapping) else {}
+    now = time.monotonic()
+    served: dict[str, dict[str, Any]] = {}
+    for service_id in service_ids:
+        hit = _HEALTH_EVIDENCE_CACHE.get(service_id)
+        # An edited service is not answered from its old record, as in _models_catalog_health_evidence.
+        if hit is not None and now - hit[0] < max_age_s and hit[1] == json.dumps(services.get(service_id), sort_keys=True, default=str):
+            served[service_id] = dict(hit[2])
+    return served
+
+
+async def _home_health_evidence(service_records: Mapping[str, Any], *, service_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    global _HOME_HEALTH_TASK
+    wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
+    fresh = _cached_health_evidence(service_records, wanted, _HEALTH_EVIDENCE_TTL_S)
+    if len(fresh) == len(wanted):
+        return fresh
+    if _HOME_HEALTH_TASK is None or _HOME_HEALTH_TASK.done():
+        _HOME_HEALTH_TASK = asyncio.get_running_loop().create_task(
+            _models_catalog_health_evidence(service_records, service_ids=wanted))
+        _HOME_HEALTH_TASK.add_done_callback(lambda task: _log_home_probe_failure("health evidence", task))
+    served = _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
+    if not served:
+        try:
+            await asyncio.wait_for(asyncio.shield(_HOME_HEALTH_TASK), timeout=_ENGINE_ROWS_FIRST_WAIT_S)
+        except Exception:  # noqa: BLE001 - a late or failed probe leaves its services unmeasured for this read
+            pass
+        served = _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
+    return served
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
