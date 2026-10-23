@@ -46,15 +46,40 @@ the apply, a person who still uses one either keeps it or replaces it.
 - `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` keeps a trusted address.
 
 Keep is refused with `409 keep_not_provable` unless nobody else could have made the
-binding. Nobody else could have made it only when all three of these are true:
+binding. Nobody else could have made it only when all of these are true:
 
-- the signed-in person holds the owner role now, and no other subject has ever held
-  it. Revoked grants count, so an owner grant once given to someone else refuses keep;
+- the signed-in person is the App's accountable person, and the sole person who holds
+  the owner role now. A revoked owner grant does not count. Neither does a service
+  account that holds the owner role, which is the owner's own control-plane key;
+- the App has always answered to that person. No audit event names another accountable
+  person for it, and the schema-7 migration did not change it;
 - the record names no creator other than the person. It may name no creator at all;
 - the audit log names no other creator for this binding.
 
-So only the owner can keep. The owner gets `403 not_your_app` for another person's App.
-A key that already names the person is left as it is.
+So only the owner can keep. Members replace. Another person's key or App gets the same
+`404` as a missing one: `404 credential_not_found` for a key, `404 app_not_found` for an
+address. A key that already names the person is left as it is, with no confirmation.
+
+**Administrators on record.** Before the cut-over, an administrator could issue a key or
+an address on any App, and so could a past one. So when a person who held the admin,
+superadmin or owner role at any time could have made the binding, keeping it is refused
+with `409 keep_needs_confirmation` until the owner confirms:
+
+```json
+{"error": {"code": "keep_needs_confirmation", "message": "...",
+           "administrators": ["Alex Example", "CI bot"]}}
+```
+
+`administrators` names them, sorted. A person with no display name is listed as
+`unnamed administrator`; an email address is never shown. A service account that held
+admin or superadmin is named by its name. The owner confirms by keeping again with this
+body, where `true` is a JSON boolean (the string `"true"` does not count):
+
+```json
+{"confirm_admins_could_have_made_it": true}
+```
+
+The audit event names the administrators confirmed, in `confirmed_administrators`.
 
 **Replace a key** issues a new key and revokes the old one:
 
@@ -66,27 +91,31 @@ A key that already names the person is left as it is.
   leaves the old key live and no new key behind.
 - The response is `201`: `credential` holds the new key, with its secret in `api_key`
   (shown once), and `replaced_credential_id` holds the old key's id.
-- It refuses another person's App with `403 not_your_app`, a disabled App with
-  `403 app_disabled`, and a key that is missing, revoked, or not an App key with
-  `404 credential_not_found`.
+- It answers another person's key or App as a missing one, with `404 credential_not_found`.
+  A disabled App is refused with `403 app_disabled`. A key that is missing, revoked, not
+  an App key, or on a session App is `404 credential_not_found`.
 
 **Add an address again.** An address that cannot be kept is refused with
 `409 keep_not_provable`. The person adds it again with
 `POST /me/api/apps/{app_id}/trusted-addresses`, then removes the old entry with
-`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`. The removal returns `200`,
-and it is audited. Another person's App gets `404 app_not_found`.
+`DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}`. The removal returns `200`.
+Its audit event is written in the same transaction, so a removal never happens without
+it. Another person's App gets `404 app_not_found`.
 
 Each keep writes an audit event (`credential.adopt`, `app.trusted_address.adopt`). Each
 replacement writes `credential.replace`, naming both keys. Each removal writes
 `app.trusted_address.remove`.
 
 Keys and addresses are kept one at a time. From the browser console on the signed-in
-Azizam page, the owner keeps a key like this:
+Azizam page, the owner keeps a key like this. If the answer is `409 keep_needs_confirmation`,
+read its `administrators`, then send the same request with the confirmation body:
 
 ```js
 const csrf = (await (await fetch("/auth/api/options")).json()).signed_in_oidc.csrf_token;
 await fetch("/me/api/credentials/<key id>/adopt", {
-  method: "POST", headers: { "x-azizam-csrf": csrf, "x-azizam-user-action": "1" },
+  method: "POST",
+  headers: { "x-azizam-csrf": csrf, "x-azizam-user-action": "1", "content-type": "application/json" },
+  body: JSON.stringify({ confirm_admins_could_have_made_it: true }),  // only after reading the administrators
 });
 ```
 
@@ -114,10 +143,12 @@ Do this once per database, in this order.
 1. **Start the gateway once** with this release, so its migrations run.
 2. **Keep or replace** each binding you still use (above).
 3. **Stop the gateway.** Check first with `scripts/safe-restart --dry-run`, then stop the
-   service. Apply refuses while a gateway runs. Every running gateway holds
-   `admin.db.running`, beside `admin.db`, for its whole life, whatever its environment,
-   and apply takes that file exclusively. Apply also checks the gateway's private
-   directory lock (`private-tmp/.owner.lock`, or `AZIZAM_PRIVATE_TMPDIR`) where it can see it.
+   service. Apply refuses while a gateway runs. A gateway takes `admin.db.running`, beside
+   `admin.db`, shared when its app starts, and keeps it until the app shuts down. The app
+   takes it whichever way it is launched: `python proxy.py`, `uvicorn proxy:app`, or
+   `scripts/ui/serve.py`. Apply takes that file exclusively. Apply also checks the
+   gateway's private directory lock (`private-tmp/.owner.lock`, or `AZIZAM_PRIVATE_TMPDIR`)
+   where it can see it.
 4. **Preview a copy** of `admin.db`. Read the `BLOCKS APPLY` lines; each means an App
    would stop while in use. Keep a binding on it, or disable the App, then preview again.
 
