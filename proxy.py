@@ -14211,10 +14211,12 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     from gateway.record_ownership import owns_record
     auth_context = _auth_context_from_scope(request)
     # One App reader per request: the authorizer runs once per row of a page.
-    apps = getattr(request.state, "record_apps", None)
+    state = getattr(request, "state", None)
+    apps = getattr(state, "record_apps", None)
     if apps is None:
         apps = content_makers.Apps(ADMIN_STORE.path)
-        request.state.record_apps = apps
+        if state is not None:
+            state.record_apps = apps
     return owns_record(kind, record, viewer=viewer_from_auth(auth_context, owner_keys=()), apps=apps)
 
 

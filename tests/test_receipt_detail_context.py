@@ -228,6 +228,10 @@ def test_shared_app_receipt_route_masks_other_makers_retention(detail):
     assert single.status_code == 404
     assert listing.status_code == 200
     assert all(row["request_id"] != "req_shared_app" for row in listing.json()["receipts"])
+    own = client.get("/gateway/v1/receipts/req_own_app", headers=headers)
+    assert own.status_code == 200
+    assert own.json()["retention"] == [entry]
+    assert next(row for row in listing.json()["receipts"] if row["request_id"] == "req_own_app")["retention"] == [entry]
 
 
 def test_every_non_internal_receipt_store_read_call_passes_viewer():

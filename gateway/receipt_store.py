@@ -95,7 +95,6 @@ CREATE INDEX IF NOT EXISTS receipts_app_profile ON receipts(app_profile);
 CREATE INDEX IF NOT EXISTS receipts_app_id ON receipts(app_id);
 CREATE INDEX IF NOT EXISTS receipts_job_id ON receipts(job_id);
 CREATE INDEX IF NOT EXISTS receipts_parent ON receipts(parent_request_id);
-CREATE INDEX IF NOT EXISTS receipts_maker_person ON receipts(json_extract(receipt_json, '$.maker_person_id'));
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """

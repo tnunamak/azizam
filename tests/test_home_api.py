@@ -162,7 +162,7 @@ def test_client_activity_projection_keeps_app_id_under_source(home_case):
     assert "app_id" not in rows[0]
 
 
-def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
+def test_owner_cannot_open_instance_receipts_and_the_owner_bypass_is_gone(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
@@ -170,10 +170,13 @@ def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
 
-    assert get_user_receipt(c.session, "local", path=c.db, receipts_path=c.receipts)["source"]["kind"] == "local-network"
-    assert get_user_receipt(c.session, "service", path=c.db, receipts_path=c.receipts)["source"]["app_id"] == service["id"]
-    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
-    assert {row["target_id"] for row in audit_rows} == {"service", "local"}
+    # Owning the App, or being the owner, does not make another person's receipt the owner's (D51).
+    # A receipt with no person is read by no person (D52).
+    for request_id in ("local", "service"):
+        with pytest.raises(UserPortalError) as owner_error:
+            get_user_receipt(c.session, request_id, path=c.db, receipts_path=c.receipts)
+        assert owner_error.value.status_code == 404
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
 
     member_session = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
     with pytest.raises(UserPortalError) as local_error:
@@ -376,6 +379,7 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "mine", "app_id": None, "maker_person_id": c.user["id"], "status": "succeeded"}, path=c.receipts)
 
     assert c.http.post("/admin/api/setup-evidence", json={"event": "settings_copied", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
     assert c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
@@ -384,14 +388,17 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "local"}, headers=c.headers).status_code == 403
     c.owner = True
 
+    # Only a receipt the owner made can be viewed, so only it can count as evidence (D51).
     for request_id in ("local", "service", "foreign"):
         response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers)
-        assert response.status_code == 200, response.text
+        assert response.status_code == 404, response.text
+    response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "mine"}, headers=c.headers)
+    assert response.status_code == 200, response.text
     evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
     assert evidence["receipt_viewed"]["recorded"]
     assert not evidence["external_client_confirmed"]["recorded"]
     audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
-    assert {row["target_id"] for row in audit_rows} >= {"local", "service", "foreign"}
+    assert {row["target_id"] for row in audit_rows} == {"mine"}
 
 
 def test_setup_actual_invitation_completes_optional_step(home_case):

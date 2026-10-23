@@ -178,7 +178,6 @@ OPTIONS /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised:
 PATCH /gateway/v1/providers/{provider}/{native_path:path} 404  # not exercised: was: HTTP status in DENIED
 POST /gateway/v1/providers/{provider}/{native_path:path} 404   # not exercised: was: HTTP status in DENIED
 PUT /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
-GET /gateway/v1/receipts 200                                   # not exercised: only the blanket decoy GET rule covered it
 GET /gateway/v1/providers 200                                  # not exercised: only the blanket decoy GET rule covered it
 GET /gateway/v1/requests/{record_id} 404                      # not exercised: a maker route; content access refuses another principal before any category rule (tests/test_request_history_routes.py)
 DELETE /gateway/v1/requests/{record_id} 404                   # not exercised: a maker route; content access refuses another principal before any category rule (tests/test_request_history_routes.py)

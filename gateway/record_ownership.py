@@ -34,7 +34,14 @@ def owns_record(kind: str, record: Mapping[str, Any], *, viewer: Viewer, apps: A
         apps=apps,
     )
     connection = (receipt or record).get("connection_id")
-    origin = ContentOrigin("mcp_grant", connection_id=connection) if isinstance(connection, str) and connection else None
+    origin: ContentOrigin | None = None
+    if isinstance(connection, str) and connection:
+        origin = ContentOrigin("mcp_grant", connection_id=connection)
+    elif viewer.auth_kind == "app_key" and app_id and app_id == viewer.app_id:
+        # Receipts and jobs record no credential. A key on an App is the only writer of that App's rows
+        # through its own API, and a session never runs under a key App, so App attribution stands for
+        # the creating credential here. Rows of another App, and rows of another maker, still deny.
+        origin = ContentOrigin("app_key", credential_id=viewer.credential_id or app_id)
     person_id = makers[0] if len(makers) == 1 else None
     row = (ReceiptRecord if kind == "receipt" else JobRecord)(person_id=person_id, app_id=app_id, origin=origin)
     return isinstance(decide(viewer, row, "read"), Own)
