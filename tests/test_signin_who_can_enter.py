@@ -15,7 +15,7 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 import pytest
 
-from gateway import accounts, admin_runtime, admin_store
+from gateway import accounts, admin_runtime, admin_store, gateway_lifetime
 from tests.support.app_keys import issue_app_credential
 from gateway.admin_oidc import CookieConfig, OIDCConfig
 from tests.support.access import store_plan
@@ -124,11 +124,15 @@ def gateway(tmp_path, monkeypatch):
     gw.set_rules([TRUSTED])
     original = gw.client
     gw.client = lambda: clients.append(original()) or clients[-1]
+    # A running gateway holds the lifetime lock for its whole life. This harness serves without running the lifespan,
+    # so it takes the same hold, and the cut-over sees it as it would see a running gateway.
+    gateway_lifetime.hold(path)
     try:
         yield gw
     finally:
         for client in clients:
             client.close()
+        gateway_lifetime.release(path)
 
 
 def signed_in(gateway, *, sub, email, groups=()):

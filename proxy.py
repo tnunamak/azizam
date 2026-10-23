@@ -12905,7 +12905,24 @@ def _retry_prompt_deadline_repair() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """App lifespan manager."""
+    """The gateway's run, with the lifetime lock on its database held around the start-up and the shutdown.
+
+    Every launcher passes through here: ``python proxy.py``, ``uvicorn proxy:app`` and a test gateway that enters it.
+    The lock is re-entrant per process, and it is released when the last lifespan on this database exits (owner
+    visibility step 2, design §8.1).
+    """
+    path = ADMIN_STORE.path
+    await asyncio.to_thread(gateway_lifetime.hold, path)  # waits while the cut-over holds the file exclusively
+    try:
+        async with _serve(app):
+            yield
+    finally:
+        gateway_lifetime.release(path)
+
+
+@asynccontextmanager
+async def _serve(app: FastAPI):
+    """The start-up and shutdown of the stores, workers and background tasks."""
     # The retention defaults are data (registry/retention.yml); without a valid file the gateway has none.
     await asyncio.to_thread(retention.require_bundled)
     # Ownership and history stores must be ready before any worker can write.
@@ -31563,8 +31580,6 @@ if __name__ == "__main__":
 
     # Request scratch for this process and its children uses the private directory (REQUEST_RETENTION.md 5.1).
     private_tmp.activate()
-    # The App-binding cut-over refuses to run while this gateway holds the database's lifetime lock (owner visibility step 2).
-    gateway_lifetime.hold(ADMIN_STORE.path)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
