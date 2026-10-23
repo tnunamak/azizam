@@ -10,10 +10,22 @@ import asyncio
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_jobs, receipt_store
+from gateway import (
+    admin_store,
+    media_jobs,
+    prompt_memory,
+    receipt_store,
+    request_history,
+    request_history_capture,
+    retention,
+)
+from gateway.receipts import RouteReceipt
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 from tests.support import gateway as gateway_support
 from tests.support.gateway import gateway_client, register_litellm, use_admin_db
@@ -95,6 +107,72 @@ def test_no_app_key_or_authorization_value_reaches_any_file_the_gateway_writes(c
     needle = gateway_support._APP_KEY["key"].encode()
     leaks = [path for path in tmp_path.rglob("*") if path.is_file() and needle in path.read_bytes()]
     assert leaks == []
+
+
+def test_media_prompt_and_history_roll_back_together_when_the_second_write_fails(monkeypatch, tmp_path):
+    """A failed history insert after the prompt write must leave neither row committed (section 3.6)."""
+    admin_db = use_admin_db(monkeypatch, tmp_path)
+    person_id = admin_store.upsert_oidc_user("https://fixture.test", "media-person", path=admin_db)["id"]
+    app_record = admin_store.create_app("Media app", kind="personal", owner_user_id=person_id,
+                                        access_plan="person", path=admin_db)
+    for group, kind in ((retention.GROUP_PROMPTS, retention.LIBRARY_PROMPT),
+                        (retention.GROUP_REQUEST_HISTORY, retention.REQUEST_HISTORY)):
+        admin_store.put_prompt_memory_preference(
+            person_id, remember=True,
+            retention=retention.bundled().member_defaults(kind)["retention"],
+            group=group, path=admin_db,
+        )
+
+    media_db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(media_db)
+    receipts_db = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts_db)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipts_db)
+    asset_id = "img_atomic"
+    request_id = "req_atomic_media"
+    injected: list[bool] = []
+
+    def fail_history_insert(_conn, _record):
+        injected.append(True)
+        raise RuntimeError("injected crash between media retention writes")
+
+    monkeypatch.setattr(request_history, "insert_record", fail_history_insert)
+    app = FastAPI()
+    app.add_middleware(
+        request_history_capture.RequestHistoryMiddleware,
+        admin_path=lambda: admin_db,
+        media_path=lambda: media_db,
+    )
+
+    @app.post("/v1/images/generations")
+    async def generate(request: Request):
+        request.state.request_history_identity = SimpleNamespace(identity=SimpleNamespace(
+            person_id=person_id, app_id=app_record["id"], auth_kind="app_key", credential_id="credential-media",
+        ))
+        await request.json()
+        receipt_store.record(RouteReceipt(
+            protocol="openai.images", intent="image.generate", path="/v1/images/generations",
+            request_id=request_id, app_id=app_record["id"], status="succeeded",
+        ), path=receipts_db)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id=request_id, intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+        ), path=media_db)
+        assert prompt_memory.safe_put(
+            asset_id, person_id, "a painted orchard", kept_until=None, path=media_db, admin_path=admin_db,
+        )
+        return {"created": True}
+
+    response = TestClient(app).post(
+        "/v1/images/generations", json={"model": "image", "prompt": "a painted orchard"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert injected == [True]
+    assert prompt_memory.get(asset_id, person_id, path=media_db) is None
+    with sqlite3.connect(media_db) as conn:
+        rows = conn.execute("SELECT record_id FROM kept_requests WHERE request_id=?", (request_id,)).fetchall()
+    assert rows == []
 
 
 def test_a_member_who_keeps_replies_also_gets_the_status_and_the_reply_body(chat_gateway):
