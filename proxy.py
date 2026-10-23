@@ -17763,28 +17763,12 @@ async def setup_create_first_app(request: Request):
                 path=ADMIN_STORE.path,
             )
         else:
-            app_record = ADMIN_STORE.create_app(
-                data={"name": app_name, "kind": "service", "access_plan": "person"},
-                actor=actor,
-            )
-            credential = ADMIN_STORE.create_credential(
-                app_id=str(app_record["id"]),
-                data={"label": key_label},
-                actor=actor,
-            )
-            admin_store.record_audit(
-                "setup.first_app_key",
-                actor_kind=actor.actor_kind,
-                actor_id=actor.audit_actor_id,
-                actor_label=actor.actor_label,
-                target_kind="credential",
-                target_id=str(credential.get("id") or ""),
-                metadata={
-                    "via": "setup_page",
-                    "app_id": app_record.get("id"),
-                    "prefix": credential.get("prefix"),
-                },
-                path=ADMIN_STORE.path,
+            # A control-plane key answers for no person, so it cannot issue an App's first key (owner
+            # visibility step 2). The owner signs in and makes the App from their own session.
+            return await _setup_page_response(
+                request,
+                app_error="Sign in as the person this App will answer for. A control-plane key cannot add a key to an App.",
+                status_code=403,
             )
     except UserPortalError as e:
         return await _setup_page_response(

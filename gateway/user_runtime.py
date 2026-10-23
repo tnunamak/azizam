@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway import admin_store, avatars, session_guard, session_policy
+from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -504,6 +504,53 @@ def mint_user_app_key(
     out["api_key"] = api_key
     out["prompt_memory"] = app_key_prompt_memory(app, record)
     return out
+
+
+def add_user_trusted_address(
+    session: AdminSession,
+    app_id: str,
+    data: Mapping[str, Any],
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Trust a client address for an App the signed-in person answers for (owner visibility step 2).
+
+    The same rule as the admin route: only the accountable person adds an address, and the address
+    records them as its creator. The insert runs in the sign-in's own transaction, so a sign-out that
+    lands first adds nothing. An App that is not theirs is refused with the same reason as a foreign
+    key request.
+    """
+    user = _user_from_session(session, path=path)
+    app = admin_store.get_app(app_id, path=path)
+    if app is None:
+        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
+    if app.get("owner_user_id") != str(user["id"]):
+        raise UserPortalError(
+            "not_your_app",
+            "Only the person this App answers for can add a trusted address to it.",
+            status_code=403,
+        )
+    try:
+        address = trusted_addresses.normalize_entry(data.get("address"))
+        record = admin_store.add_trusted_address(
+            app_id, address, note=str(data.get("note") or "")[:200], created_by=str(user["id"]),
+            max_entries=trusted_addresses.MAX_ENTRIES_PER_APP,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    except ValueError as exc:
+        raise UserPortalError("invalid_trusted_address", str(exc), status_code=400) from None
+    admin_store.record_audit(
+        "app.trusted_address.add",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=app_id,
+        metadata={"address": address, "entry_id": record["id"]},
+        path=path,
+    )
+    return record
 
 
 def ensure_try_session_key(

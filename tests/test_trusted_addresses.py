@@ -334,7 +334,7 @@ def test_receipts_carry_the_app_and_the_address(store):
 # --- admin API -----------------------------------------------------------------------
 
 
-def _admin_client(tmp_path, roles=("owner",)):
+def _admin_client(tmp_path, roles=("owner",), accountable=True):
     from fastapi import FastAPI
     from gateway.admin_api import AdminContext, create_admin_router
     from gateway.admin_runtime import AdminSQLiteStore
@@ -347,10 +347,13 @@ def _admin_client(tmp_path, roles=("owner",)):
     accounts.change_person(person["id"], "test", plan_id=admin_store.create_access_plan(
         {**PLAN, "name": "p"}, path=path)["id"], path=path)
     app = admin_store.create_app("Display", kind="service", owner_user_id=person["id"], access_plan="person", path=path)
+    # By default the caller is the App's accountable person; accountable=False is someone else with the same roles.
+    actor_id = person["id"] if accountable else "someone-else"
     api = FastAPI()
     api.include_router(create_admin_router(
         AdminSQLiteStore(path),
-        auth=lambda request: AdminContext(subject="u", roles=frozenset(roles), auth_method="bearer"),
+        auth=lambda request: AdminContext(subject=actor_id, actor_kind="user", actor_id=actor_id,
+                                          roles=frozenset(roles), auth_method="bearer"),
     ))
     return TestClient(api), app["id"], path
 
@@ -389,11 +392,11 @@ def test_admin_api_refuses_a_duplicate_and_an_unknown_app(tmp_path):
     assert client.get("/admin/api/apps/app_missing/trusted-addresses").status_code == 404
 
 
-def test_only_an_owner_can_trust_an_address(tmp_path):
-    client, app_id, path = _admin_client(tmp_path, roles=("admin",))
+def test_only_the_accountable_person_can_trust_an_address(tmp_path):
+    client, app_id, path = _admin_client(tmp_path, roles=("owner",), accountable=False)
     response = client.post(f"/admin/api/apps/{app_id}/trusted-addresses", json={"address": "10.0.0.1"})
-    assert response.status_code == 403 and response.json()["error"]["code"] == "owner_required"
-    assert admin_store.list_trusted_addresses(path=path) == []
+    assert response.status_code == 403 and response.json()["error"]["code"] == "not_your_app"
+    assert admin_store.list_trusted_addresses(app_id, path=path) == []
 
 
 def test_an_app_holds_a_bounded_number_of_entries(tmp_path):

@@ -105,6 +105,10 @@ class AdminContext:
         return self.actor_id or self.subject
 
 
+class NotYourApp(PermissionError):
+    """An App key or trusted address is added by the App's accountable person only (owner visibility §3.5)."""
+
+
 class AdminKeyNameTaken(ValueError):
     """The name of a new admin key is already in use."""
 
@@ -1262,6 +1266,10 @@ def _owner_required(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
 
 
+def _not_your_app(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "not_your_app", str(exc)).as_response()
+
+
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
     """Resolve admin context, returning a JSONResponse on failure."""
     try:
@@ -2109,12 +2117,10 @@ def create_admin_router(
             body = await _read_json_body(request)
         except _RouteError as exc:
             return exc.as_response()
-        if "owner" not in ctx.roles:  # Trusting an address lets a device in with no key.
-            return _RouteError(
-                status.HTTP_403_FORBIDDEN, "owner_required", "Only an owner can trust an address.",
-            ).as_response()
-        try:
+        try:  # Trusting an address lets a device in with no key, so only the App's accountable person may.
             record = store.add_trusted_address(app_id=app_id, data=body, actor=ctx)
+        except NotYourApp as exc:
+            return _not_your_app(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST, "invalid_trusted_address", str(exc),
@@ -2267,6 +2273,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except NotYourApp as exc:
+            return _not_your_app(exc)
         except PermissionError as exc:
             return _owner_required(exc)
         except SessionEnded as exc:

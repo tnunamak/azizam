@@ -31,7 +31,7 @@ from gateway import log_scrub
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
-from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
+from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, NotYourApp, access_model_summary
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
     AdminSession,
@@ -370,6 +370,17 @@ class AdminSQLiteStore:
             return
         raise PermissionError("Only the owner can do this for an App that someone else answers for.")
 
+    @staticmethod
+    def _require_accountable_person(actor: AdminContext, accountable_user_id: str) -> None:
+        """Only the App's accountable person adds a key or a trusted address (owner visibility §3.5).
+
+        The owner role is not enough: it runs plans and disables Apps, but a binding is a credential
+        the person must issue for themselves. A control-plane key is not a person, so it adds none.
+        """
+        if actor.actor_kind == "user" and accountable_user_id and actor.audit_actor_id == accountable_user_id:
+            return
+        raise NotYourApp("Only the person this App answers for can add a key or a trusted address to it.")
+
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -564,8 +575,10 @@ class AdminSQLiteStore:
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
         """Trust a client address or range for one App. ValueError carries a sentence for the owner."""
-        if admin_store.get_app(app_id, path=self.path) is None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is None:
             return None
+        self._require_accountable_person(actor, str(app.get("owner_user_id") or ""))
         try:
             address = trusted_addresses.normalize_entry(data.get("address"))
             record = admin_store.add_trusted_address(
@@ -623,7 +636,7 @@ class AdminSQLiteStore:
         app = admin_store.get_app(app_id, path=self.path)
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
-        self._require_owner_or_accountable(actor, str(app.get("owner_user_id") or ""))
+        self._require_accountable_person(actor, str(app.get("owner_user_id") or ""))
         api_key = generate_app_api_key()
         record = admin_store.create_credential_hash(
             subject_kind="app",
