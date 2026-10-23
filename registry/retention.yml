@@ -12,6 +12,9 @@ format_version: 1
 # no expiry.
 retention_choices:
   never: null
+  1_day: 86400
+  7_days: 604800
+  30_days: 2592000
   3_months: 7776000
   1_year: 31536000
 
@@ -207,8 +210,10 @@ provider_fact_catalog:
 household:
   never_keep: false
 
-# One member switch per group. A group is a set of kinds that share one switch. The values are
-# the ones the gateway used before this file existed.
+# One member switch per group. A group is a set of kinds that share one switch. The prompts values are
+# the ones the gateway used before this file existed. Request history is on by default for a new member
+# (DECISIONS.md D50: "Request history is on by default, with an incognito mode"); a person who already has
+# a row keeps it, so changing this default never changes an existing member.
 groups:
   prompts:
     kinds: [library_prompt, conversation]
@@ -216,6 +221,12 @@ groups:
     default_retention: never    # the member's default period
     default_cap: never          # the household's default cap on every member's period
     choices: [never, 1_year, 3_months]   # the order the settings screens list them
+  request_history:
+    kinds: [request_history]
+    default_keep: true          # D50, on by default; for a new member only
+    default_retention: 7_days   # the member's default period
+    default_cap: 30_days        # the household's cap; a cap of 30 days keeps the longest offered period
+    choices: [1_day, 7_days, 30_days]
 
 # One purpose per kind, and what a record of the kind may hold and who may read it.
 kinds:
@@ -227,6 +238,11 @@ kinds:
     purpose: An app can ask Azizam to keep a conversation so it can continue it later.
     parts: {allowed: [accepted, received], default: [accepted, received]}
     readers: scope
+  request_history:
+    purpose: Request history keeps what your apps sent for a short time, so you can check it and run it again.
+    parts: {allowed: [accepted, received], default: [accepted]}
+    max_record_bytes: 1048576
+    readers: maker
 
 # Nothing in data widens who can read content. The validator accepts only none.
 widening: none

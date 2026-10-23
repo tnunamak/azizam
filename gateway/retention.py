@@ -58,13 +58,21 @@ NAMESPACE = "com.azizam.prompts"
 # Core defines the kinds, because each kind needs a capture point in code. Data gives each its values.
 LIBRARY_PROMPT = "library_prompt"
 CONVERSATION = "conversation"
-KINDS = (LIBRARY_PROMPT, CONVERSATION)
+REQUEST_HISTORY = "request_history"
+KINDS = (LIBRARY_PROMPT, CONVERSATION, REQUEST_HISTORY)
 #: The group whose view the settings screens speak.
 GROUP_PROMPTS = "prompts"
+GROUP_REQUEST_HISTORY = "request_history"
+#: Core defines which kinds share a member switch, as it defines the kinds themselves.
+GROUP_KINDS = {GROUP_PROMPTS: (LIBRARY_PROMPT, CONVERSATION), GROUP_REQUEST_HISTORY: (REQUEST_HISTORY,)}
 #: What a record of each kind can hold at most: the boundaries the code can capture.
-CAPTURE_POINTS = {LIBRARY_PROMPT: ("accepted",), CONVERSATION: ("accepted", "received")}
-#: Only reader rules enforced by the existing Library and Responses routes belong in slice 1.
-READERS = {LIBRARY_PROMPT: ("maker",), CONVERSATION: ("scope",)}
+CAPTURE_POINTS = {
+    LIBRARY_PROMPT: ("accepted",),
+    CONVERSATION: ("accepted", "received"),
+    REQUEST_HISTORY: ("accepted", "received"),
+}
+#: Only reader rules the code enforces belong in the file. Request history is maker-only (DECISIONS.md D51).
+READERS = {LIBRARY_PROMPT: ("maker",), CONVERSATION: ("scope",), REQUEST_HISTORY: ("maker",)}
 
 #: The names of the prompts group's view (the settings screens' wire names).
 PROMPTS_VIEW_FIELDS = frozenset({"default_remember", "never_keep", "retention_cap"})
@@ -126,8 +134,10 @@ class Contract:
             "choices": [{"id": name, "seconds": seconds[name]} for name in self.group(kind)["choices"]],
             "defaults": {**self.household_defaults(kind), **self.member_defaults(kind)},
         }
+        # A choice another group offers is not "known but unoffered" for this one: the prompts payload stays as it was.
+        offered_anywhere = {name for group in self.data["groups"].values() for name in group["choices"]}
         unoffered = [{"id": name, "seconds": duration} for name, duration in seconds.items()
-                     if name not in self.group(kind)["choices"]]
+                     if name not in offered_anywhere]
         if unoffered:
             result["known_unoffered"] = unoffered
         return result
@@ -141,12 +151,16 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
     seconds = data["retention_choices"]
     if data["household"]["never_keep"]:
-        errors.append("household/never_keep: slice 5 adds startup erasure; slice 1 accepts this switch through the owner setting only")
+        errors.append("household/never_keep: the bundled file cannot erase content at startup; the owner's setting can")
     seen_in: dict[str, str] = {}
-    if set(data["groups"]) != {GROUP_PROMPTS}:
-        errors.append("groups: slice 5 adds another group; slice 1 enforces only prompts")
-    elif set(data["groups"][GROUP_PROMPTS]["kinds"]) != set(KINDS):
-        errors.append("groups/prompts/kinds: slice 5 adds group routing; slice 1 keeps both existing kinds in prompts")
+    for name in data["groups"]:
+        if name not in GROUP_KINDS:
+            errors.append(f"groups/{name}: the gateway has no group of that name ({', '.join(GROUP_KINDS)})")
+    for name, kinds in GROUP_KINDS.items():
+        if name not in data["groups"]:
+            errors.append(f"groups/{name}: the group is missing")
+        elif set(data["groups"][name]["kinds"]) != set(kinds):
+            errors.append(f"groups/{name}/kinds: the gateway routes {', '.join(kinds)} to this group")
     for kind in data["kinds"]:
         if kind not in KINDS:
             errors.append(f"kinds/{kind}: the kind is not one the gateway can capture ({', '.join(KINDS)})")
@@ -173,10 +187,8 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         if kind not in KINDS:
             continue
         if values["readers"] not in READERS[kind]:
-            errors.append(f"kinds/{kind}/readers: slice 5 adds reader controls; slice 1 enforces only {', '.join(READERS[kind])}")
+            errors.append(f"kinds/{kind}/readers: the gateway enforces only {', '.join(READERS[kind])} for this kind")
         parts = values["parts"]
-        if set(parts["allowed"]) != set(CAPTURE_POINTS[kind]) or set(parts["default"]) != set(CAPTURE_POINTS[kind]):
-            errors.append(f"kinds/{kind}/parts: slice 5 adds part-aware capture; slice 1 enforces only the current parts")
         for part in parts["allowed"]:
             if part not in CAPTURE_POINTS[kind]:
                 errors.append(f"kinds/{kind}/parts/allowed: {part} is not captured for {kind} (captured: {', '.join(CAPTURE_POINTS[kind])})")
