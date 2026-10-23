@@ -138,24 +138,16 @@ for (const viewport of WIDTHS) {
       await capture(page, name, "password-gone");
     });
 
-    // The owner's "On shared computers" choice (S12) on Settings, saved, then the browser that remembered two people
-    // shows the plain form. Tagged global-state: the choice is owner-wide, and the fixture restores it after the test.
+    // The owner's "On shared computers" choice (S12) on a password-only install, saved on Settings. The browser that
+    // remembered two people then shows the plain form. Tagged global-state: the choice is owner-wide, and the fixture
+    // restores it after the test.
     test(`the owner remembers nobody on Settings, and the chooser then shows the plain form`, {
       tag: GLOBAL_STATE_TAG,
-    }, async ({ page: owner, request, baseURL, isolated }) => {
+    }, async ({ page: owner, request, isolated }) => {
       test.setTimeout(240_000);
-      // A provider that is on, set the way signin-rules sets it: the page is then the live one, and Save changes a saved
-      // sign-in. On an install with no provider on, every save asks for a provider test first (the page's turn-on rule).
+      // Single sign-on is off: the mode is set here, so the test does not depend on the seed.
       const api = await ownerApi(request);
-      await api.send("PUT", "/fixture/operator-settings/oidc_provider_config", {
-        enabled: true,
-        issuer: "https://id.example.test/realms/e2e",
-        client_id: "azizam-e2e",
-        client_secret: "e2e-secret",
-        redirect_uri: `${new URL(baseURL!).origin}/admin/oidc/callback`,
-        scopes: ["openid", "email", "profile"],
-      });
-      await api.send("PUT", "/fixture/operator-settings/sign_in", { mode: "both" });
+      await api.send("PUT", "/fixture/operator-settings/sign_in", { mode: "built-in" });
 
       const { page: device } = await twoPeopleOnOneBrowser(isolated);
       await device.goto("/sign-in/");
@@ -167,7 +159,9 @@ for (const viewport of WIDTHS) {
       await block.getByRole("radio", { name: "Remember nobody" }).click();
       await expect(block).toContainText("Saving forgets every name on every browser.");
       await block.screenshot({ path: test.info().outputPath(`w5-shots/${viewport.name}-s12-remember-nobody.png`) });
-      await owner.getByRole("button", { name: "Save changes" }).click();
+      const save = owner.getByRole("button", { name: "Save changes" });
+      await expect(save).toBeEnabled();
+      await save.click();
       await expect(owner.getByText("Nothing to save.")).toBeVisible();
 
       await device.goto("/sign-in/");
