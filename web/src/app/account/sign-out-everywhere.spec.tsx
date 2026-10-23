@@ -36,7 +36,7 @@ describe("sign out everywhere", () => {
     expect(dialog).toHaveTextContent("including this one");
     expect(sent).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Sign out everywhere" }));
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere"));
     expect(sent).toEqual([
       { path: "/auth/api/sign-out-everywhere", method: "POST", csrf: "csrf-token" },
     ]);
