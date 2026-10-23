@@ -235,8 +235,20 @@ def test_an_unknown_tile_is_refused_before_any_provider_redirect(tls):
 
     unknown = same_device(tls, client).get("/login", params={"tile": "t_bogus"}, follow_redirects=False)
 
-    assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "tile_unknown"
-    assert "location" not in unknown.headers and session_cookies(unknown) == []
+    assert unknown.status_code == 302 and unknown.headers["location"] == "/sign-in/?error=tile_unknown"
+    assert session_cookies(unknown) == []
+
+
+def test_a_forgotten_tile_on_single_sign_on_goes_back_to_the_sign_in_page(tls):
+    client = tls.client()
+    tls.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], start={"remember": "1"})
+    tile = next(person["tile"] for person in listed(client)["people"] if person["method"] == "sso")
+    assert client.delete(f"/auth/api/remembered/{tile}").status_code == 200
+
+    stale = same_device(tls, client).get("/login", params={"tile": tile}, follow_redirects=False)
+
+    assert stale.status_code == 302 and stale.headers["location"] == "/sign-in/?error=tile_unknown"
+    assert session_cookies(stale) == []
 
 
 def test_tile_login_resolves_the_person_from_the_device_not_the_request(tls):
