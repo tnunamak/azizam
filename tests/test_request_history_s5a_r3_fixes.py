@@ -205,3 +205,38 @@ def test_r2_6_control_a_reply_the_member_keeps_is_kept_with_its_omissions(member
     row = _only_row(media)
     assert json.loads(row["parts_kept"]) == ["accepted", "received"]
     assert "media" in json.loads(row["omissions_json"])
+
+
+# ------------------------------------------------------------------ nit: delete all reports the rows it deleted
+
+
+def _kept_row(person: str, created: int) -> dict:
+    return {"record_id": request_history.new_record_id(), "request_id": None, "person_id": person, "app_id": "app_probe",
+            "origin_kind": "app_key", "origin_id": "cred_probe", "created_at": created, "kept_until": None,
+            "parts": {"accepted": {"headers": {}, "body": {"model": "m"}}}, "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/responses", "model": "m", "status": 200, "latency_ms": 1}}
+
+
+def _busy(*args, **kwargs):
+    raise sqlite3.OperationalError("database is locked")
+
+
+def test_delete_all_reports_the_rows_it_deleted_when_the_intent_cannot__be_cleared(member_db, monkeypatch):
+    db, media, person = member_db
+    now = int(time.time())
+    request_history.insert(_kept_row(person, now - 10), path=media)
+    request_history.insert(_kept_row(person, now - 5), path=media)
+    monkeypatch.setattr(request_history, "_clear_intent", _busy)
+    result = request_history.delete_all_for_person(person, admin_path=db, path=media, now=now)
+    assert result == {"deleted": 2, "pending": False}
+    assert _kept(media) == []
+
+
+def test_delete_all_says_pending_when_the_rows_cannot_be_deleted(member_db, monkeypatch):
+    db, media, person = member_db
+    now = int(time.time())
+    request_history.insert(_kept_row(person, now - 10), path=media)
+    monkeypatch.setattr(request_history, "_delete_rows", _busy)
+    result = request_history.delete_all_for_person(person, admin_path=db, path=media, now=now)
+    assert result == {"deleted": 0, "pending": True}
+    assert len(_kept(media)) == 1

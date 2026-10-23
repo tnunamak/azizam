@@ -564,13 +564,8 @@ def _admin_connection(admin_path: Path) -> sqlite3.Connection:
     return retention.connect(admin_path, timeout=retention.RETENTION_LOCK_TIMEOUT_SECONDS)
 
 
-def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path | None = None) -> int:
-    """Delete a person's kept requests created at or before ``cutoff`` (``*``: everyone's), then clear the intent.
-
-    The rows go first. If that fails, the intent stays, and maintenance settles it again (section 12).
-    """
-    from gateway import retention
-
+def _delete_rows(person_id: str, cutoff: int, *, path: Path | None) -> int:
+    """Delete a person's kept requests created at or before ``cutoff`` (``*``: everyone's). Returns how many."""
     conn = connect(path)
     try:
         if person_id == "*":
@@ -579,9 +574,15 @@ def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path 
             cursor = conn.execute("DELETE FROM kept_requests WHERE kind=? AND person_id=? AND created_at<=?",
                                   (KIND, person_id, cutoff))
         conn.commit()
-        deleted = cursor.rowcount
+        return cursor.rowcount
     finally:
         conn.close()
+
+
+def _clear_intent(person_id: str, cutoff: int, *, admin_path: Path) -> None:
+    """Clear a person's erasure intent once its rows are gone."""
+    from gateway import retention
+
     admin = _admin_connection(admin_path)
     try:
         admin.execute("BEGIN IMMEDIATE")
@@ -592,6 +593,15 @@ def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path 
         admin.commit()
     finally:
         admin.close()
+
+
+def settle_erasure(person_id: str, cutoff: int, *, admin_path: Path, path: Path | None = None) -> int:
+    """Delete a person's kept requests created at or before ``cutoff`` (``*``: everyone's), then clear the intent.
+
+    The rows go first. If that fails, the intent stays, and maintenance settles it again (section 12).
+    """
+    deleted = _delete_rows(person_id, cutoff, path=path)
+    _clear_intent(person_id, cutoff, admin_path=admin_path)
     return deleted
 
 
@@ -612,10 +622,16 @@ def delete_all_for_person(person_id: str, *, admin_path: Path, path: Path | None
     finally:
         admin.close()
     try:
-        return {"deleted": settle_erasure(person_id, now, admin_path=admin_path, path=path), "pending": False}
+        deleted = _delete_rows(person_id, now, path=path)
     except sqlite3.OperationalError:
         log.warning("request history erasure settles at maintenance: the rows could not be deleted now", exc_info=False)
         return {"deleted": 0, "pending": True}
+    try:
+        _clear_intent(person_id, now, admin_path=admin_path)
+    except sqlite3.OperationalError:
+        # The rows are gone, so the count is the real one. The intent stays, and maintenance clears it (section 12).
+        log.warning("request history erasure intent settles at maintenance: the store is busy", exc_info=False)
+    return {"deleted": deleted, "pending": False}
 
 
 def set_member_choice(person_id: str, *, keep: bool, retention_id: str, parts: list[str], admin_path: Path,
