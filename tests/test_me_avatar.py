@@ -281,7 +281,8 @@ def test_removing_a_person_deletes_their_avatar_row_and_the_provider_url(tmp_pat
     avatars.set_choice(member["id"], "picture", path=db)
     accounts.change_person(member["id"], owner["id"], remove=True, path=db)
     assert avatars.get(member["id"], path=db) == {"choice": "auto", "picture_url": None, "picture_set_at": None,
-                                                  "generated_template": None, "generated_at": None}
+                                                  "generated_template": None, "generated_at": None,
+                                                  "default_job_id": None, "default_attempted_at": None}
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM user_avatars WHERE user_id=?", (member["id"],)).fetchone()[0] == 0
 

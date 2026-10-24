@@ -46,9 +46,11 @@ _SIGNATURES = (
     (b"GIF87a", "image/gif"),
     (b"GIF89a", "image/gif"),
 )
-_COLUMNS = "choice, picture_url, picture_set_at, generated_template, generated_at"
+_COLUMNS = ("choice, picture_url, picture_set_at, generated_template, generated_at, "
+            "default_job_id, default_attempted_at")
 _DEFAULT = {"choice": AUTO, "picture_url": None, "picture_set_at": None,
-            "generated_template": None, "generated_at": None}
+            "generated_template": None, "generated_at": None,
+            "default_job_id": None, "default_attempted_at": None}
 
 
 class AvatarError(ValueError):
@@ -86,7 +88,8 @@ def clean_picture_url(value: Any) -> str | None:
 
 def _record(row: sqlite3.Row) -> dict[str, Any]:
     return {"choice": row["choice"], "picture_url": row["picture_url"], "picture_set_at": row["picture_set_at"],
-            "generated_template": row["generated_template"], "generated_at": row["generated_at"]}
+            "generated_template": row["generated_template"], "generated_at": row["generated_at"],
+            "default_job_id": row["default_job_id"], "default_attempted_at": row["default_attempted_at"]}
 
 
 def _row(conn: sqlite3.Connection, person_id: str) -> sqlite3.Row | None:
@@ -171,6 +174,8 @@ def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) ->
     if person_id == viewer_id:
         view["sign_in_picture_url"] = _preview_path(SHOWN_SIGN_IN, record["picture_set_at"]) if record["picture_url"] else None
         view["made_picture_url"] = _preview_path(SHOWN_GENERATED, record["generated_at"]) if has_current_copy(record) else None
+        # The automatic default is being made: the page shows that until its picture is kept or it fails.
+        view["generating"] = record["default_job_id"] is not None
     return view
 
 
@@ -192,42 +197,128 @@ def remove_generated_files(person_id: str, *, path: Path) -> None:
     shutil.rmtree(generated_dir(person_id, path=path), ignore_errors=True)
 
 
-def store_generated(person_id: str, data: bytes, *, path: Path) -> dict[str, Any]:
-    """Keep a copy of a picture the gateway made, and show it as the person's avatar."""
-    if image_type(data) is None or len(data) > MAX_GENERATED_BYTES:
-        raise AvatarError("invalid_generated_picture", "That picture cannot be kept as an avatar.")
-    if admin_store.get_user(person_id, path=path) is None:
-        raise AvatarError("person_not_found", "This account was not found.", 404)
+def _write_copy(person_id: str, data: bytes, *, path: Path) -> None:
+    """Write the copy for the current template, and nothing else, into the person's cache directory."""
     directory = generated_dir(person_id, path=path)
     target = directory / TEMPLATE_VERSION
     private_io.ensure_private_dir(directory)
     private_io.atomic_write_bytes(target, data)
-    now = int(time.time())
-    with admin_store.transaction(path) as tx:
-        tx.conn.execute(
-            "INSERT INTO user_avatars(user_id, choice, generated_template, generated_at, updated_at) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, generated_template=excluded.generated_template, "
-            "generated_at=excluded.generated_at, updated_at=excluded.updated_at",
-            (person_id, GENERATED, TEMPLATE_VERSION, now, now),
-        )
-    # Only the copy for the current template stays.
     for entry in directory.iterdir():
         if entry != target:
             entry.unlink(missing_ok=True)
+
+
+def store_generated(person_id: str, data: bytes, *, path: Path) -> dict[str, Any]:
+    """Keep a copy of a picture the gateway made, and show it as the person's avatar.
+
+    A person who keeps one has settled their default: the automatic picture is never made for them after this.
+    """
+    if image_type(data) is None or len(data) > MAX_GENERATED_BYTES:
+        raise AvatarError("invalid_generated_picture", "That picture cannot be kept as an avatar.")
+    if admin_store.get_user(person_id, path=path) is None:
+        raise AvatarError("person_not_found", "This account was not found.", 404)
+    _write_copy(person_id, data, path=path)
+    now = int(time.time())
+    with admin_store.transaction(path) as tx:
+        tx.conn.execute(
+            "INSERT INTO user_avatars(user_id, choice, generated_template, generated_at, default_attempted_at, updated_at) "
+            "VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, generated_template=excluded.generated_template, "
+            "generated_at=excluded.generated_at, updated_at=excluded.updated_at, "
+            "default_attempted_at=COALESCE(user_avatars.default_attempted_at, excluded.default_attempted_at)",
+            (person_id, GENERATED, TEMPLATE_VERSION, now, now, now),
+        )
     return get(person_id, path=path)
 
 
 def clear_generated(person_id: str, *, path: Path) -> dict[str, Any]:
-    """Remove the picture the gateway made. The person then shows their sign-in picture, or the palette."""
+    """Remove the picture the gateway made, whichever avatar the person shows.
+
+    The made picture's metadata always goes, so no preview of a missing file is offered. A person who showed the
+    made picture falls back in order: their sign-in picture if they have one, else the palette. That is the
+    automatic choice (AUTO). Their other choices (their sign-in picture, or a palette colour) stay as they are.
+    """
     now = int(time.time())
     with admin_store.transaction(path) as tx:
-        tx.conn.execute(
-            "UPDATE user_avatars SET choice=?, generated_template=NULL, generated_at=NULL, updated_at=? "
-            "WHERE user_id=? AND choice=?",
-            (AUTO, now, person_id, GENERATED),
-        )
+        row = _row(tx.conn, person_id)
+        if row is not None:
+            fallback = AUTO if row["choice"] == GENERATED else row["choice"]
+            tx.conn.execute(
+                "UPDATE user_avatars SET choice=?, generated_template=NULL, generated_at=NULL, updated_at=? "
+                "WHERE user_id=?",
+                (fallback, now, person_id),
+            )
     remove_generated_files(person_id, path=path)
     return get(person_id, path=path)
+
+
+def _default_due(record: Mapping[str, Any]) -> bool:
+    """A person with no sign-in picture and no chosen avatar, who has not had the one automatic attempt yet."""
+    return record["default_attempted_at"] is None and record["choice"] == AUTO and not record["picture_url"]
+
+
+def default_due(person_id: str, *, path: Path) -> bool:
+    """Whether the automatic default is still to be made. It does not record an attempt; ``begin_default`` does."""
+    return _default_due(get(person_id, path=path))
+
+
+def begin_default(person_id: str, *, path: Path) -> bool:
+    """Record the one automatic attempt, if it is still due. True when this call made it due and it is ours to start.
+
+    The check and the record share one write transaction, so two page loads cannot both start the job. The
+    attempt is recorded before the job starts, so a job that fails to start is never retried.
+    """
+    now = int(time.time())
+    with admin_store.transaction(path) as tx:
+        if tx.conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is None:
+            return False
+        row = _row(tx.conn, person_id)
+        if row is not None and not _default_due(_record(row)):
+            return False
+        tx.conn.execute(
+            "INSERT INTO user_avatars(user_id, choice, default_attempted_at, updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET default_attempted_at=excluded.default_attempted_at, "
+            "updated_at=excluded.updated_at",
+            (person_id, AUTO, now, now),
+        )
+    return True
+
+
+def set_default_job(person_id: str, job_id: str, *, path: Path) -> None:
+    with admin_store.transaction(path) as tx:
+        tx.conn.execute("UPDATE user_avatars SET default_job_id=?, updated_at=? WHERE user_id=?",
+                        (job_id, int(time.time()), person_id))
+
+
+def finish_default(person_id: str, job_id: str, data: bytes | None, *, path: Path) -> None:
+    """The default's job has stopped. Keep its picture when it made one, then forget the job.
+
+    The picture becomes the person's avatar only while they still have the automatic choice and no sign-in
+    picture. Otherwise it is kept for them to choose later. A job that is no longer the current one changes nothing.
+    """
+    now = int(time.time())
+    with admin_store.transaction(path) as tx:
+        row = _row(tx.conn, person_id)
+        if row is None or row["default_job_id"] != job_id:
+            return  # Not the current job: it was settled already, or the person was removed.
+        picture = data if data is not None and image_type(data) and len(data) <= MAX_GENERATED_BYTES else None
+        if picture is not None:
+            try:
+                _write_copy(person_id, picture, path=path)
+            except OSError:
+                picture = None  # The picture could not be kept, so the job ends without one.
+        if picture is None:
+            tx.conn.execute("UPDATE user_avatars SET default_job_id=NULL, updated_at=? WHERE user_id=?",
+                            (now, person_id))
+            return
+        # The made picture is shown only while the person still has the automatic choice and no sign-in picture.
+        # Otherwise it is kept, so the person can choose it later.
+        choose = row["choice"] == AUTO and not row["picture_url"]
+        tx.conn.execute(
+            "UPDATE user_avatars SET choice=?, generated_template=?, generated_at=?, default_job_id=NULL, "
+            "updated_at=? WHERE user_id=?",
+            (GENERATED if choose else row["choice"], TEMPLATE_VERSION, now, now, person_id),
+        )
 
 
 def set_choice(person_id: str, choice: Any, *, path: Path) -> dict[str, Any]:

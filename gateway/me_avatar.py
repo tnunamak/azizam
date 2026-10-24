@@ -9,10 +9,15 @@ that copy. A failed fetch answers 404, and the page shows the palette initial in
 A person may also have the gateway make a picture of them. ``GET .../avatar/generator`` says whether an image
 route exists, ``POST .../avatar/generate`` starts a make job, ``POST .../avatar/generated`` keeps one of the
 person's own results, and ``DELETE .../avatar/generated`` removes it (gateway/avatar_generation.py).
+
+A person with no sign-in picture and no chosen avatar also gets one picture made for them, once:
+``POST .../avatar/default`` starts it on their first signed-in page load. ``GET`` and ``POST`` keep the picture
+once its job has stopped, so the page sees it on its next read. The attempt is never repeated.
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -31,6 +36,10 @@ from gateway.public_failure import PublicFailure
 SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 PictureFetcher = Callable[[str], Awaitable[media_fetch.FetchedMedia]]
+log = logging.getLogger(__name__)
+# The make job states after which it makes no more pictures.
+JOB_STOPPED = frozenset({"succeeded", "failed", "canceled", "cancelled"})
+JOB_SUCCEEDED = "succeeded"
 
 MAX_PICTURE_BYTES = 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 8.0
@@ -143,6 +152,17 @@ def _picture(data: bytes, content_type: str) -> Response:
     })
 
 
+def _own_picture_bytes(generation: AvatarGeneration, person_id: str, asset_id: str) -> bytes | None:
+    """The bytes of one of the person's own Library pictures, or None when it is not theirs or cannot be read."""
+    source = generation.own_picture_file(person_id, asset_id)
+    if source is None:
+        return None
+    try:
+        return source.read_bytes()
+    except OSError:
+        return None
+
+
 def create_me_avatar_router(
     *,
     session_provider: SessionProvider,
@@ -189,12 +209,50 @@ def create_me_avatar_router(
         kept.put(key, data, content_type)
         return _Kept(0.0, data, content_type)
 
+    async def _settle_default(person_id: str) -> None:
+        """Once the default's job has stopped, keep the picture it made (if any) and forget the job."""
+        record = await asyncio.to_thread(avatars.get, person_id, path=db())
+        job_id = record["default_job_id"]
+        if job_id is None:
+            return
+        job = None
+        if generation is not None:
+            job = await asyncio.to_thread(generation.job_state, person_id, job_id)
+        if job is not None and job.get("status") not in JOB_STOPPED:
+            return
+        data = None
+        if job is not None and job.get("status") == JOB_SUCCEEDED and job.get("asset_ids") and generation is not None:
+            data = await asyncio.to_thread(_own_picture_bytes, generation, person_id, str(job["asset_ids"][0]))
+        await asyncio.to_thread(avatars.finish_default, person_id, job_id, data, path=db())
+
+    async def _start_default(request: Request, person_id: str) -> None:
+        """Start the person's default picture: once, at low priority, and only when an image route exists."""
+        if generation is None or not await asyncio.to_thread(avatars.default_due, person_id, path=db()):
+            return
+        # Other picture work comes first. Waiting here uses no attempt: the default is still due later.
+        if await asyncio.to_thread(generation.busy):
+            return
+        model = await asyncio.to_thread(generation.model_for, person_id)
+        if model is None:
+            return
+        # The attempt is recorded before the job starts, so a default that fails to start is never retried.
+        if not await asyncio.to_thread(avatars.begin_default, person_id, path=db()):
+            return
+        prompt = avatar_generation.build_prompt(avatar_generation.new_seed())
+        try:
+            job = generation.start(request, person_id, model, prompt)
+        except Exception as exc:  # noqa: BLE001 - the page shows the palette; the attempt is already recorded
+            log.warning("automatic avatar for a person did not start: %s", type(exc).__name__)
+            return
+        await asyncio.to_thread(avatars.set_default_job, person_id, str(job["job_id"]), path=db())
+
     @router.get("/avatar", include_in_schema=False)
     async def get_avatar(request: Request) -> JSONResponse:
         session = await _session(request)
         if isinstance(session, JSONResponse):
             return session
         person_id = str(session.subject)
+        await _settle_default(person_id)
         record = await asyncio.to_thread(avatars.get, person_id, path=db())
         return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
                             headers={"Cache-Control": "no-store"})
@@ -276,6 +334,12 @@ def create_me_avatar_router(
             return missing
         if kind == avatars.SHOWN_GENERATED:
             data = await asyncio.to_thread(avatars.read_generated, person_id, path=db())
+            # The choice or the copy may have changed while it was read: answer as a request made now would.
+            again = await current()
+            if (again is None or again["generated_at"] != record["generated_at"]
+                    or not avatars.has_picture(kind, again)
+                    or (requested is None and avatars.shown_kind(again) != kind)):
+                return missing
             content_type = image_type(data) if data is not None else None
             return _picture(data, content_type) if data is not None and content_type else missing
         url = record["picture_url"]
@@ -325,10 +389,28 @@ def create_me_avatar_router(
             return _error("generator_unavailable", "This gateway has no picture route to make an avatar with.", 503)
         prompt = avatar_generation.build_prompt(avatar_generation.new_seed())
         try:
-            job = await asyncio.to_thread(generation.start, request, person_id, model, prompt)
+            # The make runtime schedules the job on the running loop, so the job starts on this loop, as a make
+            # page request does. A worker thread has no loop, and would fail after leaving the job queued.
+            job = generation.start(request, person_id, model, prompt)
         except PublicFailure as exc:
             return JSONResponse(exc.body(), status_code=exc.status_code, headers={"Cache-Control": "no-store"})
         return JSONResponse({"job": job}, status_code=202, headers={"Cache-Control": "no-store"})
+
+    @router.post("/avatar/default", include_in_schema=False)
+    async def post_default(request: Request) -> JSONResponse:
+        """The person's automatic picture: made once, on their first signed-in page load where the avatar shows."""
+        session = await _session(request)
+        if isinstance(session, JSONResponse):
+            return session
+        error = await _mutation_error(request, session)
+        if error is not None:
+            return error
+        person_id = str(session.subject)
+        await _settle_default(person_id)
+        await _start_default(request, person_id)
+        record = await asyncio.to_thread(avatars.get, person_id, path=db())
+        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
+                            headers={"Cache-Control": "no-store"})
 
     @router.post("/avatar/generated", include_in_schema=False)
     async def post_generated(request: Request) -> JSONResponse:

@@ -114,6 +114,7 @@ UNMANAGED_ME_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/me/api/profile/avatar/generate"): "the person's own make job for an avatar, stamped with them like any make job: no service record content",
     ("POST", "/me/api/profile/avatar/generated"): "a picture from the person's own Library, kept as their avatar: no service record content",
     ("DELETE", "/me/api/profile/avatar/generated"): "the person's own generated avatar, removed: no service record content",
+    ("POST", "/me/api/profile/avatar/default"): "the person's own automatic avatar, made once for them: no service record content",
     ("GET", "/me/api/profile/avatars"): "the avatar choices the viewer may see: no service record content",
     ("GET", "/me/api/prompt-memory"): "the person's own prompt memory: no service record content",
     ("PUT", "/me/api/prompt-memory"): "the person's own prompt memory: no service record content",

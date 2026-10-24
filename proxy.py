@@ -14541,6 +14541,8 @@ class _SessionMakeRuntime:
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
         if job_id in _image_media_job_scheduled:
             return
+        # The owning loop comes first: called off it, this raises before any marker or gate is kept.
+        loop = asyncio.get_running_loop()
         _image_media_job_scheduled.add(job_id)
         gate = self._gates.setdefault(job_id, _MakePublishGate())
 
@@ -14574,11 +14576,16 @@ class _SessionMakeRuntime:
             finally:
                 semaphore.release()
 
-        loop = asyncio.get_running_loop()
         # A cancel while the job waits for a turn ends the wait at once, so
         # only queued or running jobs hold a task and a gate.
         gate.loop, gate.stop_waiting = loop, asyncio.Event()
-        task = loop.create_task(bounded())
+        try:
+            task = loop.create_task(bounded())
+        except BaseException:
+            # No task will run the job, so give back its marker and its gate.
+            _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
+            raise
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:
@@ -14785,6 +14792,16 @@ def _avatar_own_picture_file(person_id: str, asset_id: str) -> Path | None:
     return path if path is not None and path.is_file() else None
 
 
+def _avatar_job_state(person_id: str, job_id: str) -> dict[str, Any] | None:
+    """The person's own make job, as the automatic default reads it, or None when it is not theirs."""
+    return me_make.person_job_state(job_id, person_id, admin_path=ADMIN_STORE.path, jobs_path=media_jobs.DB_PATH)
+
+
+def _avatar_picture_work_busy() -> bool:
+    """Whether any picture job is queued or running here. The automatic default waits for the queue to clear."""
+    return bool(_image_media_job_scheduled)
+
+
 app.include_router(
     me_avatar.create_me_avatar_router(
         session_provider=lambda request: _oidc_session_from_request(request),
@@ -14794,6 +14811,8 @@ app.include_router(
             model_for=_avatar_picture_model,
             start=_avatar_start_job,
             own_picture_file=_avatar_own_picture_file,
+            job_state=_avatar_job_state,
+            busy=_avatar_picture_work_busy,
         ),
     )
 )

@@ -50,7 +50,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -81,6 +81,9 @@ _RETENTION_GROUPS_VERSION = 17
 # Schema 19 lets a person keep a picture the gateway made for them (gateway/avatars.py). The avatar choice gains a
 # word, and SQLite cannot widen a CHECK in place, so _rebuild_user_avatars rebuilds the table.
 _GENERATED_AVATAR_VERSION = 19
+# Schema 20 keeps the automatic default for a person with no picture (gateway/avatars.py): the make job it started,
+# and when the one automatic attempt was made. Two plain columns, so an ALTER is enough.
+_AVATAR_DEFAULT_VERSION = 20
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -373,6 +376,8 @@ CREATE TABLE IF NOT EXISTS user_avatars (
  picture_set_at INTEGER,
  generated_template TEXT,
  generated_at INTEGER,
+ default_job_id TEXT,
+ default_attempted_at INTEGER,
  updated_at INTEGER NOT NULL
 );
 -- The names a browser keeps for its sign-in list (gateway.remembered_people). ``device_hash`` is the SHA-256 of the
@@ -592,6 +597,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         stt_chunking_upgrade.migrate_registry(conn)
     if row is not None and int(row[0]) < _GENERATED_AVATAR_VERSION:
         _rebuild_user_avatars(conn)
+    if row is not None and int(row[0]) < _AVATAR_DEFAULT_VERSION:
+        _add_avatar_default_columns(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
@@ -636,6 +643,15 @@ def _rebuild_user_avatars(conn: sqlite3.Connection) -> None:
     )
     conn.execute("DROP TABLE user_avatars")
     conn.execute("ALTER TABLE user_avatars_schema19 RENAME TO user_avatars")
+
+
+def _add_avatar_default_columns(conn: sqlite3.Connection) -> None:
+    """Schema 20: the automatic default's job and attempt columns. ``ACCOUNT_SCHEMA`` has them for a fresh database."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(user_avatars)").fetchall()}
+    if "default_job_id" not in columns:
+        conn.execute("ALTER TABLE user_avatars ADD COLUMN default_job_id TEXT")
+    if "default_attempted_at" not in columns:
+        conn.execute("ALTER TABLE user_avatars ADD COLUMN default_attempted_at INTEGER")
 
 
 def access_plans_backup_path(path: Path) -> Path:
