@@ -159,10 +159,7 @@ def create_me_media_router(
                 )
                 if not batch:
                     break
-                receipts = receipt_store.get_many(
-                    [rid for job in batch for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
-                )
-                rows.extend(job for job in batch if _job_in_library(job, _receipt_of(job, receipts), scope, apps))
+                rows.extend(job for job in batch if _job_in_library(job, scope))
                 scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
                 if len(batch) < 101:
                     break
@@ -171,11 +168,7 @@ def create_me_media_router(
             made = _maker_jobs(scope, jobs_path=jobs_path, receipts_path=receipt_path, before=cursor,
                                updated_since=updated_since, include_active=include_active)
             if made:
-                made_receipts = receipt_store.get_many(
-                    [rid for job in made for rid in _job_receipt_ids(job)], audience="internal", path=receipt_path,
-                )
-                rows.extend(job for job in made if job["job_id"] not in listed
-                            and _job_in_library(job, _receipt_of(job, made_receipts), scope, apps))
+                rows.extend(job for job in made if job["job_id"] not in listed and _job_in_library(job, scope))
                 rows.sort(key=lambda job: (job["updated_at"], job["job_id"]), reverse=True)
             page = rows[:100]
             next_cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
@@ -188,14 +181,12 @@ def create_me_media_router(
     def job_detail(job_id: str, request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
-            receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _member_media_scope(actor.user_id, admin_path)
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
             if job is None:
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
-            receipts = receipt_store.get_many(_job_receipt_ids(job), audience="internal", path=receipt_path)
-            if not _job_in_library(job, _receipt_of(job, receipts), scope, _Apps(admin_path)):
+            if not _job_in_library(job, scope):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
             return _json({"job": me_make._client_view(job, asset_path_resolver=asset_path_resolver)})
         except (PublicFailure, UserPortalError) as exc:
@@ -559,7 +550,7 @@ def _folder_counts(
     reports it apart, and a Library with only such ids is unverifiable rather than present.
     """
     named: dict[str, None] = {}
-    for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path, apps=_Apps(admin_path)):
+    for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path):
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
             if asset_id:
@@ -617,7 +608,7 @@ def _viewer_removal(
     """The same current selection for the read-only plan and the destructive action."""
     scope = _member_media_scope(user_id, admin_path)
     return _plan_removal(
-        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path, apps=_Apps(admin_path)),
+        _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=receipts_path),
         is_stored=lambda asset_id: _is_stored(asset_id, storage),
         already_hidden=(
             _deleted_asset_ids(scope, admin_path),
@@ -1044,19 +1035,19 @@ def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]
     return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
 
 
-def _job_in_library(
-    job: Mapping[str, Any], receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps,
-) -> bool:
-    """Whether the viewer may read this job and its items. Unscoped totals skip the decision."""
+def _job_in_library(job: Mapping[str, Any], scope: _MediaScope) -> bool:
+    """Whether the viewer may read this job and its items, by the maker stamped on the job when it was made.
+
+    A receipt or a parent link names no maker here: a client chooses its parent, so a parent link would let it claim
+    another person's job. Unscoped totals skip the decision.
+    """
     if scope.app_ids is None:
         return True
-    app_id = str(job.get("app_id") or (receipt or {}).get("app_id") or "") or None
-    makers = content_makers.row_makers(
-        explicit=[str((receipt or {}).get("maker_person_id") or "")], app_id=app_id,
-        owner_keys=[str(job.get("owner_key_hash") or ""), str((receipt or {}).get("owner_key_hash") or "")],
-        apps=apps,
+    record = JobRecord(
+        person_id=str(job.get("maker_person_id") or "") or None,
+        app_id=str(job.get("app_id") or "") or None,
+        credential_id=str(job.get("maker_credential_id") or "") or None,
     )
-    record = JobRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
     return isinstance(decide(_library_viewer(scope), record, "read"), Own)
 
 
@@ -1110,7 +1101,7 @@ def _maker_jobs(
 
 
 def _scoped_jobs(
-    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path, apps: _Apps,
+    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path,
 ) -> list[tuple[dict[str, Any], Mapping[str, Any] | None]]:
     """Every finished job the viewer may read, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
     jobs = media_jobs.recent(
@@ -1125,7 +1116,7 @@ def _scoped_jobs(
     )
     scoped = []
     for job in jobs:
-        if _job_in_library(job, _receipt_of(job, receipts), scope, apps):
+        if _job_in_library(job, scope):
             scoped.append((job, _receipt_of(job, receipts)))
     return scoped
 
@@ -1155,7 +1146,7 @@ def _media_entries(
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
     hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
-    for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path, apps=apps):
+    for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
