@@ -29,7 +29,8 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Alias** | Builder surfaces only: another accepted model name | - |
 | **Capability** | What you can do: Chat, Images, Video, Voice, Transcription, Music, Sound effects, Embeddings | intent, resource class, kind |
 | **Workflow** | A configured multi-step process with inputs and outputs | pipeline, graph, binding |
-| **App** | Something that connects to the gateway (Open WebUI, a phone app, Daisy) | client, integration, consumer |
+| **App** | Something that connects to the gateway: a chat app, a script, a phone. Each app has its own keys and plan | integration, consumer |
+| **Client** | The program you set up to use the gateway (Open WebUI, Codex) | app (for the program), integration |
 | **Key** | The secret an app uses | token, credential, API key (except in the "API key" field an app asks for) |
 | **Access plan** | What a person or app may use and spend | profile, policy, plan (alone) |
 | **Person** | Anyone with an account | user, account, principal |
