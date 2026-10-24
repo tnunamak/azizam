@@ -140,7 +140,7 @@ export function withRemember(url: string, remember: boolean): string {
 
 /**
  * The plain sign-in form (S9): single sign-on, email and password, or the reset form for a reset link. The name box
- * (remember) sits under the heading, above both ways to sign in (DESIGN.md 4.9).
+ * (remember) sits under the single sign-on button, or after the form's Sign in when there is a form (DESIGN.md 4.9).
  */
 export function PlainSignIn({
   data,
@@ -150,6 +150,7 @@ export function PlainSignIn({
   fromList,
   onBack,
   providerError,
+  openOwnerForm = false,
 }: {
   data: SignInOptions | undefined;
   reset: string;
@@ -160,10 +161,12 @@ export function PlainSignIn({
   fromList: boolean;
   onBack: () => void;
   providerError: ProviderError;
+  /** True to open the owner's password form at once (the list's owner link), instead of behind the link. */
+  openOwnerForm?: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [ownerForm, setOwnerForm] = useState(false);
+  const [ownerForm, setOwnerForm] = useState(openOwnerForm);
   const [remember, setRemember] = useState(true);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -210,13 +213,14 @@ export function PlainSignIn({
     Boolean(data) && !data?.built_in && data?.owner_password !== false && !reset;
   const showForm = Boolean(data?.built_in) || Boolean(reset) || ownerForm;
   const nameBoxShown = rememberOn && !reset;
-  // The name box is a quiet row under the main action, on the column's left edge (DESIGN.md 4.9): under the single
-  // sign-on button, or under the password form's Sign in. Its helper sits under the label, at the label's left edge.
+  // The name box is one row on the column's left edge (DESIGN.md 4.9). It sits under the single sign-on button when that
+  // is the only way in, and under the whole form (after its Sign in) when there is a form, so it covers both ways.
+  // The 44 px target keeps every control at least 44 by 44; its vertical margins are -14 px, so it takes 16 px of
+  // height, and its 14 px overhang puts the box on the column's edge. The label tucks 4 px into the target's clear
+  // space, which leaves 10 px between the box and the label. The helper is indented by the box plus those 10 px.
   const nameBox = nameBoxShown ? (
     <div>
-      <div className="flex items-center gap-3">
-        {/* A 44 px target around the 16 px box, so every control on this page is at least 44 by 44. The target hangs 14 px
-            into the margin, which puts the box itself on the column's left edge. */}
+      <div className="flex items-center">
         <button
           type="button"
           role="checkbox"
@@ -224,7 +228,7 @@ export function PlainSignIn({
           aria-checked={remember}
           aria-describedby={rememberHelpId}
           onClick={() => setRemember((value) => !value)}
-          className="focus-visible:ring-ring/50 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
+          className="focus-visible:ring-ring/50 -my-3.5 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
         >
           <span
             aria-hidden
@@ -236,12 +240,12 @@ export function PlainSignIn({
             {remember && <Check className="size-3.5" />}
           </span>
         </button>
-        <Label htmlFor={rememberId} className="text-body font-medium">
+        <Label htmlFor={rememberId} className="-ml-1 text-body font-medium">
           Show my name on this browser next time
         </Label>
       </div>
-      {/* 42 px: the 44 px target less its 14 px overhang, and the 12 px gap, so the helper starts where the label does. */}
-      <p id={rememberHelpId} className="text-muted-foreground text-meta pl-[42px]">
+      {/* 26 px: the 16 px box and the 10 px gap, so the helper starts where the label does. */}
+      <p id={rememberHelpId} className="text-muted-foreground text-meta mt-0.5 pl-[26px]">
         Turn this off on a public computer.
       </p>
     </div>
@@ -278,8 +282,8 @@ export function PlainSignIn({
             </a>
           </Button>
         )}
-        {hasProvider && nameBox && <div className="mt-4">{nameBox}</div>}
-        {hasProvider && (data.built_in || ownerForm) && (
+        {hasProvider && !showForm && nameBox && <div className="mt-4">{nameBox}</div>}
+        {hasProvider && showForm && (
           <div className="text-muted-foreground text-meta my-6 flex items-center gap-4">
             <span className="flex-1 border-t" />
             <span>or use your email</span>
@@ -360,10 +364,10 @@ export function PlainSignIn({
                   ? "Save password"
                   : "Sign in"}
             </Button>
-            {!hasProvider && nameBox}
+            {nameBox}
             {!reset && (
               <p className="text-muted-foreground text-meta">
-                Forgot your password? Ask the person who runs this gateway for a reset link.
+                Forgot your password? Ask whoever set this up for a reset link.
               </p>
             )}
           </form>
@@ -531,7 +535,7 @@ export function PersonPassword({
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
         <p className="text-muted-foreground text-meta">
-          Forgot your password? Ask the person who runs this gateway for a reset link.
+          Forgot your password? Ask whoever set this up for a reset link.
         </p>
       </form>
     </>

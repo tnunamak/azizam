@@ -152,7 +152,10 @@ function signInHref(returnPath: string): string {
 
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const toggle = () => setTheme(resolvedTheme === "dark" ? "light" : "dark");
+  // The name says what a press does ("Switch to dark"), and the tooltip shows the same words.
+  const next = resolvedTheme === "dark" ? "light" : "dark";
+  const label = `Switch to ${next}`;
+  const toggle = () => setTheme(next);
   const icons = (
     <>
       <Sun className="size-4 dark:hidden" aria-hidden="true" />
@@ -162,7 +165,8 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   return chrome ? (
     <button
       type="button"
-      aria-label="Toggle theme"
+      aria-label={label}
+      title={label}
       className="shell-nav-footer size-11 shrink-0 justify-center px-0 lg:size-9"
       onClick={toggle}
     >
@@ -173,7 +177,8 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
       variant="ghost"
       size="icon"
       className="min-h-11 min-w-11"
-      aria-label="Toggle theme"
+      aria-label={label}
+      title={label}
       onClick={toggle}
     >
       {icons}

@@ -534,9 +534,7 @@ it("names the instance only: no shared-by line, and no person's name, even if th
 it("gives the reset line one copy for everyone, with no name in it", async () => {
   Object.assign(options, { owner_name: "Sam Okafor" });
   mount();
-  expect(
-    await screen.findByText("Forgot your password? Ask the person who runs this gateway for a reset link."),
-  ).toBeVisible();
+  expect(await screen.findByText("Forgot your password? Ask whoever set this up for a reset link.")).toBeVisible();
   expect(screen.queryByText(/Sam Okafor/)).toBeNull();
 });
 
@@ -549,6 +547,18 @@ it("puts the name box under the single sign-on button, and its helper is its des
   const box = screen.getByRole("checkbox", { name: "Show my name on this browser next time" });
   expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(box).toHaveAccessibleDescription("Turn this off on a public computer.");
+});
+
+it("puts the name box after the form's Sign in when both ways in are on, so it covers both", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  const signIn = screen.getByRole("button", { name: "Sign in" });
+  const box = screen.getByRole("checkbox", { name: "Show my name on this browser next time" });
+  expect(provider.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(signIn.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it("moves focus to Email when the owner's password form opens in place", async () => {
