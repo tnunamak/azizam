@@ -236,6 +236,11 @@ test("phone More and tablet expansion expose every destination", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  // The bottom bar's Apps tab is the one Apps & keys entry on a phone. Checked before More opens, because the open
+  // sheet makes the rest of the page inaccessible to role queries.
+  await expect(
+    page.getByRole("navigation", { name: "Phone navigation" }).getByRole("link", { name: "Apps", exact: true }),
+  ).toHaveAttribute("href", /^\/apps\/?$/);
   await page.getByRole("button", { name: "More", exact: true }).click();
   let sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   for (const name of [
@@ -245,17 +250,19 @@ test("phone More and tablet expansion expose every destination", async ({
     "Try",
     "Library",
     "Usage",
-    "Apps & keys",
     ...ownerPages,
   ]) {
     await expect(sheet.getByRole("link", { name, exact: true })).toBeVisible();
   }
+  await expect(sheet.getByRole("link", { name: "Apps & keys", exact: true })).toHaveCount(0);
   await sheet.getByRole("link", { name: "Activity", exact: true }).click();
   await expect(page).toHaveURL(/\/activity\/?$/);
   await expect(sheet).not.toBeVisible();
   await page.setViewportSize({ width: 768, height: 1000 });
   await page.getByRole("button", { name: "Expand navigation" }).click();
   sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  // A tablet has no bottom bar, so its expanded navigation keeps Apps & keys.
+  await expect(sheet.getByRole("link", { name: "Apps & keys", exact: true })).toBeVisible();
   await expect(
     sheet.getByRole("link", { name: "Settings", exact: true }),
   ).toBeVisible();

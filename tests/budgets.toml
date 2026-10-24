@@ -434,6 +434,20 @@ pytest = 17340
 # field has text; Sign in shows a spinner while it is checked) and chooser.spec.tsx +3 (the chooser's names come only from
 # this browser's remembered list; the password screen's reset line; its spinner). `vitest list`: 231 files, 3457 cases;
 # the full run passes 3455 of them (measured 2026-10-24). The ceiling takes the larger count.
+# Apps & keys model (slice 1): +1 case in src/app/apps/trusted-addresses.spec.tsx (the App's trusted-address section).
+# vitest list measured 3452 (2026-10-24).
+# Set up this app (slice 2): +3 Connect cases for ?app=<id> (set up, unknown app, plain visit) and +1 rename case
+# (the menu's Set up this app link). vitest list measured 3456 (2026-10-24).
+# Apps & keys and Connect round 2: trusted-address cases (one replaced, two added: +2), an App-grouping case (+1)
+# and a Connect disclosure case (+1). vitest list measured 3460 (2026-10-24).
+# Apps & keys and Connect round 3, Connect part: connect/page.spec.tsx goes from 18 to 20 cases (the App strip and
+# the keyless and local-address cases replace the removed tools and notes cases), +3 in lib/private-address.spec.ts
+# and +2 in lib/docs.spec.ts. vitest list measured 3467 (2026-10-24, 235 files).
+# Apps & keys and Connect round 4: connect/page.spec.tsx gains the no-preselection, More clients, generic-recipe and
+# missing-model cases; apps/page.spec.tsx gains the Key 2 and Revoke cases; lib/private-address.spec.ts gains the
+# reach cases (+13 net).
+# No Playwright case was added or removed, so the playwright ceiling stays at 569.
+# vitest list measured 3480 (2026-10-24).
 vitest = 3488
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
@@ -494,7 +508,13 @@ vitest = 3488
 # e2e/signin-built.spec.ts (single sign-on while it opens, the password step for a remembered account, the both-methods
 # Sign in while it signs in, the remember checkbox beside single sign-on, and the edge-contrast record; skipped unless
 # SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 633, live-data 3, household 18: 654, measured 2026-10-24.
-playwright = 565
+# Set up this app (slice 2): +1 case in e2e/connect.spec.ts (chromium project). Gate lists measured 2026-10-24:
+# playwright.config.ts 546 + live-data 3 + household 18 = 567.
+# Apps & keys and Connect round 2: +1 case in e2e/connect.spec.ts (Back and Forward between two Connect pages, with
+# axe on the Apps and Connect pages). Gate lists measured 2026-10-24: playwright.config.ts 547 + live-data 3 + household 18 = 568.
+# Apps & keys and Connect round 3, Apps part: +1 case in e2e/connect.spec.ts (an App's access and key, and Create key on
+# an App with none). Gate lists measured 2026-10-24: playwright.config.ts 548 + live-data 3 + household 18 = 569.
+playwright = 569
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

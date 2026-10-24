@@ -1,16 +1,18 @@
 "use client";
 
 import {
+  Fragment,
   Suspense,
   useEffect,
   useRef,
   useState,
   type FormEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatAppName } from "@/lib/format";
@@ -38,7 +40,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { ListCard, ListRow } from "@/components/product/list-card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { SignInConnections } from "@/components/product/sign-in-connections";
 import {
   Select,
@@ -51,41 +59,41 @@ import {
   PageHeader,
   EmptyState,
   ErrorState,
-  RelativeTime,
   CopyField,
 } from "@/components/product";
 import { cn } from "@/lib/cn";
+import { keyStart } from "@/lib/key-hint";
 import { keyPromptNote } from "@/lib/prompt-memory";
 import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
-import { keyApps, suggestedModel } from "@/lib/app-guides";
+import { guideIdForAppName, suggestedModel } from "@/lib/app-guides";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+  type TrustedAddress,
+} from "@/lib/trusted-addresses";
 import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
+import { AppKeyRows, KeylessAccessRow } from "./app-details";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
 const SAME_AS_PERSON = "person";
 type Reveal = {
   secret: string;
+  /** The key's masked start ("opk_n2ib…"), which the recipe names once the key is saved. */
+  start: string;
   appId: string;
   app: string;
   oldIds: string[];
   /** Whether prompts sent with the key are remembered, and for whom. */
   note?: string | null;
 };
-type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
-
-/** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr). */
-function guideForName(name: string): string {
-  const lower = name.toLowerCase();
-  return (
-    keyApps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
-    keyApps[0].id
-  );
-}
+/** `key` is set when the action is for one key of the app (its row's Rotate or Revoke); otherwise it covers every key. */
+type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp; key?: Credential };
 
 /** What an app may use, in one sentence: 'Access plan "Local only": Chat and Images. No paid models.' */
 function planSentence(plan: { name: string; summary: string | null } | null | undefined): string {
@@ -108,6 +116,37 @@ function accessPlanSummary(app: AccountApp): string {
   return plan.same_as_person ? `${plan.name} (yours)` : plan.name;
 }
 
+/** The plan's name, which opens a note on what the plan allows ("Chat and Images. No paid models."). */
+function AccessPlanName({ app }: { app: AccountApp }) {
+  const plan = app.access_plan;
+  if (!plan) return null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="link" size="sm" className="h-auto px-0">
+          {accessPlanSummary(app)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start">
+        <PopoverTitle>{plan.name}</PopoverTitle>
+        <PopoverDescription>
+          {plan.summary ?? "This plan has no description."}
+          {plan.same_as_person ? " It is your own plan." : ""}
+        </PopoverDescription>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** A separator between the parts of one line. It shows on a phone too, so "1 key · Access plan" reads as one line. */
+function Separator() {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground">
+      ·
+    </span>
+  );
+}
+
 /** Why this app cannot get a key. The API sends only the boolean, so the
  * reason comes from the fields that set it (gateway/user_runtime.py). */
 function mintBlockedReason(app: AccountApp): string {
@@ -115,6 +154,16 @@ function mintBlockedReason(app: AccountApp): string {
   if (!app.access_plan)
     return "This app has no access plan. Ask the owner to choose one.";
   return "You can't create keys for this app. Ask the owner to update its access.";
+}
+
+/** A new key's name: the name it is given if no key of the app has it, else "Key 2", "Key 3" and so on, so no two
+ * keys of one app share a name. */
+function newKeyName(app: AccountApp, name: string): string {
+  const taken = new Set(app.credentials.map((key) => key.display_name));
+  if (!taken.has(name)) return name;
+  let number = 2;
+  while (taken.has(`Key ${number}`)) number += 1;
+  return `Key ${number}`;
 }
 
 /** Keys and addresses the cut-over would remove from this app. Each one has a remedy the gateway names: keep it,
@@ -171,7 +220,8 @@ function writeUnfinishedRotations(value: UnfinishedRotations): boolean {
 function AppsContents() {
   const searchParams = useSearchParams();
   const requestedApp = searchParams.get("app");
-  const createFromCommand = searchParams.get("action") === "create-key";
+  // The command palette sends `action=create-key`; Connect sends `?app=<id>` with `create-key` or `rotate`.
+  const requestedAction = searchParams.get("action");
   const commandConsumed = useRef(false);
   const focusedRequest = useRef<string | null>(null);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
@@ -195,7 +245,8 @@ function AppsContents() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [plan, setPlan] = useState(SAME_AS_PERSON);
-  const [guideApp, setGuideApp] = useState(keyApps[0].id);
+  // The client picked in the new key's recipe. None until the person picks one, so no client is preselected.
+  const [guideApp, setGuideApp] = useState<string | null>(null);
   const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
   const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
@@ -273,17 +324,32 @@ function AppsContents() {
   const personPlan = accountData?.user?.access_plan ?? null;
   const chosenPlan = (plans ?? []).find((item) => item.id === plan);
 
+  // Opens a flow once per visit: the command palette's New key (no app named), or a key or a rotation for the app
+  // a Connect link names. The app's own flow is the same one its card uses.
   useEffect(() => {
-    if (
-      createFromCommand &&
-      accountData?.authenticated &&
-      !commandConsumed.current
-    ) {
+    if (!requestedAction || !accountData?.authenticated || commandConsumed.current)
+      return;
+    if (!requestedApp) {
+      if (requestedAction !== "create-key") return;
       commandConsumed.current = true;
       dialogReturnFocus.current = newAppButton.current;
       setCreating(true);
+      return;
     }
-  }, [createFromCommand, accountData?.authenticated]);
+    const app = accountData.apps.find((item) => item.id === requestedApp);
+    if (!app || !app.can_mint_keys) return;
+    if (requestedAction === "create-key") {
+      commandConsumed.current = true;
+      startAddKey(app);
+    } else if (requestedAction === "rotate" && app.credentials.length) {
+      commandConsumed.current = true;
+      rememberAppFocus(app.id);
+      setAction({ kind: "rotate", app });
+      setError(null);
+    }
+    // The helpers only set state and refs, and the consumed flag makes this run once per visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAction, requestedApp, accountData]);
 
   useEffect(() => {
     const stored = readUnfinishedRotations();
@@ -398,6 +464,15 @@ function AppsContents() {
     setCreating(true);
   }
 
+  /** A key for one app, from its card: the New app dialog with the app already made, so a failed key can be retried. */
+  function startAddKey(app: AccountApp, opener?: HTMLElement) {
+    rememberAppFocus(app.id, opener);
+    resetDraft();
+    setCreatedApp(app);
+    setName(app.name);
+    setCreating(true);
+  }
+
   function closeCreate() {
     setCreating(false);
     resetDraft();
@@ -442,10 +517,11 @@ function AppsContents() {
         });
       }
       const appName = formatAppName(app.name, accountData?.user?.email);
-      const key = await accountApi.mintKey(app.id, appName);
-      setGuideApp(guideForName(app.name));
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
+      setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
+        start: keyStart(key.api_key),
         appId: app.id,
         app: appName,
         oldIds: [],
@@ -524,10 +600,11 @@ function AppsContents() {
         : current,
     );
     revealFocusId.current = `rename-key-${record.id}`;
-    setGuideApp(guideForName(app.name));
+    setGuideApp(guideIdForAppName(app.name));
     setSaved(false);
     setReveal({
       secret,
+      start: keyStart(secret),
       appId: app.id,
       app: formatAppName(app.name, accountData?.user?.email),
       oldIds: [],
@@ -579,16 +656,19 @@ function AppsContents() {
     setBusy(true);
     setError(null);
     try {
-      const ids = action.app.credentials.map((key) => key.id);
+      const ids = action.key
+        ? [action.key.id]
+        : action.app.credentials.map((key) => key.id);
       const appName = formatAppName(action.app.name, accountData?.user?.email);
       if (action.kind === "rotate") {
         const key = await accountApi.mintKey(
           action.app.id,
-          `${appName} replacement`,
+          newKeyName(action.app, `${appName} replacement`),
         );
-        setGuideApp(guideForName(action.app.name));
+        setGuideApp(guideIdForAppName(action.app.name));
         setReveal({
           secret: key.api_key,
+          start: keyStart(key.api_key),
           appId: action.app.id,
           app: appName,
           oldIds: ids,
@@ -612,7 +692,7 @@ function AppsContents() {
               : null,
           );
         }
-        toast.success("App keys revoked");
+        toast.success(action.key ? "Key revoked" : "App keys revoked");
       } else {
         await accountApi.deleteApp(action.app.id);
         dialogReturnFocus.current = newAppButton.current;
@@ -710,12 +790,13 @@ function AppsContents() {
     setMintingAppId(app.id);
     setError(null);
     try {
-      const key = await accountApi.mintKey(app.id, appName);
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
       rememberAppFocus(app.id);
       setSaved(false);
-      setGuideApp(guideForName(app.name));
+      setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
+        start: keyStart(key.api_key),
         appId: app.id,
         app: appName,
         oldIds: [],
@@ -735,6 +816,19 @@ function AppsContents() {
   }
 
   const apps = accountData?.apps ?? [];
+  // Only an owner sees an App's keyless addresses. They are read once here, so each card can tell whether it has
+  // any (its row shows only then) and the hint goes under the first card that does.
+  const owner = accountData?.user?.role === "owner";
+  const keylessQueries = useQueries({
+    queries: owner
+      ? apps.map((app) => ({
+          queryKey: trustedAddressesKey(app.id),
+          queryFn: () => listTrustedAddresses(app.id),
+        }))
+      : [],
+  });
+  const keylessOf = (index: number): TrustedAddress[] => keylessQueries[index]?.data ?? [];
+  const firstKeylessIndex = apps.findIndex((_, index) => keylessOf(index).length > 0);
   const keysApp = apps.find((item) => item.id === renamingKeysOf) ?? null;
   const actionAppName = action
     ? formatAppName(action.app.name, accountData?.user?.email)
@@ -744,14 +838,20 @@ function AppsContents() {
         accessPlanSummary(action.app),
         action.kind === "rotate" &&
         action.app.kind === "personal" &&
-        action.app.credentials.some((key) => key.created_by === null)
+        (action.key ? [action.key] : action.app.credentials).some(
+          (key) => key.created_by === null,
+        )
           ? "A new key saves your prompts"
           : null,
         action.kind === "rotate"
-          ? "Save the replacement key first. Old keys stop after you confirm."
+          ? action.key
+            ? "Save the replacement key first. The old key stops after you confirm."
+            : "Save the replacement key first. Old keys stop after you confirm."
           : action.kind === "remove"
             ? "This removes the app and its keys."
-            : "Apps using these keys will stop connecting.",
+            : action.key
+              ? "Apps using this key will stop connecting."
+              : "Apps using these keys will stop connecting.",
       ]
         .filter(Boolean)
         .join(". ")
@@ -762,7 +862,7 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Apps that use your gateway"
+        subtitle="An app is anything that connects to this gateway: a chat app, a script, a phone. Each app has its own keys and plan."
         primaryAction={
           <Button
             ref={newAppButton}
@@ -821,29 +921,21 @@ function AppsContents() {
         <EmptyState
           icon={KeyRound}
           title="Connect your first app"
-          description="Create a key for an app you already use."
           action={<Button onClick={startNewApp}>New app</Button>}
         />
       ) : (
-        // The list template: one ListCard of 60 px rows (64 on a phone).
-        <ListCard label="Apps">
-          {apps.map((app) => {
+        // Each app is one group: its header, then its keys and (for an owner) its trusted addresses, indented under
+        // its name. The groups stack with a gap, so the page reads as a list of apps, not one flat list of rows.
+        <ul aria-label="Apps" className="flex flex-col gap-3">
+          {apps.map((app, index) => {
             const appName = formatAppName(app.name, accountData?.user?.email);
-            const lastUsed = app.credentials.reduce<number | null>(
-              (latest, key) =>
-                key.last_used_at != null &&
-                (latest === null || key.last_used_at > latest)
-                  ? key.last_used_at
-                  : latest,
-              null,
-            );
             const activeIds = new Set(app.credentials.map((key) => key.id));
             // Old keys from a rotation finished later, still active.
             const oldKeys = (unfinished[app.id] ?? []).filter((id) =>
               activeIds.has(id),
             );
             // A personal app's key the cut-over removes, and the person must replace: its keys cannot save the
-            // member's prompts. The row offers that replacement only when one key needs it; the keys dialog
+            // member's prompts. The header offers that replacement only when one key needs it; the keys dialog
             // offers the same replacement for each key.
             const replaceable =
               app.kind === "personal"
@@ -858,96 +950,109 @@ function AppsContents() {
               ? null
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
-            // A notice must stay whole on a phone, where there is no hover:
-            // its meta line wraps and a row action moves under it.
-            const hasAction = oldKeys.length > 0 || rowReplace !== null;
-            const hasNotice = hasAction || blockedReason !== null;
+            // A notice leads the meta line, so it is read first.
+            const meta: ReactNode[] = [
+              oldKeys.length
+                ? "Old keys still work"
+                : needsNewKey && app.can_mint_keys
+                  ? "Needs a new key"
+                  : null,
+              blockedReason ? "Can't create keys" : null,
+              `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
+              app.access_plan ? (
+                <span key="plan">
+                  Access plan: <AccessPlanName app={app} />
+                </span>
+              ) : null,
+            ].filter((part) => part !== null);
+            const metaTitle = oldKeys.length
+              ? "Your new key is saved. Some old keys still work."
+              : needsNewKey && app.can_mint_keys
+                ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
+                : (blockedReason ?? undefined);
+              const primary = (
+                      minting ? (
+                        <span
+                          role="status"
+                          className="text-muted-foreground text-meta inline-flex items-center gap-2"
+                        >
+                          <Spinner />
+                          Creating key…
+                        </span>
+                      ) : oldKeys.length ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void revokeUnfinished(app.id, oldKeys)}
+                        >
+                          Revoke old keys
+                        </Button>
+                      ) : rowReplace !== null ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void replaceFromRow(app, rowReplace)}
+                        >
+                          {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
+                        </Button>
+                      ) : null
+              );
             return (
-              <ListRow
+              <li
                 key={app.id}
                 id={`app-${app.id}`}
                 tabIndex={requestedApp === app.id ? -1 : undefined}
+                aria-labelledby={`app-title-${app.id}`}
                 className={cn(
+                  "bg-card rounded-panel min-w-0 overflow-hidden border",
                   requestedApp === app.id &&
                     "ring-ring ring-offset-background ring-2 ring-offset-2",
-                  hasNotice &&
-                    "max-sm:py-3 max-sm:[&_[data-slot=list-row-meta]]:overflow-visible max-sm:[&_[data-slot=list-row-meta]]:whitespace-normal",
-                  hasAction &&
-                    "max-sm:flex-wrap max-sm:[&_[data-slot=list-row-trailing]]:w-full max-sm:[&_[data-slot=list-row-trailing]]:pl-7",
                 )}
-                lines={2}
-                titleAs="h2"
-                leading={<AppWindow aria-hidden="true" />}
-                title={appName}
-                // A notice leads the line, so a phone's trailing action
-                // cuts the key count, not the notice.
-                meta={[
-                  oldKeys.length
-                    ? "Old keys still work"
-                    : needsNewKey && app.can_mint_keys
-                      ? "Needs a new key"
-                      : null,
-                  blockedReason ? "Can't create keys" : null,
-                  `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
-                  accessPlanSummary(app)
-                    ? `Access plan: ${accessPlanSummary(app)}`
-                    : null,
-                ]}
-                metaTitle={
-                  oldKeys.length
-                    ? "Your new key is saved. Some old keys still work."
-                    : needsNewKey && app.can_mint_keys
-                      ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
-                      : (blockedReason ?? undefined)
-                }
-                facts={[
-                  lastUsed !== null ? (
-                    <span key="used">
-                      Last used <RelativeTime ts={lastUsed} />
-                    </span>
-                  ) : null,
-                ]}
-                trailing={
-                  <>
-                    {minting ? (
-                      <span
-                        role="status"
-                        className="text-muted-foreground text-meta inline-flex items-center gap-2"
+              >
+                {/* A narrower gap on a phone keeps a zero-key card's menu on the Set up row instead of wrapping it below. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-x-3">
+                  <AppWindow
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1 basis-40">
+                    <h2
+                      id={`app-title-${app.id}`}
+                      className="text-[15px] leading-6 font-semibold break-words"
+                    >
+                      {appName}
+                    </h2>
+                    <p
+                      title={metaTitle}
+                      className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                    >
+                      {meta.map((part, index) => (
+                        <Fragment key={index}>
+                          {index > 0 ? <Separator /> : null}
+                          {part}
+                        </Fragment>
+                      ))}
+                    </p>
+                  </div>
+                  {/* On a phone a keyed app's actions drop under its name, aligned with it, so its header keeps the menu
+                      top right. A zero-key app keeps "Set up" beside the menu, which keeps its card short. */}
+                  <div
+                    className={cn(
+                      "flex shrink-0 flex-wrap items-center gap-2",
+                      app.credentials.length > 0 && "max-sm:order-last max-sm:basis-full max-sm:pl-7",
+                    )}
+                  >
+                    {primary}
+                    <Button asChild variant="outline" size="sm">
+                      <Link
+                        prefetch={false}
+                        href={`/connect/?app=${encodeURIComponent(app.id)}`}
+                        aria-label={`Set up ${appName}`}
                       >
-                        <Spinner />
-                        Creating key…
-                      </span>
-                    ) : oldKeys.length ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void revokeUnfinished(app.id, oldKeys)}
-                      >
-                        Revoke old keys
-                      </Button>
-                    ) : !app.credentials.length && app.can_mint_keys ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={(event) => {
-                          rememberAppFocus(app.id, event.currentTarget);
-                          resetDraft();
-                          setCreatedApp(app);
-                          setName(app.name);
-                          setCreating(true);
-                        }}
-                      >
-                        Create key
-                      </Button>
-                    ) : rowReplace !== null ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void replaceFromRow(app, rowReplace)}
-                      >
-                        {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
-                      </Button>
-                    ) : null}
+                        Set up
+                      </Link>
+                    </Button>
+                  </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -960,11 +1065,6 @@ function AppsContents() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {blockedReason && (
-                          <p className="text-muted-foreground text-meta max-w-64 px-2 py-1.5">
-                            {blockedReason}
-                          </p>
-                        )}
                         <DropdownMenuItem
                           onSelect={() => {
                             rememberAppFocus(app.id);
@@ -1003,6 +1103,7 @@ function AppsContents() {
                           Rotate keys
                         </DropdownMenuItem>
                         <DropdownMenuItem
+                          variant="destructive"
                           disabled={!app.credentials.length}
                           onSelect={() => {
                             rememberAppFocus(app.id);
@@ -1012,6 +1113,16 @@ function AppsContents() {
                         >
                           Revoke keys
                         </DropdownMenuItem>
+                        {owner ? (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setTrustingApp(app);
+                            }}
+                          >
+                            Allow keyless access…
+                          </DropdownMenuItem>
+                        ) : null}
                         {viewer.admin && (
                           <DropdownMenuItem
                             onSelect={() => {
@@ -1028,16 +1139,6 @@ function AppsContents() {
                             Change access plan
                           </DropdownMenuItem>
                         )}
-                        {accountData?.user?.role === "owner" && (
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              rememberAppFocus(app.id);
-                              setTrustingApp(app);
-                            }}
-                          >
-                            Trusted addresses
-                          </DropdownMenuItem>
-                        )}
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={busy}
@@ -1051,12 +1152,36 @@ function AppsContents() {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </>
-                }
-              />
+                </div>
+                <AppKeyRows
+                  app={app}
+                  appName={appName}
+                  busy={busy}
+                  blockedReason={blockedReason}
+                  onAddKey={(opener) => startAddKey(app, opener)}
+                  onRotate={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "rotate", app, key });
+                    setError(null);
+                  }}
+                  onRevoke={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "revoke", app, key });
+                    setError(null);
+                  }}
+                />
+                {owner ? (
+                  <KeylessAccessRow
+                    appName={appName}
+                    addresses={keylessOf(index)}
+                    failed={keylessQueries[index]?.isError ?? false}
+                    showHint={index === firstKeylessIndex}
+                  />
+                ) : null}
+              </li>
             );
           })}
-        </ListCard>
+        </ul>
       )}
       {accountData?.authenticated ? (
         <SignInConnections
@@ -1188,7 +1313,9 @@ function AppsContents() {
                   : "Revoke"}{" "}
               {action?.kind === "remove"
                 ? actionAppName
-                : `keys for ${actionAppName}`}
+                : action?.key
+                  ? `key ${action.key.display_name}`
+                  : `keys for ${actionAppName}`}
               ?
             </DialogTitle>
             <DialogDescription>{actionDescription}</DialogDescription>
@@ -1221,7 +1348,9 @@ function AppsContents() {
                   ? "Create replacement key"
                   : action?.kind === "remove"
                     ? "Remove app"
-                    : "Revoke keys"}
+                    : action?.key
+                      ? "Revoke key"
+                      : "Revoke keys"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1239,6 +1368,7 @@ function AppsContents() {
           setFocusCheck(false);
         }}
         onChanged={() => void refresh()}
+        onCloseAutoFocus={restoreDialogFocus}
       />
       <RenameAppDialog
         app={renamingApp}
@@ -1281,7 +1411,7 @@ function AppsContents() {
           onPointerDownOutside={(event) => event.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Connect {reveal?.app}</DialogTitle>
+            <DialogTitle>New key for {reveal?.app}</DialogTitle>
             <DialogDescription>
               Copy the key now. It is shown only once.
             </DialogDescription>
@@ -1303,24 +1433,30 @@ function AppsContents() {
               )}
               <section aria-labelledby="setup-heading" className="space-y-3 border-t pt-5">
                 <h3 id="setup-heading" className="text-body font-medium">
-                  Set up your app
+                  Set up a client
                 </h3>
                 <AppGuide
-                  appId={guideApp}
-                  onAppChange={setGuideApp}
+                  clientId={guideApp}
+                  onClientChange={setGuideApp}
                   values={guideValues}
+                  owner={viewer.admin}
                   loading={catalogPending || (ownPlanLimits && viewer.admin && previewPending)}
                   keyHint={
-                    saved
-                      ? "Paste the key you saved."
-                      : "Paste the key from above."
+                    saved ? (
+                      <>
+                        Use key <span className="font-mono">{reveal.start}</span> (the secret you
+                        saved when you created it).
+                      </>
+                    ) : (
+                      "Paste the key from above."
+                    )
                   }
                 />
                 <p className="text-muted-foreground text-meta">
                   The full guide opens on{" "}
                   <Link
                     prefetch={false}
-                    href="/connect/"
+                    href={`/connect/?app=${encodeURIComponent(reveal.appId)}`}
                     target="_blank"
                     rel="noopener"
                     className="underline underline-offset-4"

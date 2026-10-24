@@ -75,7 +75,7 @@ for (const theme of ["light", "dark"] as const) {
           ),
         ).toEqual([]);
         for (const element of await page
-          .locator("input, button, a[data-slot=button]")
+          .locator("input, textarea, button, a[data-slot=button]")
           .all()) {
           const box = await element.boundingBox();
           expect(box?.height).toBeGreaterThanOrEqual(44);

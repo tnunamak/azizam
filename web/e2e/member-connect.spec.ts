@@ -84,18 +84,17 @@ test("an invited member connects an app with copied settings and the receipt nam
     await mine.getByRole("button", { name: "I’ve saved it" }).click();
     await expect(mine).toHaveURL(/^https?:\/\/[^/]+\/$/);
 
-    // Connect leads to a new key; the key is shown once, with a copy button.
+    // Apps & keys makes the app and its key; the key is shown once, with a copy button.
     await mine
       .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: "Connect", exact: true })
+      .getByRole("link", { name: "Apps & keys", exact: true })
       .click();
-    await expect(mine.getByRole("heading", { level: 1, name: "Connect" })).toBeVisible();
-    await mine.getByRole("link", { name: "Create a key" }).click();
-    await expect(mine).toHaveURL(/\/apps\/?\?action=create-key/);
+    await expect(mine.getByRole("heading", { level: 1, name: "Apps & keys" })).toBeVisible();
+    await mine.getByRole("button", { name: "New app", exact: true }).click();
     const create = mine.getByRole("dialog");
     await create.getByLabel("App name").fill("My chat app");
     await create.getByRole("button", { name: "Create app and key" }).click();
-    const reveal = mine.getByRole("dialog", { name: /^Connect / });
+    const reveal = mine.getByRole("dialog", { name: /^New key for / });
     await expect(reveal.getByLabel("Your key", { exact: true })).toHaveValue(/^opk_/);
     const key = await copyAndRead(mine, reveal.getByRole("button", { name: "Copy your key" }));
     expect(key).toMatch(/^opk_/);

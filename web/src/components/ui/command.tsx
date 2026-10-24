@@ -234,9 +234,10 @@ export function CommandPalette({
   }
   useEffect(() => {
     if (copyAddress === null) return;
-    const input = addressRecovery.current?.querySelector("input");
-    input?.focus();
-    input?.select();
+    // The copy field is a textarea (CopyField), so both kinds are read.
+    const field = addressRecovery.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>("textarea, input");
+    field?.focus();
+    field?.select();
   }, [copyAddress]);
   const {
     data: appData,

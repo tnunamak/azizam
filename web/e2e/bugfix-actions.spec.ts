@@ -28,7 +28,7 @@ test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_S
     .getByRole("button", { name: "Create app and key", exact: true })
     .click();
   const { credential } = await (await mintedResponse).json();
-  const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+  const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
   await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
   expect(

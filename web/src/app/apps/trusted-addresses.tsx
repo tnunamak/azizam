@@ -7,9 +7,14 @@ import {
   accountApi,
   administratorsToConfirm,
   hasAdministrators,
-  type AdministratorsOnRecord,
   type KeepOptions,
 } from "@/lib/account-api";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+  trustedAddressesPath,
+  type TrustedAddress,
+} from "@/lib/trusted-addresses";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,28 +29,23 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
-export interface TrustedAddress {
-  id: string;
-  app_id: string;
-  address: string;
-  note: string | null;
-  created_at: number;
-  /** Null when the address was made before its creator was recorded. */
-  created_by: string | null;
-  /** Present only when the cut-over would remove the address: keep it, or add it again. */
-  cutover?: "keep" | "readd";
-  /** The administrators on record who could also have added it. Keeping it asks the owner to confirm them first. */
-  administrators?: AdministratorsOnRecord;
-  /** The person recorded as its maker, when that is another person. */
-  made_by_name?: string;
-}
-
-const listPath = (appId: string) =>
-  `/admin/api/apps/${encodeURIComponent(appId)}/trusted-addresses`;
+export type { TrustedAddress };
+export { listTrustedAddresses, trustedAddressesKey };
 
 /** What to show for a failed change: the gateway's words, or the fallback. */
 function messageOf(caught: unknown, fallback: string): string {
   return caught instanceof Error && caught.message ? caught.message : fallback;
+}
+
+/** The row of the first address that needs a remedy, if the list is on the page. */
+function checkRowOf(data: TrustedAddress[] | undefined): HTMLElement | null {
+  const entry = data?.find((item) => item.cutover !== undefined);
+  return entry ? document.getElementById(`address-row-${entry.id}`) : null;
+}
+
+function focusRow(row: HTMLElement) {
+  row.scrollIntoView({ block: "center" });
+  row.querySelector("button")?.focus();
 }
 
 /** An owner trusts a device, or a range of them, to use one app with no
@@ -56,6 +56,7 @@ export function TrustedAddressesDialog({
   focusCheck = false,
   onClose,
   onChanged,
+  onCloseAutoFocus,
 }: {
   app: { id: string } | null;
   appName: string;
@@ -64,6 +65,8 @@ export function TrustedAddressesDialog({
   onClose: () => void;
   /** An address was kept or added again: the account's Apps list shows the new count. */
   onChanged: () => void;
+  /** Returns focus to the App's menu when the dialog closes. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const queryClient = useQueryClient();
   const [address, setAddress] = useState("");
@@ -73,14 +76,11 @@ export function TrustedAddressesDialog({
   const [keptId, setKeptId] = useState<string | null>(null);
   const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   const appId = app?.id ?? "";
-  const key = ["admin", "app-trusted-addresses", appId];
+  const key = trustedAddressesKey(appId);
   const { data, isPending, isError } = useQuery({
     queryKey: key,
     enabled: app !== null,
-    queryFn: () =>
-      adminFetch<{ trusted_addresses: TrustedAddress[] }>(listPath(appId)).then(
-        (r) => r.trusted_addresses,
-      ),
+    queryFn: () => listTrustedAddresses(appId),
   });
 
   async function change(run: () => Promise<unknown>) {
@@ -100,18 +100,18 @@ export function TrustedAddressesDialog({
     }
   }
 
-  // Opened from the quick-check line: once the list is in, the first address with a remedy is brought into view and
-  // focused, once per opening.
+  // Opened from the quick-check line: the first address with a remedy is brought into view and focused, once per
+  // opening. The list may already be cached (the App's section on the page loads it), so the row can be on screen
+  // when the dialog opens, or arrive after it. The open-focus handler covers the first case: it runs once the
+  // dialog's content is mounted, and Radix's own first-focus would otherwise win.
   const checkFocused = useRef(false);
   useEffect(() => {
     if (app === null) checkFocused.current = false;
     if (!focusCheck || checkFocused.current || !data) return;
-    const entry = data.find((item) => item.cutover !== undefined);
-    if (!entry) return;
+    const row = checkRowOf(data);
+    if (!row) return;
     checkFocused.current = true;
-    const row = document.getElementById(`address-row-${entry.id}`);
-    row?.scrollIntoView({ block: "center" });
-    row?.querySelector("button")?.focus();
+    focusRow(row);
   }, [app, data, focusCheck]);
 
   // After a keep the entry's Keep button is gone, so focus its Remove button once the change has settled.
@@ -125,7 +125,7 @@ export function TrustedAddressesDialog({
   async function add(event: FormEvent) {
     event.preventDefault();
     const saved = await change(() =>
-      adminFetch(listPath(appId), {
+      adminFetch(trustedAddressesPath(appId), {
         method: "POST",
         body: { address, note },
       }),
@@ -217,9 +217,20 @@ export function TrustedAddressesDialog({
         }
       }}
     >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onCloseAutoFocus={onCloseAutoFocus}
+        onOpenAutoFocus={(event) => {
+          if (!focusCheck || checkFocused.current) return;
+          const row = checkRowOf(data);
+          if (!row) return;
+          event.preventDefault();
+          checkFocused.current = true;
+          focusRow(row);
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>Trusted addresses for {appName}</DialogTitle>
+          <DialogTitle>Keyless access for {appName}</DialogTitle>
           <DialogDescription>
             A device at a trusted address can use this app with no key. It runs
             with this app&apos;s access plan, and its requests show the address.
@@ -235,8 +246,7 @@ export function TrustedAddressesDialog({
           </p>
         ) : data.length === 0 ? (
           <p className="text-muted-foreground text-meta">
-            No address is trusted for this app. Requests without a key are
-            refused.
+            Until you add an address, every request to this app needs a key.
           </p>
         ) : (
           <ul className="divide-y" aria-label="Trusted addresses">
@@ -297,7 +307,7 @@ export function TrustedAddressesDialog({
                     aria-label={`Remove ${entry.address}`}
                     onClick={() =>
                       void change(() =>
-                        adminFetch(`${listPath(appId)}/${entry.id}`, {
+                        adminFetch(`${trustedAddressesPath(appId)}/${entry.id}`, {
                           method: "DELETE",
                         }),
                       )

@@ -146,7 +146,7 @@ for (const viewport of viewports) {
     });
 
     await keys.getByRole("button", { name: /^Replace key / }).click();
-    const reveal = page.getByRole("dialog", { name: /^Connect / });
+    const reveal = page.getByRole("dialog", { name: /^New key for / });
     await expect(reveal.getByRole("textbox", { name: "Your key" })).toHaveValue(/^opk_/);
     await expect(reveal.getByText("Copy the key now. It is shown only once.")).toBeVisible();
     // The old key is revoked now. The member's principal lives on under the new key, which the teardown checks.
@@ -223,7 +223,7 @@ for (const viewport of viewports) {
       await expect(checkLine).toBeVisible();
       // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      const dialog = page.getByRole("dialog", { name: /^Keyless access for / });
       await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toBeVisible();
       await noSideways(page, "the trusted addresses dialog with the add-again notice");
@@ -371,7 +371,7 @@ for (const viewport of viewports) {
       await expect(checkLine).toBeVisible();
       // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      const dialog = page.getByRole("dialog", { name: /^Keyless access for / });
       await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADDRESS_KEEP_NOTICE, { exact: true })).toBeVisible();
 
