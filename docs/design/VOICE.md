@@ -13,8 +13,10 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 ## Money words
 
 - A recorded charge: "USD 0.42". A charge under one cent: "Less than USD 0.01".
-- A local request with routing evidence: "Local · no provider charge".
-- Missing amount: "Cost not recorded" (never "Free", never blank, never "0").
+- A request that ran locally, where its receipt says it did not go to a remote provider: "Local · no charge".
+- A paid request whose provider did not report its cost: "Cost not reported by the provider".
+- A total that leaves out requests with no reported cost: "Total excludes N requests without a reported cost". Say what it means in one more line: spend adds only reported costs.
+- A missing amount where the gateway cannot say where the request ran: "Cost not recorded" (never "Free", never blank, never "0"). Give it a help line that says why.
 - Before a paid run: "This uses [model], a paid model. About USD 0.02."
 
 ## Glossary (one name per concept)

@@ -252,9 +252,8 @@ test.each([0, 4])(
       spend_total_requests: 4,
     });
     expect(await screen.findByText("Spend this month (USD)")).toBeVisible();
-    expect(screen.getByText("Cost not recorded")).toBeVisible();
-    expect(screen.getByText(/Costs recorded for 0 of 4 requests/)).toBeVisible();
-    expect(screen.getByText(/4 paid requests have unknown cost/)).toBeVisible();
+    expect(screen.getByText("Cost not reported by the provider")).toBeVisible();
+    expect(screen.getByText(/Total excludes 4 requests without a reported cost/)).toBeVisible();
   },
 );
 test.each([
@@ -262,13 +261,13 @@ test.each([
     unknown: 2,
     measured: 2,
     label: "Spend this month (USD)",
-    detail: /2 paid requests have unknown cost/,
+    detail: /Total excludes 2 requests without a reported cost/,
   },
   {
     unknown: 0,
     measured: 4,
     label: "Spend this month (USD)",
-    detail: /Costs recorded for 4 of 4 requests/,
+    detail: null,
   },
 ])(
   "USAGE-01 identifies completeness: $label",
@@ -282,7 +281,8 @@ test.each([
     });
     expect(await screen.findByText(label)).toBeVisible();
     expect(screen.getByText("$1.25")).toBeVisible();
-    expect(screen.getByText(detail)).toBeVisible();
+    if (detail) expect(screen.getByText(detail)).toBeVisible();
+    else expect(screen.queryByText(/Total excludes|We don't know/)).toBeNull();
   },
 );
 test("USAGE-01 does not claim complete coverage without measurement counts", async () => {
@@ -417,7 +417,7 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   expect(within(zero).queryByText("Cost not recorded")).not.toBeInTheDocument();
   expect(within(zero).getByText("$0.00")).toBeInTheDocument();
   const local = screen.getByRole("button", { name: /Receipt details for Video request/ });
-  expect(within(local).getByText("No provider charge")).toBeInTheDocument();
+  expect(within(local).getByText("Local · no charge")).toBeInTheDocument();
   // A model row with no locality evidence says Cost not recorded, never blank.
   expect(screen.getAllByText("Cost not recorded")).toHaveLength(4);
   const modelRow = screen.getByRole("row", { name: /unmeasured-model|Unmeasured Model/ });
@@ -426,6 +426,44 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   const sheet = screen.getByRole("dialog");
   expect(within(sheet).getByText("Spend")).toBeVisible();
   expect(within(sheet).getByText("Cost not recorded")).toBeVisible();
+});
+
+test("A17 names a local request, a remote one without a reported cost, and a total that leaves some out", async () => {
+  renderUsage({
+    requests: 3,
+    remote_spend: 0.5,
+    paid_requests: 1,
+    unknown_paid_requests: 1,
+    spend_measured_requests: 1,
+    spend_total_requests: 2,
+    receipts: [
+      { request_id: "local-1", capability: "chat", remote: false },
+      { request_id: "remote-1", capability: "image", remote: true },
+    ],
+    by_model: [
+      { model: "paid-model", capability: "image", requests: 1, remote_spend: 0.5, paid_requests: 1, unknown_paid_requests: 0 },
+      { model: "unreported-model", capability: "video", requests: 1, remote_spend: null, paid_requests: 0, unknown_paid_requests: 1 },
+    ],
+  });
+  const user = userEvent.setup();
+  // The total is a sum of reported costs, so it says what it leaves out.
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("$0.50")).toBeVisible();
+  expect(within(spend).getByText(/Total excludes 1 request without a reported cost/)).toBeVisible();
+  const unreportedRow = screen.getByRole("row", { name: /unreported/i });
+  expect(within(unreportedRow).getByText("Cost not reported by the provider")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  const local = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  const localLabel = within(local).getByText("Local · no charge");
+  expect(localLabel).toHaveAttribute("title", "Didn’t go to a paid provider, so nothing was charged.");
+  const remote = screen.getByRole("button", { name: /Receipt details for Image request/ });
+  expect(within(remote).getByText("Cost not reported by the provider")).toBeVisible();
+  await user.click(remote);
+  const sheet = screen.getByRole("dialog");
+  expect(within(sheet).getByText("Cost not reported by the provider")).toBeVisible();
+  expect(
+    within(sheet).getByText("A paid provider handled this request but didn’t report what it cost, so it isn’t in the total."),
+  ).toBeVisible();
 });
 
 
@@ -654,10 +692,10 @@ test("Usage model Spend cell is Local, an amount or Cost not recorded", async ()
   expect(within(modelRow("Local Chat")).getByText("Cost not recorded")).toBeVisible();
   expect(within(modelRow("Zero Chat")).getByText("$0.00")).toBeVisible();
   expect(within(modelRow("Paid Image")).getByText("$0.25")).toBeVisible();
-  expect(within(modelRow("Mystery")).getByText("Cost not recorded")).toBeVisible();
+  expect(within(modelRow("Mystery")).getByText("Cost not reported by the provider")).toBeVisible();
   const partial = modelRow("Partial");
   expect(within(partial).getByText("$0.50")).toBeVisible();
-  expect(within(partial).getByText("Some costs missing")).toBeVisible();
+  expect(within(partial).getByText("Total excludes 1 request without a reported cost")).toBeVisible();
   expect(screen.queryByText(/Local: no provider charge\./)).not.toBeInTheDocument();
   expect(screen.queryByText(/Unavailable: the provider cost was not recorded\./)).not.toBeInTheDocument();
   // No row is blank in the Spend column.
@@ -810,7 +848,7 @@ test("Usage By task keeps missing and partial costs distinct from known local co
   const table = await screen.findByRole("table", { name: "By task" });
   const chat = within(table).getByRole("row", { name: /Chat/ });
   expect(within(chat).getByText("$0.50")).toBeVisible();
-  expect(within(chat).getByText("Some costs missing")).toBeVisible();
+  expect(within(chat).getByText("Some requests have no recorded cost.")).toBeVisible();
   const picture = within(table).getByRole("row", { name: /Make a picture/ });
   expect(within(picture).getByText("Cost not recorded")).toBeVisible();
   expect(within(picture).queryByText("$0.00")).not.toBeInTheDocument();
