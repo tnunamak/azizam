@@ -1604,7 +1604,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self._receipt(app_id, submit_request_id, intent="image.generate",
                       route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
                       resolved_model=None, status="ok", backend="comfyui", created_at=created_at,
-                      job_id=job_id if links_job else None)
+                      job_id=job_id if links_job else None,
+                      # The route's finish() gives its submit receipt attempt 1, the same number as the first attempt.
+                      attempt_number=1)
         media_jobs.create(media_jobs.MediaJob(
             job_id=job_id, request_id=f"imgjob_idem_{job_id}", intent="image.generate",
             parent_request_id=submit_request_id, app_id=app_id, status=status,
