@@ -63,7 +63,7 @@ function mockHomeMedia(
       if (path === "/me/api/media?limit=12") {
         return Response.json({ assets, has_more: false });
       }
-      if (path.includes("/download?"))
+      if (path.includes("/download"))
         return Response.json({ download_url: "/renewed.wav" });
       throw new Error(`Unexpected request: ${path}`);
     }),

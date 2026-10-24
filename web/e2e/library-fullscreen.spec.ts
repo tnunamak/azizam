@@ -64,8 +64,10 @@ for (const width of [1440, 390] as const) {
     await dialog.getByRole("button", { name: "Full screen", exact: true }).click();
 
     await expect(stage).toHaveAttribute("data-fullscreen", "fallback");
-    const box = await stage.boundingBox();
-    expect(box).toEqual(expect.objectContaining({ x: 0, y: 0, width, height: width === 390 ? 844 : 1000 }));
+    // The viewer's open animation scales the stage until it settles; measure once it fills the window.
+    await expect
+      .poll(() => stage.boundingBox())
+      .toEqual(expect.objectContaining({ x: 0, y: 0, width, height: width === 390 ? 844 : 1000 }));
     await page.keyboard.press("Escape");
     await expect(stage).toHaveAttribute("data-fullscreen", "off");
     await expect(dialog).toBeVisible();
