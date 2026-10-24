@@ -1453,6 +1453,12 @@
       "access": "own-account"
     },
     {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_default",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/default",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generated",
       "method": "POST",
       "path": "/me/api/profile/avatar/generated",

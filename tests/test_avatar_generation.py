@@ -331,7 +331,7 @@ def test_remove_returns_to_the_palette_when_there_is_no_picture(rig: Rig, genera
     client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
     body = client.delete("/me/api/profile/avatar/generated", headers=ACTION).json()
     assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_picture_url": None,
-                    "made_picture_url": None}
+                    "made_picture_url": None, "generating": False}
     assert client.get("/me/api/profile/avatar/picture").status_code == 404
 
 
@@ -419,6 +419,9 @@ def test_an_existing_database_accepts_the_generated_choice_after_upgrade(tmp_pat
         conn.commit()
     admin_store.init_db(db)
     assert avatars.get(user["id"], path=db)["choice"] == "v3"
+    with sqlite3.connect(db) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(user_avatars)")}
+    assert {"default_job_id", "default_attempted_at"} <= columns
     with sqlite3.connect(db) as conn:
         conn.execute("UPDATE user_avatars SET choice='generated', generated_template='1', generated_at=2 WHERE user_id=?",
                      (user["id"],))
