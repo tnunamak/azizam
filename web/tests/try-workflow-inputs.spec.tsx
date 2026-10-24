@@ -493,22 +493,22 @@ describe("WorkflowInputs", () => {
   });
 
   describe("each input's detail is its own helper text", () => {
-    // ACE-Step's denoise as the catalog sends it: a manifest label, a plain help line, and a request
-    // field the workflow extension carries. It had no help line, so its only description was in a list.
-    const denoise: WorkflowInput = {
-      name: "denoise",
+    // A change-strength input as a manifest sends it: a label, a plain help line, and a request field the
+    // workflow extension carries. Before it had a help line, its only description was in a separate list.
+    const changeStrength: WorkflowInput = {
+      name: "strength",
       type: "number",
       label: "change strength",
-      help: "Keep at 1 to make a new song from your words.",
+      help: "Keep at 1 to change the whole picture.",
       minimum: 0,
       maximum: 1,
       applies: "Workflow extension",
-      request_field: "denoise",
+      request_field: "strength",
     };
     function Form({ owner }: { owner: boolean }) {
       const [json, setJson] = useState("{}");
       return (
-        <WorkflowInputs inputs={[denoise]} json={json} onChange={setJson} technical={owner} />
+        <WorkflowInputs inputs={[changeStrength]} json={json} onChange={setJson} technical={owner} />
       );
     }
 
@@ -516,9 +516,9 @@ describe("WorkflowInputs", () => {
       render(<Form owner={false} />);
       const control = screen.getByRole("spinbutton", { name: "Change strength" });
       expect(control.closest("label")).toHaveTextContent(
-        "Keep at 1 to make a new song from your words.",
+        "Keep at 1 to change the whole picture.",
       );
-      expect(screen.queryByText(/Writes denoise/)).toBeNull();
+      expect(screen.queryByText(/Writes strength/)).toBeNull();
       expect(screen.queryByText("Input details")).toBeNull();
     });
 
@@ -526,7 +526,7 @@ describe("WorkflowInputs", () => {
       render(<Form owner />);
       const control = screen.getByRole("spinbutton", { name: "Change strength" });
       expect(control.closest("label")).toHaveTextContent(
-        "Keep at 1 to make a new song from your words. Writes denoise · range 0 to 1. Workflow extension.",
+        "Keep at 1 to change the whole picture. Writes strength · range 0 to 1. Workflow extension.",
       );
       expect(screen.queryByText("Input details")).toBeNull();
     });

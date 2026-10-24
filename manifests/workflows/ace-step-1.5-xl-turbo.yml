@@ -91,12 +91,6 @@ inputs:
   scheduler:
     label: step timing
     type: string
-  denoise:
-    label: change strength
-    help: Keep at 1 to make a new song from your words.
-    type: number
-    minimum: 0
-    maximum: 1
 outputs:
   audio:
     media_type: audio/wav
@@ -160,6 +154,3 @@ bindings:
       scheduler:
         - node: "20"
           input: scheduler
-      denoise:
-        - node: "20"
-          input: denoise
